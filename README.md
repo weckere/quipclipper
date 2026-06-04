@@ -8,6 +8,10 @@ span → cut it out with ffmpeg. Point it at a video plus a subtitle file (or le
 it find a sidecar `.srt` / extract an embedded track), type the dialogue, and get
 a clip.
 
+> **Documentation:** [`docs/MANUAL.md`](docs/MANUAL.md) is the complete user
+> manual; [`docs/DESIGN_NOTES.md`](docs/DESIGN_NOTES.md) explains the design
+> decisions and their rationale.
+
 ## Features
 
 - **Local, offline** — works on your own video + subtitle files, no API keys.
