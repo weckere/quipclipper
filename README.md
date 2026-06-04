@@ -11,6 +11,8 @@ a clip.
 ## Features
 
 - **Local, offline** — works on your own video + subtitle files, no API keys.
+- **Lossless by default** — audio/video are stream-copied (`-c copy`), so clips
+  are an exact copy of the original quality and cut in a fraction of a second.
 - **Fuzzy, ranked search** — case-insensitive, typo-tolerant, with surrounding
   context so you pick the right hit. Phrases that span two or three captions
   still match.
@@ -58,22 +60,47 @@ clipper search "hasta la vista" --video movie.mkv
 ### Cut a clip
 
 ```bash
-# audio (default)
+# audio (default, lossless stream copy -> codec-matched container e.g. .m4a)
 clipper clip "i'll be back" --video movie.mkv --type audio
 
 # video segment, with extra padding: start 5s before the line, end 3s after
 clipper clip "get to the chopper" --video movie.mkv --type video --before 5 --after 3
 
-# gif
+# gif (always re-encoded)
 clipper clip "hasta la vista" --video movie.mkv --type gif
 
+# force a re-encode for frame-exact boundaries / a specific format (e.g. mp3)
+clipper clip "i'll be back" --video movie.mkv --type audio --no-lossless
+
 # pick a different ranked match, name the output, skip the confirm prompt
-clipper clip "come with me" -v movie.mkv -i 1 -o out.mp3 --yes
+clipper clip "come with me" -v movie.mkv -i 1 -o out.m4a --yes
 ```
 
 By default the clip covers the matched line's own start/end plus `--before` /
 `--after` padding (0.5s each). The output is auto-named next to the source unless
 you pass `--out`.
+
+## Lossless cutting
+
+Inspired by [LosslessCut](https://github.com/mifi/lossless-cut), clips are cut
+**losslessly by default**: ffmpeg stream-copies (`-c copy`) the original encoded
+packets instead of re-encoding, so the output is byte-for-byte the same quality
+as the source and is produced almost instantly.
+
+The one inherent tradeoff — true of every codec — is that a copy can only begin
+at a **keyframe**. clipper seeks to the nearest keyframe at or before your start
+time, so a lossless clip may start a little earlier than requested (the **end is
+exact**). For dialogue clips that just adds a small lead-in, which is usually
+welcome. Output containers are chosen to hold the source codec without
+transcoding:
+
+| Mode | Audio | Video |
+|---|---|---|
+| Lossless (default) | codec-matched (`.m4a`/`.opus`/`.flac`/… → `.mka` fallback) | `.mkv` |
+| `--no-lossless` (re-encode) | `.mp3` | `.mp4` (H.264/AAC) |
+
+Use `--no-lossless` when you need frame-exact boundaries or a specific output
+format. GIF output is inherently a re-encode and ignores the flag.
 
 ### Inspect embedded subtitle tracks
 
@@ -91,7 +118,7 @@ clipper clip "i'll be back" -v movie.mkv --track 2
 | `models.py` | `Cue` (a timed subtitle line) and `Match` (a ranked hit). |
 | `subtitles.py` | Parse `.srt`/`.vtt`/`.ass`/`.sub`; find sidecars; list/extract embedded tracks. |
 | `search.py` | Fuzzy ranking (`rapidfuzz`) over single cues and sliding windows of consecutive cues. |
-| `clip.py` | Turn a match into a padded time range and cut it with ffmpeg. |
+| `clip.py` | Turn a match into a padded time range and cut it with ffmpeg (lossless `-c copy` or re-encode). |
 | `cli.py` | `typer` CLI: `search`, `clip`, `tracks`. |
 
 ## Development

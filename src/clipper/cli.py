@@ -69,6 +69,11 @@ def clip(
     subs: Optional[Path] = typer.Option(None, "--subs", "-s", help="Subtitle file (else sidecar/embedded)."),
     track: Optional[int] = typer.Option(None, "--track", help="Embedded subtitle stream index."),
     kind: str = typer.Option("audio", "--type", "-t", help="audio | video | gif."),
+    lossless: bool = typer.Option(
+        True,
+        "--lossless/--no-lossless",
+        help="Stream-copy with no re-encode (default). --no-lossless re-encodes for exact boundaries.",
+    ),
     before: float = typer.Option(0.5, "--before", "-b", help="Seconds of padding before the line."),
     after: float = typer.Option(0.5, "--after", "-a", help="Seconds of padding after the line."),
     index: int = typer.Option(0, "--index", "-i", help="Which ranked match to cut (0 = best)."),
@@ -94,17 +99,26 @@ def clip(
     chosen = matches[index]
     rng = compute_range(chosen, before=before, after=after)
 
+    is_copy = lossless and kind != "gif"
+    mode = "lossless copy" if is_copy else "re-encode"
     typer.echo("Selected match:")
     _echo_match(index, chosen)
     typer.echo(
         f"Clip range: {rng.start:.2f}s → {rng.end:.2f}s "
-        f"({rng.duration:.2f}s, {kind})"
+        f"({rng.duration:.2f}s, {kind}, {mode})"
     )
+    if is_copy:
+        typer.secho(
+            "  note: lossless start snaps to the nearest keyframe, so the clip "
+            "may begin a little earlier (the end is exact). Use --no-lossless "
+            "for frame-exact boundaries.",
+            fg="bright_black",
+        )
     if not yes:
         typer.confirm("Cut this clip?", default=True, abort=True)
 
     try:
-        written = cut_clip(video, rng, kind=kind, out=out)
+        written = cut_clip(video, rng, kind=kind, lossless=lossless, out=out)
     except RuntimeError as exc:
         typer.secho(str(exc), fg="red", err=True)
         raise typer.Exit(code=1)
