@@ -212,20 +212,23 @@ def render_clip_srt(cues: list[Cue], *, window_start: float, window_end: float) 
 # --- channel grouping --------------------------------------------------------
 
 
-def group_channels(channels: list[str]) -> list[tuple[str, list[str]]]:
+def group_channels(channels: list[str], *, include_lfe: bool = True) -> list[tuple[str, list[str]]]:
     """Group channels into stereo pairs plus standalone mono channels.
 
     e.g. 5.1 [FL,FR,FC,LFE,BL,BR] ->
         [("front",[FL,FR]), ("back",[BL,BR]), ("center",[FC]), ("lfe",[LFE])]
+
+    With `include_lfe=False` the low-frequency-effects channel is dropped.
     """
-    present = set(channels)
+    chans = [c for c in channels if include_lfe or c != "LFE"]
+    present = set(chans)
     used: set[str] = set()
     groups: list[tuple[str, list[str]]] = []
     for label, (left, right) in CHANNEL_PAIRS:
         if left in present and right in present:
             groups.append((label, [left, right]))
             used.update((left, right))
-    for ch in channels:  # remaining channels, in original order, as mono files
+    for ch in chans:  # remaining channels, in original order, as mono files
         if ch in used:
             continue
         groups.append((MONO_LABELS.get(ch, ch.lower()), [ch]))
@@ -388,14 +391,16 @@ def split_audio_channels(
     *,
     audio_index: int = 0,
     fmt: str = "wav",
+    include_lfe: bool = True,
     out: str | Path | None = None,
 ) -> list[Path]:
     """Split one surround audio stream into per-group files for the clip range.
 
     Produces a stereo file for each L/R pair (front, side, back, ...) and a mono
-    file for each standalone channel (centre, LFE). This decodes the surround mix
-    (it cannot be a stream copy); `fmt` is "wav"/"flac" (lossless) or "original"
-    (re-encode to the source codec). Returns the list of files written.
+    file for each standalone channel (centre, LFE — drop LFE with
+    `include_lfe=False`). This decodes the surround mix (it cannot be a stream
+    copy); `fmt` is "wav"/"flac" (lossless, no re-encode of the decoded audio) or
+    "original" (re-encode to the source codec). Returns the list of files written.
     """
     source = Path(source)
     if shutil.which("ffmpeg") is None:
@@ -409,7 +414,7 @@ def split_audio_channels(
             f"Could not determine the channel layout of audio stream a:{audio_index}."
         )
     encoder, ext = _split_codec(fmt, source, audio_index)
-    groups = group_channels(channels)
+    groups = group_channels(channels, include_lfe=include_lfe)
 
     base = Path(out) if out else source.with_suffix("")
     base.parent.mkdir(parents=True, exist_ok=True)

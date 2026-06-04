@@ -97,6 +97,71 @@ def list_embedded_tracks(video_path: str | Path) -> list[SubtitleTrack]:
     return tracks
 
 
+@dataclass(frozen=True)
+class StreamInfo:
+    """A media stream in a container, with its type-relative (a:N/s:N/v:N) index."""
+
+    kind: str  # "video" | "audio" | "subtitle"
+    type_index: int
+    codec: str
+    language: str | None
+    title: str | None
+    channels: int | None
+    channel_layout: str | None
+
+    @property
+    def selector(self) -> str:
+        return {"video": "v", "audio": "a", "subtitle": "s"}.get(self.kind, "?") + f":{self.type_index}"
+
+    def label(self) -> str:
+        parts = [self.selector, self.codec]
+        if self.channel_layout:
+            parts.append(self.channel_layout)
+        elif self.channels:
+            parts.append(f"{self.channels}ch")
+        if self.language and self.language not in ("und", ""):
+            parts.append(self.language)
+        if self.title:
+            parts.append(f"'{self.title}'")
+        return "  ".join(parts)
+
+
+def list_streams(video_path: str | Path) -> list[StreamInfo]:
+    """List all video/audio/subtitle streams with their per-type index."""
+    video_path = Path(video_path)
+    if shutil.which("ffprobe") is None:
+        raise RuntimeError("ffprobe not found on PATH. Install ffmpeg to inspect streams.")
+    cmd = [
+        "ffprobe", "-v", "error",
+        "-show_entries",
+        "stream=codec_type,codec_name,channels,channel_layout:stream_tags=language,title",
+        "-of", "json", str(video_path),
+    ]
+    out = subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
+    streams = json.loads(out or "{}").get("streams", [])
+    counts: dict[str, int] = {}
+    infos: list[StreamInfo] = []
+    for s in streams:
+        kind = s.get("codec_type", "")
+        if kind not in ("video", "audio", "subtitle"):
+            continue
+        tags = s.get("tags", {}) or {}
+        idx = counts.get(kind, 0)
+        counts[kind] = idx + 1
+        infos.append(
+            StreamInfo(
+                kind=kind,
+                type_index=idx,
+                codec=s.get("codec_name", "?"),
+                language=tags.get("language"),
+                title=tags.get("title"),
+                channels=s.get("channels"),
+                channel_layout=s.get("channel_layout"),
+            )
+        )
+    return infos
+
+
 def extract_embedded(video_path: str | Path, stream_index: int) -> list[Cue]:
     """Extract one embedded subtitle stream to a temp .srt and parse it."""
     video_path = Path(video_path)

@@ -16,11 +16,12 @@ from typing import Optional
 import typer
 
 from clipper.clip import compute_range, cut_clip, split_audio_channels
+from clipper.mkv import cut_with_mkvmerge, is_matroska, mkvmerge_available
 from clipper.models import Match
 from clipper.search import search
 from clipper.subtitles import (
     ResolvedSubtitles,
-    list_embedded_tracks,
+    list_streams,
     resolve_subtitles,
 )
 
@@ -104,7 +105,17 @@ def clip(
     split_format: str = typer.Option(
         "wav",
         "--split-format",
-        help="Format for --split-channels: wav | flac (lossless) | original (re-encode to source codec).",
+        help="Format for --split-channels: wav | flac (lossless, no re-encode) | original (re-encode to source codec).",
+    ),
+    include_lfe: bool = typer.Option(
+        True,
+        "--include-lfe/--no-lfe",
+        help="Include the LFE channel as its own file when splitting (default). --no-lfe drops it.",
+    ),
+    backend: str = typer.Option(
+        "auto",
+        "--backend",
+        help="Cutting backend: auto | ffmpeg | mkvmerge. auto uses mkvmerge for lossless MKV video.",
     ),
     embed_subs: bool = typer.Option(
         True,
@@ -129,7 +140,33 @@ def clip(
     if split_format not in ("wav", "flac", "original"):
         typer.secho("--split-format must be wav, flac, or original.", fg="red", err=True)
         raise typer.Exit(code=2)
+    if backend not in ("auto", "ffmpeg", "mkvmerge"):
+        typer.secho("--backend must be auto, ffmpeg, or mkvmerge.", fg="red", err=True)
+        raise typer.Exit(code=2)
     audio_indices = _parse_tracks(audio_track)
+
+    # Decide whether to use the mkvmerge backend. It only does lossless audio/
+    # video cuts (no gif, no re-encode, no channel split).
+    mkv_capable = lossless and kind in ("audio", "video") and not split_channels
+    if backend == "mkvmerge":
+        if not mkv_capable:
+            typer.secho(
+                "--backend mkvmerge supports only lossless audio/video cuts "
+                "(not gif, --no-lossless, or --split-channels).",
+                fg="red", err=True,
+            )
+            raise typer.Exit(code=2)
+        if not mkvmerge_available():
+            typer.secho("mkvmerge not found on PATH. Install MKVToolNix.", fg="red", err=True)
+            raise typer.Exit(code=2)
+        use_mkvmerge = True
+    elif backend == "auto":
+        use_mkvmerge = (
+            mkv_capable and kind == "video"
+            and is_matroska(video) and mkvmerge_available()
+        )
+    else:  # ffmpeg
+        use_mkvmerge = False
 
     resolved = _resolve(subs, video, track)
     matches = search(query, resolved.cues, limit=max(index + 1, 5), min_score=min_score, max_span=max_span)
@@ -146,8 +183,10 @@ def clip(
     is_copy = lossless and kind != "gif" and not split_channels
     if split_channels:
         mode = f"channel split ({split_format})"
+    elif use_mkvmerge:
+        mode = "lossless copy (mkvmerge)"
     else:
-        mode = "lossless copy" if is_copy else "re-encode"
+        mode = "lossless copy (ffmpeg)" if is_copy else "re-encode"
     typer.echo("Selected match:")
     _echo_match(index, chosen)
     typer.echo(
@@ -172,15 +211,24 @@ def clip(
 
     try:
         if split_channels:
-            written = split_audio_channels(
+            outputs = split_audio_channels(
                 video,
                 rng,
                 audio_index=(audio_indices[0] if audio_indices else 0),
                 fmt=split_format,
+                include_lfe=include_lfe,
                 out=out,
             )
-            for w in written:
+            for w in outputs:
                 typer.secho(f"Wrote {w}", fg="green")
+        elif use_mkvmerge:
+            # mkvmerge muxes/trims a sidecar subtitle natively, so pass the file.
+            sidecar = resolved.path if (embed_subs and kind == "video") else None
+            written = cut_with_mkvmerge(
+                video, rng, kind=kind, out=out,
+                audio_indices=audio_indices, keep_subs=True, embed_subs=sidecar,
+            )
+            typer.secho(f"Wrote {written}", fg="green")
         else:
             # Embed the (clip-aligned) search subtitles only when we have an
             # external file; embedded video subtitle tracks are always kept.
@@ -201,13 +249,25 @@ def clip(
 def tracks(
     video: Path = typer.Argument(..., help="Video file to inspect."),
 ):
-    """List embedded subtitle tracks in a video container."""
-    found = list_embedded_tracks(video)
+    """List the video, audio and subtitle streams in a container.
+
+    Audio/subtitle entries show the a:N / s:N index to pass to --audio-track / --track.
+    """
+    try:
+        found = list_streams(video)
+    except RuntimeError as exc:
+        typer.secho(str(exc), fg="red", err=True)
+        raise typer.Exit(code=2)
     if not found:
-        typer.secho("No embedded subtitle tracks.", fg="yellow")
+        typer.secho("No streams found.", fg="yellow")
         raise typer.Exit(code=1)
-    for t in found:
-        typer.echo(t.label())
+    for kind in ("video", "audio", "subtitle"):
+        group = [s for s in found if s.kind == kind]
+        if not group:
+            continue
+        typer.secho(f"{kind.capitalize()}:", bold=True)
+        for s in group:
+            typer.echo(f"  {s.label()}")
 
 
 if __name__ == "__main__":

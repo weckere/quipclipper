@@ -167,6 +167,13 @@ def test_group_channels_stereo_is_single_front_pair():
     assert group_channels(["FL", "FR"]) == [("front", ["FL", "FR"])]
 
 
+def test_group_channels_can_drop_lfe():
+    groups = dict(group_channels(["FL", "FR", "FC", "LFE", "BL", "BR"], include_lfe=False))
+    assert "lfe" not in groups
+    assert groups["front"] == ["FL", "FR"]
+    assert groups["center"] == ["FC"]
+
+
 def test_split_codec_wav_and_flac():
     assert _split_codec("wav", "in.mkv", 0) == ("pcm_s24le", "wav")
     assert _split_codec("flac", "in.mkv", 0) == ("flac", "flac")

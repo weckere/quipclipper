@@ -34,6 +34,8 @@ a clip.
 - Python ≥ 3.10
 - [`ffmpeg`](https://ffmpeg.org/) and `ffprobe` on your `PATH` (used to cut clips
   and to read/extract embedded subtitle tracks)
+- *(optional)* [MKVToolNix](https://mkvtoolnix.download/) (`mkvmerge`) — used as
+  the cutting backend for MKV sources; see "MKV sources" below
 
 ## Install
 
@@ -95,14 +97,26 @@ comma-separated list) to keep only some:
 ```bash
 clipper clip "i'll be back" -v movie.mkv --audio-track 0      # just the first track
 clipper clip "i'll be back" -v movie.mkv --audio-track 0,2    # tracks 0 and 2
-clipper tracks movie.mkv                                       # list subtitle tracks
+clipper tracks movie.mkv                                       # list all streams + indices
+```
+
+`clipper tracks` prints the video, audio and subtitle streams with the `a:N` /
+`s:N` indices to feed back into `--audio-track` / `--track`:
+
+```
+Video:
+  v:0  h264
+Audio:
+  a:0  ac3  5.1(side)  eng
+  a:1  aac  stereo  eng  'Commentary'
+Subtitle:
+  s:0  subrip  eng
 ```
 
 ### Splitting surround sound into separate files
 
-`--split-channels` decodes a surround track and writes one file per channel
-group — a stereo file for each L/R pair (front, side, back) plus a mono file for
-the centre and LFE channels. Pick the format with `--split-format`:
+`--split-channels` writes one file per channel group — a stereo file for each
+L/R pair (front, side, back) plus a mono file for the centre and LFE channels:
 
 ```bash
 # 5.1 -> front.wav (stereo) + side/back.wav + center.wav + lfe.wav  (lossless PCM)
@@ -111,14 +125,46 @@ clipper clip "get to the chopper" -v movie.mkv --split-channels
 # lossless FLAC instead of WAV
 clipper clip "get to the chopper" -v movie.mkv --split-channels --split-format flac
 
-# re-encode each split back to the source codec (e.g. AC3)
-clipper clip "get to the chopper" -v movie.mkv --split-channels --split-format original \
-    --audio-track 0
+# drop the LFE channel
+clipper clip "get to the chopper" -v movie.mkv --split-channels --no-lfe
 ```
 
-Splitting **cannot** be a stream copy — pulling channels apart requires decoding
-the surround mix. `wav`/`flac` are lossless relative to that decode; `original`
-re-encodes back to the source codec.
+**Channel splitting writes lossless WAV or FLAC and never does a lossy
+re-encode.** Pulling channels apart does require *decoding* the surround mix —
+that is unavoidable, you cannot route channels out of a compressed stream without
+decoding it — but the decoded audio is written verbatim: `wav` is raw PCM
+(`pcm_s24le`) and `flac` is lossless compression (bit-exact). Neither loses any
+quality relative to the source.
+
+There is also an opt-in `--split-format original`, the **only** option that
+re-encodes (back to the source codec, e.g. AC3). Use it only if you specifically
+need the original format rather than lossless WAV/FLAC.
+
+## MKV sources: the mkvmerge backend
+
+For Matroska sources, clipper can cut with **[MKVToolNix](https://mkvtoolnix.download/)'s
+`mkvmerge`** instead of ffmpeg. mkvmerge splits MKV losslessly and superbly: it
+keeps every track, chapter and attachment, never re-encodes, produces tighter
+cuts, and trims and time-shifts subtitles natively (including a sidecar file).
+
+```bash
+clipper clip "i'll be back" -v movie.mkv -t video                    # auto: uses mkvmerge
+clipper clip "i'll be back" -v movie.mkv -t audio --backend mkvmerge  # force mkvmerge (-> .mka)
+clipper clip "i'll be back" -v movie.mp4 -t video --backend ffmpeg    # force ffmpeg
+```
+
+`--backend` is `auto` (default), `ffmpeg`, or `mkvmerge`:
+
+- **auto** — uses mkvmerge for lossless **video** cuts of MKV sources when
+  mkvmerge is installed; otherwise ffmpeg. Audio-only cuts stay on ffmpeg so you
+  get a codec-matched container (`.ac3`/`.m4a`); force `--backend mkvmerge` if you
+  prefer a `.mka`.
+- **mkvmerge** — used for both audio and video (output is always Matroska:
+  `.mkv` / `.mka`). Only supports lossless cuts — not gif, `--no-lossless`, or
+  `--split-channels`.
+- **ffmpeg** — always use ffmpeg.
+
+mkvmerge requires MKVToolNix on your `PATH` (`mkvmerge`).
 
 ### Subtitles in video clips
 
@@ -167,25 +213,18 @@ Containers are chosen to hold the source streams without transcoding:
 
 Use `--no-lossless` only when you deliberately want a re-encode (frame-exact
 boundaries or a specific format like mp3). GIF output is inherently a re-encode
-and ignores the flag.
-
-### Inspect embedded subtitle tracks
-
-```bash
-clipper tracks movie.mkv
-# #2 subrip eng 'English'
-# #3 subrip spa 'Spanish'
-clipper clip "i'll be back" -v movie.mkv --track 2
-```
+and ignores the flag. (For MKV sources the default backend is mkvmerge — see
+"MKV sources" above.)
 
 ## How it works
 
 | Module | Responsibility |
 |---|---|
 | `models.py` | `Cue` (a timed subtitle line) and `Match` (a ranked hit). |
-| `subtitles.py` | Parse `.srt`/`.vtt`/`.ass`/`.sub`; find sidecars; list/extract embedded tracks. |
+| `subtitles.py` | Parse `.srt`/`.vtt`/`.ass`/`.sub`; find sidecars; list/extract embedded tracks; list all streams. |
 | `search.py` | Fuzzy ranking (`rapidfuzz`) over single cues and sliding windows of consecutive cues. |
-| `clip.py` | Turn a match into a padded time range and cut it with ffmpeg (lossless `-c copy` or re-encode). |
+| `clip.py` | Turn a match into a padded time range and cut it with ffmpeg (lossless `-c copy`, re-encode, or surround channel split). |
+| `mkv.py` | MKVToolNix (`mkvmerge`) backend for lossless cuts of Matroska sources. |
 | `cli.py` | `typer` CLI: `search`, `clip`, `tracks`. |
 
 ## Development
