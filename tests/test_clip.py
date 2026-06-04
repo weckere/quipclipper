@@ -28,15 +28,23 @@ def test_compute_range_clamps_negative_start():
     assert rng.start == 0.0
 
 
-def test_output_extension_lossless_audio_matches_codec():
-    assert output_extension("audio", lossless=True, audio_codec="aac") == "m4a"
-    assert output_extension("audio", lossless=True, audio_codec="opus") == "opus"
-    assert output_extension("audio", lossless=True, audio_codec="flac") == "flac"
+def test_output_extension_single_audio_stream_matches_codec():
+    assert output_extension("audio", lossless=True, audio_codecs=["aac"]) == "m4a"
+    assert output_extension("audio", lossless=True, audio_codecs=["opus"]) == "opus"
+    assert output_extension("audio", lossless=True, audio_codecs=["ac3"]) == "ac3"
+    assert output_extension("audio", lossless=True, audio_codecs=["eac3"]) == "eac3"
+
+
+def test_output_extension_multiple_audio_streams_uses_mka():
+    # e.g. a 5.1 EAC3 track plus a stereo commentary -> Matroska holds both
+    assert output_extension("audio", lossless=True, audio_codecs=["eac3", "aac"]) == "mka"
+    assert output_extension("audio", lossless=True, audio_codecs=["ac3", "ac3", "aac"]) == "mka"
 
 
 def test_output_extension_lossless_audio_unknown_codec_falls_back():
-    assert output_extension("audio", lossless=True, audio_codec="weirdcodec") == "mka"
-    assert output_extension("audio", lossless=True, audio_codec=None) == "mka"
+    assert output_extension("audio", lossless=True, audio_codecs=["weirdcodec"]) == "mka"
+    assert output_extension("audio", lossless=True, audio_codecs=None) == "mka"
+    assert output_extension("audio", lossless=True, audio_codecs=[]) == "mka"
 
 
 def test_output_extension_lossless_video_is_mkv():
@@ -53,23 +61,26 @@ def test_output_extension_gif_ignores_lossless():
     assert output_extension("gif", lossless=False) == "gif"
 
 
-def test_ffmpeg_args_lossless_audio_uses_stream_copy():
+def test_ffmpeg_args_lossless_audio_copies_all_audio_streams():
     args = _ffmpeg_args(
         source=Path("in.mkv"), rng=ClipRange(5.0, 8.0), kind="audio",
-        out=Path("out.m4a"), lossless=True, fps=15, width=480,
+        out=Path("out.mka"), lossless=True, fps=15, width=480,
     )
     assert "-c" in args and args[args.index("-c") + 1] == "copy"
-    assert "-map" in args and "0:a:0" in args
+    # maps every audio stream, not just the first
+    assert "-map" in args and "0:a" in args
+    assert "0:a:0" not in args
     # duration, not absolute end time
     assert "-t" in args and args[args.index("-t") + 1] == "3.000"
 
 
-def test_ffmpeg_args_lossless_video_copies_all_relevant_streams():
+def test_ffmpeg_args_lossless_video_copies_all_av_and_subtitle_streams():
     args = _ffmpeg_args(
         source=Path("in.mkv"), rng=ClipRange(0.0, 4.0), kind="video",
         out=Path("out.mkv"), lossless=True, fps=15, width=480,
     )
-    assert args.count("-map") == 2
+    assert args.count("-map") == 3
+    assert {"0:v?", "0:a?", "0:s?"} <= set(args)
     assert args[args.index("-c") + 1] == "copy"
 
 

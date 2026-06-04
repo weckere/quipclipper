@@ -11,8 +11,9 @@ a clip.
 ## Features
 
 - **Local, offline** — works on your own video + subtitle files, no API keys.
-- **Lossless by default** — audio/video are stream-copied (`-c copy`), so clips
-  are an exact copy of the original quality and cut in a fraction of a second.
+- **Lossless by default** — audio/video are stream-copied (`-c copy`) with no
+  re-encoding, so the original format is preserved exactly (lossy stays lossy),
+  including all audio tracks and 5.1/7.1 channel layouts. Near-instant cuts.
 - **Fuzzy, ranked search** — case-insensitive, typo-tolerant, with surrounding
   context so you pick the right hit. Phrases that span two or three captions
   still match.
@@ -84,23 +85,38 @@ you pass `--out`.
 
 Inspired by [LosslessCut](https://github.com/mifi/lossless-cut), clips are cut
 **losslessly by default**: ffmpeg stream-copies (`-c copy`) the original encoded
-packets instead of re-encoding, so the output is byte-for-byte the same quality
-as the source and is produced almost instantly.
+packets straight into a new container — there is **no re-encoding at all**. The
+source format is preserved exactly: a lossy AC3/AAC/EAC3 track stays that same
+lossy bitstream, byte-for-byte, and the cut is near-instant.
+
+What "preserve everything" means here:
+
+- **No transcoding** — the encoded audio/video bytes are copied, not re-rendered.
+- **All audio tracks are kept** — clipper maps *every* audio stream (e.g. a 5.1
+  EAC3 main track plus a stereo commentary), with their language/title metadata.
+- **Multichannel layouts are intact** — 5.1 / 7.1 channel layouts are part of the
+  copied bitstream, so they come through untouched.
+- **Video mode keeps all video, audio and subtitle tracks** in one `.mkv`.
 
 The one inherent tradeoff — true of every codec — is that a copy can only begin
 at a **keyframe**. clipper seeks to the nearest keyframe at or before your start
 time, so a lossless clip may start a little earlier than requested (the **end is
 exact**). For dialogue clips that just adds a small lead-in, which is usually
-welcome. Output containers are chosen to hold the source codec without
-transcoding:
+welcome.
 
-| Mode | Audio | Video |
-|---|---|---|
-| Lossless (default) | codec-matched (`.m4a`/`.opus`/`.flac`/… → `.mka` fallback) | `.mkv` |
-| `--no-lossless` (re-encode) | `.mp3` | `.mp4` (H.264/AAC) |
+Containers are chosen to hold the source streams without transcoding:
 
-Use `--no-lossless` when you need frame-exact boundaries or a specific output
-format. GIF output is inherently a re-encode and ignores the flag.
+| Mode | Output container |
+|---|---|
+| Lossless audio, single stream | codec-matched (`.m4a` / `.ac3` / `.eac3` / `.opus` / `.flac` / …) |
+| Lossless audio, **multiple streams** | `.mka` (Matroska — holds any number of streams/codecs) |
+| Lossless video | `.mkv` (all video + audio + subtitle tracks) |
+| `--no-lossless` audio (re-encode) | `.mp3` |
+| `--no-lossless` video (re-encode) | `.mp4` (H.264 / AAC) |
+
+Use `--no-lossless` only when you deliberately want a re-encode (frame-exact
+boundaries or a specific format like mp3). GIF output is inherently a re-encode
+and ignores the flag.
 
 ### Inspect embedded subtitle tracks
 

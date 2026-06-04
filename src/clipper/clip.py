@@ -70,34 +70,42 @@ def compute_range(
     return ClipRange(start=start, end=end)
 
 
-def probe_audio_codec(source: str | Path) -> str | None:
-    """Return the codec name of the first audio stream, or None if unavailable."""
+def probe_audio_streams(source: str | Path) -> list[str]:
+    """Return the codec name of every audio stream, in order (empty if unknown)."""
     if shutil.which("ffprobe") is None:
-        return None
+        return []
     cmd = [
         "ffprobe", "-v", "error",
-        "-select_streams", "a:0",
+        "-select_streams", "a",
         "-show_entries", "stream=codec_name",
         "-of", "json", str(source),
     ]
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:
-        return None
+        return []
     streams = json.loads(proc.stdout or "{}").get("streams", [])
-    return streams[0].get("codec_name") if streams else None
+    return [s.get("codec_name", "") for s in streams]
 
 
-def output_extension(kind: str, *, lossless: bool, audio_codec: str | None = None) -> str:
-    """Pick a file extension appropriate for the kind and copy/encode mode."""
+def output_extension(
+    kind: str, *, lossless: bool, audio_codecs: list[str] | None = None
+) -> str:
+    """Pick a file extension appropriate for the kind and copy/encode mode.
+
+    Lossless audio uses the source codec's natural single-stream container only
+    when there is exactly one audio stream of a known codec; with multiple audio
+    streams (e.g. a 5.1 EAC3 track plus a stereo commentary) it falls back to
+    Matroska (.mka), which can hold any number of streams of any codec losslessly.
+    """
     if kind == "gif":
         return "gif"
     if not lossless:
         return REENCODE_EXT[kind]
     if kind == "video":
         return LOSSLESS_VIDEO_EXT
-    # lossless audio: match the source codec's natural container
-    if audio_codec and audio_codec in LOSSLESS_AUDIO_EXT:
-        return LOSSLESS_AUDIO_EXT[audio_codec]
+    codecs = audio_codecs or []
+    if len(codecs) == 1 and codecs[0] in LOSSLESS_AUDIO_EXT:
+        return LOSSLESS_AUDIO_EXT[codecs[0]]
     return FALLBACK_AUDIO_EXT
 
 
@@ -125,10 +133,13 @@ def _ffmpeg_args(
         return base + ["-an", "-vf", vf, str(out)]
     if lossless:
         # -avoid_negative_ts make_zero cleans up timestamps after a keyframe seek.
+        # -map 0:a copies ALL audio streams (every language/commentary track) and
+        # -c copy preserves each one's exact bitstream and channel layout (5.1/7.1).
         common = ["-c", "copy", "-avoid_negative_ts", "make_zero"]
         if kind == "audio":
-            return base + ["-map", "0:a:0", "-vn"] + common + [str(out)]
-        return base + ["-map", "0:v:0?", "-map", "0:a?"] + common + [str(out)]
+            return base + ["-map", "0:a"] + common + [str(out)]
+        # video: keep all video, audio and subtitle tracks
+        return base + ["-map", "0:v?", "-map", "0:a?", "-map", "0:s?"] + common + [str(out)]
     # re-encode
     if kind == "audio":
         return base + ["-vn", str(out)]
@@ -159,8 +170,8 @@ def cut_clip(
         raise RuntimeError(f"Video file not found: {source}")
 
     if out is None:
-        codec = probe_audio_codec(source) if (lossless and kind == "audio") else None
-        ext = output_extension(kind, lossless=lossless, audio_codec=codec)
+        codecs = probe_audio_streams(source) if (lossless and kind == "audio") else None
+        ext = output_extension(kind, lossless=lossless, audio_codecs=codecs)
         ts = format_timestamp(rng.start).replace(":", "-").replace(".", "_")
         out = source.with_name(f"{source.stem}_{ts}.{ext}")
     out = Path(out)
