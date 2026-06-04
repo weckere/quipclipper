@@ -16,7 +16,13 @@ from typing import Optional
 import typer
 
 from clipper.clip import compute_range, cut_clip, split_audio_channels
-from clipper.mkv import cut_with_mkvmerge, is_matroska, mkvmerge_available
+from clipper.mkv import (
+    cut_with_mkvmerge,
+    estimate_remux_bytes,
+    human_size,
+    is_matroska,
+    mkvmerge_available,
+)
 from clipper.models import Match
 from clipper.search import search
 from clipper.subtitles import (
@@ -123,9 +129,9 @@ def clip(
         help="Keep chapters in mkvmerge output (default). --no-chapters drops them.",
     ),
     remux_first: bool = typer.Option(
-        False,
-        "--remux-first",
-        help="Remux source (+ sidecar subs) to a temp MKV with mkvmerge first, then cut — bypasses ffmpeg entirely for best accuracy (uses extra disk).",
+        True,
+        "--remux-first/--no-remux-first",
+        help="Remux source (+ sidecar subs) to a temp MKV with mkvmerge first, then cut — best accuracy, bypasses ffmpeg (uses extra disk). On by default; --no-remux-first cuts the source directly.",
     ),
     embed_subs: bool = typer.Option(
         True,
@@ -138,7 +144,7 @@ def clip(
     out: Optional[Path] = typer.Option(None, "--out", "-o", help="Output path (auto-named if omitted)."),
     min_score: float = typer.Option(60.0, "--min-score", help="Drop matches below this score (0-100)."),
     max_span: int = typer.Option(3, "--max-span", help="Max consecutive captions a match may join."),
-    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation preview."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip all confirmation prompts (including the remux disk-space confirmation)."),
 ):
     """Find the dialogue and cut a clip around it."""
     if kind not in ("audio", "video", "gif"):
@@ -155,16 +161,16 @@ def clip(
         raise typer.Exit(code=2)
     audio_indices = _parse_tracks(audio_track)
 
-    # Decide whether to use the mkvmerge backend. It only does lossless audio/
-    # video cuts (no gif, no re-encode, no channel split).
+    # Decide the backend. mkvmerge only does lossless audio/video cuts (no gif,
+    # no re-encode, no channel split); ffmpeg handles everything else.
     mkv_capable = lossless and kind in ("audio", "video") and not split_channels
-    # --remux-first implies a full mkvmerge pipeline.
-    wants_mkvmerge = backend == "mkvmerge" or remux_first
-    if wants_mkvmerge:
+    if backend == "ffmpeg":
+        use_mkvmerge = False
+    elif backend == "mkvmerge":
         if not mkv_capable:
             typer.secho(
-                "mkvmerge (--backend mkvmerge / --remux-first) supports only lossless "
-                "audio/video cuts (not gif, --no-lossless, or --split-channels).",
+                "--backend mkvmerge supports only lossless audio/video cuts "
+                "(not gif, --no-lossless, or --split-channels).",
                 fg="red", err=True,
             )
             raise typer.Exit(code=2)
@@ -172,11 +178,12 @@ def clip(
             typer.secho("mkvmerge not found on PATH. Install MKVToolNix.", fg="red", err=True)
             raise typer.Exit(code=2)
         use_mkvmerge = True
-    elif backend == "auto":
-        # Prefer mkvmerge for any lossless MKV cut (audio or video) when available.
-        use_mkvmerge = mkv_capable and is_matroska(video) and mkvmerge_available()
-    else:  # ffmpeg
-        use_mkvmerge = False
+    else:  # auto — prefer mkvmerge for any lossless audio/video cut when available
+        use_mkvmerge = mkv_capable and mkvmerge_available()
+
+    # Remux-first (default) only happens on the mkvmerge path; it normalises the
+    # source into a clean MKV first for maximum accuracy.
+    do_remux = use_mkvmerge and remux_first
 
     resolved = _resolve(subs, video, track)
     matches = search(query, resolved.cues, limit=max(index + 1, 5), min_score=min_score, max_span=max_span)
@@ -194,7 +201,7 @@ def clip(
     if split_channels:
         mode = f"channel split ({split_format})"
     elif use_mkvmerge:
-        mode = "lossless copy (mkvmerge, remux-first)" if remux_first else "lossless copy (mkvmerge)"
+        mode = "lossless copy (mkvmerge, remux-first)" if do_remux else "lossless copy (mkvmerge)"
     else:
         mode = "lossless copy (ffmpeg)" if is_copy else "re-encode"
     typer.echo("Selected match:")
@@ -203,7 +210,35 @@ def clip(
         f"Clip range: {rng.start:.2f}s → {rng.end:.2f}s "
         f"({rng.duration:.2f}s, {kind}, {mode})"
     )
-    if is_copy:
+
+    if do_remux:
+        sidecar_inputs = [resolved.path] if (kind == "video" and resolved.path) else []
+        estimate = estimate_remux_bytes(video, sidecar_inputs)
+        typer.secho(
+            f"  remux-first: muxing the source to a temporary MKV for best accuracy.\n"
+            f"  estimated scratch space: ~{human_size(estimate)} "
+            f"(temp file, deleted afterward).",
+            fg="yellow",
+        )
+    elif mkv_capable and not use_mkvmerge and not mkvmerge_available():
+        # Wanted mkvmerge accuracy but it isn't installed.
+        typer.secho(
+            "  note: mkvmerge not found — cutting with ffmpeg instead. Install "
+            "MKVToolNix for the most accurate cuts.",
+            fg="yellow",
+        )
+    elif mkv_capable and not do_remux:
+        # remux-first was skipped (or backend=ffmpeg): spell out the tradeoff.
+        typer.secho(
+            "  note: remux-first is off — cutting directly from the source. Without "
+            "a clean MKV remux, accuracy depends on the source container: ffmpeg "
+            "cuts can include a small keyframe lead-in at the start, and odd "
+            "container timestamps/indexes are handled less precisely than a freshly "
+            "remuxed MKV. Omit --no-remux-first for maximum accuracy.",
+            fg="yellow",
+        )
+
+    if is_copy and not use_mkvmerge:
         typer.secho(
             "  note: lossless start snaps to the nearest keyframe, so the clip "
             "may begin a little earlier (the end is exact). Use --no-lossless "
@@ -217,7 +252,7 @@ def clip(
             fg="bright_black",
         )
     if not yes:
-        typer.confirm("Cut this clip?", default=True, abort=True)
+        typer.confirm("Proceed?", default=True, abort=True)
 
     try:
         if split_channels:
@@ -237,7 +272,7 @@ def clip(
             written = cut_with_mkvmerge(
                 video, rng, kind=kind, out=out,
                 audio_indices=audio_indices, keep_subs=True, keep_chapters=chapters,
-                embed_subs=sidecar, remux_first=remux_first,
+                embed_subs=sidecar, remux_first=do_remux,
             )
             typer.secho(f"Wrote {written}", fg="green")
         else:

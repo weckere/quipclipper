@@ -1,7 +1,13 @@
 from pathlib import Path
 
 from clipper.clip import ClipRange
-from clipper.mkv import audio_track_ids, build_mkvmerge_args, is_matroska
+from clipper.mkv import (
+    audio_track_ids,
+    build_mkvmerge_args,
+    estimate_remux_bytes,
+    human_size,
+    is_matroska,
+)
 
 TRACKS = [
     {"id": 0, "type": "video"},
@@ -76,3 +82,25 @@ def test_build_args_video_embeds_sidecar_as_extra_input():
     args = _video_args(audio_ids=[1], embed_subs=Path("subs.srt"))
     # sidecar appended after the source input
     assert args.index("subs.srt") > args.index("in.mkv")
+
+
+def test_human_size():
+    assert human_size(0) == "0 B"
+    assert human_size(512) == "512 B"
+    assert human_size(1536) == "1.5 KB"
+    assert human_size(5 * 1024**3) == "5.0 GB"
+
+
+def test_estimate_remux_bytes_sums_source_and_extras(tmp_path):
+    src = tmp_path / "movie.mkv"
+    src.write_bytes(b"x" * 1000)
+    sub = tmp_path / "movie.srt"
+    sub.write_bytes(b"y" * 50)
+    assert estimate_remux_bytes(src) == 1000
+    assert estimate_remux_bytes(src, [sub]) == 1050
+
+
+def test_estimate_remux_bytes_ignores_missing_extras(tmp_path):
+    src = tmp_path / "movie.mkv"
+    src.write_bytes(b"x" * 1000)
+    assert estimate_remux_bytes(src, [tmp_path / "nope.srt"]) == 1000

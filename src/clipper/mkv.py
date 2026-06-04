@@ -30,6 +30,31 @@ def is_matroska(path: str | Path) -> bool:
     return Path(path).suffix.lower() in MATROSKA_SUFFIXES
 
 
+def estimate_remux_bytes(source: str | Path, extra_inputs: list | tuple = ()) -> int:
+    """Estimate the scratch space a remux needs: ~the source size + any extras.
+
+    A remux re-wraps every stream without recompressing, so the temporary MKV is
+    approximately the size of the source plus any added sidecar files.
+    """
+    total = Path(source).stat().st_size
+    for e in extra_inputs:
+        try:
+            total += Path(e).stat().st_size
+        except OSError:
+            pass
+    return total
+
+
+def human_size(num_bytes: float) -> str:
+    """Format a byte count as a human-readable string (e.g. '1.4 GB')."""
+    size = float(num_bytes)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if size < 1024 or unit == "TB":
+            return f"{int(size)} B" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} TB"
+
+
 def _ts(seconds: float) -> str:
     # mkvmerge accepts HH:MM:SS.mmm timestamps.
     return format_timestamp(seconds)
