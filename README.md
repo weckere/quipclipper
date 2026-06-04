@@ -16,8 +16,11 @@ a clip.
   including all audio tracks and 5.1/7.1 channel layouts. Near-instant cuts.
 - **MKVToolNix backend** — clipper cuts lossless audio/video with `mkvmerge` when
   it's installed (tighter cuts, all tracks/chapters, native subtitle handling).
-  By default it remuxes to a temporary MKV first (a full mkvmerge pipeline that
-  bypasses ffmpeg) after confirming the scratch space; `--no-remux-first` skips it.
+  Non-MKV sources are remuxed to a temporary MKV first (a full mkvmerge pipeline
+  that bypasses ffmpeg) after confirming the scratch space; MKV sources are cut
+  directly. `--no-remux-first` always skips the remux.
+- **Interactive picker** — when a line matches several places, `--pick` lists the
+  candidates and lets you select several at once to clip in one go.
 - **Fuzzy, ranked search** — case-insensitive, typo-tolerant, with surrounding
   context so you pick the right hit. Phrases that span two or three captions
   still match.
@@ -92,6 +95,32 @@ clipper clip "come with me" -v movie.mkv -i 1 -o out.m4a --yes
 By default the clip covers the matched line's own start/end plus `--before` /
 `--after` padding (0.5s each). The output is auto-named next to the source unless
 you pass `--out`.
+
+### Picking among multiple matches
+
+When a phrase appears in several places (a recurring catchphrase, or a line that
+spans captions different ways), `--pick` lists the candidates and lets you select
+**one or more** to clip in a single run:
+
+```bash
+clipper clip "i'll be back" -v movie.mkv -s movie.srt --pick
+```
+
+```
+5 match(es):
+[0]   83.00s  00:01:23.000–00:01:24.500  (score 100)
+      I'll be back.
+[1]  742.00s  00:12:22.000–00:12:23.500  (score 100)
+      I'll be back!
+...
+Select matches to clip (comma-separated indices, or 'all') [0]: 0,1
+```
+
+Selection is non-exclusive — enter comma-separated indices (`0,2,3`), `all`, or
+just press Enter for the top match. Each selected match is clipped (auto-named by
+its timestamp, so they don't collide). `--limit/-n` controls how many candidates
+are offered; `--out` can't be combined with multiple selections. Without `--pick`,
+the best match (or `--index N`) is used.
 
 ### Choosing audio tracks
 
@@ -172,11 +201,15 @@ in mkvmerge output; mkvmerge trims them to the clip range.
 
 ### remux-first (default) and `--no-remux-first`
 
-By default, before cutting, clipper muxes the source **and any sidecar subtitle**
-into a temporary MKV with mkvmerge, then cuts the clip from that — a fully
-mkvmerge pipeline that bypasses ffmpeg for maximum accuracy. Because the temp MKV
-is a full-size copy of the source, clipper first **estimates the scratch space
-needed and asks you to confirm**:
+For **non-MKV sources** (mp4, avi, …), clipper by default muxes the source **and
+any sidecar subtitle** into a temporary MKV with mkvmerge, then cuts the clip from
+that — a fully mkvmerge pipeline that bypasses ffmpeg for maximum accuracy.
+**MKV sources skip this automatically**: an `.mkv` is already a clean container,
+so clipper cuts it directly with mkvmerge (identical accuracy, no redundant
+full-size copy, no prompt).
+
+Because the temp MKV is a full-size copy of the source, clipper first **estimates
+the scratch space needed and asks you to confirm**:
 
 ```
 remux-first: muxing the source to a temporary MKV for best accuracy.

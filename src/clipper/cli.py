@@ -65,6 +65,35 @@ def _parse_tracks(spec: Optional[str]) -> Optional[list[int]]:
         raise typer.BadParameter("--audio-track must be comma-separated integers, e.g. 0,2")
 
 
+def _select_matches(candidates: list[Match]) -> list[Match]:
+    """Interactively pick one or more matches (non-exclusive multi-select).
+
+    A single candidate is auto-selected. The prompt reads from stdin, so piping a
+    selection works too; an empty Enter selects the top match.
+    """
+    if len(candidates) == 1:
+        return list(candidates)
+    raw = typer.prompt(
+        "Select matches to clip (comma-separated indices, or 'all')", default="0"
+    ).strip().lower()
+    if raw in ("all", "*"):
+        return list(candidates)
+    picks: list[Match] = []
+    seen: set[int] = set()
+    for tok in raw.replace(" ", "").split(","):
+        if tok == "":
+            continue
+        if not tok.isdigit() or int(tok) >= len(candidates):
+            raise typer.BadParameter(f"invalid selection: {tok!r}")
+        i = int(tok)
+        if i not in seen:
+            seen.add(i)
+            picks.append(candidates[i])
+    if not picks:
+        raise typer.BadParameter("no matches selected")
+    return picks
+
+
 @app.command(name="search")
 def search_cmd(
     query: str = typer.Argument(..., help="Dialogue text to search for."),
@@ -140,8 +169,15 @@ def clip(
     ),
     before: float = typer.Option(0.5, "--before", "-b", help="Seconds of padding before the line."),
     after: float = typer.Option(0.5, "--after", "-a", help="Seconds of padding after the line."),
-    index: int = typer.Option(0, "--index", "-i", help="Which ranked match to cut (0 = best)."),
-    out: Optional[Path] = typer.Option(None, "--out", "-o", help="Output path (auto-named if omitted)."),
+    index: int = typer.Option(0, "--index", "-i", help="Which ranked match to cut (0 = best). Ignored with --pick."),
+    pick: bool = typer.Option(
+        False,
+        "--pick",
+        "-p",
+        help="Interactively choose one or more matches to clip (multi-select, e.g. 0,2,3).",
+    ),
+    limit: int = typer.Option(10, "--limit", "-n", help="How many candidate matches to offer with --pick."),
+    out: Optional[Path] = typer.Option(None, "--out", "-o", help="Output path (auto-named; not allowed when clipping multiple matches)."),
     min_score: float = typer.Option(60.0, "--min-score", help="Drop matches below this score (0-100)."),
     max_span: int = typer.Option(3, "--max-span", help="Max consecutive captions a match may join."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip all confirmation prompts (including the remux disk-space confirmation)."),
@@ -181,21 +217,38 @@ def clip(
     else:  # auto — prefer mkvmerge for any lossless audio/video cut when available
         use_mkvmerge = mkv_capable and mkvmerge_available()
 
-    # Remux-first (default) only happens on the mkvmerge path; it normalises the
-    # source into a clean MKV first for maximum accuracy.
-    do_remux = use_mkvmerge and remux_first
+    # Remux-first (default) only happens on the mkvmerge path and only adds value
+    # for non-Matroska sources — an MKV is already a clean container, so cutting it
+    # directly with mkvmerge is just as accurate without the redundant full copy.
+    do_remux = use_mkvmerge and remux_first and not is_matroska(video)
 
     resolved = _resolve(subs, video, track)
-    matches = search(query, resolved.cues, limit=max(index + 1, 5), min_score=min_score, max_span=max_span)
-    if not matches:
+    candidates = search(
+        query, resolved.cues,
+        limit=(limit if pick else max(index + 1, 5)),
+        min_score=min_score, max_span=max_span,
+    )
+    if not candidates:
         typer.secho("No matches.", fg="yellow")
         raise typer.Exit(code=1)
-    if index >= len(matches):
-        typer.secho(f"Only {len(matches)} match(es); index {index} out of range.", fg="red", err=True)
-        raise typer.Exit(code=2)
 
-    chosen = matches[index]
-    rng = compute_range(chosen, before=before, after=after)
+    if pick:
+        typer.echo(f"{len(candidates)} match(es):")
+        for i, m in enumerate(candidates):
+            _echo_match(i, m)
+        chosen = _select_matches(candidates)
+    else:
+        if index >= len(candidates):
+            typer.secho(
+                f"Only {len(candidates)} match(es); index {index} out of range.",
+                fg="red", err=True,
+            )
+            raise typer.Exit(code=2)
+        chosen = [candidates[index]]
+
+    if out is not None and len(chosen) > 1:
+        typer.secho("--out can't be used when clipping multiple matches.", fg="red", err=True)
+        raise typer.Exit(code=2)
 
     is_copy = lossless and kind != "gif" and not split_channels
     if split_channels:
@@ -204,19 +257,19 @@ def clip(
         mode = "lossless copy (mkvmerge, remux-first)" if do_remux else "lossless copy (mkvmerge)"
     else:
         mode = "lossless copy (ffmpeg)" if is_copy else "re-encode"
-    typer.echo("Selected match:")
-    _echo_match(index, chosen)
-    typer.echo(
-        f"Clip range: {rng.start:.2f}s → {rng.end:.2f}s "
-        f"({rng.duration:.2f}s, {kind}, {mode})"
-    )
+
+    ranges = [compute_range(m, before=before, after=after) for m in chosen]
+    typer.echo(f"Will clip {len(chosen)} match(es) ({kind}, {mode}):")
+    for i, m in enumerate(chosen):
+        _echo_match(i, m)
 
     if do_remux:
         sidecar_inputs = [resolved.path] if (kind == "video" and resolved.path) else []
         estimate = estimate_remux_bytes(video, sidecar_inputs)
+        per = " each (run sequentially; temp deleted between clips)" if len(chosen) > 1 else ""
         typer.secho(
             f"  remux-first: muxing the source to a temporary MKV for best accuracy.\n"
-            f"  estimated scratch space: ~{human_size(estimate)} "
+            f"  estimated scratch space: ~{human_size(estimate)}{per} "
             f"(temp file, deleted afterward).",
             fg="yellow",
         )
@@ -227,12 +280,11 @@ def clip(
             "MKVToolNix for the most accurate cuts.",
             fg="yellow",
         )
-    elif mkv_capable and not do_remux:
-        # remux-first was skipped (or backend=ffmpeg): spell out the tradeoff.
+    elif mkv_capable and use_mkvmerge and not do_remux and not is_matroska(video):
+        # Non-MKV source with remux-first off: spell out the tradeoff.
         typer.secho(
             "  note: remux-first is off — cutting directly from the source. Without "
-            "a clean MKV remux, accuracy depends on the source container: ffmpeg "
-            "cuts can include a small keyframe lead-in at the start, and odd "
+            "a clean MKV remux, accuracy depends on the source container: unusual "
             "container timestamps/indexes are handled less precisely than a freshly "
             "remuxed MKV. Omit --no-remux-first for maximum accuracy.",
             fg="yellow",
@@ -240,7 +292,7 @@ def clip(
 
     if is_copy and not use_mkvmerge:
         typer.secho(
-            "  note: lossless start snaps to the nearest keyframe, so the clip "
+            "  note: ffmpeg lossless start snaps to the nearest keyframe, so the clip "
             "may begin a little earlier (the end is exact). Use --no-lossless "
             "for frame-exact boundaries.",
             fg="bright_black",
@@ -254,38 +306,36 @@ def clip(
     if not yes:
         typer.confirm("Proceed?", default=True, abort=True)
 
-    try:
+    def _cut_one(rng, out_path: Optional[Path]) -> list[Path]:
         if split_channels:
-            outputs = split_audio_channels(
-                video,
-                rng,
+            return split_audio_channels(
+                video, rng,
                 audio_index=(audio_indices[0] if audio_indices else 0),
-                fmt=split_format,
-                include_lfe=include_lfe,
-                out=out,
+                fmt=split_format, include_lfe=include_lfe, out=out_path,
             )
-            for w in outputs:
-                typer.secho(f"Wrote {w}", fg="green")
-        elif use_mkvmerge:
+        if use_mkvmerge:
             # mkvmerge muxes/trims a sidecar subtitle natively, so pass the file.
             sidecar = resolved.path if (embed_subs and kind == "video") else None
-            written = cut_with_mkvmerge(
-                video, rng, kind=kind, out=out,
+            return [cut_with_mkvmerge(
+                video, rng, kind=kind, out=out_path,
                 audio_indices=audio_indices, keep_subs=True, keep_chapters=chapters,
                 embed_subs=sidecar, remux_first=do_remux,
-            )
-            typer.secho(f"Wrote {written}", fg="green")
-        else:
-            # Embed the (clip-aligned) search subtitles only when we have an
-            # external file; embedded video subtitle tracks are always kept.
-            cues_to_embed = (
-                resolved.cues if (embed_subs and kind == "video" and resolved.path) else None
-            )
-            written = cut_clip(
-                video, rng, kind=kind, lossless=lossless, out=out,
-                audio_indices=audio_indices, embed_cues=cues_to_embed,
-            )
-            typer.secho(f"Wrote {written}", fg="green")
+            )]
+        # ffmpeg: embed the clip-aligned search subtitles when we have a file;
+        # embedded video subtitle tracks are always kept.
+        cues_to_embed = (
+            resolved.cues if (embed_subs and kind == "video" and resolved.path) else None
+        )
+        return [cut_clip(
+            video, rng, kind=kind, lossless=lossless, out=out_path,
+            audio_indices=audio_indices, embed_cues=cues_to_embed,
+        )]
+
+    single = len(chosen) == 1
+    try:
+        for rng in ranges:
+            for w in _cut_one(rng, out if single else None):
+                typer.secho(f"Wrote {w}", fg="green")
     except RuntimeError as exc:
         typer.secho(str(exc), fg="red", err=True)
         raise typer.Exit(code=1)
