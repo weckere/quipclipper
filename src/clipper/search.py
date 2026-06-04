@@ -38,8 +38,15 @@ def search(
     limit: int = 10,
     min_score: float = 60.0,
     max_span: int = 3,
+    collapse_overlapping: bool = True,
 ) -> list[Match]:
-    """Return ranked matches for `query` across the cues.
+    """Return ranked, non-overlapping matches for `query` across the cues.
+
+    The window scan produces many overlapping span-variants of the same line (the
+    line alone, plus windows that join it with its neighbours). By default these
+    are collapsed: results never overlap, keeping the best-scoring, tightest
+    representative of each region — so a recurring phrase yields one candidate per
+    place it occurs rather than several near-duplicates.
 
     Args:
         query: dialogue text to find.
@@ -47,6 +54,7 @@ def search(
         limit: maximum number of matches to return.
         min_score: drop matches scoring below this (0-100).
         max_span: how many consecutive cues a single match may join (>=1).
+        collapse_overlapping: drop matches that overlap a higher-ranked one.
     """
     q = _normalize(query)
     if not q:
@@ -65,19 +73,28 @@ def search(
             window = tuple(cues[start : i + 1])
             candidates.append(Match(score=score, cues=window, text=joined))
 
-    # Rank by score, then prefer the tighter span and earlier position so a
-    # single-cue exact hit beats a sprawling multi-cue near-match of equal score.
-    candidates.sort(key=lambda m: (-m.score, len(m.cues), m.start))
+    # Rank by score; then, among equal-scoring span-variants, prefer the window
+    # whose full text best matches the whole query (fuzz.ratio penalises both
+    # missing and extra words). This keeps a single-cue hit for a one-line query
+    # but the joined window for a sentence split across captions. Tighter span and
+    # earlier position break any remaining ties.
+    candidates.sort(
+        key=lambda m: (-m.score, -fuzz.ratio(q, _normalize(m.text)), len(m.cues), m.start)
+    )
 
     results: list[Match] = []
-    seen_starts: set[int] = set()
+    accepted: list[tuple[int, int]] = []  # cue-index spans already taken
     for m in candidates:
         if m.score < min_score:
             break
-        # Collapse overlapping windows that begin at the same cue.
-        if m.index in seen_starts:
+        lo, hi = m.cues[0].index, m.cues[-1].index
+        # Skip a match that overlaps an already-accepted (higher-ranked) region.
+        if collapse_overlapping and any(lo <= b and a <= hi for a, b in accepted):
             continue
-        seen_starts.add(m.index)
+        elif not collapse_overlapping and any(lo == a for a, _ in accepted):
+            # Without collapsing, still drop exact duplicate start cues.
+            continue
+        accepted.append((lo, hi))
         results.append(m)
         if len(results) >= limit:
             break

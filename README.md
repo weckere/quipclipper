@@ -23,7 +23,8 @@ a clip.
   candidates and lets you select several at once to clip in one go.
 - **Fuzzy, ranked search** — case-insensitive, typo-tolerant, with surrounding
   context so you pick the right hit. Phrases that span two or three captions
-  still match.
+  still match, and overlapping span-variants are collapsed so results don't
+  duplicate the same line.
 - **Flexible subtitle source** — explicit `--subs`, a sidecar file next to the
   video, or an embedded subtitle track pulled out via ffmpeg.
 - **Audio / video / gif output** — pick with `--type`.
@@ -98,9 +99,11 @@ you pass `--out`.
 
 ### Picking among multiple matches
 
-When a phrase appears in several places (a recurring catchphrase, or a line that
-spans captions different ways), `--pick` lists the candidates and lets you select
-**one or more** to clip in a single run:
+When a phrase appears in several places (a recurring catchphrase), `--pick` lists
+the candidates and lets you select **one or more** to clip in a single run.
+Candidates never overlap — the search collapses span-variants (the line alone vs.
+windows that join it with neighbours), so you get one entry per distinct place the
+phrase occurs:
 
 ```bash
 clipper clip "i'll be back" -v movie.mkv -s movie.srt --pick
@@ -289,7 +292,7 @@ and ignores the flag. (For MKV sources the default backend is mkvmerge — see
 |---|---|
 | `models.py` | `Cue` (a timed subtitle line) and `Match` (a ranked hit). |
 | `subtitles.py` | Parse `.srt`/`.vtt`/`.ass`/`.sub`; find sidecars; list/extract embedded tracks; list all streams. |
-| `search.py` | Fuzzy ranking (`rapidfuzz`) over single cues and sliding windows of consecutive cues. |
+| `search.py` | Fuzzy ranking (`rapidfuzz`) over single cues and sliding windows of consecutive cues; collapses overlapping span-variants into non-overlapping results. |
 | `clip.py` | Turn a match into a padded time range and cut it with ffmpeg (lossless `-c copy`, re-encode, or surround channel split). |
 | `mkv.py` | MKVToolNix (`mkvmerge`) backend for lossless cuts of Matroska sources. |
 | `cli.py` | `typer` CLI: `search`, `clip`, `tracks`. |
