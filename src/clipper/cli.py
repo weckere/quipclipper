@@ -115,7 +115,17 @@ def clip(
     backend: str = typer.Option(
         "auto",
         "--backend",
-        help="Cutting backend: auto | ffmpeg | mkvmerge. auto uses mkvmerge for lossless MKV video.",
+        help="Cutting backend: auto | ffmpeg | mkvmerge. auto uses mkvmerge for lossless MKV cuts.",
+    ),
+    chapters: bool = typer.Option(
+        True,
+        "--chapters/--no-chapters",
+        help="Keep chapters in mkvmerge output (default). --no-chapters drops them.",
+    ),
+    remux_first: bool = typer.Option(
+        False,
+        "--remux-first",
+        help="Remux source (+ sidecar subs) to a temp MKV with mkvmerge first, then cut — bypasses ffmpeg entirely for best accuracy (uses extra disk).",
     ),
     embed_subs: bool = typer.Option(
         True,
@@ -148,11 +158,13 @@ def clip(
     # Decide whether to use the mkvmerge backend. It only does lossless audio/
     # video cuts (no gif, no re-encode, no channel split).
     mkv_capable = lossless and kind in ("audio", "video") and not split_channels
-    if backend == "mkvmerge":
+    # --remux-first implies a full mkvmerge pipeline.
+    wants_mkvmerge = backend == "mkvmerge" or remux_first
+    if wants_mkvmerge:
         if not mkv_capable:
             typer.secho(
-                "--backend mkvmerge supports only lossless audio/video cuts "
-                "(not gif, --no-lossless, or --split-channels).",
+                "mkvmerge (--backend mkvmerge / --remux-first) supports only lossless "
+                "audio/video cuts (not gif, --no-lossless, or --split-channels).",
                 fg="red", err=True,
             )
             raise typer.Exit(code=2)
@@ -161,10 +173,8 @@ def clip(
             raise typer.Exit(code=2)
         use_mkvmerge = True
     elif backend == "auto":
-        use_mkvmerge = (
-            mkv_capable and kind == "video"
-            and is_matroska(video) and mkvmerge_available()
-        )
+        # Prefer mkvmerge for any lossless MKV cut (audio or video) when available.
+        use_mkvmerge = mkv_capable and is_matroska(video) and mkvmerge_available()
     else:  # ffmpeg
         use_mkvmerge = False
 
@@ -184,7 +194,7 @@ def clip(
     if split_channels:
         mode = f"channel split ({split_format})"
     elif use_mkvmerge:
-        mode = "lossless copy (mkvmerge)"
+        mode = "lossless copy (mkvmerge, remux-first)" if remux_first else "lossless copy (mkvmerge)"
     else:
         mode = "lossless copy (ffmpeg)" if is_copy else "re-encode"
     typer.echo("Selected match:")
@@ -226,7 +236,8 @@ def clip(
             sidecar = resolved.path if (embed_subs and kind == "video") else None
             written = cut_with_mkvmerge(
                 video, rng, kind=kind, out=out,
-                audio_indices=audio_indices, keep_subs=True, embed_subs=sidecar,
+                audio_indices=audio_indices, keep_subs=True, keep_chapters=chapters,
+                embed_subs=sidecar, remux_first=remux_first,
             )
             typer.secho(f"Wrote {written}", fg="green")
         else:

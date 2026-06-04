@@ -14,6 +14,9 @@ a clip.
 - **Lossless by default** — audio/video are stream-copied (`-c copy`) with no
   re-encoding, so the original format is preserved exactly (lossy stays lossy),
   including all audio tracks and 5.1/7.1 channel layouts. Near-instant cuts.
+- **MKVToolNix backend** — for MKV sources clipper cuts with `mkvmerge` (tighter
+  cuts, all tracks/chapters, native subtitle handling); `--remux-first` runs a
+  full mkvmerge pipeline that bypasses ffmpeg entirely.
 - **Fuzzy, ranked search** — case-insensitive, typo-tolerant, with surrounding
   context so you pick the right hit. Phrases that span two or three captions
   still match.
@@ -151,18 +154,38 @@ cuts, and trims and time-shifts subtitles natively (including a sidecar file).
 clipper clip "i'll be back" -v movie.mkv -t video                    # auto: uses mkvmerge
 clipper clip "i'll be back" -v movie.mkv -t audio --backend mkvmerge  # force mkvmerge (-> .mka)
 clipper clip "i'll be back" -v movie.mp4 -t video --backend ffmpeg    # force ffmpeg
+clipper clip "i'll be back" -v movie.mkv -t video --no-chapters       # drop chapters
 ```
 
 `--backend` is `auto` (default), `ffmpeg`, or `mkvmerge`:
 
-- **auto** — uses mkvmerge for lossless **video** cuts of MKV sources when
-  mkvmerge is installed; otherwise ffmpeg. Audio-only cuts stay on ffmpeg so you
-  get a codec-matched container (`.ac3`/`.m4a`); force `--backend mkvmerge` if you
-  prefer a `.mka`.
+- **auto** — uses mkvmerge for any lossless **audio or video** cut of an MKV
+  source when mkvmerge is installed (audio → `.mka`, video → `.mkv`); otherwise
+  ffmpeg. For non-MKV sources auto stays on ffmpeg unless you force `--backend
+  mkvmerge` or `--remux-first`.
 - **mkvmerge** — used for both audio and video (output is always Matroska:
-  `.mkv` / `.mka`). Only supports lossless cuts — not gif, `--no-lossless`, or
-  `--split-channels`.
+  `.mkv` / `.mka`; works on non-MKV sources too). Only supports lossless cuts —
+  not gif, `--no-lossless`, or `--split-channels`.
 - **ffmpeg** — always use ffmpeg.
+
+`--chapters` / `--no-chapters` (default keep) controls whether chapters are kept
+in mkvmerge output; mkvmerge trims them to the clip range.
+
+### `--remux-first` — a fully-mkvmerge pipeline
+
+`--remux-first` first muxes the source **and any sidecar subtitle** into a
+temporary MKV with mkvmerge, then cuts the clip from that, so ffmpeg is bypassed
+entirely — useful for non-MKV sources (or sidecar subs) when you want mkvmerge's
+accuracy for the whole pipeline:
+
+```bash
+clipper clip "i'll be back" -v movie.mp4 -s movie.srt -t video --remux-first
+```
+
+This writes a full-size temporary copy next to the output (extra disk space) and
+deletes it afterward. mkvmerge muxes local sources very fast, so on a fast disk
+this is often barely slower — and more accurate — than reading the source
+directly. Requires a lossless audio/video cut.
 
 mkvmerge requires MKVToolNix on your `PATH` (`mkvmerge`).
 
