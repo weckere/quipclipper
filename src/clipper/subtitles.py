@@ -133,24 +133,37 @@ def find_sidecar(video_path: str | Path) -> Path | None:
     return matches[0] if matches else None
 
 
-def resolve_cues(
+@dataclass(frozen=True)
+class ResolvedSubtitles:
+    """Cues plus where they came from.
+
+    `path` is the external subtitle file used (explicit `--subs` or a sidecar),
+    or None when the cues were extracted from an embedded track — in which case
+    the subtitle is already inside the video and need not be muxed in separately.
+    """
+
+    cues: list[Cue]
+    path: Path | None
+
+
+def resolve_subtitles(
     *,
     subs: str | Path | None,
     video: str | Path | None,
     track: int | None = None,
-) -> list[Cue]:
-    """Resolve cues from the best available source.
+) -> ResolvedSubtitles:
+    """Resolve cues from the best available source, reporting the file used.
 
     Priority: explicit ``subs`` file > sidecar next to ``video`` > embedded track.
     """
     if subs:
-        return load_subtitles(subs)
+        return ResolvedSubtitles(load_subtitles(subs), Path(subs))
     if not video:
         raise ValueError("Provide either --subs or --video.")
 
     sidecar = find_sidecar(video)
     if sidecar:
-        return load_subtitles(sidecar)
+        return ResolvedSubtitles(load_subtitles(sidecar), sidecar)
 
     tracks = list_embedded_tracks(video)
     if not tracks:
@@ -166,4 +179,14 @@ def resolve_cues(
                 "Multiple embedded subtitle tracks found; choose one with "
                 f"--track <index>:\n  {labels}"
             )
-    return extract_embedded(video, track)
+    return ResolvedSubtitles(extract_embedded(video, track), None)
+
+
+def resolve_cues(
+    *,
+    subs: str | Path | None,
+    video: str | Path | None,
+    track: int | None = None,
+) -> list[Cue]:
+    """Resolve cues from the best available source (see `resolve_subtitles`)."""
+    return resolve_subtitles(subs=subs, video=video, track=track).cues

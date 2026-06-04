@@ -20,6 +20,12 @@ a clip.
 - **Flexible subtitle source** — explicit `--subs`, a sidecar file next to the
   video, or an embedded subtitle track pulled out via ffmpeg.
 - **Audio / video / gif output** — pick with `--type`.
+- **Track selection** — keep all audio tracks or pick specific ones with
+  `--audio-track`; video clips also retain embedded subtitle tracks.
+- **Surround channel split** — `--split-channels` exports a 5.1/7.1 track as
+  stereo pairs + centre/LFE files, in lossless WAV/FLAC or the source codec.
+- **Subtitles in clips** — embedded subtitle streams are preserved, and external
+  search subtitles are muxed in, aligned to the cut (`--no-embed-subs` to skip).
 - **Configurable padding** — clip the line's own span plus `--before` / `--after`
   seconds (e.g. start 5s early and run a few seconds long).
 
@@ -80,6 +86,51 @@ clipper clip "come with me" -v movie.mkv -i 1 -o out.m4a --yes
 By default the clip covers the matched line's own start/end plus `--before` /
 `--after` padding (0.5s each). The output is auto-named next to the source unless
 you pass `--out`.
+
+### Choosing audio tracks
+
+By default every audio stream is kept. Use `--audio-track` (a `a:N` index, or a
+comma-separated list) to keep only some:
+
+```bash
+clipper clip "i'll be back" -v movie.mkv --audio-track 0      # just the first track
+clipper clip "i'll be back" -v movie.mkv --audio-track 0,2    # tracks 0 and 2
+clipper tracks movie.mkv                                       # list subtitle tracks
+```
+
+### Splitting surround sound into separate files
+
+`--split-channels` decodes a surround track and writes one file per channel
+group — a stereo file for each L/R pair (front, side, back) plus a mono file for
+the centre and LFE channels. Pick the format with `--split-format`:
+
+```bash
+# 5.1 -> front.wav (stereo) + side/back.wav + center.wav + lfe.wav  (lossless PCM)
+clipper clip "get to the chopper" -v movie.mkv --split-channels
+
+# lossless FLAC instead of WAV
+clipper clip "get to the chopper" -v movie.mkv --split-channels --split-format flac
+
+# re-encode each split back to the source codec (e.g. AC3)
+clipper clip "get to the chopper" -v movie.mkv --split-channels --split-format original \
+    --audio-track 0
+```
+
+Splitting **cannot** be a stream copy — pulling channels apart requires decoding
+the surround mix. `wav`/`flac` are lossless relative to that decode; `original`
+re-encodes back to the source codec.
+
+### Subtitles in video clips
+
+Video clips keep all embedded subtitle tracks (they ride along in the `.mkv`
+stream copy). When you search with an external subtitle file (`--subs` or a
+sidecar), clipper also muxes those lines into the clip, trimmed and time-shifted
+to line up with the cut. Disable with `--no-embed-subs`:
+
+```bash
+clipper clip "i'll be back" -v movie.mkv -t video                 # subtitles included
+clipper clip "i'll be back" -v movie.mkv -t video --no-embed-subs # video subs only
+```
 
 ## Lossless cutting
 
