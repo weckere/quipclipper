@@ -26,9 +26,11 @@ follow from taking those two facts seriously.
 10. [remux-first, the disk-space prompt, and MKV auto-skip](#10-remux-first-the-disk-space-prompt-and-mkv-auto-skip)
 11. [Search ranking and span-variant collapse](#11-search-ranking-and-span-variant-collapse)
 12. [The interactive picker](#12-the-interactive-picker)
-13. [CLI and UX conventions](#13-cli-and-ux-conventions)
-14. [Testing strategy](#14-testing-strategy)
-15. [References](#references)
+13. [Interactive subtitle track selection](#13-interactive-subtitle-track-selection)
+14. [CLI and UX conventions](#14-cli-and-ux-conventions)
+15. [Nix flake](#15-nix-flake)
+16. [Testing strategy](#16-testing-strategy)
+17. [References](#references)
 
 ---
 
@@ -348,7 +350,31 @@ place the line occurs.
 
 ---
 
-## 13. CLI and UX conventions
+## 13. Interactive subtitle track selection
+
+**Decision:** When multiple embedded subtitle tracks exist and no `--track` is
+given, prompt the user to choose interactively rather than erroring with a
+"re-run with `--track`" message.
+
+**Rationale:** The original behaviour forced a round-trip: the user runs a
+command, gets an error listing tracks, then re-runs with `--track N`. The
+interactive picker eliminates that friction — the same pattern that `--pick`
+uses for match selection. Single-track files and explicit `--subs` still
+auto-resolve without a prompt, so the common case is unchanged.
+
+**Non-interactive use is unaffected:** `--track N` bypasses the prompt entirely,
+so scripted and piped workflows keep working. The prompt only fires for the
+specific case of multiple embedded text tracks with no explicit choice.
+
+**Implementation:** The prompt lives in the CLI layer (`_pick_track` in
+`cli.py`), not in `subtitles.py` — subtitle resolution stays non-interactive
+and testable. The CLI intercepts the `ValueError` that `resolve_subtitles`
+raises for the multi-track case, presents the picker, and re-calls with the
+chosen index.
+
+---
+
+## 14. CLI and UX conventions
 
 - **Preview then confirm.** Before cutting, quipclipper prints the selected match(es),
   the clip range, the mode (e.g. "lossless copy (mkvmerge)"), and any relevant
@@ -358,15 +384,44 @@ place the line occurs.
   `--remux-first/--no-remux-first`, `--chapters/--no-chapters`,
   `--embed-subs/--no-embed-subs`, `--include-lfe/--no-lfe`).
 - **Clean errors, not tracebacks.** Missing tools (ffmpeg/ffprobe/mkvmerge), missing
-  files, unknown layouts, bad track indices and ffmpeg/mkvmerge failures are caught
-  and printed as concise red messages with a non-zero exit code.
+  files, unknown layouts, bad track indices, image-subtitle extraction failures, and
+  ffmpeg/mkvmerge failures are caught and printed as concise red messages with a
+  non-zero exit code. Raw ffmpeg/mkvmerge stderr is suppressed when the error is
+  already explained by quipclipper's own message.
 - **`tracks` shows selectable indices.** It groups streams by type and prints the
   `a:N`/`s:N` indices that feed `--audio-track`/`--track`, so the user can discover
   what to select.
 
 ---
 
-## 14. Testing strategy
+## 15. Nix flake
+
+**Decision:** Provide a `flake.nix` so quipclipper can be installed declaratively
+on NixOS or nix-darwin systems.
+
+**Rationale:** A Nix flake makes quipclipper a first-class package that can be
+added as a flake input to a system configuration. The wrapper automatically
+puts `ffmpeg` and `mkvmerge` on `PATH`, so the user never has to manage runtime
+dependencies manually.
+
+**Implementation:**
+- `buildPythonApplication` with `pyproject = true` and a `hatchling` build
+  system, matching the existing `pyproject.toml`.
+- `makeWrapperArgs` prefixes `PATH` with `ffmpeg` and `mkvtoolnix-cli` so both
+  backends are available without the user installing them separately.
+- `pytestCheckHook` runs the test suite during the Nix build.
+- A `devShells.default` provides a development environment with all
+  dependencies and pytest.
+
+**Usage in a system config:**
+```nix
+inputs.quipclipper.url = "github:weckere/quipclipper";
+# then add inputs.quipclipper.packages.${system}.default to packages
+```
+
+---
+
+## 16. Testing strategy
 
 **Decision:** Unit-test the pure logic exhaustively; verify the media integration
 against real tools during development rather than mocking ffmpeg/mkvmerge.
