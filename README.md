@@ -188,8 +188,8 @@ keeps every track, chapter and attachment, never re-encodes, produces tighter
 cuts, and trims and time-shifts subtitles natively (including a sidecar file).
 
 ```bash
-quipclipper clip "i'll be back" -v movie.mkv -t video                    # default: mkvmerge + remux-first
-quipclipper clip "i'll be back" -v movie.mkv -t video --no-remux-first   # cut the source directly
+quipclipper clip "i'll be back" -v movie.mkv -t video                    # default: direct mkvmerge cut
+quipclipper clip "i'll be back" -v movie.mp4 -t video                    # non-MKV: remux-first, then mkvmerge cut
 quipclipper clip "i'll be back" -v movie.mp4 -t video --backend ffmpeg   # force ffmpeg
 quipclipper clip "i'll be back" -v movie.mkv -t video --no-chapters      # drop chapters
 ```
