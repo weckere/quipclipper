@@ -40,12 +40,25 @@ for *why* the code is built the way it is, see [`DESIGN_NOTES.md`](DESIGN_NOTES.
 ## Installation
 
 ```bash
-cd quipclipper
 pip install -e .            # or: pip install -e ".[dev]" for the test dependencies
 ```
 
 This installs the `quipclipper` command and the Python dependencies (`pysubs2`,
 `rapidfuzz`, `typer`).
+
+### Nix
+
+quipclipper provides a Nix flake. `ffmpeg` and `mkvmerge` are wrapped onto `PATH`
+automatically — no separate install needed:
+
+```nix
+# flake input:
+inputs.quipclipper.url = "github:weckere/quipclipper";
+# add to packages:
+inputs.quipclipper.packages.${system}.default
+```
+
+A dev shell is also available: `nix develop github:weckere/quipclipper`.
 
 ## Requirements
 
@@ -113,7 +126,7 @@ quipclipper search QUERY [OPTIONS]
 | `QUERY` | — | Dialogue text to search for. |
 | `--subs`, `-s` | — | Subtitle file (`.srt`/`.vtt`/`.ass`/`.sub`). |
 | `--video`, `-v` | — | Video file (used to find a sidecar or extract an embedded track). |
-| `--track` | — | Subtitle track by s:N index (from `tracks`), when several exist. |
+| `--track` | — | Subtitle track by s:N index (from `tracks`); prompted interactively when several exist. |
 | `--limit`, `-n` | 10 | Maximum number of matches to show. |
 | `--min-score` | 60 | Drop matches scoring below this (0–100). |
 | `--max-span` | 3 | Max consecutive captions a single match may join. |
@@ -141,7 +154,7 @@ quipclipper clip QUERY --video FILE [OPTIONS]
 | `QUERY` | — | Dialogue text to locate and clip. |
 | `--video`, `-v` | *required* | Video file to cut from. |
 | `--subs`, `-s` | — | Subtitle file; otherwise a sidecar or embedded track is used. |
-| `--track` | — | Subtitle track by `s:N` index (from `tracks`). |
+| `--track` | — | Subtitle track by `s:N` index (from `tracks`); prompted interactively when several exist. |
 
 **What to produce**
 
@@ -352,6 +365,23 @@ Selection is **non-exclusive** — enter comma-separated indices (`0,2,3`), `all
 or press Enter for the top match. Each selected match is clipped in one run and
 auto-named by its timestamp so the files don't collide. `--out` cannot be combined
 with multiple selections.
+
+### Subtitle track selection
+
+When a video has multiple embedded subtitle tracks and no `--track` is given,
+quipclipper prompts you to choose:
+
+```
+3 subtitle track(s):
+  [0] s:0 subrip eng
+  [1] s:1 subrip spa
+  [2] s:2 hdmv_pgs_subtitle eng
+Select a subtitle track [0]:
+```
+
+Press Enter for the first track, or type a number. `--track N` bypasses the
+prompt for scripted use. If only one subtitle track exists, it is selected
+automatically.
 
 ### Output names and containers
 

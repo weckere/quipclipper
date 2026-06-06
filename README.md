@@ -30,7 +30,8 @@ a clip.
   still match, and overlapping span-variants are collapsed so results don't
   duplicate the same line.
 - **Flexible subtitle source** — explicit `--subs`, a sidecar file next to the
-  video, or an embedded subtitle track pulled out via ffmpeg.
+  video, or an embedded subtitle track pulled out via ffmpeg. When multiple
+  embedded tracks exist, quipclipper prompts you to choose (or pass `--track`).
 - **Audio / video / gif output** — pick with `--type`.
 - **Track selection** — keep all audio tracks or pick specific ones with
   `--audio-track`; video clips also retain embedded subtitle tracks.
@@ -52,11 +53,18 @@ a clip.
 ## Install
 
 ```bash
-cd quipclipper
 pip install -e .          # or: pip install -e ".[dev]" for the test deps
 ```
 
-This exposes a `quipclipper` command.
+**Nix:** quipclipper has a flake — `ffmpeg` and `mkvmerge` are wrapped onto `PATH`
+automatically:
+
+```nix
+# in your flake inputs:
+inputs.quipclipper.url = "github:weckere/quipclipper";
+# then add to packages:
+inputs.quipclipper.packages.${system}.default
+```
 
 ## Usage
 
