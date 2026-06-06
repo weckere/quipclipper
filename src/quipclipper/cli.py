@@ -27,6 +27,7 @@ from quipclipper.models import Match
 from quipclipper.search import search
 from quipclipper.subtitles import (
     ResolvedSubtitles,
+    list_embedded_tracks,
     list_streams,
     resolve_subtitles,
 )
@@ -47,10 +48,37 @@ def _echo_match(rank: int, m: Match) -> None:
     typer.echo(f"      {m.text}")
 
 
+def _pick_track(video: Path) -> int:
+    """Prompt the user to choose from multiple embedded subtitle tracks."""
+    tracks = list_embedded_tracks(video)
+    typer.echo(f"{len(tracks)} subtitle track(s):")
+    for t in tracks:
+        typer.echo(f"  [{t.index}] {t.label()}")
+    selection = input("Select a subtitle track [0]: ").strip()
+    if selection == "":
+        return tracks[0].index
+    try:
+        idx = int(selection)
+    except ValueError:
+        typer.secho(f"Invalid selection: {selection!r}", fg="red", err=True)
+        raise typer.Exit(code=2)
+    valid = {t.index for t in tracks}
+    if idx not in valid:
+        typer.secho(f"No subtitle track s:{idx}", fg="red", err=True)
+        raise typer.Exit(code=2)
+    return idx
+
+
 def _resolve(subs: Optional[Path], video: Optional[Path], track: Optional[int]) -> ResolvedSubtitles:
     try:
         return resolve_subtitles(subs=subs, video=video, track=track)
-    except (FileNotFoundError, ValueError, RuntimeError) as exc:
+    except ValueError as exc:
+        if track is None and video and "Multiple embedded subtitle tracks" in str(exc):
+            chosen = _pick_track(video)
+            return _resolve(subs, video, chosen)
+        typer.secho(str(exc), fg="red", err=True)
+        raise typer.Exit(code=2)
+    except (FileNotFoundError, RuntimeError) as exc:
         typer.secho(str(exc), fg="red", err=True)
         raise typer.Exit(code=2)
 
