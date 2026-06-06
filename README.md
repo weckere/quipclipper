@@ -19,10 +19,9 @@ a clip.
   re-encoding, so the original format is preserved exactly (lossy stays lossy),
   including all audio tracks and 5.1/7.1 channel layouts. Near-instant cuts.
 - **MKVToolNix backend** — quipclipper cuts lossless audio/video with `mkvmerge` when
-  it's installed (tighter cuts, all tracks/chapters, native subtitle handling).
-  Non-MKV sources are remuxed to a temporary MKV first (a full mkvmerge pipeline
-  that bypasses ffmpeg) after confirming the scratch space; MKV sources are cut
-  directly. `--no-remux-first` always skips the remux.
+  it's installed (all tracks/chapters, native subtitle handling). Sources are
+  cut directly by default; `--remux-first` muxes non-MKV sources into a
+  temporary MKV first for maximum accuracy (needs local disk space).
 - **Interactive picker** — when a line matches several places, `--pick` lists the
   candidates and lets you select several at once to clip in one go.
 - **Fuzzy, ranked search** — case-insensitive, typo-tolerant, with surrounding
@@ -214,17 +213,15 @@ quipclipper clip "i'll be back" -v movie.mkv -t video --no-chapters      # drop 
 `--chapters` / `--no-chapters` (default keep) controls whether chapters are kept
 in mkvmerge output; mkvmerge trims them to the clip range.
 
-### remux-first (default) and `--no-remux-first`
+### `--remux-first`
 
-For **non-MKV sources** (mp4, avi, …), quipclipper by default muxes the source **and
-any sidecar subtitle** into a temporary MKV with mkvmerge, then cuts the clip from
-that — a fully mkvmerge pipeline that bypasses ffmpeg for maximum accuracy.
-**MKV sources skip this automatically**: an `.mkv` is already a clean container,
-so quipclipper cuts it directly with mkvmerge (identical accuracy, no redundant
-full-size copy, no prompt).
+By default, quipclipper cuts sources **directly** — no temporary copy needed.
+**MKV sources are always cut directly** regardless of this flag.
 
-Because the temp MKV is a full-size copy of the source, quipclipper first **estimates
-the scratch space needed and asks you to confirm**:
+For **non-MKV sources** (mp4, avi, …), pass `--remux-first` to mux the source (and
+any sidecar subtitle) into a temporary MKV with mkvmerge first, then cut from
+that. This bypasses ffmpeg entirely for maximum accuracy, but needs local disk
+space for the full-size temp copy:
 
 ```
 remux-first: muxing the source to a temporary MKV for best accuracy.
@@ -232,15 +229,7 @@ estimated scratch space: ~4.7 GB (temp file, deleted afterward).
 Proceed? [Y/n]
 ```
 
-The temp file is written next to the output and **deleted afterward**. mkvmerge
-muxes local sources very fast, so on a fast disk this is often barely slower —
-and more accurate — than reading the source directly.
-
-Pass **`--no-remux-first`** to skip the remux and cut the source directly. quipclipper
-then prints the accuracy tradeoff: without a clean MKV remux, accuracy depends on
-the source container — ffmpeg cuts can include a small keyframe lead-in at the
-start, and unusual container timestamps/indexes are handled less precisely than a
-freshly remuxed MKV.
+The temp file is written next to the output and **deleted afterward**.
 
 Pass **`--yes` / `-y`** to skip all confirmation prompts (including the remux
 disk-space confirmation). remux-first applies only to lossless audio/video cuts;

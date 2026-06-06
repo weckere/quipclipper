@@ -171,7 +171,7 @@ quipclipper clip QUERY --video FILE [OPTIONS]
 | Option | Default | Description |
 |---|---|---|
 | `--backend` | `auto` | `auto`, `ffmpeg`, or `mkvmerge`. |
-| `--remux-first / --no-remux-first` | on | Remux non-MKV sources to a temp MKV first for best accuracy; MKV sources are cut directly. |
+| `--remux-first / --no-remux-first` | off | Remux non-MKV sources to a temp MKV first for maximum accuracy (copies the full source; MKV sources are always cut directly). |
 | `--chapters / --no-chapters` | keep | Keep chapters in mkvmerge output. |
 | `--yes`, `-y` | off | Skip all confirmation prompts (including the remux disk-space confirmation). |
 
@@ -269,14 +269,14 @@ quipclipper has two cutting backends:
 
 ### remux-first
 
-For **non-MKV sources** (mp4, avi, …), quipclipper by default muxes the source and any
-sidecar subtitle into a temporary MKV with mkvmerge, then cuts the clip from that
-— a fully mkvmerge pipeline that bypasses ffmpeg for maximum accuracy. **MKV
-sources skip this automatically** (an `.mkv` is already a clean container, so it's
-cut directly with identical accuracy and no temporary copy).
+By default, non-MKV sources are cut **directly** from the source with mkvmerge —
+no temporary copy needed. **MKV sources are always cut directly** (already a clean
+container).
 
-Because the temporary MKV is a full-size copy of the source, quipclipper estimates the
-scratch space and asks you to confirm:
+For maximum accuracy on non-MKV sources, pass `--remux-first`: quipclipper will mux
+the source (and any sidecar subtitle) into a temporary MKV with mkvmerge first,
+then cut from that. This bypasses ffmpeg entirely but copies the full source to
+a temp file, so it needs local disk space:
 
 ```
 remux-first: muxing the source to a temporary MKV for best accuracy.
@@ -284,9 +284,8 @@ estimated scratch space: ~4.7 GB (temp file, deleted afterward).
 Proceed? [Y/n]
 ```
 
-The temp file is written next to the output and deleted afterward. Pass
-`--no-remux-first` to cut the source directly (quipclipper then prints the accuracy
-tradeoff), and `--yes` to skip all prompts.
+The temp file is written next to the output and deleted afterward. `--yes` skips
+all prompts.
 
 ### Audio tracks and multichannel audio
 

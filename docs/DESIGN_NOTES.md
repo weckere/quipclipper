@@ -261,30 +261,36 @@ native subtitle handling, all tracks retained).
 
 ## 10. remux-first, the disk-space prompt, and MKV auto-skip
 
-**Decision:** By default, remux non-MKV sources (plus any sidecar subtitle) into a
-temporary MKV with mkvmerge and cut from that — a fully mkvmerge pipeline that
-bypasses ffmpeg. **Skip the remux automatically for sources that are already MKV.**
-Estimate the scratch space and confirm before remuxing; `--no-remux-first` opts out;
-`--yes` skips prompts.
+**Decision:** Cut sources **directly** by default. Offer `--remux-first` as an
+opt-in for non-MKV sources that remuxes to a temporary MKV before cutting.
+**MKV sources are always cut directly** regardless of the flag. Estimate the
+scratch space and confirm before remuxing; `--yes` skips prompts.
 
-**Rationale:**
-- **Accuracy** — normalising an arbitrary container into a clean MKV first means the
-  whole cut is done by mkvmerge, avoiding ffmpeg's container-specific quirks and the
-  keyframe-lead-in behaviour. mkvmerge muxes local files very fast, so on a fast
-  disk this is often barely slower than reading the source directly.
+**Rationale for changing the default (from on to off):**
+- **Network sources** — remux-first copies the entire source to a temp file,
+  which is prohibitively slow over network mounts (NAS, SMB, NFS). Since the
+  mkvmerge backend now uses ffprobe to find the correct keyframe before the
+  start time (see below), direct cuts are accurate enough for the vast
+  majority of files. `--remux-first` remains available when maximum accuracy
+  matters and the source is on local storage.
+- **Accuracy** — normalising an arbitrary container into a clean MKV means the
+  whole cut is done by mkvmerge, avoiding container-specific quirks. This is
+  still the most accurate path, but it is now opt-in.
 - **Don't waste work on MKV** — an `.mkv` is already a clean Matroska container, so
-  remuxing it to another MKV gains nothing while costing a full-size temporary copy.
-  Cutting MKV directly with mkvmerge is equally accurate. Hence the automatic skip
+  remuxing it to another MKV gains nothing. Cutting MKV directly with mkvmerge
+  is equally accurate. Hence the automatic skip
   (`do_remux = use_mkvmerge and remux_first and not is_matroska(source)`).
 - **Disk safety** — because the temp file is roughly the size of the source, quipclipper
   estimates it (`~source size + sidecars`, since a remux re-wraps without
   recompressing) and asks for confirmation. The temp file is created next to the
   output and deleted in a `finally` block so it is cleaned up even on error.
 
-**Accuracy disclaimer:** When remux-first is skipped (or ffmpeg is used), quipclipper
-prints the specific tradeoff (keyframe lead-in / less precise container timestamp
-handling) so the choice is informed. The disclaimer is suppressed for the case
-that loses no accuracy (a direct mkvmerge cut of a native MKV).
+**Keyframe alignment fix:** mkvmerge's `--split parts:` can snap the start to the
+*next* keyframe after the requested time, which may land after the dialogue. To
+prevent this, `cut_with_mkvmerge` now uses ffprobe to find the last video keyframe
+at or before the requested start and passes that to `--split parts:` instead. This
+gives the same "keyframe lead-in" behaviour as ffmpeg's `-ss` before `-i`, ensuring
+the clip always includes the requested content.
 
 ---
 

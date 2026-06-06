@@ -186,9 +186,9 @@ def clip(
         help="Keep chapters in mkvmerge output (default). --no-chapters drops them.",
     ),
     remux_first: bool = typer.Option(
-        True,
+        False,
         "--remux-first/--no-remux-first",
-        help="Remux source (+ sidecar subs) to a temp MKV with mkvmerge first, then cut — best accuracy, bypasses ffmpeg (uses extra disk). On by default; --no-remux-first cuts the source directly.",
+        help="Remux source (+ sidecar subs) to a temp MKV with mkvmerge first, then cut — bypasses ffmpeg but copies the full source to a temp file. Off by default; use --remux-first when you want maximum accuracy and have local disk space.",
     ),
     embed_subs: bool = typer.Option(
         True,
@@ -309,13 +309,11 @@ def clip(
             fg="yellow",
         )
     elif mkv_capable and use_mkvmerge and not do_remux and not is_matroska(video):
-        # Non-MKV source with remux-first off: spell out the tradeoff.
+        # Non-MKV source with remux-first off (the default): brief note.
         typer.secho(
-            "  note: remux-first is off — cutting directly from the source. Without "
-            "a clean MKV remux, accuracy depends on the source container: unusual "
-            "container timestamps/indexes are handled less precisely than a freshly "
-            "remuxed MKV. Omit --no-remux-first for maximum accuracy.",
-            fg="yellow",
+            "  note: non-MKV source — cutting directly. Use --remux-first for "
+            "maximum accuracy (copies the full source to a temp MKV first).",
+            fg="bright_black",
         )
 
     if is_copy and not use_mkvmerge:

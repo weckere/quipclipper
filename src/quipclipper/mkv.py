@@ -123,6 +123,43 @@ def remux_to_mkv(source: str | Path, extra_inputs: list[Path], out: Path) -> Pat
     return out
 
 
+def _keyframe_at_or_before(source: Path, target: float) -> float:
+    """Find the PTS of the last video keyframe at or before *target* seconds.
+
+    Uses packet-level probing (no decode) for speed.  Falls back to *target*
+    if ffprobe is missing, fails, or finds nothing in the scan window.
+    """
+    if shutil.which("ffprobe") is None:
+        return target
+    scan_start = max(0, target - 30)
+    cmd = [
+        "ffprobe", "-v", "error",
+        "-select_streams", "v:0",
+        "-read_intervals", f"{scan_start}%{target + 0.5}",
+        "-show_entries", "packet=pts_time,flags",
+        "-of", "json",
+        str(source),
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        return target
+    try:
+        packets = json.loads(proc.stdout or "{}").get("packets", [])
+    except json.JSONDecodeError:
+        return target
+    best: float | None = None
+    for pkt in packets:
+        if "K" not in pkt.get("flags", ""):
+            continue
+        try:
+            pts = float(pkt["pts_time"])
+        except (KeyError, ValueError, TypeError):
+            continue
+        if pts <= target + 0.001:
+            best = pts
+    return best if best is not None else target
+
+
 def cut_with_mkvmerge(
     source: str | Path,
     rng: ClipRange,
@@ -172,13 +209,20 @@ def cut_with_mkvmerge(
             embed_subs_path = None  # now embedded in the remux
 
         tracks = identify(work_source)
+
+        # Snap the start to the last video keyframe at or before the
+        # requested start.  mkvmerge --split parts: may otherwise snap to
+        # the *next* keyframe, which can land after the dialogue we want.
+        kf_start = _keyframe_at_or_before(work_source, rng.start)
+        cut_rng = ClipRange(start=kf_start, end=rng.end) if kf_start < rng.start else rng
+
         all_audio = audio_indices is None
         audio_ids = audio_track_ids(tracks, audio_indices)
         if not all_audio and not audio_ids:
             raise RuntimeError("None of the requested --audio-track indices exist in the source.")
 
         args = build_mkvmerge_args(
-            source=work_source, rng=rng, kind=kind, out=out, audio_ids=audio_ids,
+            source=work_source, rng=cut_rng, kind=kind, out=out, audio_ids=audio_ids,
             all_audio=all_audio, keep_subs=keep_subs, keep_chapters=keep_chapters,
             embed_subs=embed_subs_path,
         )
