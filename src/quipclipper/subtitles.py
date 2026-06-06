@@ -188,8 +188,7 @@ def extract_embedded(video_path: str | Path, stream_index: int) -> list[Cue]:
         if proc.returncode != 0:
             raise RuntimeError(
                 f"Could not extract subtitle track s:{stream_index} as text — image "
-                f"subtitles (e.g. PGS) aren't supported; supply an .srt with --subs.\n"
-                f"{proc.stderr.strip()}"
+                f"subtitles (e.g. PGS) aren't supported; supply an .srt with --subs."
             )
         return load_subtitles(tmp_path)
     finally:
