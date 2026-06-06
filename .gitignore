@@ -20,5 +20,8 @@ venv/
 *.mp4
 *.gif
 
+# Nix
+result
+
 # OS
 .DS_Store
