@@ -20,6 +20,12 @@ venv/
 *.mp4
 *.gif
 
+# quipclipper-web runtime dirs (default locations when run from a checkout)
+/clips/
+/state/
+web/backend/clips/
+web/backend/state/
+
 # Nix
 result
 

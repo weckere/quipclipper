@@ -1,0 +1,58 @@
+"""Runtime settings, read from the environment.
+
+A single :class:`Settings` object drives the app. Docker sets these via
+environment variables; the NixOS module sets the same fields through its
+options, so the two deployments behave identically. Keeping config in plain
+``os.environ`` (rather than a settings framework) keeps the dependency surface
+small for Phase 0.
+"""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from pathlib import Path
+
+
+def _bool(raw: str | None, default: bool = False) -> bool:
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _roots(raw: str | None) -> list[Path]:
+    if not raw:
+        return []
+    return [Path(p).expanduser() for p in raw.split(os.pathsep) if p.strip()]
+
+
+@dataclass(frozen=True)
+class Settings:
+    """Resolved configuration for one running instance."""
+
+    media_roots: list[Path]
+    clips_dir: Path
+    state_dir: Path
+    save_to_library: bool
+    listen_address: str
+    listen_port: int
+    max_concurrent_jobs: int
+    jellyfin_url: str | None
+    auth_required: bool
+
+    @classmethod
+    def from_env(cls, env: dict[str, str] | None = None) -> "Settings":
+        e = os.environ if env is None else env
+        return cls(
+            media_roots=_roots(e.get("QC_MEDIA_ROOTS")),
+            clips_dir=Path(e.get("QC_CLIPS_DIR", "./clips")).expanduser(),
+            state_dir=Path(e.get("QC_STATE_DIR", "./state")).expanduser(),
+            save_to_library=_bool(e.get("QC_SAVE_TO_LIBRARY")),
+            listen_address=e.get("QC_BIND", "127.0.0.1"),
+            listen_port=int(e.get("QC_PORT", "8000")),
+            max_concurrent_jobs=int(e.get("QC_MAX_CONCURRENT_JOBS", "2")),
+            jellyfin_url=e.get("QC_JELLYFIN_URL") or None,
+            # The auth gate itself lives in nginx; the backend only reports
+            # whether a password was configured so the UI can reflect it.
+            auth_required=bool(e.get("QC_PASSWORD")),
+        )

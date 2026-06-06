@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>quipclipper</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main>
+      <h1>quipclipper</h1>
+      <p class="tagline">Find and cut clips by searching the dialogue.</p>
+
+      <section id="status" class="card">
+        <h2>Backend status</h2>
+        <p id="health">Checking…</p>
+        <ul id="tools" hidden></ul>
+      </section>
+
+      <section id="config" class="card">
+        <h2>Configuration</h2>
+        <p id="config-body">Loading…</p>
+      </section>
+
+      <p class="note">
+        Phase 0 scaffold — this page confirms nginx is serving the frontend and
+        proxying <code>/api</code> to the backend. The clipping UI lands in later
+        phases.
+      </p>
+    </main>
+    <script src="app.js"></script>
+  </body>
+</html>
