@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from quipclipper.subtitles import find_sidecar, load_subtitles
+from quipclipper.subtitles import find_sidecar, load_subtitles, resolve_subtitles
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample.srt"
 
@@ -50,3 +50,15 @@ def test_find_sidecar_prefixed(tmp_path):
     srt = tmp_path / "movie.en.srt"
     srt.write_text("")
     assert find_sidecar(video) == srt
+
+
+def test_resolve_subtitles_missing_video_raises_clean_error(tmp_path):
+    # A non-existent --video should be a clean FileNotFoundError, not a traceback
+    # from ffprobe failing downstream.
+    with pytest.raises(FileNotFoundError):
+        resolve_subtitles(subs=None, video=tmp_path / "nope.mkv", track=None)
+
+
+def test_resolve_subtitles_requires_a_source():
+    with pytest.raises(ValueError):
+        resolve_subtitles(subs=None, video=None, track=None)

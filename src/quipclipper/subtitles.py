@@ -81,8 +81,12 @@ def list_embedded_tracks(video_path: str | Path) -> list[SubtitleTrack]:
         "-show_entries", "stream=index,codec_name:stream_tags=language,title",
         "-of", "json", str(video_path),
     ]
-    out = subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
-    streams = json.loads(out or "{}").get("streams", [])
+    out = subprocess.run(cmd, capture_output=True, text=True)
+    if out.returncode != 0:
+        raise RuntimeError(
+            f"ffprobe could not read {video_path}:\n{out.stderr.strip()}"
+        )
+    streams = json.loads(out.stdout or "{}").get("streams", [])
     tracks: list[SubtitleTrack] = []
     for s in streams:
         tags = s.get("tags", {}) or {}
@@ -137,8 +141,12 @@ def list_streams(video_path: str | Path) -> list[StreamInfo]:
         "stream=codec_type,codec_name,channels,channel_layout:stream_tags=language,title",
         "-of", "json", str(video_path),
     ]
-    out = subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
-    streams = json.loads(out or "{}").get("streams", [])
+    out = subprocess.run(cmd, capture_output=True, text=True)
+    if out.returncode != 0:
+        raise RuntimeError(
+            f"ffprobe could not read {video_path}:\n{out.stderr.strip()}"
+        )
+    streams = json.loads(out.stdout or "{}").get("streams", [])
     counts: dict[str, int] = {}
     infos: list[StreamInfo] = []
     for s in streams:
@@ -225,6 +233,8 @@ def resolve_subtitles(
         return ResolvedSubtitles(load_subtitles(subs), Path(subs))
     if not video:
         raise ValueError("Provide either --subs or --video.")
+    if not Path(video).exists():
+        raise FileNotFoundError(f"Video file not found: {video}")
 
     sidecar = find_sidecar(video)
     if sidecar:
