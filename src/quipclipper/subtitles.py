@@ -254,11 +254,19 @@ def resolve_subtitles(
         if len(tracks) == 1:
             track = tracks[0].index
         else:
-            labels = "\n  ".join(t.label() for t in tracks)
-            raise ValueError(
-                "Multiple embedded subtitle tracks found; choose one with "
-                f"--track <index>:\n  {labels}"
+            # Try the first English track before asking.
+            eng = next(
+                (t for t in tracks if t.language and t.language.lower() in ("eng", "en", "english")),
+                None,
             )
+            if eng is not None:
+                track = eng.index
+            else:
+                labels = "\n  ".join(t.label() for t in tracks)
+                raise ValueError(
+                    "Multiple embedded subtitle tracks found; choose one with "
+                    f"--track <index>:\n  {labels}"
+                )
     return ResolvedSubtitles(extract_embedded(video, track), None)
 
 

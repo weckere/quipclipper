@@ -49,9 +49,15 @@ def _echo_match(rank: int, m: Match) -> None:
 
 
 def _pick_track(video: Path) -> int:
-    """Prompt the user to choose from multiple embedded subtitle tracks."""
+    """Auto-select the first English subtitle track, or prompt if none exists."""
     tracks = list_embedded_tracks(video)
-    typer.echo(f"{len(tracks)} subtitle track(s):")
+    # Auto-select the first English track.
+    for t in tracks:
+        if t.language and t.language.lower() in ("eng", "en", "english"):
+            typer.secho(f"  auto-selected subtitle track: {t.label()}", fg="bright_black")
+            return t.index
+    # No English track — prompt.
+    typer.echo(f"{len(tracks)} subtitle track(s) (no English track found):")
     for t in tracks:
         typer.echo(f"  [{t.index}] {t.label()}")
     selection = input("Select a subtitle track [0]: ").strip()
@@ -148,7 +154,7 @@ def clip(
     video: Path = typer.Option(..., "--video", "-v", help="Video file to cut from."),
     subs: Optional[Path] = typer.Option(None, "--subs", "-s", help="Subtitle file (else sidecar/embedded)."),
     track: Optional[int] = typer.Option(None, "--track", help="Subtitle track to use, by s:N index (from `tracks`)."),
-    kind: str = typer.Option("audio", "--type", "-t", help="audio | video | gif."),
+    kind: str = typer.Option("video", "--type", "-t", help="audio | video | gif."),
     lossless: bool = typer.Option(
         True,
         "--lossless/--no-lossless",
@@ -195,8 +201,8 @@ def clip(
         "--embed-subs/--no-embed-subs",
         help="Mux the subtitle file into video clips (lossless). Embedded video subs are always kept.",
     ),
-    before: float = typer.Option(0.5, "--before", "-b", help="Seconds of padding before the line."),
-    after: float = typer.Option(0.5, "--after", "-a", help="Seconds of padding after the line."),
+    before: float = typer.Option(2.0, "--before", "-b", help="Seconds of padding before the line."),
+    after: float = typer.Option(2.0, "--after", "-a", help="Seconds of padding after the line."),
     index: int = typer.Option(0, "--index", "-i", help="Which ranked match to cut (0 = best). Ignored with --pick."),
     pick: bool = typer.Option(
         False,
