@@ -7,27 +7,43 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <main>
-      <h1>quipclipper</h1>
+    <header>
+      <h1 id="home-link">quipclipper</h1>
       <p class="tagline">Find and cut clips by searching the dialogue.</p>
+    </header>
 
-      <section id="status" class="card">
-        <h2>Backend status</h2>
-        <p id="health">Checking…</p>
-        <ul id="tools" hidden></ul>
+    <main>
+      <!-- Library browser -->
+      <section id="browser">
+        <nav id="breadcrumb" class="breadcrumb"></nav>
+        <ul id="entries" class="entries"></ul>
+        <p id="browser-empty" class="muted" hidden>Nothing here.</p>
       </section>
 
-      <section id="config" class="card">
-        <h2>Configuration</h2>
-        <p id="config-body">Loading…</p>
-      </section>
+      <!-- Item / inspection view -->
+      <section id="item" hidden>
+        <button id="back" class="back">← Back</button>
+        <h2 id="item-name"></h2>
 
-      <p class="note">
-        Phase 0 scaffold — this page confirms nginx is serving the frontend and
-        proxying <code>/api</code> to the backend. The clipping UI lands in later
-        phases.
-      </p>
+        <video id="player" controls preload="metadata" crossorigin="anonymous"></video>
+        <p id="preview-note" class="muted"></p>
+
+        <div class="panel">
+          <h3>Subtitles</h3>
+          <div id="subs-controls"></div>
+        </div>
+
+        <div class="panel">
+          <h3>Streams</h3>
+          <ul id="streams" class="streams"></ul>
+        </div>
+      </section>
     </main>
+
+    <footer>
+      <span id="status" class="muted">…</span>
+    </footer>
+
     <script src="app.js"></script>
   </body>
 </html>
