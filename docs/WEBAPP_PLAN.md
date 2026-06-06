@@ -1,10 +1,11 @@
 # quipclipper-web — Project Plan
 
 A self-hosted **web application** that reproduces everything the quipclipper CLI
-does, served by **nginx** and shipped as a **Docker container**. It is meant to
-run on the same host as your Jellyfin server so it can mount the *same media
-directories* and work directly on the files — no transcoding round-trips, no
-re-uploading, local-speed access to your whole library.
+does, served by **nginx**, deployable **either as a Docker container or as a Nix
+flake with a declarative NixOS module**. It is meant to run on the same host as
+your Jellyfin server so it can mount/read the *same media directories* and work
+directly on the files — no transcoding round-trips, no re-uploading, local-speed
+access to your whole library.
 
 This is **not** a Jellyfin plugin. quipclipper stays Python; the existing engine is
 wrapped in a thin HTTP API. Nothing about it depends on Jellyfin being installed
@@ -16,7 +17,8 @@ wrapped in a thin HTTP API. Nothing about it depends on Jellyfin being installed
 
 | Decision | Choice |
 |---|---|
-| Form factor | Docker container(s), nginx front, Python API behind it |
+| Form factor | nginx front, Python API behind it |
+| Deployment | **Two first-class paths: Docker (compose) _and_ a Nix flake with a declarative NixOS module.** Same backend, two front doors. |
 | Core logic | **Reuse the existing `quipclipper` package as-is** (no rewrite) |
 | Video discovery | **Both** — browse mounted folders (baseline) + optional Jellyfin metadata enrichment (posters/titles) |
 | Clip output | **Both** — offer a download *and* optionally file the clip into a "Clips" folder that Jellyfin can show as a library |
@@ -76,15 +78,101 @@ reference for the API's behaviour.
                   └──────────────────────────┘   └──────────────────┘
 ```
 
-**Containerization:** a `docker-compose.yml` with two services — `app`
-(Python/uvicorn) and `web` (nginx) — sharing the clips volume. The image
-installs `ffmpeg`, `ffprobe`, and `mkvtoolnix`. Media is bind-mounted read-only;
-clips and the bookmark store are writable volumes. (A single combined image with
-a process supervisor is a viable alternative; compose is cleaner and recommended.)
+The backend, frontend, and nginx config are the same artifacts in both
+deployment modes — only *how they're assembled and run* differs (see §4).
 
 ---
 
-## 4. Notable design points & risks
+## 4. Deployment: Docker and Nix flake
+
+The application is built from the same three pieces regardless of deployment:
+the **backend** (Python/uvicorn, importing the quipclipper engine), the **frontend**
+(static SPA files), and an **nginx site config**. Both deployment paths are
+first-class and tested.
+
+### 4a. Docker (compose)
+
+A `docker-compose.yml` with two services — `app` (Python/uvicorn) and `web`
+(nginx) — sharing the clips volume. The image installs `ffmpeg`, `ffprobe`, and
+`mkvtoolnix`. Media is bind-mounted read-only; clips and the bookmark store are
+writable volumes. Configuration is via environment variables (§5). A single
+combined image with a process supervisor is a viable alternative; compose is
+cleaner and recommended.
+
+```yaml
+services:
+  app:
+    image: ghcr.io/weckere/quipclipper-web
+    environment:
+      QC_MEDIA_ROOTS: /media/movies:/media/tv
+      QC_CLIPS_DIR:   /clips
+    volumes:
+      - /srv/media:/media:ro
+      - quip-clips:/clips
+      - quip-state:/state
+  web:
+    image: nginx
+    ports: ["8896:80"]
+    volumes:
+      - quip-clips:/clips:ro      # nginx serves downloads directly
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+```
+
+### 4b. Nix flake + declarative NixOS module
+
+The existing `flake.nix` (which already builds the CLI as a
+`buildPythonApplication` and wraps `ffmpeg`/`mkvtoolnix-cli` onto `PATH`) is
+extended to expose:
+
+- **`packages.quipclipper-web`** — a `buildPythonApplication` for the backend
+  (deps: `quipclipper` + `fastapi` + `uvicorn`), wrapped with `ffmpeg` and
+  `mkvtoolnix-cli` on `PATH`, exactly like the CLI package.
+- **`packages.quipclipper-web-frontend`** — the built static SPA assets (a plain
+  derivation; trivial if v1 stays vanilla JS with no build step).
+- **`nixosModules.default`** — a declarative module exposing
+  `services.quipclipper-web.*` options. It defines a hardened **systemd service**
+  running uvicorn as a dedicated user, and configures the **host nginx**
+  (`services.nginx.virtualHosts`) with the reverse proxy, the static frontend
+  root, and the `/clips` + `/media` locations — optionally behind
+  `basicAuth`. State (bookmarks, clips) lives under `StateDirectory`.
+
+Because NixOS modules are system-independent, the flake is restructured so
+`packages`/`devShells` stay under `flake-utils.eachDefaultSystem` while
+`nixosModules` is exposed at the top level.
+
+A user enables it declaratively in their system config:
+
+```nix
+{
+  inputs.quipclipper.url = "github:weckere/quipclipper";
+
+  # in configuration.nix:
+  imports = [ inputs.quipclipper.nixosModules.default ];
+
+  services.quipclipper-web = {
+    enable      = true;
+    mediaRoots  = [ "/srv/media/movies" "/srv/media/tv" ];
+    clipsDir    = "/srv/clips";
+    saveToLibrary = true;
+    listenPort  = 8896;
+    # optional:
+    passwordFile = "/run/secrets/quip-password";   # enables the auth gate
+    jellyfin = {
+      url        = "http://localhost:8096";
+      apiKeyFile = "/run/secrets/jellyfin-key";
+    };
+  };
+}
+```
+
+The module **maps 1:1 onto the same settings the Docker env vars set** (§5), so
+the two deployments are behaviourally identical. Secrets (password, Jellyfin API
+key) are passed as `*File` options read at service start, never written into the
+Nix store.
+
+---
+
+## 5. Notable design points & risks
 
 - **Path safety (critical).** The API shells out to ffmpeg with file paths, so
   it must never act on arbitrary host paths. All requested paths are resolved
@@ -118,21 +206,28 @@ a process supervisor is a viable alternative; compose is cleaner and recommended
 
 ---
 
-## 5. Configuration (env / mounted config)
+## 6. Configuration (env var ↔ NixOS option)
 
-| Setting | Purpose |
-|---|---|
-| `QC_MEDIA_ROOTS` | colon-separated whitelist of mounted media dirs |
-| `QC_CLIPS_DIR` | where finished clips are written |
-| `QC_SAVE_TO_LIBRARY` | also file clips into the clips library (on/off) |
-| `QC_PASSWORD` | if set, enables the basic-auth gate (else open) |
-| `QC_BIND` | bind address (default LAN) |
-| `QC_JELLYFIN_URL`, `QC_JELLYFIN_API_KEY` | optional metadata enrichment |
-| `QC_MAX_CONCURRENT_JOBS` | ffmpeg job cap |
+A single settings object drives the app; Docker sets it via env vars and the
+NixOS module sets the *same* fields via options, so behaviour is identical.
+
+| Docker env var | NixOS option (`services.quipclipper-web.*`) | Purpose |
+|---|---|---|
+| `QC_MEDIA_ROOTS` | `mediaRoots` (list) | whitelist of media dirs (the path-safety roots) |
+| `QC_CLIPS_DIR` | `clipsDir` | where finished clips are written |
+| `QC_SAVE_TO_LIBRARY` | `saveToLibrary` | also file clips into the clips library |
+| `QC_BIND` / `QC_PORT` | `listenAddress` / `listenPort` | where the backend listens (nginx fronts it) |
+| `QC_PASSWORD` | `passwordFile` | if set, enables the basic-auth gate (else open) |
+| `QC_JELLYFIN_URL`, `QC_JELLYFIN_API_KEY` | `jellyfin.url`, `jellyfin.apiKeyFile` | optional metadata enrichment |
+| `QC_STATE_DIR` | (`StateDirectory`, managed) | bookmark store location |
+| `QC_MAX_CONCURRENT_JOBS` | `maxConcurrentJobs` | ffmpeg job cap |
+
+Secrets use `*File` options under Nix (read at start, kept out of the store); the
+Docker path can use env vars or Docker secrets.
 
 ---
 
-## 6. API surface (draft)
+## 7. API surface (draft)
 
 | Method & path | Purpose |
 |---|---|
@@ -148,7 +243,7 @@ a process supervisor is a viable alternative; compose is cleaner and recommended
 
 ---
 
-## 7. Frontend (single-page app, served static by nginx)
+## 8. Frontend (single-page app, served static by nginx)
 
 - **Library browser** — folder tree / grid; Jellyfin posters when enabled.
 - **Item page** —
@@ -168,7 +263,7 @@ required for v1.
 
 ---
 
-## 8. Proposed repo layout (additions)
+## 9. Proposed repo layout (additions)
 
 ```
 web/
@@ -187,21 +282,31 @@ web/
   frontend/
     index.html  app.js  styles.css
   nginx/
-    nginx.conf
+    nginx.conf            # used verbatim by Docker; templated by the Nix module
   Dockerfile
   docker-compose.yml
   README.md
+nix/
+  quipclipper-web.nix     # buildPythonApplication for the backend
+  frontend.nix            # static frontend derivation
+  nixos-module.nix        # services.quipclipper-web (systemd + nginx vhost)
+flake.nix                 # extended: + web packages, + nixosModules.default
 ```
 
 The existing `src/quipclipper` package is the engine and stays untouched (the CLI
-keeps working); the backend installs it and imports it.
+keeps working); the backend installs it and imports it. The current `flake.nix`
+is restructured so `packages`/`devShells` stay per-system (under
+`eachDefaultSystem`) while `nixosModules.default` is exposed at the top level.
 
 ---
 
-## 9. Phased delivery
+## 10. Phased delivery
 
-- **Phase 0 — Scaffold.** compose + Dockerfile (python + ffmpeg + mkvtoolnix),
-  nginx config, FastAPI skeleton, health check. Container boots and serves a page.
+- **Phase 0 — Scaffold.** Backend package (FastAPI skeleton + health check) plus
+  *both* delivery paths from day one: Dockerfile + compose (python + ffmpeg +
+  mkvtoolnix + nginx), **and** the flake outputs (`packages.quipclipper-web`,
+  `nixosModules.default`). Goal: it boots and serves a page when run with
+  `docker compose up` *or* via the NixOS module in a VM test.
 - **Phase 1 — Library & inspection.** `library.py` with strict path safety;
   browse endpoint; `GET /api/items` (streams + subtitle tracks); WebVTT endpoint.
   Frontend folder browser + item page (no clipping yet).
@@ -214,12 +319,15 @@ keeps working); the backend installs it and imports it.
   bookmark store; clip-from-range and clip-from-bookmark.
 - **Phase 5 — Library save + Jellyfin enrichment.** "Save to Clips library"
   destination; optional Jellyfin metadata/posters and path resolution.
-- **Phase 6 — Hardening.** Optional password gate, job concurrency cap, docs,
-  and API tests.
+- **Phase 6 — Hardening & packaging.** Optional password gate, job concurrency
+  cap, docs, and API tests. Finalize the NixOS module (hardened systemd unit,
+  `passwordFile`/`apiKeyFile` secrets, nginx vhost + optional `basicAuth`) and a
+  `nixosTest` (VM) covering enable → browse → search → clip; publish the Docker
+  image build in CI.
 
 ---
 
-## 10. Testing
+## 11. Testing
 
 - Engine unit tests (existing) keep running unchanged.
 - New **API tests** with FastAPI's `TestClient`, kept media-free: path-safety
@@ -227,10 +335,13 @@ keeps working); the backend installs it and imports it.
   actual cut mocked, WebVTT rendering, bookmark CRUD.
 - Integration smoke test in the built container against a tiny sample file with a
   sidecar `.srt` (the repo already ships `tests/fixtures/sample.srt`).
+- A **NixOS VM test** (`nixosTest`) brings up the module with a sample media root
+  and asserts the same enable → browse → search → clip flow, so both deployment
+  paths are exercised in CI.
 
 ---
 
-## 11. Open questions for later (not blockers)
+## 12. Open questions for later (not blockers)
 
 1. Transcoded preview for non-browser-friendly codecs — worth adding after v1?
 2. Bookmark store: SQLite vs. a JSON file (SQLite if multi-user/concurrent).
