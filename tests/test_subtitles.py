@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from clipper.subtitles import find_sidecar, load_subtitles
+from quipclipper.subtitles import find_sidecar, load_subtitles
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample.srt"
 

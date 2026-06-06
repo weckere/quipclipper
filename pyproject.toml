@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "clipper"
+name = "quipclipper"
 version = "0.1.0"
 description = "Find and cut audio/video clips from movies & TV shows by searching the subtitle dialogue."
 readme = "README.md"
@@ -21,13 +21,13 @@ dependencies = [
 dev = ["pytest>=8.0"]
 
 [project.scripts]
-clipper = "clipper.cli:app"
+quipclipper = "quipclipper.cli:app"
 
 [project.urls]
-Homepage = "https://github.com/weckere/clipper"
+Homepage = "https://github.com/weckere/quipclipper"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/clipper"]
+packages = ["src/quipclipper"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

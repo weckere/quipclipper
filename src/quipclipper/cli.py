@@ -1,11 +1,11 @@
-"""clipper command-line interface.
+"""quipclipper command-line interface.
 
 Examples:
-    clipper search "i'll be back" --subs movie.srt
-    clipper clip "i'll be back" --video movie.mkv --type audio
-    clipper clip "i'll be back" --video movie.mkv --type video --before 5 --after 3
-    clipper clip "i'll be back" --video movie.mkv --audio-track 0
-    clipper clip "i'll be back" --video movie.mkv --split-channels --split-format wav
+    quipclipper search "i'll be back" --subs movie.srt
+    quipclipper clip "i'll be back" --video movie.mkv --type audio
+    quipclipper clip "i'll be back" --video movie.mkv --type video --before 5 --after 3
+    quipclipper clip "i'll be back" --video movie.mkv --audio-track 0
+    quipclipper clip "i'll be back" --video movie.mkv --split-channels --split-format wav
 """
 
 from __future__ import annotations
@@ -15,17 +15,17 @@ from typing import Optional
 
 import typer
 
-from clipper.clip import compute_range, cut_clip, split_audio_channels
-from clipper.mkv import (
+from quipclipper.clip import compute_range, cut_clip, split_audio_channels
+from quipclipper.mkv import (
     cut_with_mkvmerge,
     estimate_remux_bytes,
     human_size,
     is_matroska,
     mkvmerge_available,
 )
-from clipper.models import Match
-from clipper.search import search
-from clipper.subtitles import (
+from quipclipper.models import Match
+from quipclipper.search import search
+from quipclipper.subtitles import (
     ResolvedSubtitles,
     list_streams,
     resolve_subtitles,

@@ -1,8 +1,8 @@
 from pathlib import Path
 
-from clipper.models import Cue
-from clipper.search import search
-from clipper.subtitles import load_subtitles
+from quipclipper.models import Cue
+from quipclipper.search import search
+from quipclipper.subtitles import load_subtitles
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample.srt"
 

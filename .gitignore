@@ -13,7 +13,7 @@ venv/
 .ruff_cache/
 .mypy_cache/
 
-# clipper output (don't commit generated clips)
+# quipclipper output (don't commit generated clips)
 *.mp3
 *.wav
 *.opus

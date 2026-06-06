@@ -4,7 +4,7 @@ For MKV/MKA sources, mkvmerge splits losslessly by timestamp and is excellent at
 it: it keeps every track, chapter and attachment, never re-encodes, and trims and
 time-shifts subtitles natively (including a sidecar file added as an extra input).
 This module shells out to ``mkvmerge`` and is used as an alternative to the ffmpeg
-backend in :mod:`clipper.clip`.
+backend in :mod:`quipclipper.clip`.
 """
 
 from __future__ import annotations
@@ -15,8 +15,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from clipper.clip import ClipRange, _timestamp_slug
-from clipper.models import format_timestamp
+from quipclipper.clip import ClipRange, _timestamp_slug
+from quipclipper.models import format_timestamp
 
 # Containers mkvmerge can split natively (Matroska family).
 MATROSKA_SUFFIXES = (".mkv", ".mka", ".mks", ".webm")

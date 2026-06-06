@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from rapidfuzz import fuzz
 
-from clipper.models import Cue, Match
+from quipclipper.models import Cue, Match
 
 
 def _normalize(text: str) -> str:

@@ -1,6 +1,6 @@
-# clipper — User Manual
+# quipclipper — User Manual
 
-`clipper` finds and cuts audio/video clips from movies and TV shows by **searching
+`quipclipper` finds and cuts audio/video clips from movies and TV shows by **searching
 the subtitle dialogue**. Subtitles already carry precise timestamps, so the whole
 job is: parse the subtitles → fuzzy-search the line you remember → map the match
 back to its time span → cut it out. The result is a lossless clip, produced
@@ -18,9 +18,9 @@ for *why* the code is built the way it is, see [`DESIGN_NOTES.md`](DESIGN_NOTES.
 - [Quick start](#quick-start)
 - [How it works](#how-it-works)
 - [Command reference](#command-reference)
-  - [`clipper search`](#clipper-search)
-  - [`clipper clip`](#clipper-clip)
-  - [`clipper tracks`](#clipper-tracks)
+  - [`quipclipper search`](#quipclipper-search)
+  - [`quipclipper clip`](#quipclipper-clip)
+  - [`quipclipper tracks`](#quipclipper-tracks)
 - [Topics](#topics)
   - [Lossless cutting](#lossless-cutting)
   - [Backends: ffmpeg and mkvmerge](#backends-ffmpeg-and-mkvmerge)
@@ -40,11 +40,11 @@ for *why* the code is built the way it is, see [`DESIGN_NOTES.md`](DESIGN_NOTES.
 ## Installation
 
 ```bash
-cd clipper
+cd quipclipper
 pip install -e .            # or: pip install -e ".[dev]" for the test dependencies
 ```
 
-This installs the `clipper` command and the Python dependencies (`pysubs2`,
+This installs the `quipclipper` command and the Python dependencies (`pysubs2`,
 `rapidfuzz`, `typer`).
 
 ## Requirements
@@ -56,19 +56,19 @@ This installs the `clipper` command and the Python dependencies (`pysubs2`,
 | [MKVToolNix](https://mkvtoolnix.download/) (`mkvmerge`) | optional | the preferred backend for lossless cuts (see [Backends](#backends-ffmpeg-and-mkvmerge)) |
 
 `ffmpeg`/`ffprobe` and `mkvmerge` must be on your `PATH`. If `mkvmerge` is absent,
-clipper falls back to ffmpeg automatically.
+quipclipper falls back to ffmpeg automatically.
 
 ## Quick start
 
 ```bash
 # 1. Find a line
-clipper search "i'll be back" --subs movie.srt
+quipclipper search "i'll be back" --subs movie.srt
 
 # 2. Cut an audio clip of it
-clipper clip "i'll be back" --video movie.mkv --type audio
+quipclipper clip "i'll be back" --video movie.mkv --type audio
 
 # 3. Cut a video clip with extra padding
-clipper clip "get to the chopper" --video movie.mkv --type video --before 5 --after 3
+quipclipper clip "get to the chopper" --video movie.mkv --type video --before 5 --after 3
 ```
 
 ---
@@ -96,16 +96,16 @@ subtitles ──parse──► cues ──fuzzy search──► ranked matches �
 
 ## Command reference
 
-clipper has three commands: `search`, `clip`, and `tracks`. Run `clipper --help`
-or `clipper <command> --help` for the built-in summary.
+quipclipper has three commands: `search`, `clip`, and `tracks`. Run `quipclipper --help`
+or `quipclipper <command> --help` for the built-in summary.
 
-### `clipper search`
+### `quipclipper search`
 
 Search subtitles and print ranked matches with timestamps. Useful to find the
 exact phrasing/timestamp before cutting.
 
 ```
-clipper search QUERY [OPTIONS]
+quipclipper search QUERY [OPTIONS]
 ```
 
 | Option | Default | Description |
@@ -121,17 +121,17 @@ clipper search QUERY [OPTIONS]
 You must provide `--subs` or `--video` (or both).
 
 ```bash
-clipper search "i'll be back" --subs movie.srt
+quipclipper search "i'll be back" --subs movie.srt
 # [0]     1.00s  00:00:01.000–00:00:03.000  (score 100)
 #       I'll be back.
 ```
 
-### `clipper clip`
+### `quipclipper clip`
 
 Find the dialogue and cut a clip around it. This is the main command.
 
 ```
-clipper clip QUERY --video FILE [OPTIONS]
+quipclipper clip QUERY --video FILE [OPTIONS]
 ```
 
 **Source & subtitles**
@@ -187,16 +187,16 @@ clipper clip QUERY --video FILE [OPTIONS]
 | `--min-score` | 60 | Drop matches scoring below this (0–100). |
 | `--max-span` | 3 | Max consecutive captions a single match may join. |
 
-Before cutting, clipper prints a preview (the selected match, the clip range and
+Before cutting, quipclipper prints a preview (the selected match, the clip range and
 mode, and any relevant notes) and asks you to confirm — unless `--yes` is given.
 
-### `clipper tracks`
+### `quipclipper tracks`
 
 List the video, audio and subtitle streams in a container, with the per-type
 indices you pass to `--audio-track` (`a:N`) and `--track` (`s:N`).
 
 ```bash
-clipper tracks movie.mkv
+quipclipper tracks movie.mkv
 # Video:
 #   v:0  h264
 # Audio:
@@ -212,7 +212,7 @@ clipper tracks movie.mkv
 
 ### Lossless cutting
 
-By default clipper cuts **losslessly**: it copies the original encoded packets
+By default quipclipper cuts **losslessly**: it copies the original encoded packets
 into a new container with **no re-encoding at all**. A lossy AC3/AAC/EAC3 track
 stays that exact lossy bitstream, byte-for-byte, and the cut is near-instant. The
 inspiration and model is [LosslessCut](https://github.com/mifi/lossless-cut).
@@ -227,7 +227,7 @@ What "lossless" preserves:
 - **Subtitle and (for mkvmerge) chapter/attachment tracks**.
 
 The one inherent tradeoff — true of every codec — is that a copy can only begin at
-a **keyframe**. clipper seeks to the nearest keyframe at or before your start, so
+a **keyframe**. quipclipper seeks to the nearest keyframe at or before your start, so
 a lossless clip may begin a little earlier than requested; the **end is exact**.
 For dialogue clips this is just a small lead-in. mkvmerge produces tighter cuts
 than ffmpeg here. Use `--no-lossless` (a re-encode) only when you need frame-exact
@@ -237,7 +237,7 @@ GIF output is inherently a re-encode and ignores `--lossless`.
 
 ### Backends: ffmpeg and mkvmerge
 
-clipper has two cutting backends:
+quipclipper has two cutting backends:
 
 - **ffmpeg** — universal; used for gif, re-encodes (`--no-lossless`), channel
   splitting, and as a fallback when mkvmerge is unavailable.
@@ -256,13 +256,13 @@ clipper has two cutting backends:
 
 ### remux-first
 
-For **non-MKV sources** (mp4, avi, …), clipper by default muxes the source and any
+For **non-MKV sources** (mp4, avi, …), quipclipper by default muxes the source and any
 sidecar subtitle into a temporary MKV with mkvmerge, then cuts the clip from that
 — a fully mkvmerge pipeline that bypasses ffmpeg for maximum accuracy. **MKV
 sources skip this automatically** (an `.mkv` is already a clean container, so it's
 cut directly with identical accuracy and no temporary copy).
 
-Because the temporary MKV is a full-size copy of the source, clipper estimates the
+Because the temporary MKV is a full-size copy of the source, quipclipper estimates the
 scratch space and asks you to confirm:
 
 ```
@@ -272,18 +272,18 @@ Proceed? [Y/n]
 ```
 
 The temp file is written next to the output and deleted afterward. Pass
-`--no-remux-first` to cut the source directly (clipper then prints the accuracy
+`--no-remux-first` to cut the source directly (quipclipper then prints the accuracy
 tradeoff), and `--yes` to skip all prompts.
 
 ### Audio tracks and multichannel audio
 
 By default every audio stream is preserved. Multichannel layouts (5.1, 7.1) are
 inside the stream and are preserved automatically by the copy. To keep only some
-streams, use `--audio-track` with the `a:N` indices shown by `clipper tracks`:
+streams, use `--audio-track` with the `a:N` indices shown by `quipclipper tracks`:
 
 ```bash
-clipper clip "i'll be back" -v movie.mkv --audio-track 0      # first audio track only
-clipper clip "i'll be back" -v movie.mkv --audio-track 0,2    # tracks 0 and 2
+quipclipper clip "i'll be back" -v movie.mkv --audio-track 0      # first audio track only
+quipclipper clip "i'll be back" -v movie.mkv --audio-track 0,2    # tracks 0 and 2
 ```
 
 ### Splitting surround sound
@@ -292,9 +292,9 @@ clipper clip "i'll be back" -v movie.mkv --audio-track 0,2    # tracks 0 and 2
 pair (front, side, back) plus a mono file for the centre and LFE channels:
 
 ```bash
-clipper clip "get to the chopper" -v movie.mkv --split-channels                  # WAV (pcm_s24le)
-clipper clip "get to the chopper" -v movie.mkv --split-channels --split-format flac
-clipper clip "get to the chopper" -v movie.mkv --split-channels --no-lfe         # drop LFE
+quipclipper clip "get to the chopper" -v movie.mkv --split-channels                  # WAV (pcm_s24le)
+quipclipper clip "get to the chopper" -v movie.mkv --split-channels --split-format flac
+quipclipper clip "get to the chopper" -v movie.mkv --split-channels --no-lfe         # drop LFE
 ```
 
 **Channel splitting writes lossless WAV or FLAC and never does a lossy
@@ -312,13 +312,13 @@ The channel groups are derived from the stream's ffmpeg channel layout, so 5.1,
 
 Video clips keep all embedded subtitle tracks (they ride along in the stream
 copy). When you search with an external subtitle file (`--subs` or a sidecar),
-clipper also muxes those lines into the clip, trimmed and time-shifted to line up
+quipclipper also muxes those lines into the clip, trimmed and time-shifted to line up
 with the cut. Disable with `--no-embed-subs`.
 
 - With the **mkvmerge** backend, the sidecar is added as an extra input and
   mkvmerge trims and shifts it natively.
-- With the **ffmpeg** backend, clipper renders a clip-aligned SRT from the parsed
-  cues and muxes it (ffmpeg's own text-subtitle seeking is unreliable, so clipper
+- With the **ffmpeg** backend, quipclipper renders a clip-aligned SRT from the parsed
+  cues and muxes it (ffmpeg's own text-subtitle seeking is unreliable, so quipclipper
   does the trimming itself).
 
 ### Searching and the picker
@@ -334,7 +334,7 @@ candidate per place it occurs.
 When a phrase matches in several places, use `--pick` to choose interactively:
 
 ```bash
-clipper clip "i'll be back" -v movie.mkv -s movie.srt --pick
+quipclipper clip "i'll be back" -v movie.mkv -s movie.srt --pick
 ```
 
 ```
@@ -375,7 +375,7 @@ without transcoding:
 ## Architecture
 
 ```
-src/clipper/
+src/quipclipper/
   models.py      Cue (a timed subtitle line) and Match (a ranked hit); timestamp formatting.
   subtitles.py   Parse .srt/.vtt/.ass/.sub; find sidecars; list/extract embedded tracks; list all streams.
   search.py      Fuzzy ranking over single cues and sliding windows; collapses overlapping span-variants.
@@ -408,9 +408,9 @@ media; the integration behaviour was verified against real `ffmpeg` and
 | Symptom | Cause / fix |
 |---|---|
 | `ffmpeg not found on PATH` | Install ffmpeg (and ffprobe). |
-| `mkvmerge not found` (note) | Install MKVToolNix for the most accurate cuts; clipper falls back to ffmpeg. |
+| `mkvmerge not found` (note) | Install MKVToolNix for the most accurate cuts; quipclipper falls back to ffmpeg. |
 | `Could not determine the channel layout` | The audio stream's layout is unknown to ffprobe; channel splitting needs a recognised layout. |
-| `None of the requested --audio-track indices exist` | Check indices with `clipper tracks`. |
+| `None of the requested --audio-track indices exist` | Check indices with `quipclipper tracks`. |
 | Clip starts slightly early | Expected for lossless cuts (keyframe lead-in); use `--no-lossless` for frame-exact boundaries. |
 | `--out can't be used when clipping multiple matches` | Drop `--out`; clips are auto-named per match. |
 

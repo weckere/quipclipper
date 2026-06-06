@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from clipper.clip import (
+from quipclipper.clip import (
     ClipRange,
     _ffmpeg_args,
     _split_codec,
@@ -11,7 +11,7 @@ from clipper.clip import (
     output_extension,
     render_clip_srt,
 )
-from clipper.models import Cue, Match
+from quipclipper.models import Cue, Match
 
 
 def make_match(start=10.0, end=12.0):

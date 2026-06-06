@@ -1,11 +1,11 @@
-# clipper — Design Notes & Rationale
+# quipclipper — Design Notes & Rationale
 
 This document records the significant design decisions made while building
-clipper, the alternatives considered, and why each choice was made. It is
+quipclipper, the alternatives considered, and why each choice was made. It is
 organised by topic rather than chronologically. For usage see
 [`MANUAL.md`](MANUAL.md).
 
-A recurring theme: clipper is built around the observation that **subtitles are a
+A recurring theme: quipclipper is built around the observation that **subtitles are a
 free, accurate timecode index** for spoken dialogue, and that **lossless cutting**
 of media is a solved problem if you respect codec constraints. Most decisions
 follow from taking those two facts seriously.
@@ -68,10 +68,10 @@ the project deliberately targets "any video that ships with subtitles."
 - **[`typer`](https://typer.tiangolo.com/)** — declarative CLI with type hints,
   automatic `--help`, and boolean `--flag/--no-flag` pairs. Rationale: minimal
   boilerplate for a CLI with many options; the `--x/--no-x` convention maps
-  cleanly onto clipper's many toggles.
+  cleanly onto quipclipper's many toggles.
 
 **Layout:** `src/`-layout package with a `pyproject.toml` (hatchling backend) and a
-`clipper` console-script entry point — standard, tooling-friendly Python packaging.
+`quipclipper` console-script entry point — standard, tooling-friendly Python packaging.
 
 ---
 
@@ -82,7 +82,7 @@ re-encoding opt-in (`--no-lossless`).
 
 **Context / inspiration:** [LosslessCut](https://github.com/mifi/lossless-cut) is
 the well-known GUI proof that the right way to cut media is to **copy the encoded
-packets** rather than decode-and-re-encode. clipper adopts the same philosophy on
+packets** rather than decode-and-re-encode. quipclipper adopts the same philosophy on
 the command line.
 
 **Rationale:**
@@ -183,7 +183,7 @@ default, with an opt-in `original` re-encode. `--include-lfe/--no-lfe` toggles L
 
 **The honest constraint:** Splitting **cannot be a stream copy**. Individual
 channels can't be routed out of a compressed surround bitstream without decoding
-it. This is a property of the codecs, not a clipper limitation, and it is stated
+it. This is a property of the codecs, not a quipclipper limitation, and it is stated
 plainly in the CLI note and the docs.
 
 **Rationale for the format choices:**
@@ -214,7 +214,7 @@ ffmpeg input with its own `-ss`. This produced **misaligned** subtitles: ffmpeg'
 text-subtitle input seeking is unreliable (it kept lines from outside the range and
 shifted times incorrectly), and the muxed stream picked up a multi-second offset.
 
-**Resolution (ffmpeg backend):** Because clipper has already parsed the cues, it
+**Resolution (ffmpeg backend):** Because quipclipper has already parsed the cues, it
 **renders its own clip-aligned SRT** in memory (the cues overlapping the window,
 shifted to start at zero) and muxes that with no `-ss`. The key realisation was
 that `-avoid_negative_ts make_zero` applies the **same global timestamp shift** to
@@ -224,7 +224,7 @@ lead-in cancels out. This was verified by extracting both the preserved embedded
 track and the muxed sidecar from a test clip and confirming identical timing.
 
 **With mkvmerge** the problem disappears: a sidecar added as an extra input is
-trimmed and time-shifted natively by `--split`, so clipper just passes the file.
+trimmed and time-shifted natively by `--split`, so quipclipper just passes the file.
 
 ---
 
@@ -245,13 +245,13 @@ native subtitle handling, all tracks retained).
 
 **Implementation details:**
 - **Track-id mapping:** `mkvmerge -J` (JSON identification) lists tracks with global
-  IDs and types. clipper maps the user's ffmpeg-style `a:N` audio indices to
+  IDs and types. quipclipper maps the user's ffmpeg-style `a:N` audio indices to
   mkvmerge global IDs by enumerating the audio tracks in order.
 - **Selection flags:** `-a` (audio tracks), `-D`/`-S`/`-M`/`-B` (drop video /
   subtitles / attachments / buttons), `--no-chapters`. Audio-only output drops
   video and subtitles and writes `.mka`.
 - **Output naming:** a single retained part is written to the given name; older
-  mkvmerge versions append `-001`, which clipper normalises by renaming.
+  mkvmerge versions append `-001`, which quipclipper normalises by renaming.
 - **Command construction is a pure function** (`build_mkvmerge_args`) so it can be
   unit-tested without invoking mkvmerge.
 
@@ -274,12 +274,12 @@ Estimate the scratch space and confirm before remuxing; `--no-remux-first` opts 
   remuxing it to another MKV gains nothing while costing a full-size temporary copy.
   Cutting MKV directly with mkvmerge is equally accurate. Hence the automatic skip
   (`do_remux = use_mkvmerge and remux_first and not is_matroska(source)`).
-- **Disk safety** — because the temp file is roughly the size of the source, clipper
+- **Disk safety** — because the temp file is roughly the size of the source, quipclipper
   estimates it (`~source size + sidecars`, since a remux re-wraps without
   recompressing) and asks for confirmation. The temp file is created next to the
   output and deleted in a `finally` block so it is cleaned up even on error.
 
-**Accuracy disclaimer:** When remux-first is skipped (or ffmpeg is used), clipper
+**Accuracy disclaimer:** When remux-first is skipped (or ffmpeg is used), quipclipper
 prints the specific tradeoff (keyframe lead-in / less precise container timestamp
 handling) so the choice is informed. The disclaimer is suppressed for the case
 that loses no accuracy (a direct mkvmerge cut of a native MKV).
@@ -350,7 +350,7 @@ place the line occurs.
 
 ## 13. CLI and UX conventions
 
-- **Preview then confirm.** Before cutting, clipper prints the selected match(es),
+- **Preview then confirm.** Before cutting, quipclipper prints the selected match(es),
   the clip range, the mode (e.g. "lossless copy (mkvmerge)"), and any relevant
   notes, then asks "Proceed?". `--yes/-y` skips **all** prompts (including the remux
   disk-space confirmation) for scripting.
@@ -371,7 +371,7 @@ place the line occurs.
 **Decision:** Unit-test the pure logic exhaustively; verify the media integration
 against real tools during development rather than mocking ffmpeg/mkvmerge.
 
-**Rationale:** The risky, fiddly parts of clipper are *decisions about command
+**Rationale:** The risky, fiddly parts of quipclipper are *decisions about command
 construction and ranking*, not the act of running a subprocess. So:
 
 - **Command builders are pure functions** (`_ffmpeg_args`, `build_mkvmerge_args`)
@@ -394,7 +394,7 @@ real pipeline works.
 
 ## References
 
-- **LosslessCut** — lossless media cutting via stream copy; the model for clipper's
+- **LosslessCut** — lossless media cutting via stream copy; the model for quipclipper's
   default behaviour. <https://github.com/mifi/lossless-cut>
 - **FFmpeg — Seeking** — `-ss` before vs. after `-i`, accurate vs. fast seeks.
   <https://trac.ffmpeg.org/wiki/Seeking>

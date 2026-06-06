@@ -1,8 +1,8 @@
 import pytest
 import typer
 
-import clipper.cli as cli
-from clipper.models import Cue, Match
+import quipclipper.cli as cli
+from quipclipper.models import Cue, Match
 
 
 def mk(i: int) -> Match:

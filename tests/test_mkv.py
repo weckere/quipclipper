@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from clipper.clip import ClipRange
-from clipper.mkv import (
+from quipclipper.clip import ClipRange
+from quipclipper.mkv import (
     audio_track_ids,
     build_mkvmerge_args,
     estimate_remux_bytes,

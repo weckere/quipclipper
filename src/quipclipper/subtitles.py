@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pysubs2
 
-from clipper.models import Cue
+from quipclipper.models import Cue
 
 # Subtitle extensions we look for next to a video file, in priority order.
 SUBTITLE_EXTS = (".srt", ".vtt", ".ass", ".ssa", ".sub")

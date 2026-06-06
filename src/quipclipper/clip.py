@@ -25,7 +25,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from clipper.models import Cue, Match, format_timestamp
+from quipclipper.models import Cue, Match, format_timestamp
 
 # Source audio codec -> a container extension that can hold it via stream copy.
 LOSSLESS_AUDIO_EXT = {
