@@ -113,7 +113,7 @@ quipclipper search QUERY [OPTIONS]
 | `QUERY` | — | Dialogue text to search for. |
 | `--subs`, `-s` | — | Subtitle file (`.srt`/`.vtt`/`.ass`/`.sub`). |
 | `--video`, `-v` | — | Video file (used to find a sidecar or extract an embedded track). |
-| `--track` | — | Embedded subtitle stream index (when several exist). |
+| `--track` | — | Subtitle track by s:N index (from `tracks`), when several exist. |
 | `--limit`, `-n` | 10 | Maximum number of matches to show. |
 | `--min-score` | 60 | Drop matches scoring below this (0–100). |
 | `--max-span` | 3 | Max consecutive captions a single match may join. |
@@ -141,7 +141,7 @@ quipclipper clip QUERY --video FILE [OPTIONS]
 | `QUERY` | — | Dialogue text to locate and clip. |
 | `--video`, `-v` | *required* | Video file to cut from. |
 | `--subs`, `-s` | — | Subtitle file; otherwise a sidecar or embedded track is used. |
-| `--track` | — | Embedded subtitle stream index. |
+| `--track` | — | Subtitle track by `s:N` index (from `tracks`). |
 
 **What to produce**
 

@@ -99,7 +99,7 @@ def search_cmd(
     query: str = typer.Argument(..., help="Dialogue text to search for."),
     subs: Optional[Path] = typer.Option(None, "--subs", "-s", help="Subtitle file (.srt/.vtt/.ass)."),
     video: Optional[Path] = typer.Option(None, "--video", "-v", help="Video file (for sidecar/embedded subs)."),
-    track: Optional[int] = typer.Option(None, "--track", help="Embedded subtitle stream index."),
+    track: Optional[int] = typer.Option(None, "--track", help="Subtitle track to use, by s:N index (from `tracks`)."),
     limit: int = typer.Option(10, "--limit", "-n", help="Max matches to show."),
     min_score: float = typer.Option(60.0, "--min-score", help="Drop matches below this score (0-100)."),
     max_span: int = typer.Option(3, "--max-span", help="Max consecutive captions a match may join."),
@@ -119,7 +119,7 @@ def clip(
     query: str = typer.Argument(..., help="Dialogue text to locate and clip."),
     video: Path = typer.Option(..., "--video", "-v", help="Video file to cut from."),
     subs: Optional[Path] = typer.Option(None, "--subs", "-s", help="Subtitle file (else sidecar/embedded)."),
-    track: Optional[int] = typer.Option(None, "--track", help="Embedded subtitle stream index."),
+    track: Optional[int] = typer.Option(None, "--track", help="Subtitle track to use, by s:N index (from `tracks`)."),
     kind: str = typer.Option("audio", "--type", "-t", help="audio | video | gif."),
     lossless: bool = typer.Option(
         True,

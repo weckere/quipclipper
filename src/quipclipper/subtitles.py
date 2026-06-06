@@ -56,13 +56,13 @@ def load_subtitles(path: str | Path) -> list[Cue]:
 class SubtitleTrack:
     """A subtitle stream embedded in a video container."""
 
-    index: int  # ffmpeg stream index
+    index: int  # subtitle-relative index (s:N), matching `quipclipper tracks`
     codec: str
     language: str | None
     title: str | None
 
     def label(self) -> str:
-        parts = [f"#{self.index}", self.codec]
+        parts = [f"s:{self.index}", self.codec]
         if self.language:
             parts.append(self.language)
         if self.title:
@@ -88,11 +88,11 @@ def list_embedded_tracks(video_path: str | Path) -> list[SubtitleTrack]:
         )
     streams = json.loads(out.stdout or "{}").get("streams", [])
     tracks: list[SubtitleTrack] = []
-    for s in streams:
+    for rel, s in enumerate(streams):  # rel = subtitle-relative index (s:N)
         tags = s.get("tags", {}) or {}
         tracks.append(
             SubtitleTrack(
-                index=s["index"],
+                index=rel,
                 codec=s.get("codec_name", "?"),
                 language=tags.get("language"),
                 title=tags.get("title"),
@@ -181,10 +181,16 @@ def extract_embedded(video_path: str | Path, stream_index: int) -> list[Cue]:
         cmd = [
             "ffmpeg", "-y", "-v", "error",
             "-i", str(video_path),
-            "-map", f"0:{stream_index}",
+            "-map", f"0:s:{stream_index}",  # subtitle-relative index (s:N)
             "-f", "srt", str(tmp_path),
         ]
-        subprocess.run(cmd, capture_output=True, text=True, check=True)
+        proc = subprocess.run(cmd, capture_output=True, text=True)
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"Could not extract subtitle track s:{stream_index} as text — image "
+                f"subtitles (e.g. PGS) aren't supported; supply an .srt with --subs.\n"
+                f"{proc.stderr.strip()}"
+            )
         return load_subtitles(tmp_path)
     finally:
         tmp_path.unlink(missing_ok=True)
