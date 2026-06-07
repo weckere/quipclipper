@@ -215,11 +215,33 @@ async function openItem(path, name) {
   $("mark-save").disabled = true;
   if (jobPollTimer) { clearTimeout(jobPollTimer); jobPollTimer = null; }
 
+  let info;
+  try {
+    info = await getJSON("/api/items" + qp(path));
+  } catch (err) {
+    $("subs-controls").innerHTML = `<span class="error">${err.message}</span>`;
+    return;
+  }
+
   const player = $("player");
   const mediaUrl = "/api/media" + qp(path);
   const transcodeUrl = "/api/media/transcode" + qp(path);
-  player.src = mediaUrl;
   player.querySelectorAll("track").forEach((t) => t.remove());
+
+  // Check if the primary audio codec is browser-playable; if not, use
+  // the transcode endpoint from the start (browsers silently ignore
+  // unsupported audio codecs like AC3/DTS/FLAC without firing onerror).
+  const BROWSER_AUDIO = new Set(["aac", "mp3", "opus", "vorbis"]);
+  const primaryAudio = info.streams.find((s) => s.kind === "audio");
+  const needsTranscode = primaryAudio && !BROWSER_AUDIO.has(primaryAudio.codec);
+
+  if (needsTranscode) {
+    player.src = transcodeUrl;
+    $("preview-note").textContent = "Transcoding audio for browser playback…";
+  } else {
+    player.src = mediaUrl;
+  }
+
   player.onerror = () => {
     if (player.src.includes("/api/media/transcode")) {
       $("preview-note").textContent =
@@ -229,16 +251,9 @@ async function openItem(path, name) {
     }
     // Fall back to on-the-fly transcode
     player.src = transcodeUrl;
-    $("preview-note").textContent = "Transcoding for browser playback…";
+    $("preview-note").textContent = "Transcoding audio for browser playback…";
   };
 
-  let info;
-  try {
-    info = await getJSON("/api/items" + qp(path));
-  } catch (err) {
-    $("subs-controls").innerHTML = `<span class="error">${err.message}</span>`;
-    return;
-  }
   renderStreams(info.streams);
   renderSubs(info, path);
   loadBookmarks();
