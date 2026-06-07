@@ -35,7 +35,7 @@ from quipclipper.mkv import (
     mkvmerge_available,
 )
 from quipclipper.search import search as engine_search
-from quipclipper.subtitles import resolve_subtitles
+from quipclipper.subtitles import find_sidecar, resolve_subtitles, VIDEO_EXTS
 from quipclipper_web import __version__, library, media
 from quipclipper_web.bookmarks import BookmarkStore
 from quipclipper_web.config import Settings
@@ -240,6 +240,73 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 }
                 for i, m in enumerate(matches)
             ],
+        }
+
+    # --- folder dialogue search ------------------------------------------------
+
+    @app.get("/api/search/folder")
+    def search_dialogue_folder(
+        path: str = Query(...),
+        query: str = Query(..., min_length=1),
+        limit: int = Query(5, ge=1, le=20),
+        min_score: float = Query(60.0, ge=0, le=100),
+        max_span: int = Query(3, ge=1, le=10),
+    ) -> dict:
+        """Search dialogue across all video files in a folder.
+
+        For each video with subtitles (sidecar or embedded), run the search
+        engine and collect the top results.  Returns a flat list of matches
+        grouped by source file, sorted best-score-first across all files.
+        """
+        folder = _resolve(path)
+        if not folder.is_dir():
+            raise HTTPException(status_code=400, detail=f"Not a directory: {path}")
+
+        all_hits: list[dict] = []
+        errors: list[dict] = []
+
+        # Collect video files, sorted for deterministic order
+        videos = sorted(
+            (c for c in folder.iterdir() if c.is_file() and c.suffix.lower() in VIDEO_EXTS),
+            key=lambda p: p.name.lower(),
+        )
+
+        for video in videos:
+            try:
+                resolved = resolve_subtitles(subs=None, video=video)
+            except (ValueError, FileNotFoundError, RuntimeError):
+                # No subtitles available for this file — skip silently
+                continue
+
+            matches = engine_search(
+                query,
+                resolved.cues,
+                limit=limit,
+                min_score=min_score,
+                max_span=max_span,
+            )
+            for i, m in enumerate(matches):
+                all_hits.append({
+                    "file": video.name,
+                    "path": str(video),
+                    "score": round(m.score, 1),
+                    "text": m.text,
+                    "start": m.start,
+                    "end": m.end,
+                    "start_ts": format_timestamp(m.start),
+                    "end_ts": format_timestamp(m.end),
+                    "cue_count": len(m.cues),
+                })
+
+        # Sort all hits by score descending so best matches float to top
+        all_hits.sort(key=lambda h: -h["score"])
+
+        return {
+            "query": query,
+            "folder": path,
+            "files_scanned": len(videos),
+            "count": len(all_hits),
+            "matches": all_hits,
         }
 
     # --- media streaming -------------------------------------------------------

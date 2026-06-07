@@ -39,6 +39,32 @@ h1 { margin: 0; font-size: 2rem; letter-spacing: -0.02em; cursor: pointer; displ
 .library-search-bar input:focus { outline: none; border-color: var(--accent); }
 .library-search-bar input::placeholder { color: var(--muted); }
 
+.dialogue-search-row {
+  display: flex; gap: 0.5rem;
+}
+.dialogue-search-row input { flex: 1; }
+.dialogue-search-row button {
+  padding: 0.5rem 1rem; background: var(--accent); color: var(--bg);
+  border: none; border-radius: 6px; cursor: pointer; font-weight: 600;
+  white-space: nowrap;
+}
+.dialogue-search-row button:hover { opacity: 0.85; }
+.dialogue-search-row button:disabled { opacity: 0.5; cursor: default; }
+
+.dialogue-hit {
+  display: flex; flex-direction: column; gap: 0.15rem;
+  padding: 0.6rem 0.8rem; border-radius: 8px; cursor: pointer;
+}
+.dialogue-hit:hover { background: var(--hover); }
+.dialogue-hit .hit-file { font-size: 0.8rem; color: var(--accent); }
+.dialogue-hit .hit-text { font-size: 0.95rem; }
+.dialogue-hit .hit-time { font-size: 0.8rem; color: var(--muted); }
+.dialogue-hit .hit-score {
+  font-size: 0.75rem; color: var(--muted);
+  background: var(--badge); padding: 0.1rem 0.4rem; border-radius: 4px;
+  align-self: flex-start;
+}
+
 .entries { list-style: none; margin: 0; padding: 0; }
 .entry {
   display: flex; align-items: center; gap: 0.6rem;

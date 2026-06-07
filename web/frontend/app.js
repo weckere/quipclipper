@@ -54,6 +54,10 @@ async function browse(path) {
   list.innerHTML = "";
   $("browser-empty").hidden = true;
   $("library-search").value = "";
+  $("dialogue-search").value = "";
+  $("dialogue-search-status").hidden = true;
+  // Show dialogue search bar only when inside a folder (not at root)
+  $("dialogue-search-bar").hidden = !path;
   let data;
   try {
     data = await getJSON("/api/library/browse" + (path ? qp(path) : ""));
@@ -69,6 +73,7 @@ async function browse(path) {
 function renderEntries(entries) {
   const list = $("entries");
   list.innerHTML = "";
+  $("browser-empty").textContent = "Nothing here.";
   $("browser-empty").hidden = true;
 
   if (!entries.length) {
@@ -111,6 +116,58 @@ async function librarySearch(query) {
 $("library-search").addEventListener("input", (e) => {
   clearTimeout(librarySearchTimer);
   librarySearchTimer = setTimeout(() => librarySearch(e.target.value), 300);
+});
+
+// --- folder dialogue search ------------------------------------------------
+
+async function dialogueSearch() {
+  const query = $("dialogue-search").value.trim();
+  if (!query || !currentBrowsePath) return;
+
+  const list = $("entries");
+  list.innerHTML = "";
+  $("browser-empty").hidden = true;
+  const status = $("dialogue-search-status");
+  status.textContent = "Searching subtitles…";
+  status.hidden = false;
+  $("dialogue-search-btn").disabled = true;
+
+  const url = `/api/search/folder?path=${encodeURIComponent(currentBrowsePath)}&query=${encodeURIComponent(query)}`;
+  let data;
+  try {
+    data = await getJSON(url);
+  } catch (err) {
+    list.innerHTML = `<li class="error">Dialogue search failed: ${err.message}</li>`;
+    status.hidden = true;
+    $("dialogue-search-btn").disabled = false;
+    return;
+  }
+
+  $("dialogue-search-btn").disabled = false;
+  status.textContent = `${data.count} match${data.count !== 1 ? "es" : ""} across ${data.files_scanned} file${data.files_scanned !== 1 ? "s" : ""}`;
+
+  if (!data.matches.length) {
+    $("browser-empty").textContent = "No dialogue matches found.";
+    $("browser-empty").hidden = false;
+    return;
+  }
+
+  for (const hit of data.matches) {
+    const li = document.createElement("li");
+    li.className = "dialogue-hit";
+    li.innerHTML = `
+      <span class="hit-file">${hit.file}</span>
+      <span class="hit-text">"${hit.text}"</span>
+      <span class="hit-time">${hit.start_ts} – ${hit.end_ts}  <span class="hit-score">${hit.score}%</span></span>
+    `;
+    li.onclick = () => openItem(hit.path, hit.file);
+    list.appendChild(li);
+  }
+}
+
+$("dialogue-search-btn").addEventListener("click", dialogueSearch);
+$("dialogue-search").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") dialogueSearch();
 });
 
 function renderBreadcrumb(path, entries) {

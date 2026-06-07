@@ -435,3 +435,75 @@ def test_library_search_forbids_outside(tmp_path: Path) -> None:
         params={"query": "test", "path": "/etc"},
     )
     assert resp.status_code == 403
+
+
+# --- folder dialogue search ---
+
+
+SRT2 = """1
+00:00:01,000 --> 00:00:03,000
+May the force be with you.
+
+2
+00:00:04,000 --> 00:00:06,000
+I find your lack of faith disturbing.
+"""
+
+
+def test_folder_dialogue_search(tmp_path: Path) -> None:
+    """Searching dialogue across files in a folder returns matches."""
+    video = tmp_path / "episode1.mkv"
+    video.write_bytes(b"")
+    srt = tmp_path / "episode1.srt"
+    srt.write_text(SRT)
+
+    video2 = tmp_path / "episode2.mkv"
+    video2.write_bytes(b"")
+    srt2 = tmp_path / "episode2.srt"
+    srt2.write_text(SRT2)
+
+    client = _client(tmp_path)
+    resp = client.get(
+        "/api/search/folder",
+        params={"path": str(tmp_path), "query": "force"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["files_scanned"] == 2
+    assert data["count"] >= 1
+    assert any("force" in m["text"].lower() for m in data["matches"])
+    # All matches should reference episode2 for "force"
+    assert all(m["file"] == "episode2.mkv" for m in data["matches"])
+
+
+def test_folder_dialogue_search_no_subs(tmp_path: Path) -> None:
+    """Files without subtitles are skipped gracefully."""
+    (tmp_path / "nosubs.mkv").write_bytes(b"")
+    client = _client(tmp_path)
+    resp = client.get(
+        "/api/search/folder",
+        params={"path": str(tmp_path), "query": "hello"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["count"] == 0
+    assert resp.json()["files_scanned"] == 1
+
+
+def test_folder_dialogue_search_forbids_outside(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    resp = client.get(
+        "/api/search/folder",
+        params={"path": "/etc", "query": "test"},
+    )
+    assert resp.status_code == 403
+
+
+def test_folder_dialogue_search_not_a_dir(tmp_path: Path) -> None:
+    f = tmp_path / "file.mkv"
+    f.write_bytes(b"")
+    client = _client(tmp_path)
+    resp = client.get(
+        "/api/search/folder",
+        params={"path": str(f), "query": "test"},
+    )
+    assert resp.status_code == 400

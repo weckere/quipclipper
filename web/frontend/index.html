@@ -21,6 +21,13 @@
         <div class="library-search-bar">
           <input id="library-search" type="text" placeholder="Search library…" autocomplete="off" />
         </div>
+        <div id="dialogue-search-bar" class="library-search-bar dialogue-search-bar" hidden>
+          <div class="dialogue-search-row">
+            <input id="dialogue-search" type="text" placeholder="Search dialogue in this folder…" autocomplete="off" />
+            <button id="dialogue-search-btn">Search</button>
+          </div>
+          <p id="dialogue-search-status" class="muted" hidden></p>
+        </div>
         <ul id="entries" class="entries"></ul>
         <p id="browser-empty" class="muted" hidden>Nothing here.</p>
       </section>
