@@ -371,13 +371,6 @@ All settings are environment variables on the `app` service:
 | `QC_JELLYFIN_URL` | *(none)* | Jellyfin server URL for metadata enrichment |
 | `QC_JELLYFIN_API_KEY` | *(none)* | Jellyfin API key (required if URL is set) |
 
-### OpenMediaVault
-
-An OMV-ready compose file is included at
-[`web/docker-compose.omv.yml`](web/docker-compose.omv.yml). It uses OMV's
-global env vars (`$MOVIES`, `$SHOWS`, `$CLIPS`) so you only need to paste it
-into Services > Compose > Files and bring it up.
-
 ### Architecture
 
 The web app is two containers:
