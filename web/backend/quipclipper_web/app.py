@@ -12,6 +12,7 @@ Routes:
 from __future__ import annotations
 
 import asyncio
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -475,7 +476,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ext = output_extension(req.kind, lossless=req.lossless, audio_codecs=codecs)
 
         from quipclipper.clip import _timestamp_slug
-        out_name = f"{video.stem}_{_timestamp_slug(rng.start)}.{ext}"
+        # Build a filename: source_timestamp[_dialogue].ext
+        # When the clip comes from a dialogue search, append a sanitised
+        # snippet so the file is self-describing.
+        ts_slug = _timestamp_slug(rng.start)
+        if req.query:
+            text = m.text[:80].strip()
+            # Keep only alphanumeric, spaces, hyphens, apostrophes; collapse whitespace
+            text_slug = re.sub(r"[^\w\s'\-]", "", text)
+            text_slug = re.sub(r"\s+", " ", text_slug).strip()
+            text_slug = text_slug.replace(" ", "_")
+            if text_slug:
+                out_name = f"{video.stem}_{ts_slug}_{text_slug}.{ext}"
+            else:
+                out_name = f"{video.stem}_{ts_slug}.{ext}"
+        else:
+            out_name = f"{video.stem}_{ts_slug}.{ext}"
         out_path = clips_dir / out_name
 
         # Capture all values for the closure.
