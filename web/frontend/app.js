@@ -107,6 +107,14 @@ async function openItem(path, name) {
   lastSearchQuery = null;
   lastSearchMatches = [];
   activeJobId = null;
+  clipRangeStart = null;
+  clipRangeEnd = null;
+  markIn = null;
+  markOut = null;
+  $("mark-in-display").textContent = "—";
+  $("mark-out-display").textContent = "—";
+  $("mark-clip").disabled = true;
+  $("mark-save").disabled = true;
   if (jobPollTimer) { clearTimeout(jobPollTimer); jobPollTimer = null; }
 
   const player = $("player");
@@ -127,6 +135,7 @@ async function openItem(path, name) {
   }
   renderStreams(info.streams);
   renderSubs(info, path);
+  loadBookmarks();
 }
 
 function renderStreams(streams) {
@@ -260,6 +269,133 @@ $("search-input").addEventListener("keydown", (e) => {
   if (e.key === "Enter") doSearch();
 });
 
+// --- marks (in/out) ---------------------------------------------------------
+
+let markIn = null;
+let markOut = null;
+
+function setMarkIn() {
+  const player = $("player");
+  markIn = player.currentTime;
+  $("mark-in-display").textContent = formatTime(markIn);
+  updateMarkButtons();
+}
+
+function setMarkOut() {
+  const player = $("player");
+  markOut = player.currentTime;
+  $("mark-out-display").textContent = formatTime(markOut);
+  updateMarkButtons();
+}
+
+function updateMarkButtons() {
+  const hasRange = markIn !== null && markOut !== null && markOut > markIn;
+  $("mark-clip").disabled = !hasRange;
+  $("mark-save").disabled = !hasRange;
+}
+
+function formatTime(s) {
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = (s % 60).toFixed(1);
+  return h > 0
+    ? `${h}:${String(m).padStart(2, "0")}:${sec.padStart(4, "0")}`
+    : `${m}:${sec.padStart(4, "0")}`;
+}
+
+function clipFromMarks() {
+  if (markIn === null || markOut === null || markOut <= markIn) return;
+  // Open clip panel with explicit range
+  selectedMatch = null;
+  $("clip-panel").hidden = false;
+  $("clip-range-display").textContent =
+    `Manual range: ${formatTime(markIn)} – ${formatTime(markOut)}`;
+  clipRangeStart = markIn;
+  clipRangeEnd = markOut;
+}
+
+async function saveBookmark() {
+  if (!currentItem || markIn === null || markOut === null) return;
+  const label = prompt("Bookmark label:", `${formatTime(markIn)} – ${formatTime(markOut)}`);
+  if (label === null) return; // cancelled
+  try {
+    await postJSON("/api/bookmarks", {
+      path: currentItem.path,
+      label: label || `${formatTime(markIn)} – ${formatTime(markOut)}`,
+      start: markIn,
+      end: markOut,
+    });
+    loadBookmarks();
+  } catch (err) {
+    alert("Failed to save bookmark: " + err.message);
+  }
+}
+
+$("mark-in").onclick = setMarkIn;
+$("mark-out").onclick = setMarkOut;
+$("mark-clip").onclick = clipFromMarks;
+$("mark-save").onclick = saveBookmark;
+
+// --- bookmarks --------------------------------------------------------------
+
+async function loadBookmarks() {
+  if (!currentItem) return;
+  const list = $("bookmarks-list");
+  const empty = $("bookmarks-empty");
+  list.innerHTML = "";
+  empty.hidden = true;
+
+  let data;
+  try {
+    data = await getJSON(`/api/bookmarks${qp(currentItem.path)}`);
+  } catch { return; }
+
+  if (!data.bookmarks.length) {
+    empty.hidden = false;
+    return;
+  }
+  empty.hidden = true;
+  for (const bm of data.bookmarks) {
+    const li = document.createElement("li");
+    li.className = "bookmark-item";
+    li.innerHTML =
+      `<span class="bookmark-label">${escapeHtml(bm.label)}</span>` +
+      `<span class="bookmark-range">${formatTime(bm.start)} – ${formatTime(bm.end)}</span>` +
+      `<button class="bookmark-use" title="Load as clip range">Clip</button>` +
+      `<button class="bookmark-seek" title="Seek to start">▶</button>` +
+      `<button class="bookmark-del" title="Delete">✕</button>`;
+    li.querySelector(".bookmark-use").onclick = (e) => {
+      e.stopPropagation();
+      useBookmarkForClip(bm);
+    };
+    li.querySelector(".bookmark-seek").onclick = (e) => {
+      e.stopPropagation();
+      seekTo(bm.start);
+    };
+    li.querySelector(".bookmark-del").onclick = (e) => {
+      e.stopPropagation();
+      deleteBookmark(bm.id);
+    };
+    list.appendChild(li);
+  }
+}
+
+function useBookmarkForClip(bm) {
+  selectedMatch = null;
+  clipRangeStart = bm.start;
+  clipRangeEnd = bm.end;
+  $("clip-panel").hidden = false;
+  $("clip-range-display").textContent =
+    `"${bm.label}" — ${formatTime(bm.start)} – ${formatTime(bm.end)}`;
+}
+
+async function deleteBookmark(id) {
+  try {
+    await fetch(`/api/bookmarks/${id}`, { method: "DELETE" });
+    loadBookmarks();
+  } catch {}
+}
+
 // --- clipping ---------------------------------------------------------------
 
 let lastSearchQuery = null;
@@ -267,25 +403,28 @@ let lastSearchMatches = [];
 let selectedMatch = null;
 let activeJobId = null;
 let jobPollTimer = null;
+let clipRangeStart = null;
+let clipRangeEnd = null;
 
 function selectMatchForClip(m) {
   selectedMatch = m;
+  clipRangeStart = null;
+  clipRangeEnd = null;
   $("clip-panel").hidden = false;
   $("clip-range-display").textContent =
     `"${m.text.length > 80 ? m.text.slice(0, 77) + "…" : m.text}" — ${m.start_ts} – ${m.end_ts}`;
 }
 
 async function makeClip() {
-  if (!currentItem || !selectedMatch) return;
+  if (!currentItem) return;
+  // Need either a search match or explicit range
+  if (!selectedMatch && (clipRangeStart === null || clipRangeEnd === null)) return;
   $("clip-btn").disabled = true;
   $("job-panel").hidden = false;
   $("job-status").innerHTML = '<span class="job-running">Submitting…</span>';
 
   const body = {
     path: currentItem.path,
-    query: lastSearchQuery,
-    match_index: selectedMatch.index,
-    track: getSelectedTrack() !== null ? parseInt(getSelectedTrack()) : null,
     kind: $("clip-kind").value,
     lossless: $("clip-lossless").checked,
     before: parseFloat($("clip-before").value) || 2,
@@ -293,6 +432,15 @@ async function makeClip() {
     backend: $("clip-backend").value,
     embed_subs: $("clip-embed-subs").checked,
   };
+
+  if (selectedMatch) {
+    body.query = lastSearchQuery;
+    body.match_index = selectedMatch.index;
+    body.track = getSelectedTrack() !== null ? parseInt(getSelectedTrack()) : null;
+  } else {
+    body.start = clipRangeStart;
+    body.end = clipRangeEnd;
+  }
 
   try {
     const data = await postJSON("/api/clip", body);

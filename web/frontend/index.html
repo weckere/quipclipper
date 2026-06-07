@@ -28,6 +28,18 @@
         <video id="player" controls preload="metadata" crossorigin="anonymous"></video>
         <p id="preview-note" class="muted"></p>
 
+        <div class="panel marks-panel">
+          <h3>Marks</h3>
+          <div class="marks-row">
+            <button id="mark-in" class="mark-btn" title="Set in-point at current player position">Set In</button>
+            <span id="mark-in-display" class="mark-display">—</span>
+            <button id="mark-out" class="mark-btn" title="Set out-point at current player position">Set Out</button>
+            <span id="mark-out-display" class="mark-display">—</span>
+            <button id="mark-clip" class="clip-btn mark-clip-btn" disabled title="Clip from in/out marks">Clip range</button>
+            <button id="mark-save" class="mark-btn mark-save-btn" disabled title="Save as bookmark">☆ Save</button>
+          </div>
+        </div>
+
         <div class="panel">
           <h3>Search dialogue</h3>
           <div class="search-bar">
@@ -75,6 +87,12 @@
         <div class="panel" id="job-panel" hidden>
           <h3>Job status</h3>
           <div id="job-status"></div>
+        </div>
+
+        <div class="panel" id="bookmarks-panel">
+          <h3>Bookmarks</h3>
+          <ul id="bookmarks-list" class="bookmarks-list"></ul>
+          <p id="bookmarks-empty" class="muted">No bookmarks for this file.</p>
         </div>
 
         <div class="panel">

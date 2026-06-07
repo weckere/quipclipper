@@ -223,3 +223,65 @@ def test_jobs_list(tmp_path: Path) -> None:
     resp = client.get("/api/jobs")
     assert resp.status_code == 200
     assert "jobs" in resp.json()
+
+
+# --- bookmarks ---------------------------------------------------------------
+
+
+def test_bookmark_crud(tmp_path: Path) -> None:
+    video = tmp_path / "movie.mkv"
+    video.write_bytes(b"")
+    client = _client(tmp_path)
+
+    # List empty
+    resp = client.get("/api/bookmarks", params={"path": str(video)})
+    assert resp.status_code == 200
+    assert resp.json()["bookmarks"] == []
+
+    # Create
+    resp = client.post(
+        "/api/bookmarks",
+        json={"path": str(video), "label": "Test clip", "start": 10.5, "end": 15.0},
+    )
+    assert resp.status_code == 200
+    bm = resp.json()
+    assert bm["label"] == "Test clip"
+    assert bm["start"] == 10.5
+    assert bm["end"] == 15.0
+    bm_id = bm["id"]
+
+    # List with one entry
+    resp = client.get("/api/bookmarks", params={"path": str(video)})
+    assert len(resp.json()["bookmarks"]) == 1
+
+    # Delete
+    resp = client.delete(f"/api/bookmarks/{bm_id}")
+    assert resp.status_code == 200
+
+    # Gone
+    resp = client.get("/api/bookmarks", params={"path": str(video)})
+    assert resp.json()["bookmarks"] == []
+
+
+def test_bookmark_forbids_outside(tmp_path: Path) -> None:
+    root = tmp_path / "media"
+    root.mkdir()
+    client = _client(root)
+    resp = client.post(
+        "/api/bookmarks",
+        json={"path": "/etc/passwd", "label": "bad", "start": 0, "end": 1},
+    )
+    assert resp.status_code == 403
+
+
+def test_bookmark_auto_label(tmp_path: Path) -> None:
+    video = tmp_path / "movie.mkv"
+    video.write_bytes(b"")
+    client = _client(tmp_path)
+    resp = client.post(
+        "/api/bookmarks",
+        json={"path": str(video), "start": 60.0, "end": 90.0},
+    )
+    assert resp.status_code == 200
+    # Auto-generated label should contain timestamps
+    assert "00:01:00" in resp.json()["label"]

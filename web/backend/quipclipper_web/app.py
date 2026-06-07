@@ -5,6 +5,7 @@ Routes:
 - Phase 1: library browse, items, subtitles (WebVTT), media streaming
 - Phase 2: dialogue search
 - Phase 3: clip jobs (POST /api/clip, GET /api/jobs)
+- Phase 4: bookmarks (GET/POST/DELETE /api/bookmarks)
 """
 
 from __future__ import annotations
@@ -34,6 +35,7 @@ from quipclipper.mkv import (
 from quipclipper.search import search as engine_search
 from quipclipper.subtitles import resolve_subtitles
 from quipclipper_web import __version__, library, media
+from quipclipper_web.bookmarks import BookmarkStore
 from quipclipper_web.config import Settings
 from quipclipper_web.jobs import JobRegistry
 
@@ -48,6 +50,15 @@ _BROWSER_MIME = {
     ".ts": "video/mp2t",
     ".avi": "video/x-msvideo",
 }
+
+
+class BookmarkCreate(BaseModel):
+    """JSON body for POST /api/bookmarks."""
+
+    path: str
+    label: str = ""
+    start: float
+    end: float
 
 
 class ClipRequest(BaseModel):
@@ -82,6 +93,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title="quipclipper-web", version=__version__)
     app.state.settings = settings
     jobs = JobRegistry(max_workers=settings.max_concurrent_jobs)
+    bookmarks = BookmarkStore(settings.state_dir)
 
     @app.get("/api/health")
     def health() -> dict:
@@ -376,6 +388,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 mime = _BROWSER_MIME.get(p.suffix.lower(), "application/octet-stream")
                 return FileResponse(p, media_type=mime, filename=p.name)
         raise HTTPException(status_code=404, detail="File not found in job results.")
+
+    # --- bookmarks ---------------------------------------------------------------
+
+    @app.get("/api/bookmarks")
+    def list_bookmarks(path: str | None = None) -> dict:
+        if path:
+            _resolve(path)  # path-safety check
+            bms = bookmarks.list_for_path(path)
+        else:
+            bms = bookmarks.list_all()
+        return {"bookmarks": [b.to_dict() for b in bms]}
+
+    @app.post("/api/bookmarks")
+    def create_bookmark(req: BookmarkCreate) -> dict:
+        _resolve(req.path)  # path-safety check
+        if not req.label:
+            req.label = f"{format_timestamp(req.start)} – {format_timestamp(req.end)}"
+        bm = bookmarks.add(req.path, req.label, req.start, req.end)
+        return bm.to_dict()
+
+    @app.delete("/api/bookmarks/{bookmark_id}")
+    def delete_bookmark(bookmark_id: str) -> dict:
+        if not bookmarks.delete(bookmark_id):
+            raise HTTPException(status_code=404, detail="Bookmark not found.")
+        return {"deleted": bookmark_id}
 
     # Dev mode: serve the frontend when running outside nginx.
     _frontend = Path(__file__).resolve().parent.parent.parent / "frontend"

@@ -137,6 +137,39 @@ code {
 }
 .download-link:hover { opacity: 0.85; }
 
+.marks-panel { margin-top: 0.5rem; }
+.marks-row {
+  display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
+}
+.mark-btn {
+  background: var(--badge); color: var(--fg); border: 1px solid var(--badge);
+  border-radius: 6px; padding: 0.35rem 0.75rem; cursor: pointer; font-size: 0.85rem;
+}
+.mark-btn:hover { background: var(--hover); border-color: var(--accent); }
+.mark-display {
+  font-size: 0.9rem; color: var(--accent); min-width: 4.5rem; text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.mark-clip-btn { font-size: 0.85rem; padding: 0.35rem 0.75rem; }
+.mark-save-btn { font-size: 0.85rem; }
+
+.bookmarks-list { list-style: none; margin: 0; padding: 0; }
+.bookmark-item {
+  display: flex; align-items: center; gap: 0.6rem;
+  padding: 0.45rem 0.6rem; border-radius: 8px;
+}
+.bookmark-item:hover { background: var(--hover); }
+.bookmark-label { flex: 1; font-size: 0.9rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bookmark-range { font-size: 0.8rem; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bookmark-use, .bookmark-seek, .bookmark-del {
+  background: none; border: 1px solid var(--badge); color: var(--fg);
+  border-radius: 5px; padding: 0.2rem 0.5rem; cursor: pointer; font-size: 0.75rem;
+  white-space: nowrap;
+}
+.bookmark-use:hover { border-color: var(--ok); color: var(--ok); }
+.bookmark-seek:hover { border-color: var(--accent); color: var(--accent); }
+.bookmark-del:hover { border-color: var(--error); color: var(--error); }
+
 .muted { color: var(--muted); }
 .error { color: var(--error); }
 
