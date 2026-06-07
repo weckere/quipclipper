@@ -274,12 +274,16 @@ async function openItem(path, name) {
     $("preview-note").textContent = "Transcoding audio for browser playback…";
   }
 
-  // When the user drags the timeline on a transcoded stream, request a new
-  // segment from the absolute seek position.
+  // When the user drags the timeline on a transcoded stream, debounce and
+  // wait for them to finish dragging before requesting a new segment.
+  let seekDebounce = null;
   player.addEventListener("seeking", () => {
     if (!isTranscoding || settingSrc) return;
-    const seekTarget = player.currentTime + transcodeOffset;
-    loadTranscode(seekTarget);
+    clearTimeout(seekDebounce);
+    seekDebounce = setTimeout(() => {
+      const seekTarget = player.currentTime + transcodeOffset;
+      loadTranscode(seekTarget);
+    }, 600);
   });
 
   // Custom event for programmatic seeks (search results, bookmarks, etc.)
