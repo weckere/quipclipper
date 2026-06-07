@@ -660,9 +660,31 @@ async function browseClips(folder) {
       `<span class="label">${escapeHtml(c.name)}</span>` +
       `<span class="badge">${size}</span>` +
       `<a class="download-link clip-dl" href="${c.download_url}" download>Download</a>`;
+    li.onclick = (e) => {
+      if (e.target.closest("a")) return; // let download link work normally
+      playClip(c.name, c.stream_url, c.download_url);
+    };
     list.appendChild(li);
   }
 }
+
+function playClip(name, streamUrl, downloadUrl) {
+  const wrap = $("clip-player-wrap");
+  const player = $("clip-player");
+  $("clip-player-name").textContent = name;
+  player.src = streamUrl;
+  $("clip-player-dl").href = downloadUrl;
+  wrap.hidden = false;
+  player.play().catch(() => {});
+}
+
+$("clip-player-close").onclick = () => {
+  const player = $("clip-player");
+  player.pause();
+  player.removeAttribute("src");
+  player.load();
+  $("clip-player-wrap").hidden = true;
+};
 
 $("clips-link").onclick = () => browseClips(null);
 $("clips-home").onclick = () => browseClips(null);

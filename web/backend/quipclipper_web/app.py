@@ -601,6 +601,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "size": f.stat().st_size,
                     "folder": folder or "",
                     "download_url": f"/api/clips/download/{quote(((folder + '/') if folder else '') + f.name)}",
+                    "stream_url": f"/api/clips/stream/{quote(((folder + '/') if folder else '') + f.name)}",
                 }
                 for f in target.iterdir()
                 if f.is_file() and f.suffix.lower() in (".mkv", ".mka", ".mp4", ".m4v", ".webm", ".gif", ".wav", ".flac", ".ogg", ".mp3")
@@ -619,6 +620,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Clip not found.")
         mime = _BROWSER_MIME.get(target.suffix.lower(), "application/octet-stream")
         return FileResponse(target, media_type=mime, filename=target.name)
+
+    @app.get("/api/clips/stream/{clip_path:path}")
+    def stream_saved_clip(clip_path: str) -> FileResponse:
+        """Stream a clip for in-browser playback (no Content-Disposition download)."""
+        target = (settings.clips_dir / clip_path).resolve()
+        if not str(target).startswith(str(settings.clips_dir.resolve())):
+            raise HTTPException(status_code=403, detail="Path outside clips dir.")
+        if not target.is_file():
+            raise HTTPException(status_code=404, detail="Clip not found.")
+        mime = _BROWSER_MIME.get(target.suffix.lower(), "application/octet-stream")
+        return FileResponse(target, media_type=mime)
 
     # --- Jellyfin enrichment ---------------------------------------------------
 

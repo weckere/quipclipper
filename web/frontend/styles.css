@@ -214,6 +214,22 @@ code {
   font-size: 0.75rem; padding: 0.2rem 0.6rem; margin-left: auto;
 }
 
+#clip-player-wrap {
+  margin-bottom: 1.5rem; padding: 1rem;
+  background: var(--card); border-radius: 10px;
+}
+#clip-player-wrap h3 { margin: 0 0 0.75rem; font-size: 1rem; }
+#clip-player {
+  width: 100%; max-height: 60vh; border-radius: 6px;
+  background: #000;
+}
+.clip-player-actions {
+  display: flex; gap: 0.5rem; margin-top: 0.75rem;
+}
+.clip-player-actions a {
+  text-decoration: none; text-align: center;
+}
+
 .muted { color: var(--muted); }
 .error { color: var(--error); }
 
