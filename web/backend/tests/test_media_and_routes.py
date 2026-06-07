@@ -450,6 +450,27 @@ I find your lack of faith disturbing.
 """
 
 
+# --- transcode ---
+
+
+def test_transcode_forbids_outside(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    resp = client.get("/api/media/transcode", params={"path": "/etc/passwd"})
+    assert resp.status_code == 403
+
+
+def test_transcode_not_found(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    resp = client.get(
+        "/api/media/transcode",
+        params={"path": str(tmp_path / "nope.mkv")},
+    )
+    assert resp.status_code == 404
+
+
+# --- folder dialogue search ---
+
+
 def test_folder_dialogue_search(tmp_path: Path) -> None:
     """Searching dialogue across files in a folder returns matches."""
     video = tmp_path / "episode1.mkv"

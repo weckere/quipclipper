@@ -11,12 +11,14 @@ Routes:
 
 from __future__ import annotations
 
+import asyncio
 import shutil
+import subprocess
 from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -323,6 +325,56 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=f"Not found: {path}")
         mime = _BROWSER_MIME.get(p.suffix.lower(), "application/octet-stream")
         return FileResponse(p, media_type=mime)
+
+    @app.get("/api/media/transcode")
+    async def transcode(path: str = Query(...)) -> StreamingResponse:
+        """On-the-fly transcode to browser-friendly MP4 (H.264 + AAC).
+
+        Used as a fallback when the browser can't natively decode the source
+        container/codec.  Streams ffmpeg output directly — no temp file needed.
+        Seeking is limited to what the browser buffers.
+        """
+        p = _resolve(path)
+        if not p.is_file():
+            raise HTTPException(status_code=404, detail=f"Not found: {path}")
+
+        cmd = [
+            "ffmpeg",
+            "-i", str(p),
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-crf", "23",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-ac", "2",
+            "-movflags", "frag_keyframe+empty_moov+faststart",
+            "-f", "mp4",
+            "-",
+        ]
+
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+
+        async def _stream():
+            assert proc.stdout is not None
+            try:
+                while True:
+                    chunk = await proc.stdout.read(64 * 1024)
+                    if not chunk:
+                        break
+                    yield chunk
+            finally:
+                proc.kill()
+                await proc.wait()
+
+        return StreamingResponse(
+            _stream(),
+            media_type="video/mp4",
+            headers={"Accept-Ranges": "none"},
+        )
 
     # --- clipping & jobs -------------------------------------------------------
 

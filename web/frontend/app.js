@@ -216,12 +216,20 @@ async function openItem(path, name) {
   if (jobPollTimer) { clearTimeout(jobPollTimer); jobPollTimer = null; }
 
   const player = $("player");
-  player.src = "/api/media" + qp(path);
+  const mediaUrl = "/api/media" + qp(path);
+  const transcodeUrl = "/api/media/transcode" + qp(path);
+  player.src = mediaUrl;
   player.querySelectorAll("track").forEach((t) => t.remove());
   player.onerror = () => {
-    $("preview-note").textContent =
-      "Preview can't play this file in the browser (codec/container not supported). " +
-      "Dialogue search still works — try the search box below.";
+    if (player.src.includes("/api/media/transcode")) {
+      $("preview-note").textContent =
+        "Preview can't play this file in the browser. " +
+        "Dialogue search still works — try the search box below.";
+      return;
+    }
+    // Fall back to on-the-fly transcode
+    player.src = transcodeUrl;
+    $("preview-note").textContent = "Transcoding for browser playback…";
   };
 
   let info;
