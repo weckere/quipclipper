@@ -85,5 +85,64 @@ def browse(path: str | None, roots: list[Path]) -> list[Entry]:
     return dirs + files
 
 
+def search(query: str, roots: list[Path], max_results: int = 50) -> list[Entry]:
+    """Search for folders and video files matching `query` across all roots.
+
+    Walks one level of subdirectories under each root.  Results are ranked by
+    how early in the name the query appears (case-insensitive), then
+    alphabetically.  Hidden entries are skipped.
+    """
+    q = query.lower()
+    hits: list[tuple[int, Entry]] = []
+
+    for root in roots:
+        r = _real(root)
+        if not r.is_dir():
+            continue
+        for child in r.iterdir():
+            if child.name.startswith("."):
+                continue
+            name_lower = child.name.lower()
+            if q not in name_lower:
+                continue
+            pos = name_lower.index(q)
+            if child.is_dir():
+                hits.append((pos, Entry(child.name, str(child), True, False, False)))
+            elif _is_video(child):
+                hits.append(
+                    (pos, Entry(child.name, str(child), False, True, find_sidecar(child) is not None))
+                )
+
+    hits.sort(key=lambda t: (t[0], t[1].name.lower()))
+    return [e for _, e in hits[:max_results]]
+
+
+def search_within(query: str, path: str | Path, roots: list[Path], max_results: int = 50) -> list[Entry]:
+    """Search for entries matching `query` within a specific directory."""
+    target = resolve_within_roots(path, roots)
+    if not target.is_dir():
+        return []
+
+    q = query.lower()
+    hits: list[tuple[int, Entry]] = []
+
+    for child in target.iterdir():
+        if child.name.startswith("."):
+            continue
+        name_lower = child.name.lower()
+        if q not in name_lower:
+            continue
+        pos = name_lower.index(q)
+        if child.is_dir():
+            hits.append((pos, Entry(child.name, str(child), True, False, False)))
+        elif _is_video(child):
+            hits.append(
+                (pos, Entry(child.name, str(child), False, True, find_sidecar(child) is not None))
+            )
+
+    hits.sort(key=lambda t: (t[0], t[1].name.lower()))
+    return [e for _, e in hits[:max_results]]
+
+
 def entry_dict(e: Entry) -> dict:
     return asdict(e)

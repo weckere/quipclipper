@@ -30,6 +30,15 @@ h1 { margin: 0; font-size: 2rem; letter-spacing: -0.02em; cursor: pointer; displ
 .breadcrumb a { color: var(--accent); cursor: pointer; }
 .breadcrumb a:hover { text-decoration: underline; }
 
+.library-search-bar { margin: 0.5rem 0 0.75rem; }
+.library-search-bar input {
+  width: 100%; padding: 0.5rem 0.75rem;
+  background: var(--card); color: var(--fg); border: 1px solid var(--badge);
+  border-radius: 6px; font-size: 0.95rem;
+}
+.library-search-bar input:focus { outline: none; border-color: var(--accent); }
+.library-search-bar input::placeholder { color: var(--muted); }
+
 .entries { list-style: none; margin: 0; padding: 0; }
 .entry {
   display: flex; align-items: center; gap: 0.6rem;

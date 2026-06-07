@@ -44,11 +44,16 @@ function showItem() {
 
 // --- library browser --------------------------------------------------------
 
+let currentBrowsePath = null;
+let librarySearchTimer = null;
+
 async function browse(path) {
   showBrowser();
+  currentBrowsePath = path;
   const list = $("entries");
   list.innerHTML = "";
   $("browser-empty").hidden = true;
+  $("library-search").value = "";
   let data;
   try {
     data = await getJSON("/api/library/browse" + (path ? qp(path) : ""));
@@ -58,12 +63,19 @@ async function browse(path) {
   }
 
   renderBreadcrumb(path, data.entries);
+  renderEntries(data.entries);
+}
 
-  if (!data.entries.length) {
+function renderEntries(entries) {
+  const list = $("entries");
+  list.innerHTML = "";
+  $("browser-empty").hidden = true;
+
+  if (!entries.length) {
     $("browser-empty").hidden = false;
     return;
   }
-  for (const e of data.entries) {
+  for (const e of entries) {
     const li = document.createElement("li");
     li.className = "entry " + (e.is_dir ? "dir" : "video");
     const icon = e.is_dir ? "📁" : "🎬";
@@ -73,6 +85,33 @@ async function browse(path) {
     list.appendChild(li);
   }
 }
+
+async function librarySearch(query) {
+  if (!query.trim()) {
+    browse(currentBrowsePath);
+    return;
+  }
+  const list = $("entries");
+  list.innerHTML = "";
+  $("browser-empty").hidden = true;
+
+  let url = `/api/library/search?query=${encodeURIComponent(query)}`;
+  if (currentBrowsePath) url += `&path=${encodeURIComponent(currentBrowsePath)}`;
+
+  let data;
+  try {
+    data = await getJSON(url);
+  } catch (err) {
+    list.innerHTML = `<li class="error">Search failed: ${err.message}</li>`;
+    return;
+  }
+  renderEntries(data.entries);
+}
+
+$("library-search").addEventListener("input", (e) => {
+  clearTimeout(librarySearchTimer);
+  librarySearchTimer = setTimeout(() => librarySearch(e.target.value), 300);
+});
 
 function renderBreadcrumb(path, entries) {
   const bc = $("breadcrumb");

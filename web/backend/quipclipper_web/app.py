@@ -153,6 +153,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc))
         return {"path": path, "entries": [library.entry_dict(e) for e in entries]}
 
+    @app.get("/api/library/search")
+    def search_library(
+        query: str = Query(..., min_length=1),
+        path: str | None = None,
+        limit: int = Query(50, ge=1, le=200),
+    ) -> dict:
+        """Search for folders/files by name across media roots or within a folder."""
+        if path:
+            try:
+                entries = library.search_within(query, path, settings.media_roots, max_results=limit)
+            except library.PathNotAllowed as exc:
+                raise HTTPException(status_code=403, detail=str(exc))
+        else:
+            entries = library.search(query, settings.media_roots, max_results=limit)
+        return {"query": query, "count": len(entries), "entries": [library.entry_dict(e) for e in entries]}
+
     # --- file inspection -----------------------------------------------------
 
     @app.get("/api/items")

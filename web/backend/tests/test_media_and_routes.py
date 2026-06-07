@@ -375,3 +375,63 @@ def test_bookmark_auto_label(tmp_path: Path) -> None:
     assert resp.status_code == 200
     # Auto-generated label should contain timestamps
     assert "00:01:00" in resp.json()["label"]
+
+
+# --- library search ---
+
+
+def test_library_search_global(tmp_path: Path) -> None:
+    """Search across all roots returns matching dirs and videos."""
+    (tmp_path / "Alien.mkv").write_bytes(b"")
+    (tmp_path / "Aliens").mkdir()
+    (tmp_path / "Batman.mkv").write_bytes(b"")
+    client = _client(tmp_path)
+    resp = client.get("/api/library/search", params={"query": "alien"})
+    assert resp.status_code == 200
+    names = [e["name"] for e in resp.json()["entries"]]
+    assert "Alien.mkv" in names
+    assert "Aliens" in names
+    assert "Batman.mkv" not in names
+
+
+def test_library_search_within_path(tmp_path: Path) -> None:
+    """Search within a specific directory."""
+    sub = tmp_path / "movies"
+    sub.mkdir()
+    (sub / "Alien.mkv").write_bytes(b"")
+    (sub / "Batman.mkv").write_bytes(b"")
+    (tmp_path / "Alien-top.mkv").write_bytes(b"")
+    client = _client(tmp_path)
+    resp = client.get(
+        "/api/library/search",
+        params={"query": "alien", "path": str(sub)},
+    )
+    assert resp.status_code == 200
+    names = [e["name"] for e in resp.json()["entries"]]
+    assert names == ["Alien.mkv"]
+
+
+def test_library_search_empty_query(tmp_path: Path) -> None:
+    """Empty query is rejected by validation (min_length=1)."""
+    (tmp_path / "Alien.mkv").write_bytes(b"")
+    client = _client(tmp_path)
+    resp = client.get("/api/library/search", params={"query": ""})
+    assert resp.status_code == 422
+
+
+def test_library_search_no_matches(tmp_path: Path) -> None:
+    (tmp_path / "Alien.mkv").write_bytes(b"")
+    client = _client(tmp_path)
+    resp = client.get("/api/library/search", params={"query": "zzznotfound"})
+    assert resp.status_code == 200
+    assert resp.json()["entries"] == []
+
+
+def test_library_search_forbids_outside(tmp_path: Path) -> None:
+    """path param outside roots is rejected."""
+    client = _client(tmp_path)
+    resp = client.get(
+        "/api/library/search",
+        params={"query": "test", "path": "/etc"},
+    )
+    assert resp.status_code == 403
