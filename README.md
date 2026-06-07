@@ -309,6 +309,9 @@ dialogue, cut clips, and manage bookmarks — all from a browser.
   fallback, async job queue, save to a clips library.
 - **Player marks & bookmarks** — set in/out points on the video player, clip
   arbitrary ranges, and save bookmarks for later.
+- **Automatic audio transcode** — when the browser can't play a file's audio
+  codec (AC3, DTS, FLAC, etc.), the player automatically falls back to an
+  on-the-fly remux that copies the video and transcodes audio to AAC.
 - **Clips library** — browse and download finished clips.
 - **Jellyfin enrichment** — optionally pull poster art and metadata from a
   Jellyfin server on your network.
