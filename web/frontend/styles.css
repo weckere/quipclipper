@@ -70,6 +70,36 @@ code {
   padding: 0.1rem 0.35rem; border-radius: 5px; font-size: 0.85em;
 }
 
+.search-bar {
+  display: flex; gap: 0.5rem; margin-bottom: 0.75rem;
+}
+.search-bar input {
+  flex: 1; background: var(--bg); color: var(--fg); border: 1px solid var(--badge);
+  border-radius: 6px; padding: 0.45rem 0.7rem; font-size: 0.95rem;
+}
+.search-bar input:focus { outline: none; border-color: var(--accent); }
+.search-bar button {
+  background: var(--accent); color: var(--bg); border: none;
+  border-radius: 6px; padding: 0.45rem 1rem; font-weight: 600; cursor: pointer;
+}
+.search-bar button:hover { opacity: 0.85; }
+.search-bar button:disabled { opacity: 0.5; cursor: default; }
+
+.search-results { list-style: none; margin: 0; padding: 0; }
+.search-result {
+  display: flex; flex-direction: column; gap: 0.15rem;
+  padding: 0.55rem 0.8rem; border-radius: 8px; cursor: pointer;
+}
+.search-result:hover { background: var(--hover); }
+.search-result .result-text { font-size: 0.95rem; }
+.search-result .result-meta {
+  font-size: 0.8rem; color: var(--muted);
+  display: flex; gap: 0.75rem;
+}
+.search-result .result-score {
+  color: var(--ok); font-weight: 600;
+}
+
 .muted { color: var(--muted); }
 .error { color: var(--error); }
 

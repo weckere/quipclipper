@@ -73,3 +73,46 @@ def test_subtitles_route_forbids_outside(tmp_path: Path) -> None:
     root.mkdir()
     resp = _client(root).get("/api/items/subtitles", params={"path": "/etc/passwd"})
     assert resp.status_code == 403
+
+
+# --- search route -----------------------------------------------------------
+
+
+def test_search_returns_matches(tmp_path: Path) -> None:
+    video = tmp_path / "movie.mkv"
+    video.write_bytes(b"")
+    (tmp_path / "movie.srt").write_text(SRT, encoding="utf-8")
+
+    resp = _client(tmp_path).get(
+        "/api/search", params={"path": str(video), "query": "be back"}
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["query"] == "be back"
+    assert data["count"] >= 1
+    m = data["matches"][0]
+    assert m["score"] > 0
+    assert "be back" in m["text"].lower()
+    assert "start" in m and "end" in m
+    assert "start_ts" in m and "end_ts" in m
+
+
+def test_search_no_matches(tmp_path: Path) -> None:
+    video = tmp_path / "movie.mkv"
+    video.write_bytes(b"")
+    (tmp_path / "movie.srt").write_text(SRT, encoding="utf-8")
+
+    resp = _client(tmp_path).get(
+        "/api/search", params={"path": str(video), "query": "xyzzy nothing"}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["count"] == 0
+
+
+def test_search_forbids_outside(tmp_path: Path) -> None:
+    root = tmp_path / "media"
+    root.mkdir()
+    resp = _client(root).get(
+        "/api/search", params={"path": "/etc/passwd", "query": "test"}
+    )
+    assert resp.status_code == 403

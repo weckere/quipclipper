@@ -84,6 +84,9 @@ async function openItem(path, name) {
   $("subs-controls").textContent = "Loading…";
   $("streams").innerHTML = "";
   $("preview-note").textContent = "";
+  $("search-input").value = "";
+  $("search-results").innerHTML = "";
+  $("search-empty").hidden = true;
 
   const player = $("player");
   player.src = "/api/media" + qp(path);
@@ -91,7 +94,7 @@ async function openItem(path, name) {
   player.onerror = () => {
     $("preview-note").textContent =
       "Preview can't play this file in the browser (codec/container not supported). " +
-      "Dialogue search and clipping still work — that's coming next.";
+      "Dialogue search still works — try the search box below.";
   };
 
   let info;
@@ -161,6 +164,74 @@ function loadSubtitleTrack(path, track) {
   track_el.default = true;
   player.appendChild(track_el);
 }
+
+// --- dialogue search --------------------------------------------------------
+
+function getSelectedTrack() {
+  const sel = $("subs-controls")?.querySelector("select");
+  return sel ? sel.value : null;
+}
+
+async function doSearch() {
+  if (!currentItem) return;
+  const query = $("search-input").value.trim();
+  if (!query) return;
+
+  const results = $("search-results");
+  const empty = $("search-empty");
+  results.innerHTML = "";
+  empty.hidden = true;
+  $("search-btn").disabled = true;
+
+  let url = `/api/search${qp(currentItem.path)}&query=${encodeURIComponent(query)}`;
+  const track = getSelectedTrack();
+  if (track !== null) url += `&track=${track}`;
+
+  let data;
+  try {
+    data = await getJSON(url);
+  } catch (err) {
+    results.innerHTML = `<li class="error">Search failed: ${err.message}</li>`;
+    $("search-btn").disabled = false;
+    return;
+  }
+  $("search-btn").disabled = false;
+
+  if (!data.matches.length) {
+    empty.hidden = false;
+    return;
+  }
+
+  for (const m of data.matches) {
+    const li = document.createElement("li");
+    li.className = "search-result";
+    li.innerHTML =
+      `<span class="result-text">${escapeHtml(m.text)}</span>` +
+      `<span class="result-meta">` +
+        `<span class="result-score">${m.score}</span>` +
+        `<span>${m.start_ts} – ${m.end_ts}</span>` +
+      `</span>`;
+    li.onclick = () => seekTo(m.start);
+    results.appendChild(li);
+  }
+}
+
+function seekTo(seconds) {
+  const player = $("player");
+  player.currentTime = seconds;
+  player.play().catch(() => {});
+}
+
+function escapeHtml(s) {
+  const d = document.createElement("div");
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+$("search-btn").onclick = doSearch;
+$("search-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") doSearch();
+});
 
 // --- boot -------------------------------------------------------------------
 

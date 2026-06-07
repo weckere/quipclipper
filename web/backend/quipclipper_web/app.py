@@ -13,7 +13,10 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, Response
+from fastapi.staticfiles import StaticFiles
 
+from quipclipper.models import format_timestamp
+from quipclipper.search import search as engine_search
 from quipclipper.subtitles import resolve_subtitles
 from quipclipper_web import __version__, library, media
 from quipclipper_web.config import Settings
@@ -113,6 +116,54 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=500, detail=str(exc))
         return Response(content=media.cues_to_vtt(resolved.cues), media_type="text/vtt")
 
+    # --- dialogue search -------------------------------------------------------
+
+    @app.get("/api/search")
+    def search_dialogue(
+        path: str = Query(...),
+        query: str = Query(..., min_length=1),
+        track: int | None = None,
+        limit: int = Query(10, ge=1, le=100),
+        min_score: float = Query(60.0, ge=0, le=100),
+        max_span: int = Query(3, ge=1, le=10),
+    ) -> dict:
+        p = _resolve(path)
+        try:
+            resolved = resolve_subtitles(subs=None, video=p, track=track)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        except RuntimeError as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+
+        matches = engine_search(
+            query,
+            resolved.cues,
+            limit=limit,
+            min_score=min_score,
+            max_span=max_span,
+        )
+        return {
+            "query": query,
+            "count": len(matches),
+            "matches": [
+                {
+                    "index": i,
+                    "score": round(m.score, 1),
+                    "text": m.text,
+                    "start": m.start,
+                    "end": m.end,
+                    "start_ts": format_timestamp(m.start),
+                    "end_ts": format_timestamp(m.end),
+                    "cue_count": len(m.cues),
+                }
+                for i, m in enumerate(matches)
+            ],
+        }
+
+    # --- media streaming -------------------------------------------------------
+
     @app.get("/api/media")
     def stream(path: str = Query(...)) -> FileResponse:
         """Serve a source file with HTTP range support (best-effort preview).
@@ -125,6 +176,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=f"Not found: {path}")
         mime = _BROWSER_MIME.get(p.suffix.lower(), "application/octet-stream")
         return FileResponse(p, media_type=mime)
+
+    # Dev mode: serve the frontend when running outside nginx.
+    _frontend = Path(__file__).resolve().parent.parent.parent / "frontend"
+    if _frontend.is_dir():
+        app.mount("/", StaticFiles(directory=_frontend, html=True), name="frontend")
 
     return app
 
