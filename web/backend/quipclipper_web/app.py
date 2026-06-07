@@ -326,29 +326,42 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         mime = _BROWSER_MIME.get(p.suffix.lower(), "application/octet-stream")
         return FileResponse(p, media_type=mime)
 
+    def _probe_duration(path: Path) -> str | None:
+        """Get the file duration in seconds via ffprobe (synchronous, fast)."""
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
+            capture_output=True, text=True,
+        )
+        val = result.stdout.strip()
+        return val if val and val != "N/A" else None
+
     @app.get("/api/media/transcode")
     async def transcode(path: str = Query(...)) -> StreamingResponse:
-        """Remux with audio transcode to browser-friendly MP4.
+        """Remux with audio transcode to browser-friendly Matroska.
 
-        Video is stream-copied (no re-encode), audio is transcoded to AAC.
-        Used as a fallback when the browser can't decode the source audio
-        codec (AC3, DTS, FLAC, etc.).  Streams ffmpeg output directly.
+        Video is stream-copied (no re-encode), audio is transcoded to Opus.
+        Output as Matroska so the browser gets an accurate duration header
+        (fragmented MP4 with empty_moov doesn't carry duration, causing the
+        player timeline to drift).
         """
         p = _resolve(path)
         if not p.is_file():
             raise HTTPException(status_code=404, detail=f"Not found: {path}")
 
+        duration = _probe_duration(p)
+
         cmd = [
             "ffmpeg",
             "-i", str(p),
             "-c:v", "copy",
-            "-c:a", "aac",
+            "-c:a", "libopus",
             "-b:a", "192k",
             "-ac", "2",
-            "-movflags", "frag_keyframe+empty_moov+faststart",
-            "-f", "mp4",
-            "-",
         ]
+        if duration:
+            cmd += ["-metadata", f"DURATION={duration}"]
+        cmd += ["-f", "matroska", "-"]
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -370,7 +383,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         return StreamingResponse(
             _stream(),
-            media_type="video/mp4",
+            media_type="video/webm",
             headers={"Accept-Ranges": "none"},
         )
 
