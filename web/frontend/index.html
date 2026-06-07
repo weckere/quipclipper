@@ -38,6 +38,45 @@
           <p id="search-empty" class="muted" hidden>No matches found.</p>
         </div>
 
+        <div class="panel" id="clip-panel" hidden>
+          <h3>Clip options</h3>
+          <div class="clip-range" id="clip-range-display"></div>
+          <div class="clip-options">
+            <label>Type
+              <select id="clip-kind">
+                <option value="video" selected>Video</option>
+                <option value="audio">Audio</option>
+                <option value="gif">GIF</option>
+              </select>
+            </label>
+            <label>Before (s)
+              <input id="clip-before" type="number" value="2" min="0" max="60" step="0.5" />
+            </label>
+            <label>After (s)
+              <input id="clip-after" type="number" value="2" min="0" max="60" step="0.5" />
+            </label>
+            <label>Backend
+              <select id="clip-backend">
+                <option value="auto" selected>Auto</option>
+                <option value="mkvmerge">mkvmerge</option>
+                <option value="ffmpeg">ffmpeg</option>
+              </select>
+            </label>
+            <label class="checkbox-label">
+              <input id="clip-lossless" type="checkbox" checked /> Lossless
+            </label>
+            <label class="checkbox-label">
+              <input id="clip-embed-subs" type="checkbox" checked /> Embed subs
+            </label>
+          </div>
+          <button id="clip-btn" class="clip-btn">Make clip</button>
+        </div>
+
+        <div class="panel" id="job-panel" hidden>
+          <h3>Job status</h3>
+          <div id="job-status"></div>
+        </div>
+
         <div class="panel">
           <h3>Subtitles</h3>
           <div id="subs-controls"></div>

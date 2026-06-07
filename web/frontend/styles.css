@@ -100,6 +100,43 @@ code {
   color: var(--ok); font-weight: 600;
 }
 
+.clip-range {
+  font-size: 0.9rem; color: var(--muted); margin-bottom: 0.6rem;
+}
+.clip-options {
+  display: flex; flex-wrap: wrap; gap: 0.75rem 1.25rem; margin-bottom: 0.75rem;
+}
+.clip-options label {
+  display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.85rem; color: var(--muted);
+}
+.clip-options select, .clip-options input[type="number"] {
+  background: var(--bg); color: var(--fg); border: 1px solid var(--badge);
+  border-radius: 6px; padding: 0.3rem 0.5rem; width: 6rem;
+}
+.checkbox-label {
+  flex-direction: row !important; align-items: center; gap: 0.4rem !important;
+}
+.clip-btn {
+  background: var(--ok); color: var(--bg); border: none;
+  border-radius: 6px; padding: 0.5rem 1.25rem; font-weight: 600;
+  cursor: pointer; font-size: 0.95rem;
+}
+.clip-btn:hover { opacity: 0.85; }
+.clip-btn:disabled { opacity: 0.5; cursor: default; }
+
+#job-status {
+  font-size: 0.9rem;
+}
+.job-running { color: var(--accent); }
+.job-done { color: var(--ok); }
+.job-failed { color: var(--error); }
+.download-link {
+  display: inline-block; margin-top: 0.5rem;
+  background: var(--accent); color: var(--bg); text-decoration: none;
+  padding: 0.4rem 1rem; border-radius: 6px; font-weight: 600; font-size: 0.9rem;
+}
+.download-link:hover { opacity: 0.85; }
+
 .muted { color: var(--muted); }
 .error { color: var(--error); }
 

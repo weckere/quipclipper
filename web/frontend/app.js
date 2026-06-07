@@ -1,9 +1,23 @@
-// quipclipper-web frontend — Phase 1: browse the library and inspect a file.
+// quipclipper-web frontend
 
 const $ = (id) => document.getElementById(id);
 
 async function getJSON(url) {
   const resp = await fetch(url);
+  if (!resp.ok) {
+    let detail = `${resp.status}`;
+    try { detail = (await resp.json()).detail || detail; } catch {}
+    throw new Error(detail);
+  }
+  return resp.json();
+}
+
+async function postJSON(url, body) {
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
   if (!resp.ok) {
     let detail = `${resp.status}`;
     try { detail = (await resp.json()).detail || detail; } catch {}
@@ -87,6 +101,13 @@ async function openItem(path, name) {
   $("search-input").value = "";
   $("search-results").innerHTML = "";
   $("search-empty").hidden = true;
+  $("clip-panel").hidden = true;
+  $("job-panel").hidden = true;
+  selectedMatch = null;
+  lastSearchQuery = null;
+  lastSearchMatches = [];
+  activeJobId = null;
+  if (jobPollTimer) { clearTimeout(jobPollTimer); jobPollTimer = null; }
 
   const player = $("player");
   player.src = "/api/media" + qp(path);
@@ -202,6 +223,9 @@ async function doSearch() {
     return;
   }
 
+  lastSearchQuery = query;
+  lastSearchMatches = data.matches;
+
   for (const m of data.matches) {
     const li = document.createElement("li");
     li.className = "search-result";
@@ -211,7 +235,10 @@ async function doSearch() {
         `<span class="result-score">${m.score}</span>` +
         `<span>${m.start_ts} – ${m.end_ts}</span>` +
       `</span>`;
-    li.onclick = () => seekTo(m.start);
+    li.onclick = () => {
+      seekTo(m.start);
+      selectMatchForClip(m);
+    };
     results.appendChild(li);
   }
 }
@@ -232,6 +259,87 @@ $("search-btn").onclick = doSearch;
 $("search-input").addEventListener("keydown", (e) => {
   if (e.key === "Enter") doSearch();
 });
+
+// --- clipping ---------------------------------------------------------------
+
+let lastSearchQuery = null;
+let lastSearchMatches = [];
+let selectedMatch = null;
+let activeJobId = null;
+let jobPollTimer = null;
+
+function selectMatchForClip(m) {
+  selectedMatch = m;
+  $("clip-panel").hidden = false;
+  $("clip-range-display").textContent =
+    `"${m.text.length > 80 ? m.text.slice(0, 77) + "…" : m.text}" — ${m.start_ts} – ${m.end_ts}`;
+}
+
+async function makeClip() {
+  if (!currentItem || !selectedMatch) return;
+  $("clip-btn").disabled = true;
+  $("job-panel").hidden = false;
+  $("job-status").innerHTML = '<span class="job-running">Submitting…</span>';
+
+  const body = {
+    path: currentItem.path,
+    query: lastSearchQuery,
+    match_index: selectedMatch.index,
+    track: getSelectedTrack() !== null ? parseInt(getSelectedTrack()) : null,
+    kind: $("clip-kind").value,
+    lossless: $("clip-lossless").checked,
+    before: parseFloat($("clip-before").value) || 2,
+    after: parseFloat($("clip-after").value) || 2,
+    backend: $("clip-backend").value,
+    embed_subs: $("clip-embed-subs").checked,
+  };
+
+  try {
+    const data = await postJSON("/api/clip", body);
+    activeJobId = data.job_id;
+    $("job-status").innerHTML = '<span class="job-running">Queued…</span>';
+    pollJob();
+  } catch (err) {
+    $("job-status").innerHTML = `<span class="job-failed">Failed: ${escapeHtml(err.message)}</span>`;
+    $("clip-btn").disabled = false;
+  }
+}
+
+function pollJob() {
+  if (!activeJobId) return;
+  if (jobPollTimer) clearTimeout(jobPollTimer);
+
+  getJSON(`/api/jobs/${activeJobId}`)
+    .then((job) => {
+      if (job.status === "queued" || job.status === "running") {
+        const elapsed = job.started ? `${Math.round(Date.now() / 1000 - job.started)}s` : "";
+        $("job-status").innerHTML =
+          `<span class="job-running">Processing${elapsed ? " (" + elapsed + ")" : ""}…</span>`;
+        jobPollTimer = setTimeout(pollJob, 1000);
+      } else if (job.status === "done") {
+        let html = `<span class="job-done">Done${job.elapsed ? " (" + job.elapsed + "s)" : ""}!</span>`;
+        if (job.files) {
+          for (const f of job.files) {
+            const size = f.size > 1048576
+              ? (f.size / 1048576).toFixed(1) + " MB"
+              : (f.size / 1024).toFixed(0) + " KB";
+            html += `<br><a class="download-link" href="/api/jobs/${activeJobId}/download/${encodeURIComponent(f.name)}" download>Download ${escapeHtml(f.name)} (${size})</a>`;
+          }
+        }
+        $("job-status").innerHTML = html;
+        $("clip-btn").disabled = false;
+      } else {
+        $("job-status").innerHTML =
+          `<span class="job-failed">Failed: ${escapeHtml(job.error || "unknown error")}</span>`;
+        $("clip-btn").disabled = false;
+      }
+    })
+    .catch(() => {
+      jobPollTimer = setTimeout(pollJob, 2000);
+    });
+}
+
+$("clip-btn").onclick = makeClip;
 
 // --- boot -------------------------------------------------------------------
 

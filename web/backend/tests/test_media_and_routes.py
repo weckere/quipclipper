@@ -1,4 +1,4 @@
-"""WebVTT rendering and the library/subtitle routes (media-free).
+"""WebVTT rendering and the library/subtitle/search/clip routes (media-free).
 
 The subtitle route is exercised through a sidecar .srt (parsed by pysubs2, no
 ffmpeg needed); stream probing (/api/items) needs ffprobe and is covered by the
@@ -7,7 +7,9 @@ container smoke test rather than here.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -116,3 +118,71 @@ def test_search_forbids_outside(tmp_path: Path) -> None:
         "/api/search", params={"path": "/etc/passwd", "query": "test"}
     )
     assert resp.status_code == 403
+
+
+# --- clip route (with mocked cut) -------------------------------------------
+
+
+def test_clip_enqueues_job(tmp_path: Path) -> None:
+    video = tmp_path / "movie.mkv"
+    video.write_bytes(b"")
+    (tmp_path / "movie.srt").write_text(SRT, encoding="utf-8")
+
+    # Mock cut_clip so no ffmpeg is needed.
+    fake_out = tmp_path / "clip.mkv"
+    fake_out.write_bytes(b"fake clip data")
+
+    client = _client(tmp_path)
+    with patch("quipclipper_web.app.cut_clip", return_value=fake_out):
+        resp = client.post(
+            "/api/clip",
+            json={
+                "path": str(video),
+                "query": "be back",
+                "match_index": 0,
+                "kind": "video",
+                "lossless": True,
+                "backend": "ffmpeg",
+            },
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "job_id" in data
+    assert data["status"] in ("queued", "running", "done")
+
+    # Poll until done (mocked cut is instant).
+    job_id = data["job_id"]
+    for _ in range(20):
+        job = client.get(f"/api/jobs/{job_id}").json()
+        if job["status"] in ("done", "failed"):
+            break
+        time.sleep(0.1)
+    assert job["status"] == "done"
+    assert len(job["files"]) >= 1
+
+
+def test_clip_forbids_outside(tmp_path: Path) -> None:
+    root = tmp_path / "media"
+    root.mkdir()
+    resp = _client(root).post(
+        "/api/clip",
+        json={"path": "/etc/passwd", "query": "test", "kind": "audio"},
+    )
+    assert resp.status_code == 403
+
+
+def test_clip_requires_range_or_query(tmp_path: Path) -> None:
+    video = tmp_path / "movie.mkv"
+    video.write_bytes(b"")
+    resp = _client(tmp_path).post(
+        "/api/clip",
+        json={"path": str(video), "kind": "audio"},
+    )
+    assert resp.status_code == 400
+
+
+def test_jobs_list(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    resp = client.get("/api/jobs")
+    assert resp.status_code == 200
+    assert "jobs" in resp.json()
