@@ -330,12 +330,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     fmt=_split_format, include_lfe=_include_lfe, out=_out_path,
                 )
             if _use_mkvmerge:
-                return [cut_with_mkvmerge(
-                    _video, _rng, kind=_kind, out=_out_path,
-                    audio_indices=_audio_indices, keep_subs=True,
-                    keep_chapters=_chapters, embed_subs=_embed_subs_path,
-                    remux_first=_do_remux,
-                )]
+                try:
+                    return [cut_with_mkvmerge(
+                        _video, _rng, kind=_kind, out=_out_path,
+                        audio_indices=_audio_indices, keep_subs=True,
+                        keep_chapters=_chapters, embed_subs=_embed_subs_path,
+                        remux_first=_do_remux,
+                    )]
+                except RuntimeError:
+                    # mkvmerge can't split some track types (e.g. FLAC).
+                    # Fall back to ffmpeg for a lossless copy-codec cut.
+                    _out_path.unlink(missing_ok=True)
+                    return [cut_clip(
+                        _video, _rng, kind=_kind, lossless=_lossless, out=_out_path,
+                        audio_indices=_audio_indices, embed_cues=_embed_cues,
+                    )]
             return [cut_clip(
                 _video, _rng, kind=_kind, lossless=_lossless, out=_out_path,
                 audio_indices=_audio_indices, embed_cues=_embed_cues,

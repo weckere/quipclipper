@@ -161,6 +161,43 @@ def test_clip_enqueues_job(tmp_path: Path) -> None:
     assert len(job["files"]) >= 1
 
 
+def test_clip_mkvmerge_fallback_to_ffmpeg(tmp_path: Path) -> None:
+    """When mkvmerge fails (e.g. unsplittable FLAC track), fall back to ffmpeg."""
+    video = tmp_path / "movie.mkv"
+    video.write_bytes(b"")
+    (tmp_path / "movie.srt").write_text(SRT, encoding="utf-8")
+
+    fake_out = tmp_path / "clip.mkv"
+    fake_out.write_bytes(b"fake clip data")
+
+    client = _client(tmp_path)
+    with (
+        patch("quipclipper_web.app.cut_with_mkvmerge", side_effect=RuntimeError("cannot split FLAC")),
+        patch("quipclipper_web.app.mkvmerge_available", return_value=True),
+        patch("quipclipper_web.app.cut_clip", return_value=fake_out) as mock_ffmpeg,
+    ):
+        resp = client.post(
+            "/api/clip",
+            json={
+                "path": str(video),
+                "query": "be back",
+                "match_index": 0,
+                "kind": "video",
+                "lossless": True,
+                "backend": "auto",
+            },
+        )
+    assert resp.status_code == 200
+    job_id = resp.json()["job_id"]
+    for _ in range(20):
+        job = client.get(f"/api/jobs/{job_id}").json()
+        if job["status"] in ("done", "failed"):
+            break
+        time.sleep(0.1)
+    assert job["status"] == "done"
+    mock_ffmpeg.assert_called_once()
+
+
 def test_clip_forbids_outside(tmp_path: Path) -> None:
     root = tmp_path / "media"
     root.mkdir()
