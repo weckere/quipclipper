@@ -328,11 +328,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/media/transcode")
     async def transcode(path: str = Query(...)) -> StreamingResponse:
-        """On-the-fly transcode to browser-friendly MP4 (H.264 + AAC).
+        """Remux with audio transcode to browser-friendly MP4.
 
-        Used as a fallback when the browser can't natively decode the source
-        container/codec.  Streams ffmpeg output directly — no temp file needed.
-        Seeking is limited to what the browser buffers.
+        Video is stream-copied (no re-encode), audio is transcoded to AAC.
+        Used as a fallback when the browser can't decode the source audio
+        codec (AC3, DTS, FLAC, etc.).  Streams ffmpeg output directly.
         """
         p = _resolve(path)
         if not p.is_file():
@@ -341,9 +341,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         cmd = [
             "ffmpeg",
             "-i", str(p),
-            "-c:v", "libx264",
-            "-preset", "ultrafast",
-            "-crf", "23",
+            "-c:v", "copy",
             "-c:a", "aac",
             "-b:a", "192k",
             "-ac", "2",
