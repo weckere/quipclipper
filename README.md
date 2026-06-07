@@ -311,8 +311,12 @@ dialogue, cut clips, and manage bookmarks — all from a browser.
   arbitrary ranges, and save bookmarks for later.
 - **Automatic audio transcode** — when the browser can't play a file's audio
   codec (AC3, DTS, FLAC, etc.), the player automatically falls back to an
-  on-the-fly remux that copies the video and transcodes audio to AAC.
-- **Clips library** — browse and download finished clips.
+  on-the-fly remux that copies the video and transcodes audio to Opus.
+- **Clips library** — browse, play, and download finished clips directly in
+  the browser. Click a clip to watch it inline.
+- **Dialogue in filenames** — clips made from a dialogue search include the
+  matched text in the filename
+  (e.g. `Movie_00-01-23_Ill_be_back.mkv`).
 - **Jellyfin enrichment** — optionally pull poster art and metadata from a
   Jellyfin server on your network.
 
