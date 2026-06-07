@@ -32,11 +32,13 @@ const qp = (path) => `?path=${encodeURIComponent(path)}`;
 
 function showBrowser() {
   $("item").hidden = true;
+  $("clips-browser").hidden = true;
   $("browser").hidden = false;
 }
 
 function showItem() {
   $("browser").hidden = true;
+  $("clips-browser").hidden = true;
   $("item").hidden = false;
 }
 
@@ -431,6 +433,7 @@ async function makeClip() {
     after: parseFloat($("clip-after").value) || 2,
     backend: $("clip-backend").value,
     embed_subs: $("clip-embed-subs").checked,
+    save_to_library: $("clip-save-lib") ? $("clip-save-lib").checked : false,
   };
 
   if (selectedMatch) {
@@ -489,7 +492,66 @@ function pollJob() {
 
 $("clip-btn").onclick = makeClip;
 
+// --- clips library ----------------------------------------------------------
+
+function showClips() {
+  $("browser").hidden = true;
+  $("item").hidden = true;
+  $("clips-browser").hidden = false;
+}
+
+async function browseClips(folder) {
+  showClips();
+  const list = $("clips-entries");
+  const empty = $("clips-empty");
+  list.innerHTML = "";
+  empty.hidden = true;
+  $("clips-folder-crumb").textContent = folder ? ` / ${folder}` : "";
+
+  let data;
+  try {
+    const url = folder ? `/api/clips?folder=${encodeURIComponent(folder)}` : "/api/clips";
+    data = await getJSON(url);
+  } catch (err) {
+    list.innerHTML = `<li class="error">Could not load clips: ${err.message}</li>`;
+    return;
+  }
+
+  if (!data.folders.length && !data.clips.length) {
+    empty.hidden = false;
+    return;
+  }
+
+  for (const f of data.folders) {
+    const li = document.createElement("li");
+    li.className = "entry dir";
+    li.innerHTML = `<span class="icon">📁</span><span class="label">${escapeHtml(f)}</span>`;
+    li.onclick = () => browseClips(f);
+    list.appendChild(li);
+  }
+
+  for (const c of data.clips) {
+    const li = document.createElement("li");
+    li.className = "entry video";
+    const size = c.size > 1048576
+      ? (c.size / 1048576).toFixed(1) + " MB"
+      : (c.size / 1024).toFixed(0) + " KB";
+    li.innerHTML =
+      `<span class="icon">🎬</span>` +
+      `<span class="label">${escapeHtml(c.name)}</span>` +
+      `<span class="badge">${size}</span>` +
+      `<a class="download-link clip-dl" href="${c.download_url}" download>Download</a>`;
+    list.appendChild(li);
+  }
+}
+
+$("clips-link").onclick = () => browseClips(null);
+$("clips-home").onclick = () => browseClips(null);
+$("clips-back-lib").onclick = () => browse(null);
+
 // --- boot -------------------------------------------------------------------
+
+let appConfig = {};
 
 async function loadStatus() {
   try {
@@ -501,6 +563,13 @@ async function loadStatus() {
   } catch (err) {
     $("status").textContent = `backend unreachable: ${err.message}`;
   }
+  // Load config for save_to_library and jellyfin_enabled flags
+  try {
+    appConfig = await getJSON("/api/config");
+    // Always show the "Save to library" checkbox — it can be toggled per-clip
+    $("clip-save-lib-label").hidden = false;
+    $("clip-save-lib").checked = appConfig.save_to_library || false;
+  } catch {}
 }
 
 $("back").onclick = () => browse(currentParent());

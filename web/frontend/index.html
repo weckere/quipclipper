@@ -9,7 +9,9 @@
   <body>
     <header>
       <h1 id="home-link">quipclipper</h1>
-      <p class="tagline">Find and cut clips by searching the dialogue.</p>
+      <p class="tagline">Find and cut clips by searching the dialogue.
+        <a id="clips-link" class="clips-nav-link">Clips</a>
+      </p>
     </header>
 
     <main>
@@ -18,6 +20,18 @@
         <nav id="breadcrumb" class="breadcrumb"></nav>
         <ul id="entries" class="entries"></ul>
         <p id="browser-empty" class="muted" hidden>Nothing here.</p>
+      </section>
+
+      <!-- Clips library -->
+      <section id="clips-browser" hidden>
+        <nav class="breadcrumb">
+          <a id="clips-back-lib">Library</a>
+          <span class="muted"> / </span>
+          <a id="clips-home">Clips</a>
+          <span id="clips-folder-crumb" class="muted"></span>
+        </nav>
+        <ul id="clips-entries" class="entries"></ul>
+        <p id="clips-empty" class="muted" hidden>No clips yet.</p>
       </section>
 
       <!-- Item / inspection view -->
@@ -79,6 +93,9 @@
             </label>
             <label class="checkbox-label">
               <input id="clip-embed-subs" type="checkbox" checked /> Embed subs
+            </label>
+            <label class="checkbox-label" id="clip-save-lib-label" hidden>
+              <input id="clip-save-lib" type="checkbox" checked /> Save to library
             </label>
           </div>
           <button id="clip-btn" class="clip-btn">Make clip</button>

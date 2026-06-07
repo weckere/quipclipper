@@ -6,12 +6,14 @@ Routes:
 - Phase 2: dialogue search
 - Phase 3: clip jobs (POST /api/clip, GET /api/jobs)
 - Phase 4: bookmarks (GET/POST/DELETE /api/bookmarks)
+- Phase 5: clips library (GET /api/clips), Jellyfin enrichment (GET /api/jellyfin/meta)
 """
 
 from __future__ import annotations
 
 import shutil
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, Response
@@ -37,6 +39,7 @@ from quipclipper.subtitles import resolve_subtitles
 from quipclipper_web import __version__, library, media
 from quipclipper_web.bookmarks import BookmarkStore
 from quipclipper_web.config import Settings
+from quipclipper_web.jellyfin import JellyfinClient
 from quipclipper_web.jobs import JobRegistry
 
 # Containers/extensions a browser can usually play in a <video> element. Used to
@@ -82,6 +85,8 @@ class ClipRequest(BaseModel):
     chapters: bool = True
     remux_first: bool = False
     embed_subs: bool = True
+    # Save to library (organize into subfolder by source)
+    save_to_library: bool = False
     # Channel split
     split_channels: bool = False
     split_format: str = Field("wav", pattern="^(wav|flac|original)$")
@@ -94,6 +99,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     jobs = JobRegistry(max_workers=settings.max_concurrent_jobs)
     bookmarks = BookmarkStore(settings.state_dir)
+    jf: JellyfinClient | None = None
+    if settings.jellyfin_url and settings.jellyfin_api_key:
+        jf = JellyfinClient(settings.jellyfin_url, settings.jellyfin_api_key)
 
     @app.get("/api/health")
     def health() -> dict:
@@ -298,7 +306,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 pass  # non-fatal: skip subtitle embedding
 
         # Build the output path inside clips_dir.
-        clips_dir = settings.clips_dir
+        # When save_to_library is enabled (per-request or global default), organize
+        # clips into a subfolder named after the source file.
+        do_save_lib = req.save_to_library or settings.save_to_library
+        if do_save_lib:
+            clips_dir = settings.clips_dir / video.stem
+        else:
+            clips_dir = settings.clips_dir
         clips_dir.mkdir(parents=True, exist_ok=True)
 
         # Determine extension.
@@ -413,6 +427,93 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not bookmarks.delete(bookmark_id):
             raise HTTPException(status_code=404, detail="Bookmark not found.")
         return {"deleted": bookmark_id}
+
+    # --- clips library -----------------------------------------------------------
+
+    @app.get("/api/clips")
+    def list_clips(folder: str | None = None) -> dict:
+        """Browse the clips directory. With folder=, list clips inside that subfolder."""
+        base = settings.clips_dir
+        if not base.is_dir():
+            return {"clips": [], "folders": []}
+        if folder:
+            target = (base / folder).resolve()
+            if not str(target).startswith(str(base.resolve())):
+                raise HTTPException(status_code=403, detail="Path outside clips dir.")
+            if not target.is_dir():
+                raise HTTPException(status_code=404, detail="Folder not found.")
+        else:
+            target = base
+
+        folders = sorted(
+            [d.name for d in target.iterdir() if d.is_dir()],
+        )
+        clips = sorted(
+            [
+                {
+                    "name": f.name,
+                    "size": f.stat().st_size,
+                    "folder": folder or "",
+                    "download_url": f"/api/clips/download/{quote(((folder + '/') if folder else '') + f.name)}",
+                }
+                for f in target.iterdir()
+                if f.is_file() and f.suffix.lower() in (".mkv", ".mka", ".mp4", ".m4v", ".webm", ".gif", ".wav", ".flac", ".ogg", ".mp3")
+            ],
+            key=lambda c: c["name"],
+        )
+        return {"folder": folder, "folders": folders, "clips": clips}
+
+    @app.get("/api/clips/download/{clip_path:path}")
+    def download_saved_clip(clip_path: str) -> FileResponse:
+        """Download a clip from the clips library."""
+        target = (settings.clips_dir / clip_path).resolve()
+        if not str(target).startswith(str(settings.clips_dir.resolve())):
+            raise HTTPException(status_code=403, detail="Path outside clips dir.")
+        if not target.is_file():
+            raise HTTPException(status_code=404, detail="Clip not found.")
+        mime = _BROWSER_MIME.get(target.suffix.lower(), "application/octet-stream")
+        return FileResponse(target, media_type=mime, filename=target.name)
+
+    # --- Jellyfin enrichment ---------------------------------------------------
+
+    @app.get("/api/jellyfin/meta")
+    def jellyfin_meta(path: str | None = None, name: str | None = None) -> dict:
+        """Get Jellyfin metadata for a file path or search by name.
+
+        Returns ``{"meta": null}`` when Jellyfin is not configured or no match.
+        """
+        if jf is None:
+            return {"meta": None, "enabled": False}
+        if path:
+            meta = jf.search_by_path(path)
+            if meta:
+                return {
+                    "meta": {
+                        "id": meta.item_id,
+                        "name": meta.name,
+                        "year": meta.year,
+                        "overview": meta.overview,
+                        "type": meta.type,
+                        "poster": meta.poster_url(jf.base_url),
+                    },
+                    "enabled": True,
+                }
+        elif name:
+            results = jf.search_by_name(name, limit=1)
+            if results:
+                meta = results[0]
+                return {
+                    "meta": {
+                        "id": meta.item_id,
+                        "name": meta.name,
+                        "year": meta.year,
+                        "overview": meta.overview,
+                        "type": meta.type,
+                        "poster": meta.poster_url(jf.base_url),
+                    },
+                    "enabled": True,
+                }
+        return {"meta": None, "enabled": True}
 
     # Dev mode: serve the frontend when running outside nginx.
     _frontend = Path(__file__).resolve().parent.parent.parent / "frontend"

@@ -274,6 +274,96 @@ def test_bookmark_forbids_outside(tmp_path: Path) -> None:
     assert resp.status_code == 403
 
 
+def test_bookmark_delete_not_found(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    resp = client.delete("/api/bookmarks/nonexistent")
+    assert resp.status_code == 404
+
+
+# --- clips library -----------------------------------------------------------
+
+
+def test_clips_list_empty(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    resp = client.get("/api/clips")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["clips"] == []
+
+
+def test_clips_list_with_files(tmp_path: Path) -> None:
+    # Create a clips dir with some files
+    clips = tmp_path / "clips"
+    clips.mkdir()
+    (clips / "test.mkv").write_bytes(b"x" * 100)
+    sub = clips / "Movie Name"
+    sub.mkdir()
+    (sub / "clip1.mkv").write_bytes(b"y" * 200)
+
+    client = TestClient(
+        create_app(Settings.from_env({
+            "QC_MEDIA_ROOTS": str(tmp_path),
+            "QC_CLIPS_DIR": str(clips),
+        }))
+    )
+    resp = client.get("/api/clips")
+    data = resp.json()
+    assert len(data["folders"]) == 1
+    assert data["folders"][0] == "Movie Name"
+    assert len(data["clips"]) == 1
+    assert data["clips"][0]["name"] == "test.mkv"
+
+    # Browse subfolder
+    resp = client.get("/api/clips", params={"folder": "Movie Name"})
+    data = resp.json()
+    assert len(data["clips"]) == 1
+    assert data["clips"][0]["name"] == "clip1.mkv"
+
+
+def test_clips_download(tmp_path: Path) -> None:
+    clips = tmp_path / "clips"
+    clips.mkdir()
+    (clips / "test.mkv").write_bytes(b"clip data")
+
+    client = TestClient(
+        create_app(Settings.from_env({
+            "QC_MEDIA_ROOTS": str(tmp_path),
+            "QC_CLIPS_DIR": str(clips),
+        }))
+    )
+    resp = client.get("/api/clips/download/test.mkv")
+    assert resp.status_code == 200
+
+
+def test_clips_download_forbids_traversal(tmp_path: Path) -> None:
+    clips = tmp_path / "clips"
+    clips.mkdir()
+
+    client = TestClient(
+        create_app(Settings.from_env({
+            "QC_MEDIA_ROOTS": str(tmp_path),
+            "QC_CLIPS_DIR": str(clips),
+        }))
+    )
+    # FastAPI normalizes ../../ in the URL, so the path resolves inside clips_dir
+    # and gets a 404 (file not found). The important thing is it never serves
+    # files outside clips_dir.
+    resp = client.get("/api/clips/download/../../../etc/passwd")
+    assert resp.status_code in (403, 404)
+
+
+# --- Jellyfin metadata -------------------------------------------------------
+
+
+def test_jellyfin_meta_disabled(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    resp = client.get("/api/jellyfin/meta", params={"name": "test"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["meta"] is None
+    assert data["enabled"] is False
+
+
 def test_bookmark_auto_label(tmp_path: Path) -> None:
     video = tmp_path / "movie.mkv"
     video.write_bytes(b"")

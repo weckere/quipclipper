@@ -170,6 +170,15 @@ code {
 .bookmark-seek:hover { border-color: var(--accent); color: var(--accent); }
 .bookmark-del:hover { border-color: var(--error); color: var(--error); }
 
+.clips-nav-link {
+  color: var(--accent); cursor: pointer; margin-left: 1rem;
+  font-size: 0.85rem; text-decoration: none;
+}
+.clips-nav-link:hover { text-decoration: underline; }
+.clip-dl {
+  font-size: 0.75rem; padding: 0.2rem 0.6rem; margin-left: auto;
+}
+
 .muted { color: var(--muted); }
 .error { color: var(--error); }
 
