@@ -188,6 +188,24 @@ function renderBreadcrumb(path, entries) {
 // --- item / inspection view -------------------------------------------------
 
 let currentItem = null;
+let transcodeOffset = 0;  // ffmpeg -ss offset for current transcode segment
+
+/** Absolute playback position in the source file. */
+function playerTime() {
+  return $("player").currentTime + transcodeOffset;
+}
+
+/** Seek to an absolute position in the source file. */
+function seekTo(seconds) {
+  const player = $("player");
+  if (transcodeOffset > 0 || player.src.includes("/api/media/transcode")) {
+    // For transcoded streams, request a new segment from the server
+    player.dispatchEvent(new CustomEvent("transcode-seek", { detail: seconds }));
+  } else {
+    player.currentTime = seconds;
+  }
+  player.play().catch(() => {});
+}
 
 async function openItem(path, name) {
   showItem();
@@ -235,23 +253,56 @@ async function openItem(path, name) {
   const primaryAudio = info.streams.find((s) => s.kind === "audio");
   const needsTranscode = primaryAudio && !BROWSER_AUDIO.has(primaryAudio.codec);
 
-  if (needsTranscode) {
-    player.src = transcodeUrl;
+  // Transcode seek state
+  let isTranscoding = false;
+  let settingSrc = false;        // guard against re-entrant seeking events
+  transcodeOffset = 0;           // reset module-level offset
+
+  function loadTranscode(startTime) {
+    isTranscoding = true;
+    settingSrc = true;
+    transcodeOffset = startTime;  // update module-level offset
+    let url = transcodeUrl;
+    if (startTime > 0) url += `&start=${startTime}`;
+    player.src = url;
+    player.load();
+    player.addEventListener("loadedmetadata", function onMeta() {
+      player.removeEventListener("loadedmetadata", onMeta);
+      settingSrc = false;
+      player.play().catch(() => {});
+    }, { once: true });
     $("preview-note").textContent = "Transcoding audio for browser playback…";
+  }
+
+  // When the user drags the timeline on a transcoded stream, request a new
+  // segment from the absolute seek position.
+  player.addEventListener("seeking", () => {
+    if (!isTranscoding || settingSrc) return;
+    const seekTarget = player.currentTime + transcodeOffset;
+    loadTranscode(seekTarget);
+  });
+
+  // Custom event for programmatic seeks (search results, bookmarks, etc.)
+  player.addEventListener("transcode-seek", (e) => {
+    loadTranscode(e.detail);
+  });
+
+  if (needsTranscode) {
+    loadTranscode(0);
   } else {
+    transcodeOffset = 0;
     player.src = mediaUrl;
   }
 
   player.onerror = () => {
-    if (player.src.includes("/api/media/transcode")) {
+    if (isTranscoding || player.src.includes("/api/media/transcode")) {
       $("preview-note").textContent =
         "Preview can't play this file in the browser. " +
         "Dialogue search still works — try the search box below.";
       return;
     }
     // Fall back to on-the-fly transcode
-    player.src = transcodeUrl;
-    $("preview-note").textContent = "Transcoding audio for browser playback…";
+    loadTranscode(0);
   };
 
   renderStreams(info.streams);
@@ -373,11 +424,7 @@ async function doSearch() {
   }
 }
 
-function seekTo(seconds) {
-  const player = $("player");
-  player.currentTime = seconds;
-  player.play().catch(() => {});
-}
+// seekTo is defined above (module-level, handles transcode offset)
 
 function escapeHtml(s) {
   const d = document.createElement("div");
@@ -396,15 +443,13 @@ let markIn = null;
 let markOut = null;
 
 function setMarkIn() {
-  const player = $("player");
-  markIn = player.currentTime;
+  markIn = playerTime();
   $("mark-in-display").textContent = formatTime(markIn);
   updateMarkButtons();
 }
 
 function setMarkOut() {
-  const player = $("player");
-  markOut = player.currentTime;
+  markOut = playerTime();
   $("mark-out-display").textContent = formatTime(markOut);
   updateMarkButtons();
 }

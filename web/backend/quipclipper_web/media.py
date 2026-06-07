@@ -7,10 +7,27 @@ the engine functions called here.
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 from quipclipper.models import Cue, format_timestamp
 from quipclipper.subtitles import StreamInfo, find_sidecar, list_streams
+
+
+def probe_duration(path: Path) -> float | None:
+    """Get file duration in seconds via ffprobe, or None on failure."""
+    result = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
+        capture_output=True, text=True,
+    )
+    val = result.stdout.strip()
+    if val and val != "N/A":
+        try:
+            return float(val)
+        except ValueError:
+            pass
+    return None
 
 
 def stream_dict(s: StreamInfo) -> dict:
@@ -35,6 +52,7 @@ def item_info(path: Path) -> dict:
         "name": path.name,
         "path": str(path),
         "size": path.stat().st_size if path.exists() else None,
+        "duration": probe_duration(path),
         "streams": [stream_dict(s) for s in streams],
         "subtitle_tracks": subtitle_tracks,
         "has_sidecar": find_sidecar(path) is not None,
