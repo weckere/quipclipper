@@ -12,6 +12,10 @@ a clip.
 > manual; [`docs/DESIGN_NOTES.md`](docs/DESIGN_NOTES.md) explains the design
 > decisions and their rationale.
 
+quipclipper comes in two flavours: a **CLI** for scripting and quick one-off cuts,
+and a **self-hosted web app** for browsing your media library, searching dialogue,
+and cutting clips from any browser. See [Web App](#web-app) below.
+
 ## Features
 
 - **Local, offline** — works on your own video + subtitle files, no API keys.
@@ -287,6 +291,106 @@ boundaries or a specific format like mp3). GIF output is inherently a re-encode
 and ignores the flag. (For MKV sources the default backend is mkvmerge — see
 "MKV sources" above.)
 
+## Web App
+
+quipclipper-web is a self-hosted web interface that wraps the same search and
+clipping engine. Deploy it with Docker and browse your media library, search
+dialogue, cut clips, and manage bookmarks — all from a browser.
+
+### Features
+
+- **Library browser** — browse multiple media folders (movies, shows, etc.) with
+  a search bar to filter by name.
+- **Dialogue search** — open a video and fuzzy-search its subtitles (sidecar or
+  embedded) just like the CLI.
+- **Folder dialogue search** — search subtitles across every video in a folder at
+  once. Useful for finding a line when you don't know which episode it's in.
+- **Lossless clipping** — same engine as the CLI: mkvmerge with automatic ffmpeg
+  fallback, async job queue, save to a clips library.
+- **Player marks & bookmarks** — set in/out points on the video player, clip
+  arbitrary ranges, and save bookmarks for later.
+- **Clips library** — browse and download finished clips.
+- **Jellyfin enrichment** — optionally pull poster art and metadata from a
+  Jellyfin server on your network.
+
+### Quick start (Docker Compose)
+
+The compose file builds directly from this repo — no images to pull:
+
+```yaml
+# docker-compose.yml (minimal example)
+services:
+  app:
+    build:
+      context: "https://github.com/weckere/quipclipper.git#main"
+      dockerfile: web/Dockerfile
+    environment:
+      QC_MEDIA_ROOTS: /media/movies:/media/shows
+      QC_CLIPS_DIR: /clips
+      QC_STATE_DIR: /state
+    volumes:
+      - /path/to/movies:/media/movies:ro
+      - /path/to/shows:/media/shows:ro
+      - /path/to/clips:/clips
+      - quip-state:/state
+    expose:
+      - "8000"
+
+  web:
+    build:
+      context: "https://github.com/weckere/quipclipper.git#main"
+      dockerfile: web/nginx/Dockerfile
+    depends_on:
+      - app
+    ports:
+      - "8896:80"
+    volumes:
+      - /path/to/clips:/clips:ro
+
+volumes:
+  quip-state:
+```
+
+Then:
+
+```bash
+docker compose up -d
+# browse at http://localhost:8896
+```
+
+### Configuration
+
+All settings are environment variables on the `app` service:
+
+| Variable | Default | Description |
+|---|---|---|
+| `QC_MEDIA_ROOTS` | *(required)* | Colon-separated list of media directories (in-container paths) |
+| `QC_CLIPS_DIR` | `/clips` | Where finished clips are saved |
+| `QC_STATE_DIR` | `/state` | Bookmarks and other persistent state |
+| `QC_PASSWORD` | *(none)* | Set to require a password to access the app |
+| `QC_JELLYFIN_URL` | *(none)* | Jellyfin server URL for metadata enrichment |
+| `QC_JELLYFIN_API_KEY` | *(none)* | Jellyfin API key (required if URL is set) |
+
+### OpenMediaVault
+
+An OMV-ready compose file is included at
+[`web/docker-compose.omv.yml`](web/docker-compose.omv.yml). It uses OMV's
+global env vars (`$MOVIES`, `$SHOWS`, `$CLIPS`) so you only need to paste it
+into Services > Compose > Files and bring it up.
+
+### Architecture
+
+The web app is two containers:
+
+- **app** — Python (FastAPI + Uvicorn) serving the API and the static frontend.
+  Runs the quipclipper engine for search and clipping via a thread-pool job queue.
+- **web** — Nginx reverse proxy handling static assets, large file downloads
+  (clips), and forwarding API requests to the app.
+
+Media directories are mounted read-only. All file access is realpath-checked
+against the configured media roots — path traversal and symlink escapes are
+rejected.
+
 ## How it works
 
 | Module | Responsibility |
@@ -297,6 +401,7 @@ and ignores the flag. (For MKV sources the default backend is mkvmerge — see
 | `clip.py` | Turn a match into a padded time range and cut it with ffmpeg (lossless `-c copy`, re-encode, or surround channel split). |
 | `mkv.py` | MKVToolNix (`mkvmerge`) backend for lossless cuts of Matroska sources. |
 | `cli.py` | `typer` CLI: `search`, `clip`, `tracks`. |
+| `web/` | Self-hosted web app (FastAPI + nginx + vanilla JS). See [Web App](#web-app). |
 
 ## Development
 
