@@ -309,13 +309,17 @@ async function openItem(path, name) {
     loadTranscode(e.detail);
   });
 
+  const seekHint = $("transcode-hint");
+
   if (needsTranscode) {
     seekBar.hidden = false;
+    seekHint.hidden = false;
     seekDurLabel.textContent = formatTime(probedDuration);
     seekSlider.max = 100;
     loadTranscode(0);
   } else {
     seekBar.hidden = true;
+    seekHint.hidden = true;
     transcodeOffset = 0;
     player.src = mediaUrl;
   }
@@ -329,6 +333,7 @@ async function openItem(path, name) {
     }
     // Fall back to on-the-fly transcode
     seekBar.hidden = false;
+    seekHint.hidden = false;
     seekDurLabel.textContent = formatTime(probedDuration);
     loadTranscode(0);
   };
