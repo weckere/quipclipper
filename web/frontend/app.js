@@ -347,16 +347,25 @@ function renderSubs(info, path) {
 
   // A picker when there are embedded tracks; otherwise just load the default.
   if (tracks.length > 1) {
+    // Auto-select the best English track: prefer non-SDH English, then SDH
+    // English, then fall back to the first track.
+    const isEng = (t) => !t.language || /^en/i.test(t.language);
+    const isSDH = (t) => /sdh|hearing|impaired|cc\b/i.test(t.title || "");
+    const engNonSDH = tracks.find((t) => isEng(t) && !isSDH(t));
+    const engSDH = tracks.find((t) => isEng(t) && isSDH(t));
+    const bestTrack = engNonSDH || engSDH || tracks[0];
+
     const sel = document.createElement("select");
     tracks.forEach((t) => {
       const opt = document.createElement("option");
       opt.value = t.index;
       opt.textContent = `s:${t.index} ${t.codec}${t.language ? " " + t.language : ""}${t.title ? " — " + t.title : ""}`;
+      if (t === bestTrack) opt.selected = true;
       sel.appendChild(opt);
     });
     sel.onchange = () => loadSubtitleTrack(path, sel.value);
     box.appendChild(sel);
-    loadSubtitleTrack(path, tracks[0].index);
+    loadSubtitleTrack(path, bestTrack.index);
   } else {
     loadSubtitleTrack(path, null);
   }
@@ -373,6 +382,8 @@ function loadSubtitleTrack(path, track) {
   track_el.src = url;
   track_el.default = true;
   player.appendChild(track_el);
+  // Browsers often ignore .default on dynamically added tracks; force showing.
+  track_el.track.mode = "showing";
 }
 
 // --- dialogue search --------------------------------------------------------
