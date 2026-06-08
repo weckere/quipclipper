@@ -174,17 +174,21 @@ $("dialogue-search").addEventListener("keydown", (e) => {
 
 // --- folder subtitle index --------------------------------------------------
 
+let indexCheckId = 0;
+
 async function checkFolderIndex(path) {
   const banner = $("index-banner");
   banner.hidden = true;
   if (!path) return;
+  const myId = ++indexCheckId;
   try {
     const data = await getJSON(`/api/search/folder/index-status?path=${encodeURIComponent(path)}`);
+    if (myId !== indexCheckId) return;
     if (data.total === 0) return;
     if (data.indexed >= data.total) return;
     $("index-banner-text").textContent = data.indexed === 0
       ? `Subtitles in this folder haven't been indexed yet (${data.total} files). Indexing speeds up dialogue search.`
-      : `${data.indexed} of ${data.total} files indexed. Index the rest to speed up dialogue search.`;
+      : `${data.indexed} of ${data.total} files in this folder indexed. Index the rest to speed up dialogue search.`;
     banner.hidden = false;
   } catch {
     // silent — non-critical
