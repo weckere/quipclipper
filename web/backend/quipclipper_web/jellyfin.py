@@ -49,6 +49,9 @@ class JellyfinClient:
             base_url=self._base, headers=self._headers, timeout=_TIMEOUT
         )
 
+    def close(self) -> None:
+        self._http.close()
+
     @property
     def base_url(self) -> str:
         return self._base

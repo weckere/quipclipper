@@ -85,6 +85,9 @@ class JobRegistry:
             jobs = sorted(self._jobs.values(), key=lambda j: j.created, reverse=True)
         return jobs[:limit]
 
+    def shutdown(self) -> None:
+        self._pool.shutdown(wait=False)
+
     def _run(self, job: Job, fn: Callable[[], list[Path]]) -> None:
         job.status = Status.running
         job.started = time.time()

@@ -12,8 +12,10 @@ Routes:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import re
 import shutil
+from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from urllib.parse import quote
@@ -99,14 +101,22 @@ class ClipRequest(BaseModel):
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
-    app = FastAPI(title="quipclipper-web", version=__version__)
-    app.state.settings = settings
     jobs = JobRegistry(max_workers=settings.max_concurrent_jobs)
     bookmarks = BookmarkStore(settings.state_dir)
     sub_cache = SubtitleCache(settings.state_dir)
     jf: JellyfinClient | None = None
     if settings.jellyfin_url and settings.jellyfin_api_key:
         jf = JellyfinClient(settings.jellyfin_url, settings.jellyfin_api_key)
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        yield
+        if jf is not None:
+            jf.close()
+        jobs.shutdown()
+
+    app = FastAPI(title="quipclipper-web", version=__version__, lifespan=lifespan)
+    app.state.settings = settings
 
     @app.get("/api/health")
     def health() -> dict:
