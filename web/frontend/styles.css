@@ -236,6 +236,7 @@ code {
 footer { padding: 2rem 1.25rem; font-size: 0.8rem; }
 
 /* Transcode seek bar */
+.transcode-seek-bar[hidden] { display: none; }
 .transcode-seek-bar {
   display: flex; align-items: center; gap: 0.5rem;
   padding: 0.4rem 0; margin-top: -0.25rem;
@@ -252,6 +253,7 @@ footer { padding: 2rem 1.25rem; font-size: 0.8rem; }
 .transcode-time:last-child { text-align: right; }
 
 /* Subtitle index banner */
+.index-banner[hidden] { display: none; }
 .index-banner {
   display: flex; align-items: center; gap: 0.75rem;
   padding: 0.5rem 0.75rem; margin-top: 0.5rem;
