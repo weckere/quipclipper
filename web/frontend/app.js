@@ -365,6 +365,7 @@ function renderSubs(info, path) {
     });
     sel.onchange = () => loadSubtitleTrack(path, sel.value);
     box.appendChild(sel);
+    sel.value = bestTrack.index;
     loadSubtitleTrack(path, bestTrack.index);
   } else {
     loadSubtitleTrack(path, null);
