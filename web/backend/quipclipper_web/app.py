@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import re
 import shutil
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from urllib.parse import quote
 
@@ -265,7 +266,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail=f"Not a directory: {path}")
 
         all_hits: list[dict] = []
-        errors: list[dict] = []
 
         # Collect video files recursively, sorted for deterministic order
         videos = sorted(
@@ -273,22 +273,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             key=lambda p: p.name.lower(),
         )
 
-        for video in videos:
+        def _search_one(video: Path) -> list[dict]:
             try:
                 resolved = resolve_subtitles(subs=None, video=video)
             except (ValueError, FileNotFoundError, RuntimeError):
-                # No subtitles available for this file — skip silently
-                continue
-
+                return []
             matches = engine_search(
-                query,
-                resolved.cues,
-                limit=limit,
-                min_score=min_score,
-                max_span=max_span,
+                query, resolved.cues,
+                limit=limit, min_score=min_score, max_span=max_span,
             )
-            for i, m in enumerate(matches):
-                all_hits.append({
+            return [
+                {
                     "file": video.name,
                     "path": str(video),
                     "score": round(m.score, 1),
@@ -298,9 +293,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "start_ts": format_timestamp(m.start),
                     "end_ts": format_timestamp(m.end),
                     "cue_count": len(m.cues),
-                })
+                }
+                for m in matches
+            ]
 
-        # Sort all hits by score descending so best matches float to top
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            futures = {pool.submit(_search_one, v): v for v in videos}
+            for fut in as_completed(futures):
+                all_hits.extend(fut.result())
+
         all_hits.sort(key=lambda h: -h["score"])
 
         return {
