@@ -101,6 +101,8 @@ async function librarySearch(query) {
   const list = $("entries");
   list.innerHTML = "";
   $("browser-empty").hidden = true;
+  $("index-banner").hidden = true;
+  ++indexCheckId;
 
   let url = `/api/library/search?query=${encodeURIComponent(query)}`;
   if (currentBrowsePath) url += `&path=${encodeURIComponent(currentBrowsePath)}`;
@@ -184,7 +186,7 @@ async function checkFolderIndex(path) {
   try {
     const data = await getJSON(`/api/search/folder/index-status?path=${encodeURIComponent(path)}`);
     if (myId !== indexCheckId) return;
-    if (data.total === 0) return;
+    if (data.total === 0 || data.skipped) return;
     if (data.indexed >= data.total) return;
     $("index-banner-text").textContent = data.indexed === 0
       ? `Subtitles in this folder haven't been indexed yet (${data.total} files). Indexing speeds up dialogue search.`

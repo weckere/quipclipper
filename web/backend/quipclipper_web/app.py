@@ -327,9 +327,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/search/folder/index-status")
     def folder_index_status(path: str = Query(...)) -> dict:
-        videos = _folder_videos(path)
+        folder = _resolve(path)
+        if not folder.is_dir():
+            raise HTTPException(status_code=400, detail=f"Not a directory: {path}")
+        videos: list[Path] = []
+        for c in folder.rglob("*"):
+            if c.is_file() and c.suffix.lower() in VIDEO_EXTS:
+                videos.append(c)
+            if len(videos) > 500:
+                return {"total": len(videos), "indexed": 0, "skipped": True}
         indexed = sum(1 for v in videos if sub_cache.is_cached(v))
-        return {"total": len(videos), "indexed": indexed}
+        return {"total": len(videos), "indexed": indexed, "skipped": False}
 
     @app.post("/api/search/folder/index")
     def folder_index(path: str = Query(...)) -> StreamingResponse:
