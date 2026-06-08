@@ -255,13 +255,21 @@ async function openItem(path, name) {
 
   // Transcode seek state
   let isTranscoding = false;
-  let settingSrc = false;        // guard against re-entrant seeking events
-  transcodeOffset = 0;           // reset module-level offset
+  let settingSrc = false;
+  transcodeOffset = 0;
+  const seekBar = $("transcode-seek-bar");
+  const seekSlider = $("transcode-slider");
+  const seekTimeLabel = $("transcode-time");
+  const seekDurLabel = $("transcode-duration");
+  let probedDuration = info.duration || 0;
 
+  let firstLoad = true;
   function loadTranscode(startTime) {
     isTranscoding = true;
     settingSrc = true;
-    transcodeOffset = startTime;  // update module-level offset
+    transcodeOffset = startTime;
+    const autoplay = !firstLoad;
+    firstLoad = false;
     let url = transcodeUrl;
     if (startTime > 0) url += `&start=${startTime}`;
     player.src = url;
@@ -269,25 +277,31 @@ async function openItem(path, name) {
     player.addEventListener("loadedmetadata", function onMeta() {
       player.removeEventListener("loadedmetadata", onMeta);
       settingSrc = false;
-      player.play().catch(() => {});
+      if (autoplay) player.play().catch(() => {});
     }, { once: true });
     $("preview-note").textContent = "Transcoding audio for browser playback…";
   }
 
-  // When the user drags the timeline on a transcoded stream, capture the
-  // target immediately (before the browser snaps it back on an unseekable
-  // source), then debounce so we only reload once dragging stops.
-  let seekDebounce = null;
-  let pendingSeekTarget = 0;
-  player.addEventListener("seeking", () => {
-    if (!isTranscoding || settingSrc) return;
-    // Capture now — player.currentTime reflects the drag position at this
-    // moment but will revert before the debounce fires.
-    pendingSeekTarget = player.currentTime + transcodeOffset;
-    clearTimeout(seekDebounce);
-    seekDebounce = setTimeout(() => {
-      loadTranscode(pendingSeekTarget);
-    }, 600);
+  // Custom seek bar for transcoded streams (native scrubber can't seek
+  // on a non-seekable streaming source).
+  function updateSeekBar() {
+    if (!isTranscoding || !probedDuration) return;
+    const absTime = player.currentTime + transcodeOffset;
+    seekSlider.value = (absTime / probedDuration) * 100;
+    seekTimeLabel.textContent = formatTime(absTime);
+  }
+
+  player.addEventListener("timeupdate", updateSeekBar);
+
+  seekSlider.addEventListener("input", () => {
+    const absTime = (seekSlider.value / 100) * probedDuration;
+    seekTimeLabel.textContent = formatTime(absTime);
+  });
+
+  seekSlider.addEventListener("change", () => {
+    if (!isTranscoding) return;
+    const absTime = (seekSlider.value / 100) * probedDuration;
+    loadTranscode(absTime);
   });
 
   // Custom event for programmatic seeks (search results, bookmarks, etc.)
@@ -296,8 +310,12 @@ async function openItem(path, name) {
   });
 
   if (needsTranscode) {
+    seekBar.hidden = false;
+    seekDurLabel.textContent = formatTime(probedDuration);
+    seekSlider.max = 100;
     loadTranscode(0);
   } else {
+    seekBar.hidden = true;
     transcodeOffset = 0;
     player.src = mediaUrl;
   }
@@ -310,6 +328,8 @@ async function openItem(path, name) {
       return;
     }
     // Fall back to on-the-fly transcode
+    seekBar.hidden = false;
+    seekDurLabel.textContent = formatTime(probedDuration);
     loadTranscode(0);
   };
 

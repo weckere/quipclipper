@@ -234,3 +234,18 @@ code {
 .error { color: var(--error); }
 
 footer { padding: 2rem 1.25rem; font-size: 0.8rem; }
+
+/* Transcode seek bar */
+.transcode-seek-bar {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.4rem 0; margin-top: -0.25rem;
+}
+.transcode-seek-bar input[type="range"] {
+  flex: 1; height: 6px; cursor: pointer;
+  accent-color: var(--accent);
+}
+.transcode-time {
+  font-size: 0.8rem; color: var(--muted); font-variant-numeric: tabular-nums;
+  min-width: 3.5em; white-space: nowrap;
+}
+.transcode-time:last-child { text-align: right; }

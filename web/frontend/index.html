@@ -58,6 +58,11 @@
         <h2 id="item-name"></h2>
 
         <video id="player" controls preload="metadata" crossorigin="anonymous"></video>
+        <div id="transcode-seek-bar" class="transcode-seek-bar" hidden>
+          <span id="transcode-time" class="transcode-time">0:00</span>
+          <input id="transcode-slider" type="range" min="0" max="100" step="0.1" value="0">
+          <span id="transcode-duration" class="transcode-time">0:00</span>
+        </div>
         <p id="preview-note" class="muted"></p>
 
         <div class="panel marks-panel">
