@@ -267,9 +267,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         all_hits: list[dict] = []
         errors: list[dict] = []
 
-        # Collect video files, sorted for deterministic order
+        # Collect video files recursively, sorted for deterministic order
         videos = sorted(
-            (c for c in folder.iterdir() if c.is_file() and c.suffix.lower() in VIDEO_EXTS),
+            (c for c in folder.rglob("*") if c.is_file() and c.suffix.lower() in VIDEO_EXTS),
             key=lambda p: p.name.lower(),
         )
 

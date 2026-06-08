@@ -254,13 +254,14 @@ def resolve_subtitles(
         if len(tracks) == 1:
             track = tracks[0].index
         else:
-            # Try the first English track before asking.
-            eng = next(
-                (t for t in tracks if t.language and t.language.lower() in ("eng", "en", "english")),
-                None,
-            )
-            if eng is not None:
-                track = eng.index
+            # Prefer non-SDH English, then SDH English, then first track.
+            _SDH_RE = re.compile(r"sdh|hearing|impaired|\bcc\b", re.IGNORECASE)
+            eng = [t for t in tracks if t.language and t.language.lower() in ("eng", "en", "english")]
+            eng_non_sdh = next((t for t in eng if not _SDH_RE.search(t.title or "")), None)
+            eng_sdh = next((t for t in eng if _SDH_RE.search(t.title or "")), None)
+            best = eng_non_sdh or eng_sdh
+            if best is not None:
+                track = best.index
             else:
                 labels = "\n  ".join(t.label() for t in tracks)
                 raise ValueError(
