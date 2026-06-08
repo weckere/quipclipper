@@ -274,15 +274,19 @@ async function openItem(path, name) {
     $("preview-note").textContent = "Transcoding audio for browser playback…";
   }
 
-  // When the user drags the timeline on a transcoded stream, debounce and
-  // wait for them to finish dragging before requesting a new segment.
+  // When the user drags the timeline on a transcoded stream, capture the
+  // target immediately (before the browser snaps it back on an unseekable
+  // source), then debounce so we only reload once dragging stops.
   let seekDebounce = null;
+  let pendingSeekTarget = 0;
   player.addEventListener("seeking", () => {
     if (!isTranscoding || settingSrc) return;
+    // Capture now — player.currentTime reflects the drag position at this
+    // moment but will revert before the debounce fires.
+    pendingSeekTarget = player.currentTime + transcodeOffset;
     clearTimeout(seekDebounce);
     seekDebounce = setTimeout(() => {
-      const seekTarget = player.currentTime + transcodeOffset;
-      loadTranscode(seekTarget);
+      loadTranscode(pendingSeekTarget);
     }, 600);
   });
 
