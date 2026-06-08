@@ -162,7 +162,7 @@ async function dialogueSearch() {
       <span class="hit-text">"${hit.text}"</span>
       <span class="hit-time">${hit.start_ts} – ${hit.end_ts}  <span class="hit-score">${hit.score}%</span></span>
     `;
-    li.onclick = () => openItem(hit.path, hit.file);
+    li.onclick = () => openItem(hit.path, hit.file, { searchQuery: query, seekTo: hit.start });
     list.appendChild(li);
   }
 }
@@ -254,14 +254,15 @@ function seekTo(seconds) {
   player.play().catch(() => {});
 }
 
-async function openItem(path, name) {
+async function openItem(path, name, opts) {
+  const { searchQuery, seekTo: seekTarget } = opts || {};
   showItem();
   currentItem = { path, name };
   $("item-name").textContent = name;
   $("subs-controls").textContent = "Loading…";
   $("streams").innerHTML = "";
   $("preview-note").textContent = "";
-  $("search-input").value = "";
+  $("search-input").value = searchQuery || "";
   $("search-results").innerHTML = "";
   $("search-empty").hidden = true;
   $("clip-panel").hidden = true;
@@ -363,7 +364,7 @@ async function openItem(path, name) {
     seekHint.hidden = false;
     seekDurLabel.textContent = formatTime(probedDuration);
     seekSlider.max = 100;
-    loadTranscode(0);
+    loadTranscode(seekTarget || 0);
   } else {
     seekBar.hidden = true;
     seekHint.hidden = true;
@@ -388,6 +389,13 @@ async function openItem(path, name) {
   renderStreams(info.streams);
   renderSubs(info, path);
   loadBookmarks();
+
+  if (searchQuery) doSearch();
+  if (seekTarget != null && !needsTranscode) {
+    player.addEventListener("loadedmetadata", () => {
+      player.currentTime = seekTarget;
+    }, { once: true });
+  }
 }
 
 function renderStreams(streams) {
