@@ -314,6 +314,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "matches": all_hits,
         }
 
+    # --- folder subtitle index -------------------------------------------------
+
+    def _folder_videos(self_path: str) -> list[Path]:
+        folder = _resolve(self_path)
+        if not folder.is_dir():
+            raise HTTPException(status_code=400, detail=f"Not a directory: {self_path}")
+        return sorted(
+            (c for c in folder.rglob("*") if c.is_file() and c.suffix.lower() in VIDEO_EXTS),
+            key=lambda p: p.name.lower(),
+        )
+
+    @app.get("/api/search/folder/index-status")
+    def folder_index_status(path: str = Query(...)) -> dict:
+        videos = _folder_videos(path)
+        indexed = sum(1 for v in videos if sub_cache.is_cached(v))
+        return {"total": len(videos), "indexed": indexed}
+
+    @app.post("/api/search/folder/index")
+    def folder_index(path: str = Query(...)) -> StreamingResponse:
+        videos = _folder_videos(path)
+
+        def generate():
+            total = len(videos)
+            done = 0
+            for v in videos:
+                if not sub_cache.is_cached(v):
+                    try:
+                        sub_cache.resolve(v)
+                    except (ValueError, FileNotFoundError, RuntimeError):
+                        pass
+                done += 1
+                yield f"{done}/{total} {v.name}\n"
+
+        return StreamingResponse(generate(), media_type="text/plain")
+
     # --- media streaming -------------------------------------------------------
 
     @app.get("/api/media")

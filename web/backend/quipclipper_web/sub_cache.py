@@ -27,6 +27,12 @@ class SubtitleCache:
     def _cache_path(self, video: Path) -> Path:
         return self._dir / (self._cache_key(video) + ".json")
 
+    def is_cached(self, video: Path) -> bool:
+        try:
+            return self._cache_path(video).exists()
+        except OSError:
+            return False
+
     def resolve(self, video: Path, track: int | None = None) -> list[Cue]:
         cp = self._cache_path(video)
         if cp.exists():

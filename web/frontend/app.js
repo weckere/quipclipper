@@ -56,6 +56,7 @@ async function browse(path) {
   $("library-search").value = "";
   $("dialogue-search").value = "";
   $("dialogue-search-status").hidden = true;
+  $("index-banner").hidden = true;
   // Show dialogue search bar only when inside a folder (not at root)
   $("dialogue-search-bar").hidden = !path;
   let data;
@@ -68,6 +69,7 @@ async function browse(path) {
 
   renderBreadcrumb(path, data.entries);
   renderEntries(data.entries);
+  checkFolderIndex(path);
 }
 
 function renderEntries(entries) {
@@ -168,6 +170,51 @@ async function dialogueSearch() {
 $("dialogue-search-btn").addEventListener("click", dialogueSearch);
 $("dialogue-search").addEventListener("keydown", (e) => {
   if (e.key === "Enter") dialogueSearch();
+});
+
+// --- folder subtitle index --------------------------------------------------
+
+async function checkFolderIndex(path) {
+  const banner = $("index-banner");
+  banner.hidden = true;
+  if (!path) return;
+  try {
+    const data = await getJSON(`/api/search/folder/index-status?path=${encodeURIComponent(path)}`);
+    if (data.total === 0) return;
+    if (data.indexed >= data.total) return;
+    $("index-banner-text").textContent = data.indexed === 0
+      ? `Subtitles in this folder haven't been indexed yet (${data.total} files). Indexing speeds up dialogue search.`
+      : `${data.indexed} of ${data.total} files indexed. Index the rest to speed up dialogue search.`;
+    banner.hidden = false;
+  } catch {
+    // silent — non-critical
+  }
+}
+
+$("index-btn").addEventListener("click", async () => {
+  if (!currentBrowsePath) return;
+  const btn = $("index-btn");
+  const text = $("index-banner-text");
+  btn.disabled = true;
+  text.textContent = "Indexing…";
+
+  try {
+    const resp = await fetch(`/api/search/folder/index?path=${encodeURIComponent(currentBrowsePath)}`, { method: "POST" });
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let last = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      last = decoder.decode(value, { stream: true }).trim().split("\n").pop();
+      const m = last.match(/^(\d+)\/(\d+) (.+)/);
+      if (m) text.textContent = `Indexing ${m[1]}/${m[2]}: ${m[3]}`;
+    }
+    $("index-banner").hidden = true;
+  } catch {
+    text.textContent = "Indexing failed.";
+  }
+  btn.disabled = false;
 });
 
 function renderBreadcrumb(path, entries) {
