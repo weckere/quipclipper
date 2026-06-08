@@ -44,6 +44,7 @@ from quipclipper_web.bookmarks import BookmarkStore
 from quipclipper_web.config import Settings
 from quipclipper_web.jellyfin import JellyfinClient
 from quipclipper_web.jobs import JobRegistry
+from quipclipper_web.sub_cache import SubtitleCache
 
 # Containers/extensions a browser can usually play in a <video> element. Used to
 # hint the UI; the engine still works on anything ffmpeg can read.
@@ -102,6 +103,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     jobs = JobRegistry(max_workers=settings.max_concurrent_jobs)
     bookmarks = BookmarkStore(settings.state_dir)
+    sub_cache = SubtitleCache(settings.state_dir)
     jf: JellyfinClient | None = None
     if settings.jellyfin_url and settings.jellyfin_api_key:
         jf = JellyfinClient(settings.jellyfin_url, settings.jellyfin_api_key)
@@ -212,7 +214,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict:
         p = _resolve(path)
         try:
-            resolved = resolve_subtitles(subs=None, video=p, track=track)
+            cues = sub_cache.resolve(p, track=track)
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc))
         except FileNotFoundError as exc:
@@ -222,7 +224,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         matches = engine_search(
             query,
-            resolved.cues,
+            cues,
             limit=limit,
             min_score=min_score,
             max_span=max_span,
@@ -275,11 +277,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         def _search_one(video: Path) -> list[dict]:
             try:
-                resolved = resolve_subtitles(subs=None, video=video)
+                cues = sub_cache.resolve(video)
             except (ValueError, FileNotFoundError, RuntimeError):
                 return []
             matches = engine_search(
-                query, resolved.cues,
+                query, cues,
                 limit=limit, min_score=min_score, max_span=max_span,
             )
             return [
