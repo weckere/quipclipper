@@ -285,6 +285,10 @@ async function openItem(path, name, opts) {
   $("mark-out-display").textContent = "—";
   $("mark-clip").disabled = true;
   $("mark-save").disabled = true;
+  scriptCues = [];
+  scriptActiveIdx = -1;
+  $("script-wrap").hidden = true;
+  $("script-list").innerHTML = "";
   if (jobPollTimer) { clearTimeout(jobPollTimer); jobPollTimer = null; }
 
   let info;
@@ -465,12 +469,17 @@ function renderSubs(info, path) {
       if (t === bestTrack) opt.selected = true;
       sel.appendChild(opt);
     });
-    sel.onchange = () => loadSubtitleTrack(path, sel.value, isTranscoding ? transcodeOffset : 0);
+    sel.onchange = () => {
+      loadSubtitleTrack(path, sel.value, isTranscoding ? transcodeOffset : 0);
+      loadScript(path, sel.value);
+    };
     box.appendChild(sel);
     sel.value = bestTrack.index;
     loadSubtitleTrack(path, bestTrack.index);
+    loadScript(path, bestTrack.index);
   } else {
     loadSubtitleTrack(path, null);
+    loadScript(path, null);
   }
 }
 
@@ -624,6 +633,150 @@ $("mark-in").onclick = setMarkIn;
 $("mark-out").onclick = setMarkOut;
 $("mark-clip").onclick = clipFromMarks;
 $("mark-save").onclick = saveBookmark;
+
+// --- subtitle script view ---------------------------------------------------
+
+let scriptCues = [];       // full cue list [{start, end, text}, ...]
+let scriptAutoScroll = true;
+let scriptScrollTimer = null;
+let scriptActiveIdx = -1;  // index of the currently highlighted cue
+let scriptProgScroll = false; // true when we're doing a programmatic scroll
+
+/** Load cues as JSON and populate the script panel. */
+async function loadScript(path, track) {
+  const wrap = $("script-wrap");
+  const list = $("script-list");
+  list.innerHTML = "";
+  scriptCues = [];
+  scriptActiveIdx = -1;
+  wrap.hidden = true;
+
+  let url = `/api/items/subtitles?fmt=json&path=${encodeURIComponent(path)}`;
+  if (track !== null && track !== undefined) url += `&track=${track}`;
+  try {
+    scriptCues = await getJSON(url);
+  } catch { return; }
+  if (!scriptCues.length) return;
+
+  wrap.hidden = false;
+  const frag = document.createDocumentFragment();
+  scriptCues.forEach((cue, i) => {
+    const row = document.createElement("div");
+    row.className = "script-line";
+    row.dataset.idx = i;
+    row.innerHTML =
+      `<span class="script-ts">${formatTime(cue.start)}</span>` +
+      `<span class="script-text">${escapeHtml(cue.text)}</span>`;
+    row.onclick = () => scriptLineClick(i);
+    frag.appendChild(row);
+  });
+  list.appendChild(frag);
+
+  // Pause auto-scroll when the user manually scrolls, resume after 5 s idle.
+  list.addEventListener("scroll", onScriptManualScroll, { passive: true });
+}
+
+/** Handle manual scroll — pause auto-scroll, resume after idle timeout. */
+function onScriptManualScroll() {
+  if (scriptProgScroll) return; // ignore our own programmatic scrolls
+  scriptAutoScroll = false;
+  clearTimeout(scriptScrollTimer);
+  scriptScrollTimer = setTimeout(() => { scriptAutoScroll = true; }, 5000);
+}
+
+/** Click handler for a script line — seek to that cue's start time. */
+function scriptLineClick(idx) {
+  const cue = scriptCues[idx];
+  if (!cue) return;
+  seekTo(cue.start);
+  // Re-enable auto-scroll since user interacted with the script
+  scriptAutoScroll = true;
+  clearTimeout(scriptScrollTimer);
+}
+
+/** Called on timeupdate — highlight the active cue and auto-scroll. */
+function updateScript() {
+  if (!scriptCues.length) return;
+  const t = playerTime();
+  // Binary-style search for the active cue
+  let idx = -1;
+  for (let i = scriptCues.length - 1; i >= 0; i--) {
+    if (t >= scriptCues[i].start - 0.15) {
+      idx = i;
+      break;
+    }
+  }
+  if (idx === scriptActiveIdx) return;
+  scriptActiveIdx = idx;
+
+  const list = $("script-list");
+  const prev = list.querySelector(".script-line.active");
+  if (prev) prev.classList.remove("active");
+
+  if (idx >= 0) {
+    const row = list.children[idx];
+    if (row) {
+      row.classList.add("active");
+      if (scriptAutoScroll) {
+        // Scroll the active line to roughly 1/3 from the top
+        scriptProgScroll = true;
+        const listRect = list.getBoundingClientRect();
+        const rowRect = row.getBoundingClientRect();
+        const targetTop = list.scrollTop + (rowRect.top - listRect.top) - listRect.height / 3;
+        list.scrollTo({ top: targetTop, behavior: "smooth" });
+        // Reset flag after scroll animation settles
+        setTimeout(() => { scriptProgScroll = false; }, 600);
+      }
+    }
+  }
+}
+
+/** Refresh the in-range highlight on script lines. */
+function updateScriptMarks() {
+  const list = $("script-list");
+  if (!list || !scriptCues.length) return;
+  for (let i = 0; i < scriptCues.length; i++) {
+    const row = list.children[i];
+    if (!row) continue;
+    const cue = scriptCues[i];
+    row.classList.toggle("mark-in", markIn !== null && Math.abs(cue.start - markIn) < 0.01);
+    row.classList.toggle("mark-out", markOut !== null && cue.end <= markOut + 0.01 &&
+      (i + 1 >= scriptCues.length || scriptCues[i + 1].start > markOut));
+    row.classList.toggle("in-range",
+      markIn !== null && markOut !== null &&
+      cue.start >= markIn - 0.01 && cue.end <= markOut + 0.01);
+  }
+}
+
+// Hook mark setters to also set marks from the focused script line
+const origSetMarkIn = setMarkIn;
+setMarkIn = function() {
+  // If a script line is active, use its start time instead of current playback
+  if (scriptActiveIdx >= 0 && scriptCues[scriptActiveIdx]) {
+    markIn = scriptCues[scriptActiveIdx].start;
+    $("mark-in-display").textContent = formatTime(markIn);
+    updateMarkButtons();
+    updateScriptMarks();
+    return;
+  }
+  origSetMarkIn();
+  updateScriptMarks();
+};
+
+const origSetMarkOut = setMarkOut;
+setMarkOut = function() {
+  if (scriptActiveIdx >= 0 && scriptCues[scriptActiveIdx]) {
+    markOut = scriptCues[scriptActiveIdx].end;
+    $("mark-out-display").textContent = formatTime(markOut);
+    updateMarkButtons();
+    updateScriptMarks();
+    return;
+  }
+  origSetMarkOut();
+  updateScriptMarks();
+};
+
+$("player").addEventListener("timeupdate", updateScript);
 
 // --- bookmarks --------------------------------------------------------------
 

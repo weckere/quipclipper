@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import re
 import shutil
 from collections.abc import AsyncIterator
@@ -203,6 +204,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         path: str = Query(...),
         track: int | None = None,
         offset: float = Query(0, ge=0),
+        fmt: str = Query("vtt"),
     ) -> Response:
         p = _resolve(path)
         try:
@@ -213,6 +215,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=str(exc))
         except RuntimeError as exc:
             raise HTTPException(status_code=500, detail=str(exc))
+        if fmt == "json":
+            return Response(
+                content=json.dumps(
+                    [{"start": c.start, "end": c.end, "text": c.text} for c in resolved.cues],
+                ),
+                media_type="application/json",
+            )
         return Response(
             content=media.cues_to_vtt(resolved.cues, offset=offset),
             media_type="text/vtt",
