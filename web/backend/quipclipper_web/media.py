@@ -30,6 +30,44 @@ def probe_duration(path: Path) -> float | None:
     return None
 
 
+def probe_keyframe_before(path: Path, target: float) -> float:
+    """Return the PTS of the last keyframe at or before *target* seconds.
+
+    When ffmpeg uses ``-ss`` before ``-i`` with ``-c:v copy``, it starts
+    from this keyframe.  Knowing the actual start lets us shift subtitles
+    accurately instead of using the requested (approximate) seek time.
+
+    Falls back to *target* if ffprobe fails or no keyframe is found.
+    """
+    # Read a window around the target; go back far enough to catch sparse
+    # keyframe intervals (up to ~15 s for some encodes).
+    window_start = max(0, target - 20)
+    result = subprocess.run(
+        [
+            "ffprobe", "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "packet=pts_time,flags",
+            "-of", "csv=p=0",
+            "-read_intervals", f"{window_start}%{target + 0.5}",
+            str(path),
+        ],
+        capture_output=True, text=True, timeout=10,
+    )
+    best = None
+    for line in result.stdout.splitlines():
+        if ",K" not in line:
+            continue
+        pts_str = line.split(",", 1)[0]
+        try:
+            pts = float(pts_str)
+        except ValueError:
+            continue
+        if pts <= target + 0.01:  # small epsilon for floating-point
+            if best is None or pts > best:
+                best = pts
+    return best if best is not None else target
+
+
 def stream_dict(s: StreamInfo) -> dict:
     return {
         "kind": s.kind,

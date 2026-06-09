@@ -389,6 +389,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         mime = _BROWSER_MIME.get(p.suffix.lower(), "application/octet-stream")
         return FileResponse(p, media_type=mime)
 
+    @app.get("/api/media/keyframe")
+    def keyframe_before(
+        path: str = Query(...),
+        time: float = Query(..., ge=0),
+    ) -> dict:
+        """Return the PTS of the last video keyframe at or before *time*.
+
+        Used by the frontend to know where ffmpeg's ``-ss`` (input seek
+        with ``-c:v copy``) will actually land, so subtitle offsets can be
+        computed accurately.
+        """
+        p = _resolve(path)
+        if not p.is_file():
+            raise HTTPException(status_code=404, detail=f"Not found: {path}")
+        actual = media.probe_keyframe_before(p, time)
+        return {"requested": time, "actual": actual}
+
     @app.get("/api/media/transcode")
     async def transcode(
         path: str = Query(...),

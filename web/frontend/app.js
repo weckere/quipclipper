@@ -334,9 +334,22 @@ async function openItem(path, name, opts) {
       if (autoplay) player.play().catch(() => {});
     }, { once: true });
     $("preview-note").textContent = "Transcoding audio for browser playback…";
-    // Reload subtitles shifted by the transcode offset so cue times
-    // align with the player's currentTime (which resets to 0 each seek).
-    loadSubtitleTrack(path, getSelectedTrack(), startTime);
+    // With -c:v copy, ffmpeg starts from the nearest keyframe before
+    // the requested time.  Query the actual keyframe position so we can
+    // shift subtitles accurately and keep the seek bar in sync.
+    if (startTime > 0) {
+      getJSON(`/api/media/keyframe?path=${encodeURIComponent(path)}&time=${startTime}`)
+        .then((kf) => {
+          transcodeOffset = kf.actual;
+          loadSubtitleTrack(path, getSelectedTrack(), kf.actual);
+        })
+        .catch(() => {
+          // Fall back to requested time if probe fails
+          loadSubtitleTrack(path, getSelectedTrack(), startTime);
+        });
+    } else {
+      loadSubtitleTrack(path, getSelectedTrack(), 0);
+    }
   }
 
   // Custom seek bar for transcoded streams (native scrubber can't seek
