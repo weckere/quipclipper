@@ -334,6 +334,9 @@ async function openItem(path, name, opts) {
       if (autoplay) player.play().catch(() => {});
     }, { once: true });
     $("preview-note").textContent = "Transcoding audio for browser playback…";
+    // Reload subtitles shifted by the transcode offset so cue times
+    // align with the player's currentTime (which resets to 0 each seek).
+    loadSubtitleTrack(path, getSelectedTrack(), startTime);
   }
 
   // Custom seek bar for transcoded streams (native scrubber can't seek
@@ -449,7 +452,7 @@ function renderSubs(info, path) {
       if (t === bestTrack) opt.selected = true;
       sel.appendChild(opt);
     });
-    sel.onchange = () => loadSubtitleTrack(path, sel.value);
+    sel.onchange = () => loadSubtitleTrack(path, sel.value, isTranscoding ? transcodeOffset : 0);
     box.appendChild(sel);
     sel.value = bestTrack.index;
     loadSubtitleTrack(path, bestTrack.index);
@@ -458,11 +461,12 @@ function renderSubs(info, path) {
   }
 }
 
-function loadSubtitleTrack(path, track) {
+function loadSubtitleTrack(path, track, offset) {
   const player = $("player");
   player.querySelectorAll("track").forEach((t) => t.remove());
   let url = "/api/items/subtitles" + qp(path);
   if (track !== null && track !== undefined) url += `&track=${track}`;
+  if (offset) url += `&offset=${offset}`;
   const track_el = document.createElement("track");
   track_el.kind = "subtitles";
   track_el.label = "Dialogue";

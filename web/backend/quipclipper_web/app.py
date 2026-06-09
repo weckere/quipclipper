@@ -199,7 +199,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=500, detail=str(exc))
 
     @app.get("/api/items/subtitles")
-    def subtitles(path: str = Query(...), track: int | None = None) -> Response:
+    def subtitles(
+        path: str = Query(...),
+        track: int | None = None,
+        offset: float = Query(0, ge=0),
+    ) -> Response:
         p = _resolve(path)
         try:
             resolved = resolve_subtitles(subs=None, video=p, track=track)
@@ -209,7 +213,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=str(exc))
         except RuntimeError as exc:
             raise HTTPException(status_code=500, detail=str(exc))
-        return Response(content=media.cues_to_vtt(resolved.cues), media_type="text/vtt")
+        return Response(
+            content=media.cues_to_vtt(resolved.cues, offset=offset),
+            media_type="text/vtt",
+        )
 
     # --- dialogue search -------------------------------------------------------
 

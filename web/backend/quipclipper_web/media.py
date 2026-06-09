@@ -59,11 +59,20 @@ def item_info(path: Path) -> dict:
     }
 
 
-def cues_to_vtt(cues: list[Cue]) -> str:
-    """Render cues as a WebVTT document (absolute timestamps)."""
+def cues_to_vtt(cues: list[Cue], offset: float = 0) -> str:
+    """Render cues as a WebVTT document.
+
+    When *offset* is non-zero, shift all timestamps backward by that amount
+    (i.e. subtract *offset* from each cue start/end).  Cues that fall entirely
+    before the offset are dropped; cues that straddle it are clamped to 0.
+    """
     lines = ["WEBVTT", ""]
     for c in cues:
-        lines.append(f"{format_timestamp(c.start)} --> {format_timestamp(c.end)}")
+        end = c.end - offset
+        if end <= 0:
+            continue
+        start = max(0, c.start - offset)
+        lines.append(f"{format_timestamp(start)} --> {format_timestamp(end)}")
         lines.append(c.text)
         lines.append("")
     return "\n".join(lines)
