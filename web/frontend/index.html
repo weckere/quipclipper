@@ -73,15 +73,15 @@
         <div class="panel marks-panel">
           <h3>Marks</h3>
           <div class="marks-row">
-            <button id="mark-in" class="mark-btn" title="Set in-point at current player position">Set In</button>
-            <span id="mark-in-display" class="mark-display">—</span>
-            <button id="mark-out" class="mark-btn" title="Set out-point at current player position">Set Out</button>
-            <span id="mark-out-display" class="mark-display">—</span>
-            <button id="mark-clip" class="clip-btn mark-clip-btn" disabled title="Clip from in/out marks">Clip range</button>
+            <button id="mark-in" class="mark-btn" title="Set in-point at the current dialogue line">Set In</button>
+            <button id="mark-out" class="mark-btn" title="Set out-point at the current dialogue line">Set Out</button>
+            <button id="mark-clear" class="mark-btn" title="Clear selection">Clear</button>
+            <span id="mark-range-display" class="mark-range-display"></span>
+            <button id="mark-clip" class="clip-btn mark-clip-btn" disabled title="Clip the selected range">Clip</button>
             <button id="mark-save" class="mark-btn mark-save-btn" disabled title="Save as bookmark">☆ Save</button>
           </div>
           <div id="script-wrap" class="script-wrap" hidden>
-            <div class="script-hint">Click a line to seek. <strong>In</strong>/<strong>Out</strong> buttons set clip marks on the focused line.</div>
+            <div class="script-hint">Click a line to seek. Use <strong>Set In</strong> / <strong>Set Out</strong> to highlight the clip range.</div>
             <div id="script-list" class="script-list"></div>
           </div>
         </div>
