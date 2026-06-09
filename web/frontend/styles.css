@@ -294,20 +294,20 @@ footer { padding: 2rem 1.25rem; font-size: 0.8rem; }
   border-left-color: var(--accent);
 }
 .script-line.in-range {
-  background: rgba(255, 220, 100, 0.10);
-  border-left-color: rgba(255, 220, 100, 0.5);
+  background: rgba(255, 220, 100, 0.18);
+  border-left-color: rgba(255, 220, 100, 0.7);
 }
 .script-line.in-range.range-first {
-  border-top: 2px solid rgba(255, 220, 100, 0.6);
+  border-top: 2px solid rgba(255, 220, 100, 0.8);
   padding-top: calc(0.35rem - 2px);
 }
 .script-line.in-range.range-last {
-  border-bottom: 2px solid rgba(255, 220, 100, 0.6);
+  border-bottom: 2px solid rgba(255, 220, 100, 0.8);
   padding-bottom: calc(0.35rem - 2px);
 }
 /* Active line inside the range keeps blue accent on left but yellow bg */
 .script-line.in-range.active {
-  background: rgba(255, 220, 100, 0.15);
+  background: rgba(255, 220, 100, 0.25);
   border-left-color: var(--accent);
 }
 .script-ts {

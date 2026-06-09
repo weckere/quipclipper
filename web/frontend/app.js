@@ -279,8 +279,8 @@ async function openItem(path, name, opts) {
   activeJobId = null;
   clipRangeStart = null;
   clipRangeEnd = null;
-  markIn = null;
-  markOut = null;
+  clipFirst = -1;
+  clipLast = -1;
   $("mark-range-display").innerHTML = "";
   $("mark-clip").disabled = true;
   $("mark-save").disabled = true;
@@ -570,51 +570,75 @@ $("search-input").addEventListener("keydown", (e) => {
 
 // --- marks (in/out) ---------------------------------------------------------
 
-let markIn = null;   // cue-snapped start time (dialogue boundary)
-let markOut = null;  // cue-snapped end time (dialogue boundary)
+// --- clip selection (dialogue-based) ----------------------------------------
+//
+// A clip is defined as a contiguous range of dialogue cues.  Timestamps
+// are *derived* from the selected cues, not the other way around.
+//   clipFirst / clipLast  — indices into scriptCues[]
+//   clipStart()           — scriptCues[clipFirst].start
+//   clipEnd()             — scriptCues[clipLast].end
 
-function setMarkIn() {
-  markIn = playerTime();
-  updateMarkRange();
-  updateMarkButtons();
+let clipFirst = -1;  // index of first selected cue (-1 = none)
+let clipLast = -1;   // index of last selected cue (-1 = none)
+
+/** Derived start time of the clip (dialogue boundary, no padding). */
+function clipStart() {
+  return clipFirst >= 0 ? scriptCues[clipFirst].start : null;
+}
+/** Derived end time of the clip (dialogue boundary, no padding). */
+function clipEnd() {
+  return clipLast >= 0 ? scriptCues[clipLast].end : null;
+}
+/** Whether we have a valid clip selection. */
+function hasClipRange() {
+  return clipFirst >= 0 && clipLast >= 0 && clipLast >= clipFirst;
 }
 
-function setMarkOut() {
-  markOut = playerTime();
-  updateMarkRange();
-  updateMarkButtons();
+// Legacy compat — other parts of the code read markIn/markOut
+Object.defineProperty(window, "markIn", { get: clipStart });
+Object.defineProperty(window, "markOut", { get: clipEnd });
+
+function setClipIn() {
+  if (scriptActiveIdx < 0) return;
+  clipFirst = scriptActiveIdx;
+  // If no out yet, or out is before the new in, set out to same line
+  if (clipLast < clipFirst) clipLast = clipFirst;
+  updateClipUI();
 }
 
-function clearMarks() {
-  markIn = null;
-  markOut = null;
-  updateMarkRange();
-  updateMarkButtons();
-  updateScriptMarks();
+function setClipOut() {
+  if (scriptActiveIdx < 0) return;
+  clipLast = scriptActiveIdx;
+  // If no in yet, or in is after the new out, set in to same line
+  if (clipFirst < 0 || clipFirst > clipLast) clipFirst = clipLast;
+  updateClipUI();
 }
 
-function updateMarkButtons() {
-  const hasRange = markIn !== null && markOut !== null && markOut > markIn;
-  $("mark-clip").disabled = !hasRange;
-  $("mark-save").disabled = !hasRange;
+function clearClip() {
+  clipFirst = -1;
+  clipLast = -1;
+  updateClipUI();
 }
 
-/** Update the compact range display between the buttons. */
-function updateMarkRange() {
+function updateClipUI() {
+  // Range display
   const el = $("mark-range-display");
-  if (markIn === null && markOut === null) {
+  if (!hasClipRange()) {
     el.innerHTML = "";
-    return;
+    $("mark-clip").disabled = true;
+    $("mark-save").disabled = true;
+  } else {
+    const s = clipStart(), e = clipEnd();
+    const dur = e - s;
+    const nLines = clipLast - clipFirst + 1;
+    el.innerHTML =
+      `<span class="range-times">${formatTime(s)} – ${formatTime(e)}</span> ` +
+      `<span>(${dur.toFixed(1)}s, ${nLines} line${nLines > 1 ? "s" : ""})</span>`;
+    $("mark-clip").disabled = false;
+    $("mark-save").disabled = false;
   }
-  const parts = [];
-  if (markIn !== null) parts.push(`<span class="range-times">${formatTime(markIn)}</span>`);
-  parts.push("–");
-  if (markOut !== null) parts.push(`<span class="range-times">${formatTime(markOut)}</span>`);
-  if (markIn !== null && markOut !== null && markOut > markIn) {
-    const dur = markOut - markIn;
-    parts.push(`<span>(${dur.toFixed(1)}s)</span>`);
-  }
-  el.innerHTML = parts.join(" ");
+  // Highlight script lines
+  updateScriptHighlight();
 }
 
 function formatTime(s) {
@@ -627,25 +651,27 @@ function formatTime(s) {
 }
 
 function clipFromMarks() {
-  if (markIn === null || markOut === null || markOut <= markIn) return;
+  if (!hasClipRange()) return;
   selectedMatch = null;
   $("clip-panel").hidden = false;
+  const s = clipStart(), e = clipEnd();
   $("clip-range-display").textContent =
-    `${formatTime(markIn)} – ${formatTime(markOut)} (${(markOut - markIn).toFixed(1)}s)`;
-  clipRangeStart = markIn;
-  clipRangeEnd = markOut;
+    `${formatTime(s)} – ${formatTime(e)} (${(e - s).toFixed(1)}s)`;
+  clipRangeStart = s;
+  clipRangeEnd = e;
 }
 
 async function saveBookmark() {
-  if (!currentItem || markIn === null || markOut === null) return;
-  const label = prompt("Bookmark label:", `${formatTime(markIn)} – ${formatTime(markOut)}`);
-  if (label === null) return; // cancelled
+  if (!currentItem || !hasClipRange()) return;
+  const s = clipStart(), e = clipEnd();
+  const label = prompt("Bookmark label:", `${formatTime(s)} – ${formatTime(e)}`);
+  if (label === null) return;
   try {
     await postJSON("/api/bookmarks", {
       path: currentItem.path,
-      label: label || `${formatTime(markIn)} – ${formatTime(markOut)}`,
-      start: markIn,
-      end: markOut,
+      label: label || `${formatTime(s)} – ${formatTime(e)}`,
+      start: s,
+      end: e,
     });
     loadBookmarks();
   } catch (err) {
@@ -653,9 +679,9 @@ async function saveBookmark() {
   }
 }
 
-$("mark-in").onclick = setMarkIn;
-$("mark-out").onclick = setMarkOut;
-$("mark-clear").onclick = clearMarks;
+$("mark-in").onclick = setClipIn;
+$("mark-out").onclick = setClipOut;
+$("mark-clear").onclick = clearClip;
 $("mark-clip").onclick = clipFromMarks;
 $("mark-save").onclick = saveBookmark;
 
@@ -723,7 +749,6 @@ function scriptLineClick(idx) {
 function updateScript() {
   if (!scriptCues.length) return;
   const t = playerTime();
-  // Binary-style search for the active cue
   let idx = -1;
   for (let i = scriptCues.length - 1; i >= 0; i--) {
     if (t >= scriptCues[i].start - 0.15) {
@@ -743,95 +768,29 @@ function updateScript() {
     if (row) {
       row.classList.add("active");
       if (scriptAutoScroll) {
-        // Scroll the active line to roughly 1/3 from the top
         scriptProgScroll = true;
         const listRect = list.getBoundingClientRect();
         const rowRect = row.getBoundingClientRect();
         const targetTop = list.scrollTop + (rowRect.top - listRect.top) - listRect.height / 3;
         list.scrollTo({ top: targetTop, behavior: "smooth" });
-        // Reset flag after scroll animation settles
         setTimeout(() => { scriptProgScroll = false; }, 600);
       }
     }
   }
 }
 
-/** Refresh the in-range highlight on script lines. */
-function updateScriptMarks() {
+/** Highlight the selected clip range on the script. */
+function updateScriptHighlight() {
   const list = $("script-list");
   if (!list || !scriptCues.length) return;
-
-  // Find first and last cue indices in the range
-  let firstIdx = -1, lastIdx = -1;
-  if (markIn !== null && markOut !== null && markOut > markIn) {
-    for (let i = 0; i < scriptCues.length; i++) {
-      const cue = scriptCues[i];
-      if (cue.start >= markIn - 0.01 && cue.end <= markOut + 0.01) {
-        if (firstIdx < 0) firstIdx = i;
-        lastIdx = i;
-      }
-    }
-  }
-
   for (let i = 0; i < scriptCues.length; i++) {
     const row = list.children[i];
     if (!row) continue;
-    const inRange = i >= firstIdx && i <= lastIdx && firstIdx >= 0;
+    const inRange = hasClipRange() && i >= clipFirst && i <= clipLast;
     row.classList.toggle("in-range", inRange);
-    row.classList.toggle("range-first", i === firstIdx);
-    row.classList.toggle("range-last", i === lastIdx);
+    row.classList.toggle("range-first", i === clipFirst && hasClipRange());
+    row.classList.toggle("range-last", i === clipLast && hasClipRange());
   }
-}
-
-// Hook mark setters to snap to cue boundaries when the script is available
-const origSetMarkIn = setMarkIn;
-setMarkIn = function() {
-  if (scriptActiveIdx >= 0 && scriptCues[scriptActiveIdx]) {
-    // Snap to the active cue's start time
-    markIn = scriptCues[scriptActiveIdx].start;
-  } else {
-    // Fall back to current player time, snapping to nearest cue start
-    markIn = snapToCueStart(playerTime());
-  }
-  updateMarkRange();
-  updateMarkButtons();
-  updateScriptMarks();
-};
-
-const origSetMarkOut = setMarkOut;
-setMarkOut = function() {
-  if (scriptActiveIdx >= 0 && scriptCues[scriptActiveIdx]) {
-    // Snap to the active cue's end time
-    markOut = scriptCues[scriptActiveIdx].end;
-  } else {
-    // Fall back to current player time, snapping to nearest cue end
-    markOut = snapToCueEnd(playerTime());
-  }
-  updateMarkRange();
-  updateMarkButtons();
-  updateScriptMarks();
-};
-
-/** Find the cue whose start is closest to t and return its start. */
-function snapToCueStart(t) {
-  if (!scriptCues.length) return t;
-  let best = scriptCues[0].start, bestDist = Math.abs(t - best);
-  for (const c of scriptCues) {
-    const d = Math.abs(t - c.start);
-    if (d < bestDist) { best = c.start; bestDist = d; }
-  }
-  return best;
-}
-
-/** Find the cue whose end is closest to t and return its end. */
-function snapToCueEnd(t) {
-  if (!scriptCues.length) return t;
-  let best = scriptCues[0].end, bestDist = Math.abs(t - best);
-  for (const c of scriptCues) {
-    const d = Math.abs(t - c.end);
-    if (d < bestDist) { best = c.end; bestDist = d; }
-  }
-  return best;
 }
 
 $("player").addEventListener("timeupdate", updateScript);
