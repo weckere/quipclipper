@@ -639,7 +639,9 @@ function updateClipUI() {
     const nLines = clipLast - clipFirst + 1;
     el.innerHTML =
       `<span class="range-times">${formatTime(s)} – ${formatTime(e)}</span> ` +
-      `<span>(${dur.toFixed(1)}s, ${nLines} line${nLines > 1 ? "s" : ""})</span>`;
+      `<span>(${dur.toFixed(1)}s, ${nLines} line${nLines > 1 ? "s" : ""})</span>` +
+      ` <button class="mark-clear-inline" title="Clear selection">×</button>`;
+    el.querySelector(".mark-clear-inline").onclick = clearClip;
     $("mark-save").disabled = false;
     // Auto-show clip panel and populate range
     selectedMatch = null;
@@ -686,9 +688,6 @@ async function saveBookmark() {
   }
 }
 
-$("mark-in").onclick = setClipIn;
-$("mark-out").onclick = setClipOut;
-$("mark-clear").onclick = clearClip;
 $("mark-save").onclick = saveBookmark;
 
 // --- subtitle script view ---------------------------------------------------
@@ -725,12 +724,12 @@ async function loadScript(path, track) {
       `<span class="script-ts">${formatTime(cue.start)}</span>` +
       `<span class="script-text">${escapeHtml(cue.text)}</span>` +
       `<span class="script-actions">` +
-        `<button class="script-mark-btn script-in-btn" title="Set In">In</button>` +
-        `<button class="script-mark-btn script-out-btn" title="Set Out">Out</button>` +
+        `<button class="script-mark-btn script-start-btn" title="Set clip start">Start</button>` +
+        `<button class="script-mark-btn script-end-btn" title="Set clip end">End</button>` +
       `</span>`;
     row.onclick = () => scriptLineClick(i);
-    row.querySelector(".script-in-btn").onclick = (e) => { e.stopPropagation(); setClipInAt(i); };
-    row.querySelector(".script-out-btn").onclick = (e) => { e.stopPropagation(); setClipOutAt(i); };
+    row.querySelector(".script-start-btn").onclick = (e) => { e.stopPropagation(); setClipInAt(i); };
+    row.querySelector(".script-end-btn").onclick = (e) => { e.stopPropagation(); setClipOutAt(i); };
     frag.appendChild(row);
   });
   list.appendChild(frag);

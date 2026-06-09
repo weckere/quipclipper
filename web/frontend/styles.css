@@ -187,7 +187,12 @@ code {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .mark-range-display .range-times { color: rgba(255, 220, 100, 0.8); }
-.mark-clip-btn { font-size: 0.85rem; padding: 0.35rem 0.75rem; }
+.mark-clear-inline {
+  background: none; border: none; color: var(--muted); cursor: pointer;
+  font-size: 1rem; padding: 0 0.2rem; vertical-align: middle;
+  opacity: 0.6; transition: opacity 0.1s;
+}
+.mark-clear-inline:hover { opacity: 1; color: var(--error); }
 .mark-save-btn { font-size: 0.85rem; }
 
 .bookmarks-list { list-style: none; margin: 0; padding: 0; }
@@ -328,6 +333,8 @@ footer { padding: 2rem 1.25rem; font-size: 0.8rem; }
   cursor: pointer; line-height: 1.2; white-space: nowrap;
   opacity: 0.7; transition: opacity 0.1s, border-color 0.1s;
 }
-.script-mark-btn:hover { opacity: 1; border-color: var(--accent); }
-.script-in-btn:hover { border-color: var(--ok); color: var(--ok); }
-.script-out-btn:hover { border-color: rgba(255, 220, 100, 0.8); color: rgba(255, 220, 100, 0.9); }
+.script-mark-btn:hover { opacity: 1; }
+.script-start-btn { border-color: rgba(95, 208, 122, 0.4); color: var(--ok); }
+.script-start-btn:hover { border-color: var(--ok); }
+.script-end-btn { border-color: rgba(255, 107, 107, 0.4); color: var(--error); }
+.script-end-btn:hover { border-color: var(--error); }
