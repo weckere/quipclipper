@@ -282,7 +282,6 @@ async function openItem(path, name, opts) {
   clipFirst = -1;
   clipLast = -1;
   $("mark-range-display").innerHTML = "";
-  $("mark-clip").disabled = true;
   $("mark-save").disabled = true;
   scriptCues = [];
   scriptActiveIdx = -1;
@@ -625,8 +624,9 @@ function updateClipUI() {
   const el = $("mark-range-display");
   if (!hasClipRange()) {
     el.innerHTML = "";
-    $("mark-clip").disabled = true;
     $("mark-save").disabled = true;
+    // Hide clip panel only if it wasn't opened by a search result
+    if (!selectedMatch) $("clip-panel").hidden = true;
   } else {
     const s = clipStart(), e = clipEnd();
     const dur = e - s;
@@ -634,8 +634,14 @@ function updateClipUI() {
     el.innerHTML =
       `<span class="range-times">${formatTime(s)} – ${formatTime(e)}</span> ` +
       `<span>(${dur.toFixed(1)}s, ${nLines} line${nLines > 1 ? "s" : ""})</span>`;
-    $("mark-clip").disabled = false;
     $("mark-save").disabled = false;
+    // Auto-show clip panel and populate range
+    selectedMatch = null;
+    clipRangeStart = s;
+    clipRangeEnd = e;
+    $("clip-panel").hidden = false;
+    $("clip-range-display").textContent =
+      `${formatTime(s)} – ${formatTime(e)} (${dur.toFixed(1)}s)`;
   }
   // Highlight script lines
   updateScriptHighlight();
@@ -648,17 +654,6 @@ function formatTime(s) {
   return h > 0
     ? `${h}:${String(m).padStart(2, "0")}:${sec.padStart(4, "0")}`
     : `${m}:${sec.padStart(4, "0")}`;
-}
-
-function clipFromMarks() {
-  if (!hasClipRange()) return;
-  selectedMatch = null;
-  $("clip-panel").hidden = false;
-  const s = clipStart(), e = clipEnd();
-  $("clip-range-display").textContent =
-    `${formatTime(s)} – ${formatTime(e)} (${(e - s).toFixed(1)}s)`;
-  clipRangeStart = s;
-  clipRangeEnd = e;
 }
 
 async function saveBookmark() {
@@ -682,7 +677,6 @@ async function saveBookmark() {
 $("mark-in").onclick = setClipIn;
 $("mark-out").onclick = setClipOut;
 $("mark-clear").onclick = clearClip;
-$("mark-clip").onclick = clipFromMarks;
 $("mark-save").onclick = saveBookmark;
 
 // --- subtitle script view ---------------------------------------------------
@@ -882,15 +876,21 @@ async function makeClip() {
   $("job-panel").hidden = false;
   $("job-status").innerHTML = '<span class="job-running">Submitting…</span>';
 
+  const audioOnly = $("clip-audio-only").checked;
+  const fmt = $("clip-format").value;
+  const splitCh = $("clip-split-channels").checked;
+
   const body = {
     path: currentItem.path,
-    kind: $("clip-kind").value,
-    lossless: $("clip-lossless").checked,
+    kind: audioOnly ? "audio" : "video",
+    lossless: fmt === "lossless",
     before: parseFloat($("clip-before").value) || 2,
     after: parseFloat($("clip-after").value) || 2,
-    backend: $("clip-backend").value,
-    embed_subs: $("clip-embed-subs").checked,
+    backend: "auto",
+    embed_subs: !audioOnly && $("clip-embed-subs").checked,
     save_to_library: $("clip-save-lib") ? $("clip-save-lib").checked : false,
+    split_channels: splitCh,
+    split_format: fmt === "lossless" ? "wav" : fmt,
   };
 
   if (selectedMatch) {
@@ -948,6 +948,15 @@ function pollJob() {
 }
 
 $("clip-btn").onclick = makeClip;
+
+// Clip option interactions
+function updateClipOptionVisibility() {
+  const audioOnly = $("clip-audio-only").checked;
+  // Embed subs only makes sense for video
+  $("clip-embed-subs").disabled = audioOnly;
+  if (audioOnly) $("clip-embed-subs").checked = false;
+}
+$("clip-audio-only").onchange = updateClipOptionVisibility;
 
 // --- clips library ----------------------------------------------------------
 
