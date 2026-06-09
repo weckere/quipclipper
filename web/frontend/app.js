@@ -599,16 +599,22 @@ Object.defineProperty(window, "markOut", { get: clipEnd });
 
 function setClipIn() {
   if (scriptActiveIdx < 0) return;
-  clipFirst = scriptActiveIdx;
-  // If no out yet, or out is before the new in, set out to same line
-  if (clipLast < clipFirst) clipLast = clipFirst;
-  updateClipUI();
+  setClipInAt(scriptActiveIdx);
 }
 
 function setClipOut() {
   if (scriptActiveIdx < 0) return;
-  clipLast = scriptActiveIdx;
-  // If no in yet, or in is after the new out, set in to same line
+  setClipOutAt(scriptActiveIdx);
+}
+
+function setClipInAt(idx) {
+  clipFirst = idx;
+  if (clipLast < clipFirst) clipLast = clipFirst;
+  updateClipUI();
+}
+
+function setClipOutAt(idx) {
+  clipLast = idx;
   if (clipFirst < 0 || clipFirst > clipLast) clipFirst = clipLast;
   updateClipUI();
 }
@@ -659,12 +665,18 @@ function formatTime(s) {
 async function saveBookmark() {
   if (!currentItem || !hasClipRange()) return;
   const s = clipStart(), e = clipEnd();
-  const label = prompt("Bookmark label:", `${formatTime(s)} – ${formatTime(e)}`);
+  // Build default label: time range + first dialogue line
+  let defaultLabel = `${formatTime(s)} – ${formatTime(e)}`;
+  if (clipFirst >= 0 && scriptCues[clipFirst]) {
+    const firstLine = scriptCues[clipFirst].text.slice(0, 60);
+    defaultLabel += ` — ${firstLine}`;
+  }
+  const label = prompt("Bookmark label:", defaultLabel);
   if (label === null) return;
   try {
     await postJSON("/api/bookmarks", {
       path: currentItem.path,
-      label: label || `${formatTime(s)} – ${formatTime(e)}`,
+      label: label || defaultLabel,
       start: s,
       end: e,
     });
@@ -711,8 +723,14 @@ async function loadScript(path, track) {
     row.dataset.idx = i;
     row.innerHTML =
       `<span class="script-ts">${formatTime(cue.start)}</span>` +
-      `<span class="script-text">${escapeHtml(cue.text)}</span>`;
+      `<span class="script-text">${escapeHtml(cue.text)}</span>` +
+      `<span class="script-actions">` +
+        `<button class="script-mark-btn script-in-btn" title="Set In">In</button>` +
+        `<button class="script-mark-btn script-out-btn" title="Set Out">Out</button>` +
+      `</span>`;
     row.onclick = () => scriptLineClick(i);
+    row.querySelector(".script-in-btn").onclick = (e) => { e.stopPropagation(); setClipInAt(i); };
+    row.querySelector(".script-out-btn").onclick = (e) => { e.stopPropagation(); setClipOutAt(i); };
     frag.appendChild(row);
   });
   list.appendChild(frag);
