@@ -218,6 +218,104 @@ def test_clip_requires_range_or_query(tmp_path: Path) -> None:
     assert resp.status_code == 400
 
 
+def _wait_done(client: TestClient, job_id: str) -> dict:
+    for _ in range(40):
+        job = client.get(f"/api/jobs/{job_id}").json()
+        if job["status"] in ("done", "failed"):
+            return job
+        time.sleep(0.05)
+    return job
+
+
+def test_clip_save_to_library_can_be_overridden_off(tmp_path: Path) -> None:
+    """With the global default ON, an explicit save_to_library=false must win
+    (the clip lands in the clips root, not a per-source subfolder) — R2."""
+    media = tmp_path / "media"
+    media.mkdir()
+    video = media / "movie.mkv"
+    video.write_bytes(b"")
+    (media / "movie.srt").write_text(SRT, encoding="utf-8")
+    clips = tmp_path / "clips"
+    clips.mkdir()
+    fake_out = clips / "out.mkv"
+    fake_out.write_bytes(b"x")
+
+    client = TestClient(create_app(Settings.from_env({
+        "QC_MEDIA_ROOTS": str(media),
+        "QC_CLIPS_DIR": str(clips),
+        "QC_STATE_DIR": str(tmp_path / "state"),
+        "QC_SAVE_TO_LIBRARY": "true",  # global default ON
+    })))
+
+    with patch("quipclipper_web.app.cut_clip", return_value=fake_out) as mock_cut:
+        resp = client.post("/api/clip", json={
+            "path": str(video), "query": "be back", "kind": "video",
+            "lossless": True, "backend": "ffmpeg",
+            "save_to_library": False,  # override the default OFF
+        })
+        assert resp.status_code == 200
+        job = _wait_done(client, resp.json()["job_id"])
+        assert job["status"] == "done"
+        out_arg = Path(mock_cut.call_args.kwargs["out"])
+    # Override respected: no per-source subfolder.
+    assert out_arg.parent == clips
+
+
+def test_clip_save_to_library_default_applies_when_unset(tmp_path: Path) -> None:
+    """When the request omits save_to_library, the server default ON files the
+    clip into a per-source subfolder — R2 (None falls back to the default)."""
+    media = tmp_path / "media"
+    media.mkdir()
+    video = media / "movie.mkv"
+    video.write_bytes(b"")
+    (media / "movie.srt").write_text(SRT, encoding="utf-8")
+    clips = tmp_path / "clips"
+    clips.mkdir()
+    fake_out = clips / "movie" / "out.mkv"
+    fake_out.parent.mkdir(parents=True)
+    fake_out.write_bytes(b"x")
+
+    client = TestClient(create_app(Settings.from_env({
+        "QC_MEDIA_ROOTS": str(media),
+        "QC_CLIPS_DIR": str(clips),
+        "QC_STATE_DIR": str(tmp_path / "state"),
+        "QC_SAVE_TO_LIBRARY": "true",
+    })))
+
+    with patch("quipclipper_web.app.cut_clip", return_value=fake_out) as mock_cut:
+        resp = client.post("/api/clip", json={
+            "path": str(video), "query": "be back", "kind": "video",
+            "lossless": True, "backend": "ffmpeg",
+            # save_to_library omitted → None → use the server default (ON)
+        })
+        assert resp.status_code == 200
+        job = _wait_done(client, resp.json()["job_id"])
+        assert job["status"] == "done"
+        out_arg = Path(mock_cut.call_args.kwargs["out"])
+    assert out_arg.parent == clips / "movie"
+
+
+def test_clips_browse_rejects_sibling_dir_traversal(tmp_path: Path) -> None:
+    """A sibling like /clips-evil must not pass the clips-dir check — R3.
+    (The old string-prefix test allowed it; is_relative_to does not.)"""
+    media = tmp_path / "media"
+    media.mkdir()
+    clips = tmp_path / "clips"
+    clips.mkdir()
+    evil = tmp_path / "clips-evil"
+    evil.mkdir()
+    (evil / "secret.mkv").write_bytes(b"x")
+
+    client = TestClient(create_app(Settings.from_env({
+        "QC_MEDIA_ROOTS": str(media),
+        "QC_CLIPS_DIR": str(clips),
+        "QC_STATE_DIR": str(tmp_path / "state"),
+    })))
+
+    resp = client.get("/api/clips", params={"folder": "../clips-evil"})
+    assert resp.status_code == 403
+
+
 def test_jobs_list(tmp_path: Path) -> None:
     client = _client(tmp_path)
     resp = client.get("/api/jobs")

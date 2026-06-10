@@ -396,10 +396,11 @@ item view will request, so indexing warms playback and the script view, not just
 search.
 
 **Trade-off accepted:** the CLI lost its interactive prompt for the no-English
-multi-track case; it now silently picks the top-scoring track. `--track N`
-remains the explicit override, and `quipclipper tracks` lists the candidates.
-(The now-dead `_pick_track` prompt code in `cli.py` is slated for removal — see
-the review notes in `WEBAPP_PROGRESS.md`.)
+multi-track case; it now picks the top-scoring track and **echoes which track it
+auto-selected** (`_resolve` reads `ResolvedSubtitles.track` and prints its
+label). `--track N` remains the explicit override, and `quipclipper tracks`
+lists the candidates. The old `_pick_track` prompt and its now-unreachable
+`ValueError` recovery were removed (review finding R4).
 
 ---
 

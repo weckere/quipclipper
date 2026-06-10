@@ -48,45 +48,27 @@ def _echo_match(rank: int, m: Match) -> None:
     typer.echo(f"      {m.text}")
 
 
-def _pick_track(video: Path) -> int:
-    """Auto-select the first English subtitle track, or prompt if none exists."""
-    tracks = list_embedded_tracks(video)
-    # Auto-select the first English track.
-    for t in tracks:
-        if t.language and t.language.lower() in ("eng", "en", "english"):
-            typer.secho(f"  auto-selected subtitle track: {t.label()}", fg="bright_black")
-            return t.index
-    # No English track — prompt.
-    typer.echo(f"{len(tracks)} subtitle track(s) (no English track found):")
-    for t in tracks:
-        typer.echo(f"  [{t.index}] {t.label()}")
-    selection = input("Select a subtitle track [0]: ").strip()
-    if selection == "":
-        return tracks[0].index
-    try:
-        idx = int(selection)
-    except ValueError:
-        typer.secho(f"Invalid selection: {selection!r}", fg="red", err=True)
-        raise typer.Exit(code=2)
-    valid = {t.index for t in tracks}
-    if idx not in valid:
-        typer.secho(f"No subtitle track s:{idx}", fg="red", err=True)
-        raise typer.Exit(code=2)
-    return idx
-
-
 def _resolve(subs: Optional[Path], video: Optional[Path], track: Optional[int]) -> ResolvedSubtitles:
+    """Resolve cues, mapping engine errors to clean CLI exits.
+
+    When several embedded subtitle tracks exist and no ``--track`` is given,
+    the engine auto-selects the best dialogue track (English full dialogue >
+    SDH > forced; see ``best_track``). We echo which track it landed on so the
+    choice is visible; pass ``--track`` to override.
+    """
     try:
-        return resolve_subtitles(subs=subs, video=video, track=track)
-    except ValueError as exc:
-        if track is None and video and "Multiple embedded subtitle tracks" in str(exc):
-            chosen = _pick_track(video)
-            return _resolve(subs, video, chosen)
+        resolved = resolve_subtitles(subs=subs, video=video, track=track)
+    except (ValueError, FileNotFoundError, RuntimeError) as exc:
         typer.secho(str(exc), fg="red", err=True)
         raise typer.Exit(code=2)
-    except (FileNotFoundError, RuntimeError) as exc:
-        typer.secho(str(exc), fg="red", err=True)
-        raise typer.Exit(code=2)
+    if track is None and video and resolved.track is not None:
+        tracks = list_embedded_tracks(video)
+        label = next(
+            (t.label() for t in tracks if t.index == resolved.track),
+            f"s:{resolved.track}",
+        )
+        typer.secho(f"  auto-selected subtitle track: {label}", fg="bright_black")
+    return resolved
 
 
 def _parse_tracks(spec: Optional[str]) -> Optional[list[int]]:

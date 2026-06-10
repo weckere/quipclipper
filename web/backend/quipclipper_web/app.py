@@ -41,7 +41,7 @@ from quipclipper.mkv import (
     mkvmerge_available,
 )
 from quipclipper.search import search as engine_search
-from quipclipper.subtitles import find_sidecar, resolve_subtitles, VIDEO_EXTS
+from quipclipper.subtitles import find_sidecar, load_subtitles, VIDEO_EXTS
 from quipclipper_web import __version__, library, media
 from quipclipper_web.bookmarks import BookmarkStore
 from quipclipper_web.config import Settings
@@ -92,8 +92,9 @@ class ClipRequest(BaseModel):
     chapters: bool = True
     remux_first: bool = False
     embed_subs: bool = True
-    # Save to library (organize into subfolder by source)
-    save_to_library: bool = False
+    # Save to library (organize into subfolder by source).
+    # None = use the server default; an explicit bool overrides it per-clip.
+    save_to_library: bool | None = None
     # Channel split
     split_channels: bool = False
     split_format: str = Field("wav", pattern="^(wav|flac|original)$")
@@ -546,10 +547,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             label = f"{req.kind} clip {format_timestamp(req.start)}–{format_timestamp(req.end)}"
         elif req.query:
             try:
-                resolved = resolve_subtitles(subs=None, video=video, track=req.track)
+                # Use the cache: extraction is slow and the same cues were very
+                # likely already extracted when the user searched in the UI.
+                cues = sub_cache.resolve(video, track=req.track)
             except (ValueError, FileNotFoundError, RuntimeError) as exc:
                 raise HTTPException(status_code=400, detail=str(exc))
-            matches = engine_search(req.query, resolved.cues, limit=req.match_index + 1)
+            matches = engine_search(req.query, cues, limit=req.match_index + 1)
             if req.match_index >= len(matches):
                 raise HTTPException(status_code=404, detail="Match index out of range.")
             m = matches[req.match_index]
@@ -583,23 +586,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         do_remux = use_mkvmerge and req.remux_first and not is_matroska(video)
 
-        # Resolve subtitles for embedding (if applicable).
+        # Resolve subtitles for embedding (if applicable). Only the *sidecar*
+        # search subtitle is muxed in — embedded subtitle tracks already ride
+        # along in the lossless copy. We therefore only need find_sidecar (a
+        # cheap glob) and load_subtitles (parse a text file); no ffmpeg
+        # extraction. Populate BOTH the mkvmerge path (file) and the ffmpeg
+        # path (cues) so the mkvmerge→ffmpeg fallback in do_cut keeps the subs.
         embed_cues = None
         embed_subs_path = None
         if req.embed_subs and req.kind == "video" and req.lossless:
             try:
-                sub_resolved = resolve_subtitles(subs=None, video=video, track=req.track)
-                if use_mkvmerge and sub_resolved.path:
-                    embed_subs_path = sub_resolved.path
-                elif sub_resolved.path:
-                    embed_cues = sub_resolved.cues
+                sidecar = find_sidecar(video)
+                if sidecar:
+                    embed_subs_path = sidecar          # used by the mkvmerge path
+                    embed_cues = load_subtitles(sidecar)  # used by the ffmpeg path/fallback
             except Exception:
                 pass  # non-fatal: skip subtitle embedding
 
         # Build the output path inside clips_dir.
-        # When save_to_library is enabled (per-request or global default), organize
-        # clips into a subfolder named after the source file.
-        do_save_lib = req.save_to_library or settings.save_to_library
+        # When save_to_library is enabled, organize clips into a subfolder named
+        # after the source file. The request value wins when set (so the UI can
+        # turn it off even when the server default is on); otherwise the default.
+        do_save_lib = (
+            req.save_to_library if req.save_to_library is not None
+            else settings.save_to_library
+        )
         if do_save_lib:
             clips_dir = settings.clips_dir / video.stem
         else:
@@ -744,7 +755,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return {"clips": [], "folders": []}
         if folder:
             target = (base / folder).resolve()
-            if not str(target).startswith(str(base.resolve())):
+            if not target.is_relative_to(base.resolve()):
                 raise HTTPException(status_code=403, detail="Path outside clips dir.")
             if not target.is_dir():
                 raise HTTPException(status_code=404, detail="Folder not found.")
@@ -775,7 +786,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def download_saved_clip(clip_path: str) -> FileResponse:
         """Download a clip from the clips library."""
         target = (settings.clips_dir / clip_path).resolve()
-        if not str(target).startswith(str(settings.clips_dir.resolve())):
+        if not target.is_relative_to(settings.clips_dir.resolve()):
             raise HTTPException(status_code=403, detail="Path outside clips dir.")
         if not target.is_file():
             raise HTTPException(status_code=404, detail="Clip not found.")
@@ -786,7 +797,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def stream_saved_clip(clip_path: str) -> FileResponse:
         """Stream a clip for in-browser playback (no Content-Disposition download)."""
         target = (settings.clips_dir / clip_path).resolve()
-        if not str(target).startswith(str(settings.clips_dir.resolve())):
+        if not target.is_relative_to(settings.clips_dir.resolve()):
             raise HTTPException(status_code=403, detail="Path outside clips dir.")
         if not target.is_file():
             raise HTTPException(status_code=404, detail="Clip not found.")
