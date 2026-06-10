@@ -172,7 +172,8 @@ code {
 }
 .download-link:hover { opacity: 0.85; }
 
-.marks-panel { margin-top: 0.5rem; }
+.marks-panel { margin-top: 0.5rem; padding-top: 0.4rem; padding-bottom: 0.4rem; }
+.marks-panel h3 { margin: 0 0 0.25rem; }
 .marks-row {
   display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
 }
@@ -221,21 +222,29 @@ code {
   font-size: 0.75rem; padding: 0.2rem 0.6rem; margin-left: auto;
 }
 
-#clip-player-wrap {
-  margin-bottom: 1.5rem; padding: 1rem;
-  background: var(--card); border-radius: 10px;
+/* Bookmarks browser */
+.bm-browser-list { list-style: none; margin: 0; padding: 0; }
+.bm-browser-group {
+  display: flex; align-items: center; gap: 0.6rem;
+  padding: 0.6rem 0.8rem; margin-top: 0.75rem;
+  background: var(--card); border-radius: 8px;
 }
-#clip-player-wrap h3 { margin: 0 0 0.75rem; font-size: 1rem; }
-#clip-player {
-  width: 100%; max-height: 60vh; border-radius: 6px;
-  background: #000;
+.bm-browser-group:first-child { margin-top: 0; }
+.bm-browser-file {
+  flex: 1; font-size: 0.9rem; font-weight: 600; color: var(--accent);
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.clip-player-actions {
-  display: flex; gap: 0.5rem; margin-top: 0.75rem;
+.bm-browser-open {
+  background: none; border: 1px solid var(--badge); color: var(--fg);
+  border-radius: 5px; padding: 0.2rem 0.5rem; cursor: pointer; font-size: 0.75rem;
+  white-space: nowrap;
 }
-.clip-player-actions a {
-  text-decoration: none; text-align: center;
+.bm-browser-open:hover { border-color: var(--accent); color: var(--accent); }
+.bm-browser-item {
+  display: flex; align-items: center; gap: 0.6rem;
+  padding: 0.35rem 0.8rem 0.35rem 1.5rem;
 }
+.bm-browser-item:hover { background: var(--hover); border-radius: 6px; }
 
 .muted { color: var(--muted); }
 .error { color: var(--error); }

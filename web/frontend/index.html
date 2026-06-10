@@ -11,6 +11,7 @@
       <h1 id="home-link">quipclipper</h1>
       <p class="tagline">Find and cut clips by searching the dialogue.
         <a id="clips-link" class="clips-nav-link">Clips</a>
+        <a id="bookmarks-link" class="clips-nav-link">Bookmarks</a>
       </p>
     </header>
 
@@ -44,16 +45,18 @@
           <a id="clips-home">Clips</a>
           <span id="clips-folder-crumb" class="muted"></span>
         </nav>
-        <div id="clip-player-wrap" hidden>
-          <h3 id="clip-player-name"></h3>
-          <video id="clip-player" controls preload="metadata"></video>
-          <div class="clip-player-actions">
-            <a id="clip-player-dl" class="clip-btn" download>Download</a>
-            <button id="clip-player-close" class="mark-btn">Close</button>
-          </div>
-        </div>
         <ul id="clips-entries" class="entries"></ul>
         <p id="clips-empty" class="muted" hidden>No clips yet.</p>
+      </section>
+
+      <!-- Bookmarks browser -->
+      <section id="bookmarks-browser" hidden>
+        <nav class="breadcrumb">
+          <a id="all-bm-back-lib">Library</a>
+          <span class="muted"> / Bookmarks</span>
+        </nav>
+        <ul id="all-bookmarks-list" class="bookmarks-list bm-browser-list"></ul>
+        <p id="all-bookmarks-empty" class="muted" hidden>No bookmarks saved yet.</p>
       </section>
 
       <!-- Item / inspection view -->

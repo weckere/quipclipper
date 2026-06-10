@@ -153,6 +153,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except library.PathNotAllowed as exc:
             raise HTTPException(status_code=403, detail=str(exc))
 
+    def _resolve_any(path: str) -> Path:
+        """Resolve a path within media roots OR clips dir."""
+        try:
+            return library.resolve_within_roots(path, settings.media_roots)
+        except library.PathNotAllowed:
+            pass
+        # Try clips dir
+        target = Path(path).resolve()
+        clips_root = settings.clips_dir.resolve()
+        if clips_root.is_dir() and (target == clips_root or clips_root in target.parents):
+            return target
+        raise HTTPException(status_code=403, detail=f"Path is outside allowed directories: {path}")
+
     @app.get("/api/library/roots")
     def roots() -> dict:
         return {"roots": [str(p) for p in settings.media_roots]}
@@ -189,7 +202,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/items")
     def item(path: str = Query(...)) -> dict:
-        p = _resolve(path)
+        p = _resolve_any(path)
         if not p.exists():
             raise HTTPException(status_code=404, detail=f"Not found: {path}")
         if not p.is_file():
@@ -206,7 +219,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         offset: float = Query(0, ge=0),
         fmt: str = Query("vtt"),
     ) -> Response:
-        p = _resolve(path)
+        p = _resolve_any(path)
         try:
             resolved = resolve_subtitles(subs=None, video=p, track=track)
         except ValueError as exc:  # multiple tracks, none auto-selectable
@@ -238,7 +251,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         min_score: float = Query(60.0, ge=0, le=100),
         max_span: int = Query(3, ge=1, le=10),
     ) -> dict:
-        p = _resolve(path)
+        p = _resolve_any(path)
         try:
             cues = sub_cache.resolve(p, track=track)
         except ValueError as exc:
@@ -392,7 +405,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         Starlette's FileResponse handles Range requests (206), so the browser can
         seek. Whether it actually decodes depends on the codec/container.
         """
-        p = _resolve(path)
+        p = _resolve_any(path)
         if not p.is_file():
             raise HTTPException(status_code=404, detail=f"Not found: {path}")
         mime = _BROWSER_MIME.get(p.suffix.lower(), "application/octet-stream")
@@ -409,7 +422,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         with ``-c:v copy``) will actually land, so subtitle offsets can be
         computed accurately.
         """
-        p = _resolve(path)
+        p = _resolve_any(path)
         if not p.is_file():
             raise HTTPException(status_code=404, detail=f"Not found: {path}")
         actual = media.probe_keyframe_before(p, time)
@@ -427,7 +440,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         Supports optional start/end params for segment-based seeking — ffmpeg's
         -ss is placed before -i for fast seek.
         """
-        p = _resolve(path)
+        p = _resolve_any(path)
         if not p.is_file():
             raise HTTPException(status_code=404, detail=f"Not found: {path}")
 
@@ -477,7 +490,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/clip")
     def create_clip(req: ClipRequest) -> dict:
-        video = _resolve(req.path)
+        video = _resolve_any(req.path)
         if not video.is_file():
             raise HTTPException(status_code=404, detail=f"Not found: {req.path}")
 
@@ -655,7 +668,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/bookmarks")
     def list_bookmarks(path: str | None = None) -> dict:
         if path:
-            _resolve(path)  # path-safety check
+            _resolve_any(path)  # path-safety check
             bms = bookmarks.list_for_path(path)
         else:
             bms = bookmarks.list_all()
@@ -663,7 +676,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/bookmarks")
     def create_bookmark(req: BookmarkCreate) -> dict:
-        _resolve(req.path)  # path-safety check
+        _resolve_any(req.path)  # path-safety check
         if not req.label:
             req.label = f"{format_timestamp(req.start)} – {format_timestamp(req.end)}"
         bm = bookmarks.add(req.path, req.label, req.start, req.end)
@@ -699,6 +712,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             [
                 {
                     "name": f.name,
+                    "path": str(f.resolve()),
                     "size": f.stat().st_size,
                     "folder": folder or "",
                     "download_url": f"/api/clips/download/{quote(((folder + '/') if folder else '') + f.name)}",

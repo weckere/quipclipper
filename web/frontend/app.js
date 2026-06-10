@@ -33,12 +33,14 @@ const qp = (path) => `?path=${encodeURIComponent(path)}`;
 function showBrowser() {
   $("item").hidden = true;
   $("clips-browser").hidden = true;
+  $("bookmarks-browser").hidden = true;
   $("browser").hidden = false;
 }
 
 function showItem() {
   $("browser").hidden = true;
   $("clips-browser").hidden = true;
+  $("bookmarks-browser").hidden = true;
   $("item").hidden = false;
 }
 
@@ -335,7 +337,7 @@ async function openItem(path, name, opts) {
       settingSrc = false;
       if (autoplay) player.play().catch(() => {});
     }, { once: true });
-    $("preview-note").textContent = "Transcoding audio for browser playback…";
+    $("preview-note").textContent = "";
     // With -c:v copy, ffmpeg starts from the nearest keyframe before
     // the requested time.  Query the actual keyframe position so we can
     // shift subtitles accurately and keep the seek bar in sync.
@@ -419,6 +421,13 @@ async function openItem(path, name, opts) {
     player.addEventListener("loadedmetadata", () => {
       player.currentTime = seekTarget;
     }, { once: true });
+  }
+
+  // Apply pending bookmark clip (when navigating from bookmarks browser)
+  if (pendingBookmarkClip) {
+    const bm = pendingBookmarkClip;
+    pendingBookmarkClip = null;
+    useBookmarkForClip(bm);
   }
 }
 
@@ -980,6 +989,7 @@ $("clip-audio-only").onchange = updateClipOptionVisibility;
 function showClips() {
   $("browser").hidden = true;
   $("item").hidden = true;
+  $("bookmarks-browser").hidden = true;
   $("clips-browser").hidden = false;
 }
 
@@ -1026,33 +1036,99 @@ async function browseClips(folder) {
       `<a class="download-link clip-dl" href="${c.download_url}" download>Download</a>`;
     li.onclick = (e) => {
       if (e.target.closest("a")) return; // let download link work normally
-      playClip(c.name, c.stream_url, c.download_url);
+      openItem(c.path, c.name);
     };
     list.appendChild(li);
   }
 }
 
-function playClip(name, streamUrl, downloadUrl) {
-  const wrap = $("clip-player-wrap");
-  const player = $("clip-player");
-  $("clip-player-name").textContent = name;
-  player.src = streamUrl;
-  $("clip-player-dl").href = downloadUrl;
-  wrap.hidden = false;
-  player.play().catch(() => {});
-}
-
-$("clip-player-close").onclick = () => {
-  const player = $("clip-player");
-  player.pause();
-  player.removeAttribute("src");
-  player.load();
-  $("clip-player-wrap").hidden = true;
-};
-
 $("clips-link").onclick = () => browseClips(null);
 $("clips-home").onclick = () => browseClips(null);
 $("clips-back-lib").onclick = () => browse(null);
+
+// --- bookmarks browser ------------------------------------------------------
+
+function showBookmarksBrowser() {
+  $("browser").hidden = true;
+  $("item").hidden = true;
+  $("clips-browser").hidden = true;
+  $("bookmarks-browser").hidden = false;
+}
+
+async function browseBookmarks() {
+  showBookmarksBrowser();
+  const list = $("all-bookmarks-list");
+  const empty = $("all-bookmarks-empty");
+  list.innerHTML = "";
+  empty.hidden = true;
+
+  let data;
+  try {
+    data = await getJSON("/api/bookmarks");
+  } catch (err) {
+    list.innerHTML = `<li class="error">Could not load bookmarks: ${err.message}</li>`;
+    return;
+  }
+
+  if (!data.bookmarks.length) {
+    empty.hidden = false;
+    return;
+  }
+
+  // Group by source path
+  const groups = new Map();
+  for (const bm of data.bookmarks) {
+    if (!groups.has(bm.path)) groups.set(bm.path, []);
+    groups.get(bm.path).push(bm);
+  }
+
+  for (const [path, bookmarks] of groups) {
+    const fileName = path.split("/").pop() || path;
+    const header = document.createElement("li");
+    header.className = "bm-browser-group";
+    header.innerHTML =
+      `<span class="bm-browser-file">${escapeHtml(fileName)}</span>` +
+      `<button class="bm-browser-open" title="Open file">Open ▶</button>`;
+    header.querySelector(".bm-browser-open").onclick = () => openItem(path, fileName);
+    list.appendChild(header);
+
+    for (const bm of bookmarks) {
+      const li = document.createElement("li");
+      li.className = "bm-browser-item";
+      li.innerHTML =
+        `<span class="bookmark-label">${escapeHtml(bm.label)}</span>` +
+        `<span class="bookmark-range">${formatTime(bm.start)} – ${formatTime(bm.end)}</span>` +
+        `<button class="bookmark-use" title="Open & clip">Clip</button>` +
+        `<button class="bookmark-seek" title="Open & seek">▶</button>` +
+        `<button class="bookmark-del" title="Delete">✕</button>`;
+      li.querySelector(".bookmark-use").onclick = (e) => {
+        e.stopPropagation();
+        openItem(path, fileName, { seekTo: bm.start });
+        // After item loads, set up the clip range from this bookmark
+        pendingBookmarkClip = bm;
+      };
+      li.querySelector(".bookmark-seek").onclick = (e) => {
+        e.stopPropagation();
+        openItem(path, fileName, { seekTo: bm.start });
+      };
+      li.querySelector(".bookmark-del").onclick = async (e) => {
+        e.stopPropagation();
+        try {
+          await fetch(`/api/bookmarks/${bm.id}`, { method: "DELETE" });
+          browseBookmarks();
+        } catch {}
+      };
+      list.appendChild(li);
+    }
+  }
+}
+
+// When navigating from bookmarks browser to an item with "Clip", we need to
+// apply the bookmark range after the item finishes loading.
+let pendingBookmarkClip = null;
+
+$("bookmarks-link").onclick = () => browseBookmarks();
+$("all-bm-back-lib").onclick = () => browse(null);
 
 // --- boot -------------------------------------------------------------------
 
