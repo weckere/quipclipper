@@ -257,7 +257,7 @@ footer { padding: 2rem 1.25rem; font-size: 0.8rem; }
   display: flex; align-items: center; gap: 0.5rem;
   padding: 0.4rem 0; margin-top: -0.25rem;
 }
-.transcode-hint { font-size: 0.8rem; margin-top: 0; }
+.transcode-hint { font-size: 0.8rem; margin-top: 0; text-align: center; }
 .transcode-seek-bar input[type="range"] {
   flex: 1; height: 6px; cursor: pointer;
   accent-color: var(--accent);
@@ -283,6 +283,19 @@ footer { padding: 2rem 1.25rem; font-size: 0.8rem; }
 }
 .index-btn:hover { opacity: 0.85; }
 .index-btn:disabled { opacity: 0.5; cursor: default; }
+
+/* Reindex controls */
+.reindex-row {
+  display: flex; align-items: center; gap: 0.6rem;
+  margin-top: 0.5rem;
+}
+.reindex-link {
+  color: var(--muted); cursor: pointer; font-size: 0.8rem;
+  text-decoration: none; white-space: nowrap;
+}
+.reindex-link:hover { color: var(--accent); text-decoration: underline; }
+.reindex-link.disabled { opacity: 0.5; cursor: default; pointer-events: none; }
+.reindex-status { font-size: 0.8rem; }
 
 /* Subtitle script view */
 .script-wrap { margin-top: 0.75rem; }

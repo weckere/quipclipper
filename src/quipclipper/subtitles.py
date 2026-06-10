@@ -60,6 +60,8 @@ class SubtitleTrack:
     codec: str
     language: str | None
     title: str | None
+    forced: bool = False
+    hearing_impaired: bool = False
 
     def label(self) -> str:
         parts = [f"s:{self.index}", self.codec]
@@ -78,7 +80,9 @@ def list_embedded_tracks(video_path: str | Path) -> list[SubtitleTrack]:
     cmd = [
         "ffprobe", "-v", "error",
         "-select_streams", "s",
-        "-show_entries", "stream=index,codec_name:stream_tags=language,title",
+        "-show_entries",
+        "stream=index,codec_name:stream_tags=language,title"
+        ":stream_disposition=forced,hearing_impaired",
         "-of", "json", str(video_path),
     ]
     out = subprocess.run(cmd, capture_output=True, text=True)
@@ -90,12 +94,15 @@ def list_embedded_tracks(video_path: str | Path) -> list[SubtitleTrack]:
     tracks: list[SubtitleTrack] = []
     for rel, s in enumerate(streams):  # rel = subtitle-relative index (s:N)
         tags = s.get("tags", {}) or {}
+        disp = s.get("disposition", {}) or {}
         tracks.append(
             SubtitleTrack(
                 index=rel,
                 codec=s.get("codec_name", "?"),
                 language=tags.get("language"),
                 title=tags.get("title"),
+                forced=bool(disp.get("forced")),
+                hearing_impaired=bool(disp.get("hearing_impaired")),
             )
         )
     return tracks
@@ -112,6 +119,8 @@ class StreamInfo:
     title: str | None
     channels: int | None
     channel_layout: str | None
+    forced: bool = False
+    hearing_impaired: bool = False
 
     @property
     def selector(self) -> str:
@@ -138,7 +147,9 @@ def list_streams(video_path: str | Path) -> list[StreamInfo]:
     cmd = [
         "ffprobe", "-v", "error",
         "-show_entries",
-        "stream=codec_type,codec_name,channels,channel_layout:stream_tags=language,title",
+        "stream=codec_type,codec_name,channels,channel_layout"
+        ":stream_tags=language,title"
+        ":stream_disposition=forced,hearing_impaired",
         "-of", "json", str(video_path),
     ]
     out = subprocess.run(cmd, capture_output=True, text=True)
@@ -154,6 +165,7 @@ def list_streams(video_path: str | Path) -> list[StreamInfo]:
         if kind not in ("video", "audio", "subtitle"):
             continue
         tags = s.get("tags", {}) or {}
+        disp = s.get("disposition", {}) or {}
         idx = counts.get(kind, 0)
         counts[kind] = idx + 1
         infos.append(
@@ -165,6 +177,8 @@ def list_streams(video_path: str | Path) -> list[StreamInfo]:
                 title=tags.get("title"),
                 channels=s.get("channels"),
                 channel_layout=s.get("channel_layout"),
+                forced=bool(disp.get("forced")),
+                hearing_impaired=bool(disp.get("hearing_impaired")),
             )
         )
     return infos
@@ -254,12 +268,21 @@ def resolve_subtitles(
         if len(tracks) == 1:
             track = tracks[0].index
         else:
-            # Prefer non-SDH English, then SDH English, then first track.
+            # Score English tracks: full dialogue (non-SDH, non-forced) >
+            # SDH > forced.  Forced tracks contain only foreign-language
+            # portions (minimal dialogue), so they rank below SDH.
             _SDH_RE = re.compile(r"sdh|hearing|impaired|\bcc\b", re.IGNORECASE)
+            _FORCED_RE = re.compile(r"forced", re.IGNORECASE)
             eng = [t for t in tracks if t.language and t.language.lower() in ("eng", "en", "english")]
-            eng_non_sdh = next((t for t in eng if not _SDH_RE.search(t.title or "")), None)
-            eng_sdh = next((t for t in eng if _SDH_RE.search(t.title or "")), None)
-            best = eng_non_sdh or eng_sdh
+
+            def _score(t: SubtitleTrack) -> int:
+                if t.forced or _FORCED_RE.search(t.title or ""):
+                    return -50
+                if t.hearing_impaired or _SDH_RE.search(t.title or ""):
+                    return -10
+                return 0
+
+            best = max(eng, key=_score) if eng else None
             if best is not None:
                 track = best.index
             else:

@@ -78,6 +78,8 @@ def stream_dict(s: StreamInfo) -> dict:
         "title": s.title,
         "channels": s.channels,
         "channel_layout": s.channel_layout,
+        "forced": s.forced,
+        "hearing_impaired": s.hearing_impaired,
         "label": s.label(),
     }
 

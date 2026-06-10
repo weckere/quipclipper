@@ -30,7 +30,20 @@ const qp = (path) => `?path=${encodeURIComponent(path)}`;
 
 // --- views ------------------------------------------------------------------
 
+/** Stop playback and release the source so audio doesn't keep playing
+ *  after navigating away from the item view. */
+function stopPlayer() {
+  const player = $("player");
+  if (!player) return;
+  player.pause();
+  player.removeAttribute("src");
+  // Drop any subtitle tracks too, then reset the media element.
+  player.querySelectorAll("track").forEach((t) => t.remove());
+  player.load();
+}
+
 function showBrowser() {
+  stopPlayer();
   $("item").hidden = true;
   $("clips-browser").hidden = true;
   $("bookmarks-browser").hidden = true;
@@ -48,17 +61,23 @@ function showItem() {
 
 let currentBrowsePath = null;
 let librarySearchTimer = null;
+// When a library search surfaces folders, holds their paths so dialogue
+// search can span all of them. null = search the current folder only.
+let dialogueSearchScope = null;
 
 async function browse(path) {
   showBrowser();
   currentBrowsePath = path;
+  dialogueSearchScope = null;
   const list = $("entries");
   list.innerHTML = "";
   $("browser-empty").hidden = true;
   $("library-search").value = "";
   $("dialogue-search").value = "";
+  $("dialogue-search").placeholder = "Search dialogue in this folder…";
   $("dialogue-search-status").hidden = true;
   $("index-banner").hidden = true;
+  $("reindex-folder-status").hidden = true;
   // Show dialogue search bar only when inside a folder (not at root)
   $("dialogue-search-bar").hidden = !path;
   let data;
@@ -69,7 +88,7 @@ async function browse(path) {
     return;
   }
 
-  renderBreadcrumb(path, data.entries);
+  renderBreadcrumb(path);
   renderEntries(data.entries);
   checkFolderIndex(path);
 }
@@ -117,6 +136,19 @@ async function librarySearch(query) {
     return;
   }
   renderEntries(data.entries);
+
+  // Enable cross-folder dialogue search over the folders this search surfaced.
+  const folderPaths = data.entries.filter((e) => e.is_dir).map((e) => e.path);
+  if (folderPaths.length) {
+    dialogueSearchScope = folderPaths;
+    $("dialogue-search").placeholder =
+      `Search dialogue across ${folderPaths.length} folder${folderPaths.length > 1 ? "s" : ""}…`;
+    $("dialogue-search-bar").hidden = false;
+  } else {
+    dialogueSearchScope = null;
+    $("dialogue-search").placeholder = "Search dialogue in this folder…";
+    $("dialogue-search-bar").hidden = !currentBrowsePath;
+  }
 }
 
 $("library-search").addEventListener("input", (e) => {
@@ -128,7 +160,10 @@ $("library-search").addEventListener("input", (e) => {
 
 async function dialogueSearch() {
   const query = $("dialogue-search").value.trim();
-  if (!query || !currentBrowsePath) return;
+  // Search either the explicit multi-folder scope (from a library search) or
+  // the current folder we're browsing.
+  const folders = dialogueSearchScope || (currentBrowsePath ? [currentBrowsePath] : []);
+  if (!query || !folders.length) return;
 
   const list = $("entries");
   list.innerHTML = "";
@@ -138,7 +173,8 @@ async function dialogueSearch() {
   status.hidden = false;
   $("dialogue-search-btn").disabled = true;
 
-  const url = `/api/search/folder?path=${encodeURIComponent(currentBrowsePath)}&query=${encodeURIComponent(query)}`;
+  const pathParams = folders.map((f) => `path=${encodeURIComponent(f)}`).join("&");
+  const url = `/api/search/folder?${pathParams}&query=${encodeURIComponent(query)}`;
   let data;
   try {
     data = await getJSON(url);
@@ -225,19 +261,129 @@ $("index-btn").addEventListener("click", async () => {
   btn.disabled = false;
 });
 
-function renderBreadcrumb(path, entries) {
+/** Stream a (re)index of one folder, reporting progress via a callback. */
+async function streamFolderIndex(folder, force, onProgress) {
+  let url = `/api/search/folder/index?path=${encodeURIComponent(folder)}`;
+  if (force) url += "&force=true";
+  const resp = await fetch(url, { method: "POST" });
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    const last = decoder.decode(value, { stream: true }).trim().split("\n").pop();
+    const m = last.match(/^(\d+)\/(\d+) (.+)/);
+    if (m && onProgress) onProgress(m[1], m[2], m[3]);
+  }
+}
+
+// Force-reindex the current folder(s) — clears cache then re-extracts.
+$("reindex-folder-btn").addEventListener("click", async () => {
+  const folders = dialogueSearchScope || (currentBrowsePath ? [currentBrowsePath] : []);
+  if (!folders.length) return;
+  const btn = $("reindex-folder-btn");
+  const status = $("reindex-folder-status");
+  btn.classList.add("disabled");
+  status.hidden = false;
+  try {
+    for (let i = 0; i < folders.length; i++) {
+      const prefix = folders.length > 1 ? `Folder ${i + 1}/${folders.length} — ` : "";
+      await streamFolderIndex(folders[i], true, (d, t, name) => {
+        status.textContent = `${prefix}Reindexing ${d}/${t}: ${name}`;
+      });
+    }
+    status.textContent = "Reindexed.";
+    if (currentBrowsePath) checkFolderIndex(currentBrowsePath);
+  } catch {
+    status.textContent = "Reindex failed.";
+  }
+  btn.classList.remove("disabled");
+});
+
+// Force-reindex the current file's subtitles, then reload the script.
+$("reindex-item-btn").addEventListener("click", async () => {
+  if (!currentItem) return;
+  const btn = $("reindex-item-btn");
+  const status = $("reindex-item-status");
+  btn.classList.add("disabled");
+  status.hidden = false;
+  status.textContent = "Reindexing…";
+  try {
+    const data = await postJSON(
+      `/api/items/subtitles/reindex?path=${encodeURIComponent(currentItem.path)}`, {},
+    );
+    status.textContent = `Reindexed (${data.cues} cues).`;
+    // Reload the script and subtitle track so the new subs show immediately.
+    const track = getSelectedTrack();
+    loadScript(currentItem.path, track);
+    loadSubtitleTrack(currentItem.path, track, transcodeOffset || 0);
+  } catch (err) {
+    status.textContent = `Reindex failed: ${err.message}`;
+  }
+  btn.classList.remove("disabled");
+});
+
+function renderBreadcrumb(path) {
   const bc = $("breadcrumb");
   bc.innerHTML = "";
-  const root = document.createElement("a");
-  root.textContent = "Library";
-  root.onclick = () => browse(null);
-  bc.appendChild(root);
-  if (path) {
-    const cur = document.createElement("span");
-    cur.textContent = " / " + path;
-    cur.className = "muted";
-    bc.appendChild(cur);
+
+  const addLink = (label, target) => {
+    const a = document.createElement("a");
+    a.textContent = label;
+    a.onclick = () => browse(target);
+    bc.appendChild(a);
+  };
+  const addSep = () => {
+    const sep = document.createElement("span");
+    sep.className = "muted";
+    sep.textContent = " / ";
+    bc.appendChild(sep);
+  };
+  const addCurrent = (label) => {
+    const span = document.createElement("span");
+    span.className = "muted";
+    span.textContent = label;
+    bc.appendChild(span);
+  };
+
+  // Root "Library" link is always present.
+  if (!path) {
+    addCurrent("Library");
+    return;
   }
+  addLink("Library", null);
+
+  // Find the media root that contains this path so we don't make segments
+  // above a root clickable (they'd be outside the allowed roots).
+  const root = mediaRoots.find((r) => path === r || path.startsWith(r + "/"));
+  if (!root) {
+    // Fallback: show the whole path as a single non-clickable segment.
+    addSep();
+    addCurrent(path);
+    return;
+  }
+
+  const rootName = root.split("/").pop() || root;
+  addSep();
+  if (path === root) {
+    addCurrent(rootName);
+    return;
+  }
+  addLink(rootName, root);
+
+  const rest = path.slice(root.length).replace(/^\/+/, "");
+  const parts = rest.split("/");
+  let cum = root;
+  parts.forEach((part, i) => {
+    cum += "/" + part;
+    const target = cum;  // capture per-iteration value for the closure
+    addSep();
+    if (i === parts.length - 1) {
+      addCurrent(part);  // current folder — not a link
+    } else {
+      addLink(part, target);
+    }
+  });
 }
 
 // --- item / inspection view -------------------------------------------------
@@ -445,8 +591,12 @@ function renderSubs(info, path) {
   const box = $("subs-controls");
   box.innerHTML = "";
   const tracks = info.subtitle_tracks || [];
+  const hasSubs = tracks.length > 0 || info.has_sidecar;
+  // Only offer reindex when there are subtitles to reindex.
+  $("reindex-item-row").hidden = !hasSubs;
+  $("reindex-item-status").hidden = true;
 
-  if (!tracks.length && !info.has_sidecar) {
+  if (!hasSubs) {
     box.innerHTML = '<span class="muted">No subtitles found (sidecar or embedded).</span>';
     return;
   }
@@ -460,13 +610,21 @@ function renderSubs(info, path) {
 
   // A picker when there are embedded tracks; otherwise just load the default.
   if (tracks.length > 1) {
-    // Auto-select the best English track: prefer non-SDH English, then SDH
-    // English, then fall back to the first track.
+    // Auto-select the best English track by score. Preference order:
+    //   full dialogue (non-SDH, non-forced) > SDH > forced.
+    // Forced tracks contain only foreign-language portions (minimal dialogue),
+    // so they rank below SDH even though SDH adds sound descriptions.
     const isEng = (t) => !t.language || /^en/i.test(t.language);
-    const isSDH = (t) => /sdh|hearing|impaired|cc\b/i.test(t.title || "");
-    const engNonSDH = tracks.find((t) => isEng(t) && !isSDH(t));
-    const engSDH = tracks.find((t) => isEng(t) && isSDH(t));
-    const bestTrack = engNonSDH || engSDH || tracks[0];
+    const isSDH = (t) => t.hearing_impaired || /sdh|hearing|impaired|cc\b/i.test(t.title || "");
+    const isForced = (t) => t.forced || /forced/i.test(t.title || "");
+    const score = (t) => {
+      let s = 0;
+      if (isEng(t)) s += 100;
+      if (isForced(t)) s -= 50;   // forced ranks lowest among eng tracks
+      else if (isSDH(t)) s -= 10; // SDH ranks below full dialogue
+      return s;
+    };
+    const bestTrack = tracks.reduce((best, t) => (score(t) > score(best) ? t : best), tracks[0]);
 
     const sel = document.createElement("select");
     tracks.forEach((t) => {
@@ -987,6 +1145,7 @@ $("clip-audio-only").onchange = updateClipOptionVisibility;
 // --- clips library ----------------------------------------------------------
 
 function showClips() {
+  stopPlayer();
   $("browser").hidden = true;
   $("item").hidden = true;
   $("bookmarks-browser").hidden = true;
@@ -1049,6 +1208,7 @@ $("clips-back-lib").onclick = () => browse(null);
 // --- bookmarks browser ------------------------------------------------------
 
 function showBookmarksBrowser() {
+  stopPlayer();
   $("browser").hidden = true;
   $("item").hidden = true;
   $("clips-browser").hidden = true;
@@ -1133,6 +1293,7 @@ $("all-bm-back-lib").onclick = () => browse(null);
 // --- boot -------------------------------------------------------------------
 
 let appConfig = {};
+let mediaRoots = [];  // absolute media-root paths, for breadcrumb segmentation
 
 async function loadStatus() {
   try {
@@ -1150,6 +1311,11 @@ async function loadStatus() {
     // Always show the "Save to library" checkbox — it can be toggled per-clip
     $("clip-save-lib-label").hidden = false;
     $("clip-save-lib").checked = appConfig.save_to_library || false;
+  } catch {}
+  // Load media roots so the breadcrumb can offer clickable path segments.
+  try {
+    const r = await getJSON("/api/library/roots");
+    mediaRoots = r.roots || [];
   } catch {}
 }
 

@@ -32,6 +32,10 @@
             <span id="index-banner-text">Subtitles in this folder haven't been indexed yet. Indexing speeds up dialogue search.</span>
             <button id="index-btn" class="index-btn">Index now</button>
           </div>
+          <div class="reindex-row">
+            <a id="reindex-folder-btn" class="reindex-link" title="Clear and re-extract subtitles for every file in this folder (use if subtitles changed)">↻ Reindex subtitles</a>
+            <span id="reindex-folder-status" class="muted reindex-status" hidden></span>
+          </div>
         </div>
         <ul id="entries" class="entries"></ul>
         <p id="browser-empty" class="muted" hidden>Nothing here.</p>
@@ -142,6 +146,10 @@
         <div class="panel">
           <h3>Subtitles</h3>
           <div id="subs-controls"></div>
+          <div id="reindex-item-row" class="reindex-row" hidden>
+            <a id="reindex-item-btn" class="reindex-link" title="Clear and re-extract subtitles for this file (use if subtitles changed)">↻ Reindex subtitles</a>
+            <span id="reindex-item-status" class="muted reindex-status" hidden></span>
+          </div>
         </div>
 
         <div class="panel">

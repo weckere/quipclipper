@@ -290,29 +290,42 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/search/folder")
     def search_dialogue_folder(
-        path: str = Query(...),
+        path: list[str] = Query(...),
         query: str = Query(..., min_length=1),
         limit: int = Query(5, ge=1, le=20),
         min_score: float = Query(60.0, ge=0, le=100),
         max_span: int = Query(3, ge=1, le=10),
     ) -> dict:
-        """Search dialogue across all video files in a folder.
+        """Search dialogue across all video files in one or more folders.
 
-        For each video with subtitles (sidecar or embedded), run the search
-        engine and collect the top results.  Returns a flat list of matches
-        grouped by source file, sorted best-score-first across all files.
+        Accepts one or more ``path`` query params (repeat the param to search
+        several folders at once, e.g. the folders returned by a library
+        search).  For each video with subtitles (sidecar or embedded), run the
+        search engine and collect the top results.  Returns a flat list of
+        matches grouped by source file, sorted best-score-first across all files.
         """
-        folder = _resolve(path)
-        if not folder.is_dir():
-            raise HTTPException(status_code=400, detail=f"Not a directory: {path}")
+        # Resolve and validate every requested folder.
+        folders: list[Path] = []
+        for p in path:
+            folder = _resolve(p)
+            if not folder.is_dir():
+                raise HTTPException(status_code=400, detail=f"Not a directory: {p}")
+            folders.append(folder)
 
         all_hits: list[dict] = []
 
-        # Collect video files recursively, sorted for deterministic order
-        videos = sorted(
-            (c for c in folder.rglob("*") if c.is_file() and c.suffix.lower() in VIDEO_EXTS),
-            key=lambda p: p.name.lower(),
-        )
+        # Collect video files recursively across all folders, de-duplicated
+        # (folders may overlap) and sorted for deterministic order.
+        seen: set[Path] = set()
+        videos: list[Path] = []
+        for folder in folders:
+            for c in folder.rglob("*"):
+                if c.is_file() and c.suffix.lower() in VIDEO_EXTS:
+                    rp = c.resolve()
+                    if rp not in seen:
+                        seen.add(rp)
+                        videos.append(c)
+        videos.sort(key=lambda p: p.name.lower())
 
         def _search_one(video: Path) -> list[dict]:
             try:
@@ -347,7 +360,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         return {
             "query": query,
-            "folder": path,
+            "folders": path,
             "files_scanned": len(videos),
             "count": len(all_hits),
             "matches": all_hits,
@@ -379,8 +392,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"total": len(videos), "indexed": indexed, "skipped": False}
 
     @app.post("/api/search/folder/index")
-    def folder_index(path: str = Query(...)) -> StreamingResponse:
+    def folder_index(
+        path: str = Query(...),
+        force: bool = Query(False),
+    ) -> StreamingResponse:
+        """Index (extract + cache) subtitles for every video under a folder.
+
+        With ``force=true``, clears the existing cache for the folder first so
+        subtitles are re-extracted even if they were already cached — use this
+        when the underlying subtitle files have changed.
+        """
         videos = _folder_videos(path)
+        if force:
+            folder = _resolve(path)
+            sub_cache.clear_under(folder)
 
         def generate():
             total = len(videos)
@@ -395,6 +420,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 yield f"{done}/{total} {v.name}\n"
 
         return StreamingResponse(generate(), media_type="text/plain")
+
+    @app.post("/api/items/subtitles/reindex")
+    def reindex_item_subtitles(path: str = Query(...)) -> dict:
+        """Clear and re-extract the subtitle cache for a single video file.
+
+        Use this when a file's subtitles have changed and you want the script
+        and dialogue search to reflect the new subtitles immediately.
+        """
+        p = _resolve_any(path)
+        if not p.is_file():
+            raise HTTPException(status_code=404, detail=f"Not found: {path}")
+        cleared = sub_cache.clear(p)
+        try:
+            cues = sub_cache.resolve(p)
+        except (ValueError, FileNotFoundError, RuntimeError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
+        return {"cleared": cleared, "cues": len(cues)}
 
     # --- media streaming -------------------------------------------------------
 
