@@ -173,10 +173,11 @@ code {
 .download-link:hover { opacity: 0.85; }
 
 .marks-panel { margin-top: 0.5rem; padding-top: 0.4rem; padding-bottom: 0.4rem; }
-.marks-panel h3 { margin: 0 0 0.25rem; }
 .marks-row {
   display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
 }
+/* Title sits inline with the range display and Save button */
+.marks-row h3 { margin: 0; flex-shrink: 0; }
 .mark-btn {
   background: var(--badge); color: var(--fg); border: 1px solid var(--badge);
   border-radius: 6px; padding: 0.35rem 0.75rem; cursor: pointer; font-size: 0.85rem;
@@ -195,6 +196,9 @@ code {
 }
 .mark-clear-inline:hover { opacity: 1; color: var(--error); }
 .mark-save-btn { font-size: 0.85rem; }
+.mark-save-btn .star { color: #ffd24a; }
+.mark-save-btn:disabled { opacity: 0.5; cursor: default; }
+.mark-save-btn:disabled .star { color: var(--muted); }
 
 .bookmarks-list { list-style: none; margin: 0; padding: 0; }
 .bookmark-item {
