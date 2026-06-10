@@ -864,24 +864,43 @@ let scriptAutoScroll = true;
 let scriptScrollTimer = null;
 let scriptActiveIdx = -1;  // index of the currently highlighted cue
 let scriptProgScroll = false; // true when we're doing a programmatic scroll
+let scriptLoadId = 0;      // generation token to ignore stale script loads
 
 /** Load cues as JSON and populate the script panel. */
 async function loadScript(path, track) {
   const wrap = $("script-wrap");
   const list = $("script-list");
-  list.innerHTML = "";
   scriptCues = [];
   scriptActiveIdx = -1;
-  wrap.hidden = true;
+
+  // Guard against overlapping/stale loads (e.g. fast track switches): only
+  // the most recent call may commit its results.
+  const myId = ++scriptLoadId;
+
+  // Show a loading placeholder — extraction from large files can take
+  // several seconds the first time, and a blank panel looks broken.
+  wrap.hidden = false;
+  list.innerHTML = '<div class="script-loading muted">Extracting subtitles… (first load can take a few seconds for large files)</div>';
 
   let url = `/api/items/subtitles?fmt=json&path=${encodeURIComponent(path)}`;
   if (track !== null && track !== undefined) url += `&track=${track}`;
+  let cues;
   try {
-    scriptCues = await getJSON(url);
-  } catch { return; }
-  if (!scriptCues.length) return;
+    cues = await getJSON(url);
+  } catch {
+    if (myId === scriptLoadId) {
+      list.innerHTML = '<div class="script-loading muted">Could not load subtitles.</div>';
+    }
+    return;
+  }
+  if (myId !== scriptLoadId) return;  // a newer load superseded us
+  scriptCues = cues;
+  if (!scriptCues.length) {
+    list.innerHTML = '<div class="script-loading muted">No subtitle cues found.</div>';
+    return;
+  }
 
-  wrap.hidden = false;
+  list.innerHTML = "";
   const frag = document.createDocumentFragment();
   scriptCues.forEach((cue, i) => {
     const row = document.createElement("div");

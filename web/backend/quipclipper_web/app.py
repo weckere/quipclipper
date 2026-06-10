@@ -221,7 +221,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> Response:
         p = _resolve_any(path)
         try:
-            resolved = resolve_subtitles(subs=None, video=p, track=track)
+            # Use the cache: extraction from large files is slow (~9s for a
+            # 2160p remux), and the VTT track + script panel request the same
+            # subtitles when an item opens.  The cache + in-flight lock means
+            # one extraction serves all callers and later views are instant.
+            cues = sub_cache.resolve(p, track=track)
         except ValueError as exc:  # multiple tracks, none auto-selectable
             raise HTTPException(status_code=409, detail=str(exc))
         except FileNotFoundError as exc:
@@ -231,12 +235,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if fmt == "json":
             return Response(
                 content=json.dumps(
-                    [{"start": c.start, "end": c.end, "text": c.text} for c in resolved.cues],
+                    [{"start": c.start, "end": c.end, "text": c.text} for c in cues],
                 ),
                 media_type="application/json",
             )
         return Response(
-            content=media.cues_to_vtt(resolved.cues, offset=offset),
+            content=media.cues_to_vtt(cues, offset=offset),
             media_type="text/vtt",
         )
 

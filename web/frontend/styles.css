@@ -344,6 +344,7 @@ footer { padding: 2rem 1.25rem; font-size: 0.8rem; }
   flex-shrink: 0;
 }
 .script-text { flex: 1; }
+.script-loading { padding: 0.6rem 0.7rem; font-size: 0.85rem; }
 /* Floating In/Out buttons on hover */
 .script-actions {
   display: none; flex-shrink: 0; gap: 0.25rem; align-items: center;

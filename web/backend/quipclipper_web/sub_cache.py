@@ -23,6 +23,7 @@ import hashlib
 import json
 import os
 import tempfile
+import threading
 from pathlib import Path
 
 from quipclipper.models import Cue
@@ -33,6 +34,11 @@ class SubtitleCache:
     def __init__(self, cache_dir: Path) -> None:
         self._dir = cache_dir / "sub_cache"
         self._dir.mkdir(parents=True, exist_ok=True)
+        # Per-key locks dedupe concurrent cold extractions of the same
+        # (video, track) — e.g. the VTT track and the script panel both
+        # request the same subtitles when an item is opened.
+        self._inflight: dict[str, threading.Lock] = {}
+        self._inflight_guard = threading.Lock()
 
     def _source_mtime(self, video: Path) -> float:
         """Mtime of the subtitle source — sidecar if present, else the video."""
@@ -43,57 +49,82 @@ class SubtitleCache:
         except OSError:
             return 0.0
 
-    def _cache_key(self, video: Path) -> str:
-        raw = f"{video}:{self._source_mtime(video)}"
+    def _cache_key(self, video: Path, track: int | None = None) -> str:
+        # Track must be part of the key: different subtitle streams in the
+        # same container have different cues.  None = backend auto-select.
+        tkey = "auto" if track is None else str(track)
+        raw = f"{video}:{self._source_mtime(video)}:{tkey}"
         return hashlib.sha256(raw.encode()).hexdigest()
 
-    def _cache_path(self, video: Path) -> Path:
-        return self._dir / (self._cache_key(video) + ".json")
+    def _cache_path(self, video: Path, track: int | None = None) -> Path:
+        return self._dir / (self._cache_key(video, track) + ".json")
 
-    def is_cached(self, video: Path) -> bool:
+    def _inflight_lock(self, key: str) -> threading.Lock:
+        with self._inflight_guard:
+            lk = self._inflight.get(key)
+            if lk is None:
+                lk = threading.Lock()
+                self._inflight[key] = lk
+            return lk
+
+    def is_cached(self, video: Path, track: int | None = None) -> bool:
         try:
-            return self._cache_path(video).exists()
+            return self._cache_path(video, track).exists()
         except OSError:
             return False
 
-    def resolve(self, video: Path, track: int | None = None) -> list[Cue]:
-        cp = self._cache_path(video)
-
-        # Read from cache, handling corrupt/partial files gracefully.
-        if cp.exists():
-            try:
-                data = json.loads(cp.read_text())
-                cues_raw = data["cues"] if isinstance(data, dict) else data
-                return [
-                    Cue(index=c["index"], start=c["start"], end=c["end"], text=c["text"])
-                    for c in cues_raw
-                ]
-            except (json.JSONDecodeError, KeyError, TypeError):
-                cp.unlink(missing_ok=True)
-
-        resolved = resolve_subtitles(subs=None, video=video, track=track)
-        cues = resolved.cues
-
-        # Atomic write: temp file + rename so readers never see partial data.
-        # Store the video path so stale entries can be located later.
-        payload = json.dumps(
-            {
-                "video": str(video),
-                "cues": [
-                    {"index": c.index, "start": c.start, "end": c.end, "text": c.text}
-                    for c in cues
-                ],
-            },
-        )
+    def _read(self, cp: Path) -> list[Cue] | None:
+        if not cp.exists():
+            return None
         try:
-            fd, tmp = tempfile.mkstemp(dir=self._dir, suffix=".tmp")
-            with os.fdopen(fd, "w") as f:
-                f.write(payload)
-            os.replace(tmp, cp)
-        except OSError:
-            # Best-effort cleanup; extraction result is still returned.
-            with contextlib.suppress(OSError):
-                os.unlink(tmp)
+            data = json.loads(cp.read_text())
+            cues_raw = data["cues"] if isinstance(data, dict) else data
+            return [
+                Cue(index=c["index"], start=c["start"], end=c["end"], text=c["text"])
+                for c in cues_raw
+            ]
+        except (json.JSONDecodeError, KeyError, TypeError):
+            cp.unlink(missing_ok=True)
+            return None
+
+    def resolve(self, video: Path, track: int | None = None) -> list[Cue]:
+        cp = self._cache_path(video, track)
+
+        # Fast path: serve from cache without taking any lock.
+        cues = self._read(cp)
+        if cues is not None:
+            return cues
+
+        # Cold path: serialize concurrent extractions of the same key so we
+        # only run ffmpeg once.  Re-check the cache after acquiring the lock.
+        with self._inflight_lock(self._cache_key(video, track)):
+            cues = self._read(cp)
+            if cues is not None:
+                return cues
+
+            resolved = resolve_subtitles(subs=None, video=video, track=track)
+            cues = resolved.cues
+
+            # Atomic write: temp file + rename so readers never see partial
+            # data.  Store the video path so stale entries can be located later.
+            payload = json.dumps(
+                {
+                    "video": str(video),
+                    "cues": [
+                        {"index": c.index, "start": c.start, "end": c.end, "text": c.text}
+                        for c in cues
+                    ],
+                },
+            )
+            try:
+                fd, tmp = tempfile.mkstemp(dir=self._dir, suffix=".tmp")
+                with os.fdopen(fd, "w") as f:
+                    f.write(payload)
+                os.replace(tmp, cp)
+            except OSError:
+                # Best-effort cleanup; extraction result is still returned.
+                with contextlib.suppress(OSError):
+                    os.unlink(tmp)
 
         return cues
 
