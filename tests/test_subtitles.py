@@ -2,7 +2,13 @@ from pathlib import Path
 
 import pytest
 
-from quipclipper.subtitles import find_sidecar, load_subtitles, resolve_subtitles
+from quipclipper.subtitles import (
+    SubtitleTrack,
+    best_track,
+    find_sidecar,
+    load_subtitles,
+    resolve_subtitles,
+)
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample.srt"
 
@@ -62,3 +68,55 @@ def test_resolve_subtitles_missing_video_raises_clean_error(tmp_path):
 def test_resolve_subtitles_requires_a_source():
     with pytest.raises(ValueError):
         resolve_subtitles(subs=None, video=None, track=None)
+
+
+# --- best_track: single source of truth for auto-selection -------------------
+
+def _trk(index, language=None, title=None, forced=False, hearing_impaired=False):
+    return SubtitleTrack(
+        index=index, codec="subrip", language=language, title=title,
+        forced=forced, hearing_impaired=hearing_impaired,
+    )
+
+
+def test_best_track_empty_is_none():
+    assert best_track([]) is None
+
+
+def test_best_track_prefers_full_english_over_sdh_and_forced():
+    tracks = [
+        _trk(0, "eng", forced=True),          # forced -> lowest
+        _trk(1, "eng", title="SDH", hearing_impaired=True),  # SDH -> middle
+        _trk(2, "eng"),                        # full dialogue -> best
+    ]
+    assert best_track(tracks).index == 2
+
+
+def test_best_track_prefers_sdh_over_forced_when_only_those_two():
+    # The reported case: only eng SDH + eng forced -> SDH wins.
+    tracks = [
+        _trk(0, "eng", forced=True),
+        _trk(1, "eng", title="SDH", hearing_impaired=True),
+    ]
+    assert best_track(tracks).index == 1
+
+
+def test_best_track_detects_forced_and_sdh_by_title_without_dispositions():
+    tracks = [
+        _trk(0, "eng", title="Forced"),
+        _trk(1, "eng", title="Full SDH"),
+        _trk(2, "eng", title="English"),
+    ]
+    assert best_track(tracks).index == 2
+
+
+def test_best_track_treats_untagged_language_as_english():
+    # Single-language release with no language metadata should still
+    # auto-select rather than being skipped as non-English.
+    tracks = [_trk(0, None), _trk(1, "ger")]
+    assert best_track(tracks).index == 0
+
+
+def test_best_track_ties_keep_container_order():
+    tracks = [_trk(0, "eng"), _trk(1, "eng")]
+    assert best_track(tracks).index == 0

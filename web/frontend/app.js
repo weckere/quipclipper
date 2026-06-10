@@ -610,38 +610,28 @@ function renderSubs(info, path) {
 
   // A picker when there are embedded tracks; otherwise just load the default.
   if (tracks.length > 1) {
-    // Auto-select the best English track by score. Preference order:
-    //   full dialogue (non-SDH, non-forced) > SDH > forced.
-    // Forced tracks contain only foreign-language portions (minimal dialogue),
-    // so they rank below SDH even though SDH adds sound descriptions.
-    const isEng = (t) => !t.language || /^en/i.test(t.language);
-    const isSDH = (t) => t.hearing_impaired || /sdh|hearing|impaired|cc\b/i.test(t.title || "");
-    const isForced = (t) => t.forced || /forced/i.test(t.title || "");
-    const score = (t) => {
-      let s = 0;
-      if (isEng(t)) s += 100;
-      if (isForced(t)) s -= 50;   // forced ranks lowest among eng tracks
-      else if (isSDH(t)) s -= 10; // SDH ranks below full dialogue
-      return s;
-    };
-    const bestTrack = tracks.reduce((best, t) => (score(t) > score(best) ? t : best), tracks[0]);
+    // The backend is the single source of truth for auto-selection (full
+    // dialogue > SDH > forced). Requesting its chosen index means our request
+    // matches the cache key that pre-indexing warmed — no duplicate extraction.
+    const bestIdx = info.best_track != null ? info.best_track : tracks[0].index;
 
     const sel = document.createElement("select");
     tracks.forEach((t) => {
       const opt = document.createElement("option");
       opt.value = t.index;
       opt.textContent = `s:${t.index} ${t.codec}${t.language ? " " + t.language : ""}${t.title ? " — " + t.title : ""}`;
-      if (t === bestTrack) opt.selected = true;
+      if (t.index === bestIdx) opt.selected = true;
       sel.appendChild(opt);
     });
     sel.onchange = () => {
-      loadSubtitleTrack(path, sel.value, isTranscoding ? transcodeOffset : 0);
+      // transcodeOffset is module-level and 0 when not transcoding.
+      loadSubtitleTrack(path, sel.value, transcodeOffset);
       loadScript(path, sel.value);
     };
     box.appendChild(sel);
-    sel.value = bestTrack.index;
-    loadSubtitleTrack(path, bestTrack.index);
-    loadScript(path, bestTrack.index);
+    sel.value = bestIdx;
+    loadSubtitleTrack(path, bestIdx);
+    loadScript(path, bestIdx);
   } else {
     loadSubtitleTrack(path, null);
     loadScript(path, null);

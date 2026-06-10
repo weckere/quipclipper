@@ -225,6 +225,42 @@ def find_sidecar(video_path: str | Path) -> Path | None:
     return matches[0] if matches else None
 
 
+_SDH_RE = re.compile(r"sdh|hearing|impaired|\bcc\b", re.IGNORECASE)
+_FORCED_RE = re.compile(r"forced", re.IGNORECASE)
+
+
+def _track_score(t) -> int:
+    """Score a subtitle track for dialogue quality.
+
+    English (or untagged) full dialogue > SDH > forced.  Forced tracks carry
+    only foreign-language portions (minimal dialogue), so they rank below SDH
+    even though SDH adds sound descriptions.  Untagged languages count as
+    English so single-language releases without metadata still auto-select.
+    """
+    score = 0
+    lang = (t.language or "").lower()
+    if not lang or lang.startswith("en"):
+        score += 100
+    if getattr(t, "forced", False) or _FORCED_RE.search(t.title or ""):
+        score -= 50
+    elif getattr(t, "hearing_impaired", False) or _SDH_RE.search(t.title or ""):
+        score -= 10
+    return score
+
+
+def best_track(tracks):
+    """Pick the best dialogue track from SubtitleTrack or StreamInfo objects.
+
+    This is the single source of truth for auto-selection — the web frontend
+    picker, the search/index cache, and clip subtitle embedding all follow it,
+    so cached extractions are shared across those paths.  Ties keep the first
+    track (container order).  Returns None for an empty list.
+    """
+    if not tracks:
+        return None
+    return max(tracks, key=_track_score)
+
+
 @dataclass(frozen=True)
 class ResolvedSubtitles:
     """Cues plus where they came from.
@@ -232,10 +268,14 @@ class ResolvedSubtitles:
     `path` is the external subtitle file used (explicit `--subs` or a sidecar),
     or None when the cues were extracted from an embedded track — in which case
     the subtitle is already inside the video and need not be muxed in separately.
+    `track` is the embedded track index the cues were extracted from (None when
+    they came from an external file), so callers know which track auto-selection
+    landed on.
     """
 
     cues: list[Cue]
     path: Path | None
+    track: int | None = None
 
 
 def resolve_subtitles(
@@ -265,33 +305,8 @@ def resolve_subtitles(
             f"No sidecar subtitle file and no embedded subtitle tracks found for {video}."
         )
     if track is None:
-        if len(tracks) == 1:
-            track = tracks[0].index
-        else:
-            # Score English tracks: full dialogue (non-SDH, non-forced) >
-            # SDH > forced.  Forced tracks contain only foreign-language
-            # portions (minimal dialogue), so they rank below SDH.
-            _SDH_RE = re.compile(r"sdh|hearing|impaired|\bcc\b", re.IGNORECASE)
-            _FORCED_RE = re.compile(r"forced", re.IGNORECASE)
-            eng = [t for t in tracks if t.language and t.language.lower() in ("eng", "en", "english")]
-
-            def _score(t: SubtitleTrack) -> int:
-                if t.forced or _FORCED_RE.search(t.title or ""):
-                    return -50
-                if t.hearing_impaired or _SDH_RE.search(t.title or ""):
-                    return -10
-                return 0
-
-            best = max(eng, key=_score) if eng else None
-            if best is not None:
-                track = best.index
-            else:
-                labels = "\n  ".join(t.label() for t in tracks)
-                raise ValueError(
-                    "Multiple embedded subtitle tracks found; choose one with "
-                    f"--track <index>:\n  {labels}"
-                )
-    return ResolvedSubtitles(extract_embedded(video, track), None)
+        track = best_track(tracks).index
+    return ResolvedSubtitles(extract_embedded(video, track), None, track)
 
 
 def resolve_cues(

@@ -87,6 +87,27 @@ class SubtitleCache:
             cp.unlink(missing_ok=True)
             return None
 
+    def _write(self, cp: Path, video: Path, cues: list[Cue]) -> None:
+        """Atomically write cues to a cache path (temp file + rename)."""
+        payload = json.dumps(
+            {
+                "video": str(video),
+                "cues": [
+                    {"index": c.index, "start": c.start, "end": c.end, "text": c.text}
+                    for c in cues
+                ],
+            },
+        )
+        try:
+            fd, tmp = tempfile.mkstemp(dir=self._dir, suffix=".tmp")
+            with os.fdopen(fd, "w") as f:
+                f.write(payload)
+            os.replace(tmp, cp)
+        except OSError:
+            # Best-effort cleanup; extraction result is still returned.
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)
+
     def resolve(self, video: Path, track: int | None = None) -> list[Cue]:
         cp = self._cache_path(video, track)
 
@@ -104,27 +125,16 @@ class SubtitleCache:
 
             resolved = resolve_subtitles(subs=None, video=video, track=track)
             cues = resolved.cues
+            self._write(cp, video, cues)
 
-            # Atomic write: temp file + rename so readers never see partial
-            # data.  Store the video path so stale entries can be located later.
-            payload = json.dumps(
-                {
-                    "video": str(video),
-                    "cues": [
-                        {"index": c.index, "start": c.start, "end": c.end, "text": c.text}
-                        for c in cues
-                    ],
-                },
-            )
-            try:
-                fd, tmp = tempfile.mkstemp(dir=self._dir, suffix=".tmp")
-                with os.fdopen(fd, "w") as f:
-                    f.write(payload)
-                os.replace(tmp, cp)
-            except OSError:
-                # Best-effort cleanup; extraction result is still returned.
-                with contextlib.suppress(OSError):
-                    os.unlink(tmp)
+            # Dual-key: when auto-selecting (track is None), also store under
+            # the concrete track index that auto-selection landed on.  That way
+            # pre-indexing (which resolves None) warms the cache for the item
+            # view, which requests subtitles by that explicit index.
+            if track is None and resolved.track is not None:
+                concrete = self._cache_path(video, resolved.track)
+                if concrete != cp and self._read(concrete) is None:
+                    self._write(concrete, video, cues)
 
         return cues
 

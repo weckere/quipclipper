@@ -11,7 +11,7 @@ import subprocess
 from pathlib import Path
 
 from quipclipper.models import Cue, format_timestamp
-from quipclipper.subtitles import StreamInfo, find_sidecar, list_streams
+from quipclipper.subtitles import StreamInfo, best_track, find_sidecar, list_streams
 
 
 def probe_duration(path: Path) -> float | None:
@@ -87,7 +87,12 @@ def stream_dict(s: StreamInfo) -> dict:
 def item_info(path: Path) -> dict:
     """Probe a video file: all streams, its subtitle tracks, and sidecar status."""
     streams = list_streams(path)
-    subtitle_tracks = [stream_dict(s) for s in streams if s.kind == "subtitle"]
+    sub_streams = [s for s in streams if s.kind == "subtitle"]
+    subtitle_tracks = [stream_dict(s) for s in sub_streams]
+    # The auto-selected subtitle track, by the engine's single source of truth.
+    # The frontend preselects this so its request matches the cache key that
+    # pre-indexing (which auto-selects) warmed — no duplicate extraction.
+    chosen = best_track(sub_streams)
     return {
         "name": path.name,
         "path": str(path),
@@ -95,6 +100,7 @@ def item_info(path: Path) -> dict:
         "duration": probe_duration(path),
         "streams": [stream_dict(s) for s in streams],
         "subtitle_tracks": subtitle_tracks,
+        "best_track": chosen.type_index if chosen is not None else None,
         "has_sidecar": find_sidecar(path) is not None,
     }
 
