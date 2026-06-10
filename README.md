@@ -34,7 +34,8 @@ and cutting clips from any browser. See [Web App](#web-app) below.
   duplicate the same line.
 - **Flexible subtitle source** — explicit `--subs`, a sidecar file next to the
   video, or an embedded subtitle track pulled out via ffmpeg. When multiple
-  embedded tracks exist, quipclipper prompts you to choose (or pass `--track`).
+  embedded tracks exist, quipclipper auto-selects the best dialogue track
+  (English full dialogue > SDH > forced); pass `--track` to override.
 - **Audio / video / gif output** — pick with `--type`.
 - **Track selection** — keep all audio tracks or pick specific ones with
   `--audio-track`; video clips also retain embedded subtitle tracks.
@@ -200,7 +201,7 @@ cuts, and trims and time-shifts subtitles natively (including a sidecar file).
 
 ```bash
 quipclipper clip "i'll be back" -v movie.mkv -t video                    # default: direct mkvmerge cut
-quipclipper clip "i'll be back" -v movie.mp4 -t video                    # non-MKV: remux-first, then mkvmerge cut
+quipclipper clip "i'll be back" -v movie.mp4 -t video                    # non-MKV: direct mkvmerge cut (--remux-first for max accuracy)
 quipclipper clip "i'll be back" -v movie.mp4 -t video --backend ffmpeg   # force ffmpeg
 quipclipper clip "i'll be back" -v movie.mkv -t video --no-chapters      # drop chapters
 ```
@@ -300,20 +301,27 @@ dialogue, cut clips, and manage bookmarks — all from a browser.
 ### Features
 
 - **Library browser** — browse multiple media folders (movies, shows, etc.) with
-  a search bar to filter by name.
+  a search bar to filter by name and a clickable breadcrumb for jumping up levels.
 - **Dialogue search** — open a video and fuzzy-search its subtitles (sidecar or
   embedded) just like the CLI.
-- **Folder dialogue search** — search subtitles across every video in a folder at
-  once. Useful for finding a line when you don't know which episode it's in.
+- **Folder dialogue search** — search subtitles across every video in one or more
+  folders at once (including the folders surfaced by a library search). Useful for
+  finding a line when you don't know which episode it's in. A subtitle cache plus
+  a pre-index button make repeat searches near-instant.
+- **Scrolling script view** — the full subtitle script scrolls with playback;
+  click a line to seek, hover for Start/End buttons to select a clip range by
+  dialogue lines (timestamps are derived from the selected cues).
 - **Lossless clipping** — same engine as the CLI: mkvmerge with automatic ffmpeg
-  fallback, async job queue, save to a clips library.
-- **Player marks & bookmarks** — set in/out points on the video player, clip
-  arbitrary ranges, and save bookmarks for later.
+  fallback, async job queue, audio-only/FLAC/WAV/split-channel export options,
+  save to a clips library.
+- **Bookmarks** — save selected dialogue ranges as named bookmarks per file, and
+  browse all bookmarks across the library from a top-level Bookmarks view.
+- **Clips as first-class items** — open a finished clip in the full item view:
+  search its dialogue, bookmark it, even cut a clip from a clip.
 - **Automatic audio transcode** — when the browser can't play a file's audio
   codec (AC3, DTS, FLAC, etc.), the player automatically falls back to an
-  on-the-fly remux that copies the video and transcodes audio to Opus.
-- **Clips library** — browse, play, and download finished clips directly in
-  the browser. Click a clip to watch it inline.
+  on-the-fly remux that copies the video and transcodes audio to Opus, with a
+  custom seek bar and keyframe-aligned subtitles.
 - **Dialogue in filenames** — clips made from a dialogue search include the
   matched text in the filename
   (e.g. `Movie_00-01-23_Ill_be_back.mkv`).
@@ -373,8 +381,10 @@ All settings are environment variables on the `app` service:
 |---|---|---|
 | `QC_MEDIA_ROOTS` | *(required)* | Colon-separated list of media directories (in-container paths) |
 | `QC_CLIPS_DIR` | `/clips` | Where finished clips are saved |
-| `QC_STATE_DIR` | `/state` | Bookmarks and other persistent state |
-| `QC_PASSWORD` | *(none)* | Set to require a password to access the app |
+| `QC_STATE_DIR` | `/state` | Bookmarks, subtitle cache, and other persistent state |
+| `QC_SAVE_TO_LIBRARY` | `false` | Default for the "save to library" toggle (files clips into per-source subfolders) |
+| `QC_MAX_CONCURRENT_JOBS` | `2` | Clip-job thread-pool size |
+| `QC_PASSWORD` | *(none)* | Reserved for the planned password gate (phase 6) — **not yet enforced**; only reported via `/api/config` |
 | `QC_JELLYFIN_URL` | *(none)* | Jellyfin server URL for metadata enrichment |
 | `QC_JELLYFIN_API_KEY` | *(none)* | Jellyfin API key (required if URL is set) |
 

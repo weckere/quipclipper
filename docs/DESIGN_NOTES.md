@@ -26,7 +26,7 @@ follow from taking those two facts seriously.
 10. [remux-first, the disk-space prompt, and MKV auto-skip](#10-remux-first-the-disk-space-prompt-and-mkv-auto-skip)
 11. [Search ranking and span-variant collapse](#11-search-ranking-and-span-variant-collapse)
 12. [The interactive picker](#12-the-interactive-picker)
-13. [Interactive subtitle track selection](#13-interactive-subtitle-track-selection)
+13. [Automatic subtitle track selection (`best_track`)](#13-automatic-subtitle-track-selection-best_track)
 14. [CLI and UX conventions](#14-cli-and-ux-conventions)
 15. [Nix flake](#15-nix-flake)
 16. [Testing strategy](#16-testing-strategy)
@@ -356,27 +356,50 @@ place the line occurs.
 
 ---
 
-## 13. Interactive subtitle track selection
+## 13. Automatic subtitle track selection (`best_track`)
 
 **Decision:** When multiple embedded subtitle tracks exist and no `--track` is
-given, prompt the user to choose interactively rather than erroring with a
-"re-run with `--track`" message.
+given, auto-select the best dialogue track with a single scoring function,
+`best_track()` in `subtitles.py`. The ranking is **English full dialogue >
+English SDH > English forced**; an untagged language counts as English; ties
+keep container order. SDH/forced are detected from ffprobe's
+`hearing_impaired`/`forced` dispositions with a title-regex fallback.
 
-**Rationale:** The original behaviour forced a round-trip: the user runs a
-command, gets an error listing tracks, then re-runs with `--track N`. The
-interactive picker eliminates that friction — the same pattern that `--pick`
-uses for match selection. Single-track files and explicit `--subs` still
-auto-resolve without a prompt, so the common case is unchanged.
+**Evolution (three iterations):**
+1. *Error out* — the original behaviour raised "choose one with `--track`",
+   forcing a round-trip.
+2. *Interactive prompt* — the CLI caught that error and presented a picker
+   (`_pick_track`). Better for humans, but the web app couldn't use it, so the
+   web frontend grew its own JS scoring — and the two **drifted**: the backend
+   required an explicit `eng` language tag (erroring otherwise) while the
+   frontend treated untagged tracks as English, so they disagreed on untagged
+   releases.
+3. *Score-based single source of truth (current)* — the engine's `best_track()`
+   always returns a choice, `resolve_subtitles` reports which track it landed on
+   (`ResolvedSubtitles.track`), and the web `/api/items` endpoint exposes it as
+   `best_track` so the frontend preselects rather than recomputing. The CLI no
+   longer prompts.
 
-**Non-interactive use is unaffected:** `--track N` bypasses the prompt entirely,
-so scripted and piped workflows keep working. The prompt only fires for the
-specific case of multiple embedded text tracks with no explicit choice.
+**Why forced ranks below SDH:** forced tracks contain only the foreign-language
+portions of a film — minimal dialogue — so for a dialogue-search tool they are
+nearly useless. SDH adds sound descriptions to otherwise-complete dialogue,
+making it the better fallback when no plain dialogue track exists.
 
-**Implementation:** The prompt lives in the CLI layer (`_pick_track` in
-`cli.py`), not in `subtitles.py` — subtitle resolution stays non-interactive
-and testable. The CLI intercepts the `ValueError` that `resolve_subtitles`
-raises for the multi-track case, presents the picker, and re-calls with the
-chosen index.
+**Why untagged counts as English:** single-language releases frequently ship
+with no language metadata at all; treating "no tag" as "probably the release's
+primary language" means those files resolve automatically instead of failing.
+
+**Cache consequence:** because auto-selection is deterministic and shared, the
+web subtitle cache can be **dual-keyed** — an extraction performed during folder
+pre-indexing (auto-select) is also stored under the concrete track index the
+item view will request, so indexing warms playback and the script view, not just
+search.
+
+**Trade-off accepted:** the CLI lost its interactive prompt for the no-English
+multi-track case; it now silently picks the top-scoring track. `--track N`
+remains the explicit override, and `quipclipper tracks` lists the candidates.
+(The now-dead `_pick_track` prompt code in `cli.py` is slated for removal — see
+the review notes in `WEBAPP_PROGRESS.md`.)
 
 ---
 

@@ -126,7 +126,7 @@ quipclipper search QUERY [OPTIONS]
 | `QUERY` | — | Dialogue text to search for. |
 | `--subs`, `-s` | — | Subtitle file (`.srt`/`.vtt`/`.ass`/`.sub`). |
 | `--video`, `-v` | — | Video file (used to find a sidecar or extract an embedded track). |
-| `--track` | — | Subtitle track by s:N index (from `tracks`); prompted interactively when several exist. |
+| `--track` | — | Subtitle track by s:N index (from `tracks`); auto-selected when several exist (English full dialogue > SDH > forced). |
 | `--limit`, `-n` | 10 | Maximum number of matches to show. |
 | `--min-score` | 60 | Drop matches scoring below this (0–100). |
 | `--max-span` | 3 | Max consecutive captions a single match may join. |
@@ -154,7 +154,7 @@ quipclipper clip QUERY --video FILE [OPTIONS]
 | `QUERY` | — | Dialogue text to locate and clip. |
 | `--video`, `-v` | *required* | Video file to cut from. |
 | `--subs`, `-s` | — | Subtitle file; otherwise a sidecar or embedded track is used. |
-| `--track` | — | Subtitle track by `s:N` index (from `tracks`); prompted interactively when several exist. |
+| `--track` | — | Subtitle track by `s:N` index (from `tracks`); auto-selected when several exist (English full dialogue > SDH > forced). |
 
 **What to produce**
 
@@ -368,19 +368,17 @@ with multiple selections.
 ### Subtitle track selection
 
 When a video has multiple embedded subtitle tracks and no `--track` is given,
-quipclipper prompts you to choose:
+quipclipper auto-selects the best dialogue track. Tracks are scored so that
+**English full dialogue beats SDH, which beats forced** (forced tracks carry
+only foreign-language portions, so they have minimal dialogue); a track with no
+language tag counts as English so single-language releases without metadata
+still resolve. SDH and forced are detected from the container's
+`hearing_impaired`/`forced` dispositions, with a title-text fallback
+(`SDH`, `forced`, …). Ties keep container order.
 
-```
-3 subtitle track(s):
-  [0] s:0 subrip eng
-  [1] s:1 subrip spa
-  [2] s:2 hdmv_pgs_subtitle eng
-Select a subtitle track [0]:
-```
-
-Press Enter for the first track, or type a number. `--track N` bypasses the
-prompt for scripted use. If only one subtitle track exists, it is selected
-automatically.
+Run `quipclipper tracks <video>` to see all tracks, and pass `--track N` to
+override the automatic choice. The same scoring drives the web app's subtitle
+picker and its search/index cache, so all paths agree on the default track.
 
 ### Output names and containers
 
