@@ -65,6 +65,10 @@ class Job:
 class JobRegistry:
     """Thread-safe job queue backed by a bounded thread pool."""
 
+    # Finished jobs older than this are pruned on the next submit, so the
+    # registry doesn't grow unboundedly on a long-running server.
+    MAX_FINISHED_AGE = 24 * 3600
+
     def __init__(self, max_workers: int = 2) -> None:
         self._pool = ThreadPoolExecutor(max_workers=max_workers)
         self._jobs: dict[str, Job] = {}
@@ -72,7 +76,11 @@ class JobRegistry:
 
     def submit(self, fn: Callable[[], list[Path]], *, label: str = "") -> Job:
         job = Job(id=uuid.uuid4().hex[:12], label=label)
+        cutoff = time.time() - self.MAX_FINISHED_AGE
         with self._lock:
+            for jid, j in list(self._jobs.items()):
+                if j.finished is not None and j.finished < cutoff:
+                    del self._jobs[jid]
             self._jobs[job.id] = job
         self._pool.submit(self._run, job, fn)
         return job

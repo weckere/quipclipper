@@ -134,7 +134,8 @@ in
       } // lib.optionalAttrs (cfg.jellyfin.url != null) {
         QC_JELLYFIN_URL = cfg.jellyfin.url;
       } // lib.optionalAttrs (cfg.passwordFile != null) {
-        # The gate is enforced by nginx; this just lets the UI reflect it.
+        # Reserved, not enforced (no auth gate yet — planned for phase 6);
+        # this just lets the UI reflect that a password was configured.
         QC_PASSWORD = "set";
       };
 

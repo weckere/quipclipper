@@ -105,3 +105,11 @@ def test_clear_removes_all_entries_for_video(cache, monkeypatch):
     assert removed >= 3
     assert not cache.is_cached(VIDEO, track=2)
     assert not cache.is_cached(VIDEO, track=5)
+
+
+def test_inflight_lock_pruned_after_resolve(cache, monkeypatch):
+    """The per-key lock map must not grow with every key ever extracted — R14."""
+    _stub_resolver(monkeypatch)
+    cache.resolve(VIDEO, track=0)
+    cache.resolve(VIDEO, track=1)
+    assert cache._inflight == {}

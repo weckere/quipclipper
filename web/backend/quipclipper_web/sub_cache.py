@@ -67,6 +67,18 @@ class SubtitleCache:
                 self._inflight[key] = lk
             return lk
 
+    def _prune_inflight(self, key: str) -> None:
+        """Drop a lock entry once no thread holds it, so the map stays small.
+
+        A waiter that already fetched the old Lock object keeps working with
+        it; the worst case of this benign race is one duplicate extraction,
+        and the atomic cache write makes that harmless.
+        """
+        with self._inflight_guard:
+            lk = self._inflight.get(key)
+            if lk is not None and not lk.locked():
+                del self._inflight[key]
+
     def is_cached(self, video: Path, track: int | None = None) -> bool:
         try:
             return self._cache_path(video, track).exists()
@@ -118,23 +130,27 @@ class SubtitleCache:
 
         # Cold path: serialize concurrent extractions of the same key so we
         # only run ffmpeg once.  Re-check the cache after acquiring the lock.
-        with self._inflight_lock(self._cache_key(video, track)):
-            cues = self._read(cp)
-            if cues is not None:
-                return cues
+        key = self._cache_key(video, track)
+        try:
+            with self._inflight_lock(key):
+                cues = self._read(cp)
+                if cues is not None:
+                    return cues
 
-            resolved = resolve_subtitles(subs=None, video=video, track=track)
-            cues = resolved.cues
-            self._write(cp, video, cues)
+                resolved = resolve_subtitles(subs=None, video=video, track=track)
+                cues = resolved.cues
+                self._write(cp, video, cues)
 
-            # Dual-key: when auto-selecting (track is None), also store under
-            # the concrete track index that auto-selection landed on.  That way
-            # pre-indexing (which resolves None) warms the cache for the item
-            # view, which requests subtitles by that explicit index.
-            if track is None and resolved.track is not None:
-                concrete = self._cache_path(video, resolved.track)
-                if concrete != cp and self._read(concrete) is None:
-                    self._write(concrete, video, cues)
+                # Dual-key: when auto-selecting (track is None), also store under
+                # the concrete track index that auto-selection landed on.  That way
+                # pre-indexing (which resolves None) warms the cache for the item
+                # view, which requests subtitles by that explicit index.
+                if track is None and resolved.track is not None:
+                    concrete = self._cache_path(video, resolved.track)
+                    if concrete != cp and self._read(concrete) is None:
+                        self._write(concrete, video, cues)
+        finally:
+            self._prune_inflight(key)
 
         return cues
 

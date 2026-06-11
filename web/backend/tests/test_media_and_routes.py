@@ -323,6 +323,43 @@ def test_jobs_list(tmp_path: Path) -> None:
     assert "jobs" in resp.json()
 
 
+def test_jobs_prune_old_finished() -> None:
+    """Finished jobs past MAX_FINISHED_AGE are dropped on submit — R16."""
+    import time as time_mod
+
+    from quipclipper_web.jobs import JobRegistry
+
+    reg = JobRegistry(max_workers=1)
+    old = reg.submit(lambda: [], label="old")
+    # Wait for it to finish, then age it past the cutoff.
+    for _ in range(50):
+        if old.finished is not None:
+            break
+        time_mod.sleep(0.05)
+    assert old.finished is not None
+    old.finished -= JobRegistry.MAX_FINISHED_AGE + 1
+
+    fresh = reg.submit(lambda: [], label="fresh")
+    assert reg.get(old.id) is None
+    assert reg.get(fresh.id) is not None
+    reg.shutdown()
+
+
+def test_negative_track_rejected(tmp_path: Path) -> None:
+    """Negative track values become bad ffmpeg stream specifiers — R12."""
+    video = tmp_path / "movie.mkv"
+    video.write_bytes(b"")
+    client = _client(tmp_path)
+    resp = client.get(
+        "/api/items/subtitles", params={"path": str(video), "track": -1},
+    )
+    assert resp.status_code == 422
+    resp = client.get(
+        "/api/search", params={"path": str(video), "query": "hi", "track": -1},
+    )
+    assert resp.status_code == 422
+
+
 # --- bookmarks ---------------------------------------------------------------
 
 

@@ -216,7 +216,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/items/subtitles")
     def subtitles(
         path: str = Query(...),
-        track: int | None = None,
+        track: int | None = Query(None, ge=0),
         offset: float = Query(0, ge=0),
         fmt: str = Query("vtt"),
     ) -> Response:
@@ -251,7 +251,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def search_dialogue(
         path: str = Query(...),
         query: str = Query(..., min_length=1),
-        track: int | None = None,
+        track: int | None = Query(None, ge=0),
         limit: int = Query(10, ge=1, le=100),
         min_score: float = Query(60.0, ge=0, le=100),
         max_span: int = Query(3, ge=1, le=10),
@@ -373,26 +373,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # --- folder subtitle index -------------------------------------------------
 
-    def _folder_videos(self_path: str) -> list[Path]:
+    # Folders above this size are too large to index in one request (the
+    # nginx-side timeout is 600s); both index-status and (re)indexing skip them.
+    INDEX_CAP = 500
+
+    def _folder_videos(self_path: str, cap: int | None = None) -> tuple[list[Path], bool]:
+        """Recursively scan a folder for videos, sorted by name.
+
+        With *cap*, scanning stops once more than *cap* videos are found and
+        the second element of the result is True ("skipped").
+        """
         folder = _resolve(self_path)
         if not folder.is_dir():
             raise HTTPException(status_code=400, detail=f"Not a directory: {self_path}")
-        return sorted(
-            (c for c in folder.rglob("*") if c.is_file() and c.suffix.lower() in VIDEO_EXTS),
-            key=lambda p: p.name.lower(),
-        )
-
-    @app.get("/api/search/folder/index-status")
-    def folder_index_status(path: str = Query(...)) -> dict:
-        folder = _resolve(path)
-        if not folder.is_dir():
-            raise HTTPException(status_code=400, detail=f"Not a directory: {path}")
         videos: list[Path] = []
         for c in folder.rglob("*"):
             if c.is_file() and c.suffix.lower() in VIDEO_EXTS:
                 videos.append(c)
-            if len(videos) > 500:
-                return {"total": len(videos), "indexed": 0, "skipped": True}
+                if cap is not None and len(videos) > cap:
+                    return videos, True
+        videos.sort(key=lambda p: p.name.lower())
+        return videos, False
+
+    @app.get("/api/search/folder/index-status")
+    def folder_index_status(path: str = Query(...)) -> dict:
+        videos, skipped = _folder_videos(path, cap=INDEX_CAP)
+        if skipped:
+            return {"total": len(videos), "indexed": 0, "skipped": True}
         indexed = sum(1 for v in videos if sub_cache.is_cached(v))
         return {"total": len(videos), "indexed": indexed, "skipped": False}
 
@@ -407,7 +414,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         subtitles are re-extracted even if they were already cached — use this
         when the underlying subtitle files have changed.
         """
-        videos = _folder_videos(path)
+        videos, skipped = _folder_videos(path, cap=INDEX_CAP)
+        if skipped:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Folder has more than {INDEX_CAP} videos — too large to index in one request.",
+            )
         if force:
             folder = _resolve(path)
             sub_cache.clear_under(folder)

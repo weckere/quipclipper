@@ -67,7 +67,7 @@ class BookmarkStore:
             reverse=True,
         )
 
-    def list_all(self, limit: int = 50) -> list[Bookmark]:
+    def list_all(self, limit: int = 500) -> list[Bookmark]:
         """Return all bookmarks across all files, newest first."""
         with self._lock:
             raw = self._read()

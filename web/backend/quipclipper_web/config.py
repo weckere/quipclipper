@@ -58,7 +58,8 @@ class Settings:
             max_concurrent_jobs=int(e.get("QC_MAX_CONCURRENT_JOBS", "2")),
             jellyfin_url=e.get("QC_JELLYFIN_URL") or None,
             jellyfin_api_key=e.get("QC_JELLYFIN_API_KEY") or None,
-            # The auth gate itself lives in nginx; the backend only reports
-            # whether a password was configured so the UI can reflect it.
+            # Reserved, not enforced: no auth gate exists yet (planned for
+            # phase 6). The backend only reports whether a password was
+            # configured so the UI can reflect it.
             auth_required=bool(e.get("QC_PASSWORD")),
         )

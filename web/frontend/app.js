@@ -427,7 +427,6 @@ async function openItem(path, name, opts) {
   $("job-panel").hidden = true;
   selectedMatch = null;
   lastSearchQuery = null;
-  lastSearchMatches = [];
   activeJobId = null;
   clipRangeStart = null;
   clipRangeEnd = null;
@@ -692,7 +691,6 @@ async function doSearch() {
   }
 
   lastSearchQuery = query;
-  lastSearchMatches = data.matches;
 
   for (const m of data.matches) {
     const li = document.createElement("li");
@@ -748,20 +746,6 @@ function clipEnd() {
 /** Whether we have a valid clip selection. */
 function hasClipRange() {
   return clipFirst >= 0 && clipLast >= 0 && clipLast >= clipFirst;
-}
-
-// Legacy compat — other parts of the code read markIn/markOut
-Object.defineProperty(window, "markIn", { get: clipStart });
-Object.defineProperty(window, "markOut", { get: clipEnd });
-
-function setClipIn() {
-  if (scriptActiveIdx < 0) return;
-  setClipInAt(scriptActiveIdx);
-}
-
-function setClipOut() {
-  if (scriptActiveIdx < 0) return;
-  setClipOutAt(scriptActiveIdx);
 }
 
 function setClipInAt(idx) {
@@ -1045,7 +1029,6 @@ async function deleteBookmark(id) {
 // --- clipping ---------------------------------------------------------------
 
 let lastSearchQuery = null;
-let lastSearchMatches = [];
 let selectedMatch = null;
 let activeJobId = null;
 let jobPollTimer = null;
