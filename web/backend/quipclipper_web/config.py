@@ -32,6 +32,7 @@ class Settings:
 
     media_roots: list[Path]
     clips_dir: Path
+    clips_url_prefix: str
     state_dir: Path
     save_to_library: bool
     listen_address: str
@@ -47,6 +48,9 @@ class Settings:
         return cls(
             media_roots=_roots(e.get("QC_MEDIA_ROOTS")),
             clips_dir=Path(e.get("QC_CLIPS_DIR", "./clips")).expanduser(),
+            # URL prefix where a front proxy (nginx) serves the clips dir
+            # directly. Empty = downloads go through the backend API.
+            clips_url_prefix=e.get("QC_CLIPS_URL_PREFIX", "").rstrip("/"),
             state_dir=Path(e.get("QC_STATE_DIR", "./state")).expanduser(),
             save_to_library=_bool(e.get("QC_SAVE_TO_LIBRARY")),
             listen_address=e.get("QC_BIND", "127.0.0.1"),

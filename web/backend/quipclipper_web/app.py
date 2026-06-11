@@ -765,6 +765,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         folders = sorted(
             [d.name for d in target.iterdir() if d.is_dir()],
         )
+        # When a front proxy serves the clips dir directly (QC_CLIPS_URL_PREFIX,
+        # e.g. "/clips"), point downloads there so large files bypass uvicorn.
+        dl_base = settings.clips_url_prefix or "/api/clips/download"
         clips = sorted(
             [
                 {
@@ -772,7 +775,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "path": str(f.resolve()),
                     "size": f.stat().st_size,
                     "folder": folder or "",
-                    "download_url": f"/api/clips/download/{quote(((folder + '/') if folder else '') + f.name)}",
+                    "download_url": f"{dl_base}/{quote(((folder + '/') if folder else '') + f.name)}",
                     "stream_url": f"/api/clips/stream/{quote(((folder + '/') if folder else '') + f.name)}",
                 }
                 for f in target.iterdir()

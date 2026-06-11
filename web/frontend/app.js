@@ -84,7 +84,7 @@ async function browse(path) {
   try {
     data = await getJSON("/api/library/browse" + (path ? qp(path) : ""));
   } catch (err) {
-    list.innerHTML = `<li class="error">Could not browse: ${err.message}</li>`;
+    list.innerHTML = `<li class="error">Could not browse: ${escapeHtml(err.message)}</li>`;
     return;
   }
 
@@ -108,7 +108,7 @@ function renderEntries(entries) {
     li.className = "entry " + (e.is_dir ? "dir" : "video");
     const icon = e.is_dir ? "📁" : "🎬";
     const tag = !e.is_dir && e.has_sidecar ? ' <span class="badge">sub</span>' : "";
-    li.innerHTML = `<span class="icon">${icon}</span><span class="label">${e.name}</span>${tag}`;
+    li.innerHTML = `<span class="icon">${icon}</span><span class="label">${escapeHtml(e.name)}</span>${tag}`;
     li.onclick = () => (e.is_dir ? browse(e.path) : openItem(e.path, e.name));
     list.appendChild(li);
   }
@@ -132,7 +132,7 @@ async function librarySearch(query) {
   try {
     data = await getJSON(url);
   } catch (err) {
-    list.innerHTML = `<li class="error">Search failed: ${err.message}</li>`;
+    list.innerHTML = `<li class="error">Search failed: ${escapeHtml(err.message)}</li>`;
     return;
   }
   renderEntries(data.entries);
@@ -179,7 +179,7 @@ async function dialogueSearch() {
   try {
     data = await getJSON(url);
   } catch (err) {
-    list.innerHTML = `<li class="error">Dialogue search failed: ${err.message}</li>`;
+    list.innerHTML = `<li class="error">Dialogue search failed: ${escapeHtml(err.message)}</li>`;
     status.hidden = true;
     $("dialogue-search-btn").disabled = false;
     return;
@@ -198,8 +198,8 @@ async function dialogueSearch() {
     const li = document.createElement("li");
     li.className = "dialogue-hit";
     li.innerHTML = `
-      <span class="hit-file">${hit.file}</span>
-      <span class="hit-text">"${hit.text}"</span>
+      <span class="hit-file">${escapeHtml(hit.file)}</span>
+      <span class="hit-text">"${escapeHtml(hit.text)}"</span>
       <span class="hit-time">${hit.start_ts} – ${hit.end_ts}  <span class="hit-score">${hit.score}%</span></span>
     `;
     li.onclick = () => openItem(hit.path, hit.file, { searchQuery: query, seekTo: hit.start });
@@ -411,6 +411,10 @@ function seekTo(seconds) {
 async function openItem(path, name, opts) {
   const { searchQuery, seekTo: seekTarget } = opts || {};
   showItem();
+  // Consume any pending bookmark clip immediately so an early return (e.g.
+  // probe failure) can't leak it into the next item opened.
+  const bookmarkClip = pendingBookmarkClip;
+  pendingBookmarkClip = null;
   currentItem = { path, name };
   $("item-name").textContent = name;
   $("subs-controls").textContent = "Loading…";
@@ -441,7 +445,7 @@ async function openItem(path, name, opts) {
   try {
     info = await getJSON("/api/items" + qp(path));
   } catch (err) {
-    $("subs-controls").innerHTML = `<span class="error">${err.message}</span>`;
+    $("subs-controls").innerHTML = `<span class="error">${escapeHtml(err.message)}</span>`;
     return;
   }
 
@@ -570,11 +574,7 @@ async function openItem(path, name, opts) {
   }
 
   // Apply pending bookmark clip (when navigating from bookmarks browser)
-  if (pendingBookmarkClip) {
-    const bm = pendingBookmarkClip;
-    pendingBookmarkClip = null;
-    useBookmarkForClip(bm);
-  }
+  if (bookmarkClip) useBookmarkForClip(bookmarkClip);
 }
 
 function renderStreams(streams) {
@@ -582,7 +582,7 @@ function renderStreams(streams) {
   ul.innerHTML = "";
   for (const s of streams) {
     const li = document.createElement("li");
-    li.innerHTML = `<code>${s.selector}</code> ${s.label.replace(s.selector, "").trim()}`;
+    li.innerHTML = `<code>${escapeHtml(s.selector)}</code> ${escapeHtml(s.label.replace(s.selector, "").trim())}`;
     ul.appendChild(li);
   }
 }
@@ -1174,7 +1174,7 @@ async function browseClips(folder) {
     const url = folder ? `/api/clips?folder=${encodeURIComponent(folder)}` : "/api/clips";
     data = await getJSON(url);
   } catch (err) {
-    list.innerHTML = `<li class="error">Could not load clips: ${err.message}</li>`;
+    list.innerHTML = `<li class="error">Could not load clips: ${escapeHtml(err.message)}</li>`;
     return;
   }
 
@@ -1201,7 +1201,7 @@ async function browseClips(folder) {
       `<span class="icon">🎬</span>` +
       `<span class="label">${escapeHtml(c.name)}</span>` +
       `<span class="badge">${size}</span>` +
-      `<a class="download-link clip-dl" href="${c.download_url}" download>Download</a>`;
+      `<a class="download-link clip-dl" href="${escapeHtml(c.download_url)}" download>Download</a>`;
     li.onclick = (e) => {
       if (e.target.closest("a")) return; // let download link work normally
       openItem(c.path, c.name);
@@ -1235,7 +1235,7 @@ async function browseBookmarks() {
   try {
     data = await getJSON("/api/bookmarks");
   } catch (err) {
-    list.innerHTML = `<li class="error">Could not load bookmarks: ${err.message}</li>`;
+    list.innerHTML = `<li class="error">Could not load bookmarks: ${escapeHtml(err.message)}</li>`;
     return;
   }
 
@@ -1272,9 +1272,9 @@ async function browseBookmarks() {
         `<button class="bookmark-del" title="Delete">✕</button>`;
       li.querySelector(".bookmark-use").onclick = (e) => {
         e.stopPropagation();
-        openItem(path, fileName, { seekTo: bm.start });
-        // After item loads, set up the clip range from this bookmark
+        // Set before openItem — it consumes the value in its prologue.
         pendingBookmarkClip = bm;
+        openItem(path, fileName, { seekTo: bm.start });
       };
       li.querySelector(".bookmark-seek").onclick = (e) => {
         e.stopPropagation();

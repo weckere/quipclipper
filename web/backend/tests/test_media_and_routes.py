@@ -418,6 +418,47 @@ def test_clips_list_with_files(tmp_path: Path) -> None:
     assert data["clips"][0]["name"] == "clip1.mkv"
 
 
+def test_clips_download_url_prefix(tmp_path: Path) -> None:
+    """QC_CLIPS_URL_PREFIX points download_url at the front proxy — R8."""
+    clips = tmp_path / "clips"
+    clips.mkdir()
+    (clips / "test.mkv").write_bytes(b"x")
+    sub = clips / "Movie Name"
+    sub.mkdir()
+    (sub / "clip1.mkv").write_bytes(b"y")
+
+    client = TestClient(
+        create_app(Settings.from_env({
+            "QC_MEDIA_ROOTS": str(tmp_path),
+            "QC_CLIPS_DIR": str(clips),
+            "QC_CLIPS_URL_PREFIX": "/clips/",  # trailing slash is stripped
+        }))
+    )
+    data = client.get("/api/clips").json()
+    assert data["clips"][0]["download_url"] == "/clips/test.mkv"
+    # stream_url still goes through the API (transcode/range handling)
+    assert data["clips"][0]["stream_url"].startswith("/api/clips/stream/")
+
+    data = client.get("/api/clips", params={"folder": "Movie Name"}).json()
+    assert data["clips"][0]["download_url"] == "/clips/Movie%20Name/clip1.mkv"
+
+
+def test_clips_download_url_default_is_api(tmp_path: Path) -> None:
+    """Without QC_CLIPS_URL_PREFIX, downloads go through the backend API."""
+    clips = tmp_path / "clips"
+    clips.mkdir()
+    (clips / "test.mkv").write_bytes(b"x")
+
+    client = TestClient(
+        create_app(Settings.from_env({
+            "QC_MEDIA_ROOTS": str(tmp_path),
+            "QC_CLIPS_DIR": str(clips),
+        }))
+    )
+    data = client.get("/api/clips").json()
+    assert data["clips"][0]["download_url"] == "/api/clips/download/test.mkv"
+
+
 def test_clips_download(tmp_path: Path) -> None:
     clips = tmp_path / "clips"
     clips.mkdir()

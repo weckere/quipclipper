@@ -381,6 +381,7 @@ All settings are environment variables on the `app` service:
 |---|---|---|
 | `QC_MEDIA_ROOTS` | *(required)* | Colon-separated list of media directories (in-container paths) |
 | `QC_CLIPS_DIR` | `/clips` | Where finished clips are saved |
+| `QC_CLIPS_URL_PREFIX` | *(empty)* | URL prefix where a front proxy (nginx) serves the clips dir directly; empty = download via the backend API |
 | `QC_STATE_DIR` | `/state` | Bookmarks, subtitle cache, and other persistent state |
 | `QC_SAVE_TO_LIBRARY` | `false` | Default for the "save to library" toggle (files clips into per-source subfolders) |
 | `QC_MAX_CONCURRENT_JOBS` | `2` | Clip-job thread-pool size |

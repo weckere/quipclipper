@@ -13,6 +13,7 @@ services:
     environment:
       QC_MEDIA_ROOTS: /media
       QC_CLIPS_DIR: /clips
+      QC_CLIPS_URL_PREFIX: /clips     # nginx serves the clips volume directly
       QC_STATE_DIR: /state
       # QC_PASSWORD: change-me           # presence flips the UI to "auth required"
       # QC_JELLYFIN_URL: http://jellyfin:8096

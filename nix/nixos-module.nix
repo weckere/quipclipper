@@ -124,6 +124,8 @@ in
       environment = {
         QC_MEDIA_ROOTS = lib.concatStringsSep ":" (map toString cfg.mediaRoots);
         QC_CLIPS_DIR = toString cfg.clipsDir;
+        # nginx serves the clips dir directly at /clips/ (see virtualHost below)
+        QC_CLIPS_URL_PREFIX = "/clips";
         QC_STATE_DIR = "/var/lib/quipclipper-web/state";
         QC_SAVE_TO_LIBRARY = lib.boolToString cfg.saveToLibrary;
         QC_BIND = cfg.listenAddress;

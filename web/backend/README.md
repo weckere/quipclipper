@@ -43,6 +43,7 @@ Environment variables (mirrored 1:1 by the NixOS module options):
 |---|---|---|
 | `QC_MEDIA_ROOTS` | (empty) | `:`-separated whitelist of media dirs |
 | `QC_CLIPS_DIR` | `./clips` | where finished clips are written |
+| `QC_CLIPS_URL_PREFIX` | (empty) | URL prefix where a front proxy serves the clips dir directly; empty = download via the backend API |
 | `QC_STATE_DIR` | `./state` | bookmark store, etc. |
 | `QC_SAVE_TO_LIBRARY` | `false` | also file clips into the clips library |
 | `QC_BIND` | `127.0.0.1` | backend listen address |
