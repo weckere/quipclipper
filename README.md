@@ -312,8 +312,11 @@ dialogue, cut clips, and manage bookmarks — all from a browser.
   click a line to seek, hover for Start/End buttons to select a clip range by
   dialogue lines (timestamps are derived from the selected cues).
 - **Lossless clipping** — same engine as the CLI: mkvmerge with automatic ffmpeg
-  fallback, async job queue, audio-only/FLAC/WAV/split-channel export options,
-  save to a clips library.
+  fallback, async job queue, save to a clips library. Audio export offers three
+  lossless modes: **Passthrough** (stream-copy the original codec, all tracks),
+  **WAV/FLAC** (full-mix re-encode keeping every channel — a 5.1 source becomes
+  a 5.1 WAV/FLAC in one file), and **Split channels** (one file per channel
+  group: stereo pairs + centre/LFE).
 - **Bookmarks** — save selected dialogue ranges as named bookmarks per file, and
   browse all bookmarks across the library from a top-level Bookmarks view.
 - **Clips as first-class items** — open a finished clip in the full item view:

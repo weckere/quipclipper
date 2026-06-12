@@ -1078,6 +1078,8 @@ async function makeClip() {
     save_to_library: $("clip-save-lib") ? $("clip-save-lib").checked : false,
     split_channels: splitCh,
     split_format: fmt === "lossless" ? "wav" : fmt,
+    // Audio + WAV/FLAC without splitting = full-mix lossless (keeps 5.1, etc.).
+    audio_format: (audioOnly && !splitCh && (fmt === "wav" || fmt === "flac")) ? fmt : undefined,
   };
 
   if (selectedMatch) {
@@ -1388,6 +1390,8 @@ function batchOptions(prefix) {
     save_to_library: false,
     split_channels: split,
     split_format: fmt === "lossless" ? "wav" : fmt,
+    // Full-mix lossless WAV/FLAC (keeps 5.1) when audio + not splitting.
+    audio_format: (!split && (fmt === "wav" || fmt === "flac")) ? fmt : undefined,
   };
 }
 

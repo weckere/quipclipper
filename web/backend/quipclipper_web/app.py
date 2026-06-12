@@ -84,6 +84,9 @@ class ClipRequest(BaseModel):
     # Clip options
     kind: str = Field("video", pattern="^(audio|video|gif)$")
     lossless: bool = True
+    # Full-mix lossless audio re-encode (audio kind, no split): keep all channels
+    # (e.g. 5.1) in one WAV/FLAC file. None = passthrough/MP3 per `lossless`.
+    audio_format: str | None = Field(None, pattern="^(wav|flac)$")
     before: float = Field(2.0, ge=0, le=60)
     after: float = Field(2.0, ge=0, le=60)
     audio_tracks: list[int] | None = None
@@ -590,8 +593,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if req.split_channels and req.kind != "audio":
             raise HTTPException(status_code=400, detail="split_channels only applies to audio.")
 
+        # Full-mix lossless audio (one WAV/FLAC keeping every channel, e.g. 5.1).
+        # This is an ffmpeg re-encode, so it bypasses the mkvmerge/passthrough path.
+        fullmix = req.kind == "audio" and not req.split_channels and req.audio_format is not None
+
         # Decide backend (mirrors cli.py logic).
-        mkv_capable = req.lossless and req.kind in ("audio", "video") and not req.split_channels
+        mkv_capable = (
+            req.lossless and req.kind in ("audio", "video")
+            and not req.split_channels and not fullmix
+        )
         if req.backend == "ffmpeg":
             use_mkvmerge = False
         elif req.backend == "mkvmerge":
@@ -640,7 +650,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         clips_dir.mkdir(parents=True, exist_ok=True)
 
         # Determine extension.
-        if use_mkvmerge:
+        if fullmix:
+            ext = req.audio_format  # "wav" | "flac"
+        elif use_mkvmerge:
             ext = "mka" if req.kind == "audio" else "mkv"
         elif req.split_channels:
             ext = req.split_format if req.split_format != "original" else "wav"
@@ -685,6 +697,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _split_channels = req.split_channels
         _split_format = req.split_format
         _include_lfe = req.include_lfe
+        _audio_codec = req.audio_format if fullmix else None
         _out_path = out_path
 
         def do_cut() -> list[Path]:
@@ -713,6 +726,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return [cut_clip(
                 _video, _rng, kind=_kind, lossless=_lossless, out=_out_path,
                 audio_indices=_audio_indices, embed_cues=_embed_cues,
+                audio_codec=_audio_codec,
             )]
 
         job = jobs.submit(do_cut, label=label)

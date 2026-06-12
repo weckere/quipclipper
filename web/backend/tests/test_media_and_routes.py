@@ -227,6 +227,29 @@ def _wait_done(client: TestClient, job_id: str) -> dict:
     return job
 
 
+def test_clip_audio_format_wav_is_fullmix_reencode(tmp_path: Path) -> None:
+    """audio_format=wav (audio, no split) routes to cut_clip with audio_codec
+    set and a .wav output — a full-mix lossless re-encode (keeps 5.1)."""
+    video = tmp_path / "movie.mkv"
+    video.write_bytes(b"")
+    fake_out = tmp_path / "clip.wav"
+    fake_out.write_bytes(b"x")
+
+    client = _client(tmp_path)
+    with patch("quipclipper_web.app.cut_clip", return_value=fake_out) as mock_cut:
+        resp = client.post("/api/clip", json={
+            "path": str(video), "start": 10, "end": 12,
+            "kind": "audio", "lossless": False, "audio_format": "wav",
+            "backend": "auto",
+        })
+        assert resp.status_code == 200
+        job = _wait_done(client, resp.json()["job_id"])
+        assert job["status"] == "done"
+        kwargs = mock_cut.call_args.kwargs
+    assert kwargs["audio_codec"] == "wav"
+    assert str(kwargs["out"]).endswith(".wav")
+
+
 def test_clip_whole_file_when_end_omitted(tmp_path: Path) -> None:
     """start given with no end = whole file: the backend fills the end from the
     probed duration (used by batch export in the clips library)."""

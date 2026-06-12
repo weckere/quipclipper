@@ -49,6 +49,15 @@ LOSSLESS_VIDEO_EXT = "mkv"
 # Extensions used when re-encoding instead of stream-copying.
 REENCODE_EXT = {"audio": "mp3", "video": "mp4"}
 
+# Full-mix lossless audio re-encode: decode one audio stream and write all its
+# channels (e.g. 5.1) to a single WAV/FLAC file. Unlike stream-copy passthrough
+# this re-wraps to a lossless PCM/FLAC codec, and unlike --split-channels it
+# keeps the surround mix intact in one file. (encoder, extension) per format.
+FULLMIX_AUDIO = {
+    "wav": ("pcm_s24le", "wav"),
+    "flac": ("flac", "flac"),
+}
+
 # Codecs we can re-encode back to when splitting with --split-format original.
 ORIGINAL_ENCODER_OK = {"ac3", "eac3", "aac", "mp3", "flac", "opus", "vorbis"}
 
@@ -259,6 +268,7 @@ def _ffmpeg_args(
     width: int,
     audio_indices: list[int] | None = None,
     embed_subs: Path | None = None,
+    audio_codec: str | None = None,
 ) -> list[str]:
     head = ["ffmpeg", "-y", "-v", "error"]
     inputs = ["-ss", f"{rng.start:.3f}", "-i", str(source)]
@@ -275,6 +285,15 @@ def _ffmpeg_args(
         # Scale and cap fps; height -1 preserves aspect ratio. Always re-encoded.
         vf = f"fps={fps},scale={width}:-1:flags=lanczos"
         return head + inputs + dur + ["-an", "-vf", vf, str(out)]
+
+    if kind == "audio" and audio_codec is not None:
+        # Full-mix lossless re-encode of ONE audio stream, all channels kept
+        # (no -ac downmix), so a 5.1 source becomes a 5.1 WAV/FLAC. WAV/FLAC
+        # containers hold a single stream, so map exactly one (first selected
+        # or a:0). ffmpeg writes WAVE_FORMAT_EXTENSIBLE with the channel mask.
+        enc = FULLMIX_AUDIO[audio_codec][0]
+        idx = audio_indices[0] if audio_indices else 0
+        return head + inputs + dur + ["-map", f"0:a:{idx}", "-c:a", enc, str(out)]
 
     if lossless:
         # -avoid_negative_ts make_zero cleans up timestamps after a keyframe seek.
@@ -308,6 +327,7 @@ def cut_clip(
     width: int = 480,
     audio_indices: list[int] | None = None,
     embed_cues: list[Cue] | None = None,
+    audio_codec: str | None = None,
 ) -> Path:
     """Cut `source` between `rng.start` and `rng.end` into the chosen `kind`.
 
@@ -315,24 +335,35 @@ def cut_clip(
     loss); GIF is always re-encoded. `audio_indices` selects which audio streams
     (by a:N index) to keep; None keeps them all. `embed_cues`, when given for a
     lossless video clip, are rendered to a clip-aligned SRT and muxed in (in
-    addition to any embedded subtitle tracks the source already has). Returns the
-    path written. Requires ffmpeg.
+    addition to any embedded subtitle tracks the source already has).
+
+    `audio_codec` (``"wav"`` or ``"flac"``, audio kind only) overrides copy/encode
+    mode with a **full-mix lossless re-encode**: one audio stream is decoded and
+    written with every channel kept (a 5.1 source → a 5.1 WAV/FLAC), to a single
+    file. This differs from passthrough (`lossless=True`, original codec) and from
+    `split_audio_channels` (one file per channel group). Returns the path written.
+    Requires ffmpeg.
     """
     source = Path(source)
     if kind not in ("audio", "video", "gif"):
         raise ValueError(f"kind must be audio, video, or gif, got {kind!r}")
+    if audio_codec is not None and audio_codec not in FULLMIX_AUDIO:
+        raise ValueError(f"audio_codec must be one of {sorted(FULLMIX_AUDIO)}, got {audio_codec!r}")
     if shutil.which("ffmpeg") is None:
         raise RuntimeError("ffmpeg not found on PATH. Install ffmpeg to cut clips.")
     if not source.exists():
         raise RuntimeError(f"Video file not found: {source}")
 
     if out is None:
-        codecs = None
-        if lossless and kind == "audio":
-            codecs = probe_audio_streams(source)
-            if audio_indices:  # name by the codecs of the selected streams only
-                codecs = [codecs[i] for i in audio_indices if i < len(codecs)]
-        ext = output_extension(kind, lossless=lossless, audio_codecs=codecs)
+        if kind == "audio" and audio_codec is not None:
+            ext = FULLMIX_AUDIO[audio_codec][1]
+        else:
+            codecs = None
+            if lossless and kind == "audio":
+                codecs = probe_audio_streams(source)
+                if audio_indices:  # name by the codecs of the selected streams only
+                    codecs = [codecs[i] for i in audio_indices if i < len(codecs)]
+            ext = output_extension(kind, lossless=lossless, audio_codecs=codecs)
         out = source.with_name(f"{source.stem}_{_timestamp_slug(rng.start)}.{ext}")
     out = Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -354,6 +385,7 @@ def cut_clip(
         args = _ffmpeg_args(
             source=source, rng=rng, kind=kind, out=out, lossless=lossless, fps=fps,
             width=width, audio_indices=audio_indices, embed_subs=embed_subs,
+            audio_codec=audio_codec,
         )
         proc = subprocess.run(args, capture_output=True, text=True)
         if proc.returncode != 0:

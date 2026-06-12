@@ -203,6 +203,26 @@ layouts (`5.1`, `5.1(side)`, `7.1`, etc.), with a fall back keyed on channel cou
 A two-stage seek (fast seek to just before the start, then an accurate trim) makes
 the split sample-accurate, which is affordable because splitting re-encodes anyway.
 
+**Three distinct audio output modes.** It is worth being precise about how the
+surround handling relates to the other audio paths, since they are easy to
+conflate:
+
+| Mode | What it does | Channels | When |
+|---|---|---|---|
+| **Passthrough** (`lossless=True`) | stream-copy (`-c copy`), every audio track kept | source layout, untouched | default; keeps the exact bitstream |
+| **Full-mix WAV/FLAC** (`cut_clip(audio_codec=…)`) | decode **one** stream → `pcm_s24le`/`flac`, one file | **all channels kept** (5.1 → 5.1) | want an editable lossless file without the original codec |
+| **Split channels** (`split_audio_channels`) | decode → one file per channel group | regrouped (stereo pairs + mono) | want the stems separately |
+
+The full-mix path was added because the web "WAV"/"FLAC" options previously fell
+through to the generic re-encode, which produces stereo MP3 — so there was no way
+to get, say, a single 5.1 WAV. WAV holds 5.1 fine: ffmpeg's `wav` muxer writes
+`WAVE_FORMAT_EXTENSIBLE` with the channel mask, so `-c:a pcm_s24le` with **no**
+`-ac` preserves the layout. The path maps exactly one audio stream (the first
+selected, or `a:0`) because the WAV/FLAC containers hold a single stream; keeping
+*all* tracks is the passthrough/`.mka` case. Like splitting, it is lossless only
+*relative to the decode* — the source is decoded, then written verbatim (PCM) or
+losslessly compressed (FLAC).
+
 ---
 
 ## 8. Subtitles: preservation and alignment

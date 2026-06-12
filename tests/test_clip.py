@@ -7,6 +7,7 @@ from quipclipper.clip import (
     _ffmpeg_args,
     _split_codec,
     compute_range,
+    cut_clip,
     group_channels,
     output_extension,
     render_clip_srt,
@@ -142,6 +143,38 @@ def test_ffmpeg_args_video_no_embed_when_not_requested():
         out=Path("out.mkv"), lossless=True, fps=15, width=480,
     )
     assert args.count("-i") == 1
+
+
+def test_ffmpeg_args_fullmix_wav_keeps_all_channels():
+    # Full-mix WAV: re-encode one audio stream to pcm_s24le with NO -ac downmix,
+    # so a 5.1 source stays 5.1. lossless flag is irrelevant when audio_codec set.
+    args = _ffmpeg_args(
+        source=Path("in.mkv"), rng=ClipRange(0.0, 2.0), kind="audio",
+        out=Path("out.wav"), lossless=False, fps=15, width=480,
+        audio_codec="wav",
+    )
+    assert "-c:a" in args and "pcm_s24le" in args
+    assert "-ac" not in args                 # no downmix → channel layout preserved
+    assert "-map" in args and "0:a:0" in args  # single stream (WAV holds one)
+    assert args[-1] == "out.wav"
+
+
+def test_ffmpeg_args_fullmix_flac_uses_selected_stream():
+    args = _ffmpeg_args(
+        source=Path("in.mkv"), rng=ClipRange(0.0, 2.0), kind="audio",
+        out=Path("out.flac"), lossless=False, fps=15, width=480,
+        audio_indices=[2], audio_codec="flac",
+    )
+    assert "flac" in args
+    assert "0:a:2" in args
+    assert "-ac" not in args
+
+
+def test_cut_clip_rejects_unknown_audio_codec(tmp_path):
+    src = tmp_path / "in.mkv"
+    src.write_bytes(b"")
+    with pytest.raises(ValueError):
+        cut_clip(src, ClipRange(0.0, 2.0), kind="audio", audio_codec="mp3")
 
 
 def test_group_channels_5_1():
