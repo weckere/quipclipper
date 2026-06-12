@@ -49,6 +49,20 @@
           <a id="clips-home">Clips</a>
           <span id="clips-folder-crumb" class="muted"></span>
         </nav>
+        <div id="clips-batch" class="batch-bar" hidden>
+          <label class="checkbox-label"><input id="clips-select-all" type="checkbox" /> Select all</label>
+          <label class="checkbox-label"><input id="clips-batch-audio" type="checkbox" checked /> Audio only</label>
+          <label>Format
+            <select id="clips-batch-format">
+              <option value="lossless" selected>Passthrough</option>
+              <option value="flac">FLAC</option>
+              <option value="wav">WAV</option>
+            </select>
+          </label>
+          <label class="checkbox-label"><input id="clips-batch-split" type="checkbox" /> Split channels</label>
+          <button id="clips-batch-export" class="clip-btn batch-export-btn" disabled>Export selected</button>
+          <span id="clips-batch-status" class="muted"></span>
+        </div>
         <ul id="clips-entries" class="entries"></ul>
         <p id="clips-empty" class="muted" hidden>No clips yet.</p>
       </section>
@@ -59,6 +73,26 @@
           <a id="all-bm-back-lib">Library</a>
           <span class="muted"> / Bookmarks</span>
         </nav>
+        <div id="bm-batch" class="batch-bar" hidden>
+          <label class="checkbox-label"><input id="bm-select-all" type="checkbox" /> Select all</label>
+          <label class="checkbox-label"><input id="bm-batch-audio" type="checkbox" checked /> Audio only</label>
+          <label>Format
+            <select id="bm-batch-format">
+              <option value="lossless" selected>Passthrough</option>
+              <option value="flac">FLAC</option>
+              <option value="wav">WAV</option>
+            </select>
+          </label>
+          <label class="checkbox-label"><input id="bm-batch-split" type="checkbox" /> Split channels</label>
+          <label>Before (s)
+            <input id="bm-batch-before" type="number" value="2" min="0" max="60" step="0.5" />
+          </label>
+          <label>After (s)
+            <input id="bm-batch-after" type="number" value="2" min="0" max="60" step="0.5" />
+          </label>
+          <button id="bm-batch-export" class="clip-btn batch-export-btn" disabled>Export selected</button>
+          <span id="bm-batch-status" class="muted"></span>
+        </div>
         <ul id="all-bookmarks-list" class="bookmarks-list bm-browser-list"></ul>
         <p id="all-bookmarks-empty" class="muted" hidden>No bookmarks saved yet.</p>
       </section>
@@ -123,7 +157,7 @@
             </label>
             <label>Format
               <select id="clip-format">
-                <option value="lossless" selected>Lossless (no re-encode)</option>
+                <option value="lossless" selected>Passthrough</option>
                 <option value="flac">FLAC</option>
                 <option value="wav">WAV</option>
               </select>

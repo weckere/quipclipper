@@ -553,10 +553,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not video.is_file():
             raise HTTPException(status_code=404, detail=f"Not found: {req.path}")
 
-        # Determine the clip range: explicit start/end or search-based.
-        if req.start is not None and req.end is not None:
-            rng = ClipRange(start=max(0.0, req.start - req.before), end=req.end + req.after)
-            label = f"{req.kind} clip {format_timestamp(req.start)}–{format_timestamp(req.end)}"
+        # Determine the clip range: explicit start (with optional end) or
+        # search-based. Omitting end with start set means "to the end of the
+        # file" — used by batch export to re-process a whole clip.
+        if req.start is not None:
+            end = req.end
+            if end is None:
+                end = media.probe_duration(video)
+                if end is None:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Could not determine file duration for a whole-file clip.",
+                    )
+            rng = ClipRange(start=max(0.0, req.start - req.before), end=end + req.after)
+            label = f"{req.kind} clip {format_timestamp(req.start)}–{format_timestamp(end)}"
         elif req.query:
             try:
                 # Use the cache: extraction is slow and the same cues were very
@@ -573,7 +583,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         else:
             raise HTTPException(
                 status_code=400,
-                detail="Provide either start/end or query to define the clip range.",
+                detail="Provide either start (with optional end) or query to define the clip range.",
             )
 
         # Validation

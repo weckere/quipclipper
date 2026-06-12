@@ -227,6 +227,42 @@ def _wait_done(client: TestClient, job_id: str) -> dict:
     return job
 
 
+def test_clip_whole_file_when_end_omitted(tmp_path: Path) -> None:
+    """start given with no end = whole file: the backend fills the end from the
+    probed duration (used by batch export in the clips library)."""
+    video = tmp_path / "movie.mkv"
+    video.write_bytes(b"")
+    fake_out = tmp_path / "clip.mka"
+    fake_out.write_bytes(b"x")
+
+    client = _client(tmp_path)
+    with (
+        patch("quipclipper_web.media.probe_duration", return_value=120.0),
+        patch("quipclipper_web.app.cut_clip", return_value=fake_out) as mock_cut,
+    ):
+        resp = client.post("/api/clip", json={
+            "path": str(video), "start": 0, "before": 0, "after": 0,
+            "kind": "audio", "lossless": True, "backend": "ffmpeg",
+        })
+        assert resp.status_code == 200
+        job = _wait_done(client, resp.json()["job_id"])
+        assert job["status"] == "done"
+        rng = mock_cut.call_args.args[1]
+    assert rng.start == 0.0
+    assert rng.end == 120.0
+
+
+def test_clip_whole_file_fails_cleanly_without_duration(tmp_path: Path) -> None:
+    video = tmp_path / "movie.mkv"
+    video.write_bytes(b"")
+    with patch("quipclipper_web.media.probe_duration", return_value=None):
+        resp = _client(tmp_path).post("/api/clip", json={
+            "path": str(video), "start": 0, "kind": "audio",
+        })
+    assert resp.status_code == 400
+    assert "duration" in resp.json()["detail"].lower()
+
+
 def test_clip_save_to_library_can_be_overridden_off(tmp_path: Path) -> None:
     """With the global default ON, an explicit save_to_library=false must win
     (the clip lands in the clips root, not a per-source subfolder) — R2."""

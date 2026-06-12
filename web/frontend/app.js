@@ -409,7 +409,7 @@ function seekTo(seconds) {
 }
 
 async function openItem(path, name, opts) {
-  const { searchQuery, seekTo: seekTarget } = opts || {};
+  const { searchQuery, seekTo: seekTarget, selectWholeClip } = opts || {};
   showItem();
   // Consume any pending bookmark clip immediately so an early return (e.g.
   // probe failure) can't leak it into the next item opened.
@@ -570,6 +570,17 @@ async function openItem(path, name, opts) {
     player.addEventListener("loadedmetadata", () => {
       player.currentTime = seekTarget;
     }, { once: true });
+  }
+
+  // When opening a clip from the clips library, pre-select the whole file
+  // so the clip options are immediately ready for re-export.
+  if (selectWholeClip && info.duration) {
+    selectedMatch = null;
+    clipRangeStart = 0;
+    clipRangeEnd = info.duration;
+    $("clip-panel").hidden = false;
+    $("clip-range-display").textContent =
+      `Entire file — 0:00.0 – ${formatTime(info.duration)} (${info.duration.toFixed(1)}s)`;
   }
 
   // Apply pending bookmark clip (when navigating from bookmarks browser)
@@ -1126,13 +1137,31 @@ function pollJob() {
 $("clip-btn").onclick = makeClip;
 
 // Clip option interactions
+
+/** Enable/disable the Passthrough option on a format select.
+ *  Splitting channels always decodes the audio, so passthrough (no re-encode)
+ *  is impossible; grey it out and fall back to WAV. */
+function setPassthroughAllowed(sel, allowed) {
+  const opt = sel.querySelector('option[value="lossless"]');
+  if (!opt) return;
+  opt.disabled = !allowed;
+  opt.title = allowed ? "" : "Splitting channels requires decoding — passthrough unavailable";
+  if (!allowed && sel.value === "lossless") sel.value = "wav";
+}
+
 function updateClipOptionVisibility() {
+  const split = $("clip-split-channels").checked;
+  // Split channels implies audio output (the backend rejects split for video).
+  if (split) $("clip-audio-only").checked = true;
+  $("clip-audio-only").disabled = split;
   const audioOnly = $("clip-audio-only").checked;
   // Embed subs only makes sense for video
   $("clip-embed-subs").disabled = audioOnly;
   if (audioOnly) $("clip-embed-subs").checked = false;
+  setPassthroughAllowed($("clip-format"), !split);
 }
 $("clip-audio-only").onchange = updateClipOptionVisibility;
+$("clip-split-channels").onchange = updateClipOptionVisibility;
 
 // --- clips library ----------------------------------------------------------
 
@@ -1144,13 +1173,19 @@ function showClips() {
   $("clips-browser").hidden = false;
 }
 
+let currentClipsFolder = null;
+
 async function browseClips(folder) {
   showClips();
+  currentClipsFolder = folder;
   const list = $("clips-entries");
   const empty = $("clips-empty");
   list.innerHTML = "";
   empty.hidden = true;
   $("clips-folder-crumb").textContent = folder ? ` / ${folder}` : "";
+  $("clips-batch").hidden = true;
+  $("clips-select-all").checked = false;
+  $("clips-batch-status").textContent = "";
 
   let data;
   try {
@@ -1181,16 +1216,23 @@ async function browseClips(folder) {
       ? (c.size / 1048576).toFixed(1) + " MB"
       : (c.size / 1024).toFixed(0) + " KB";
     li.innerHTML =
+      `<input type="checkbox" class="entry-select clip-select" title="Select for batch export" />` +
       `<span class="icon">🎬</span>` +
       `<span class="label">${escapeHtml(c.name)}</span>` +
       `<span class="badge">${size}</span>` +
       `<a class="download-link clip-dl" href="${escapeHtml(c.download_url)}" download>Download</a>`;
+    const cb = li.querySelector(".clip-select");
+    cb.dataset.path = c.path;
+    cb.onclick = (e) => { e.stopPropagation(); updateBatchState("clips"); };
     li.onclick = (e) => {
       if (e.target.closest("a")) return; // let download link work normally
-      openItem(c.path, c.name);
+      openItem(c.path, c.name, { selectWholeClip: true });
     };
     list.appendChild(li);
   }
+
+  // Batch export bar only when there are clips to select.
+  if (data.clips.length) $("clips-batch").hidden = false;
 }
 
 $("clips-link").onclick = () => browseClips(null);
@@ -1213,6 +1255,9 @@ async function browseBookmarks() {
   const empty = $("all-bookmarks-empty");
   list.innerHTML = "";
   empty.hidden = true;
+  $("bm-batch").hidden = true;
+  $("bm-select-all").checked = false;
+  $("bm-batch-status").textContent = "";
 
   let data;
   try {
@@ -1226,6 +1271,7 @@ async function browseBookmarks() {
     empty.hidden = false;
     return;
   }
+  $("bm-batch").hidden = false;
 
   // Group by source path
   const groups = new Map();
@@ -1248,11 +1294,17 @@ async function browseBookmarks() {
       const li = document.createElement("li");
       li.className = "bm-browser-item";
       li.innerHTML =
+        `<input type="checkbox" class="entry-select bm-select" title="Select for batch export" />` +
         `<span class="bookmark-label">${escapeHtml(bm.label)}</span>` +
         `<span class="bookmark-range">${formatTime(bm.start)} – ${formatTime(bm.end)}</span>` +
         `<button class="bookmark-use" title="Open & clip">Clip</button>` +
         `<button class="bookmark-seek" title="Open & seek">▶</button>` +
         `<button class="bookmark-del" title="Delete">✕</button>`;
+      const cb = li.querySelector(".bm-select");
+      cb.dataset.path = bm.path;
+      cb.dataset.start = bm.start;
+      cb.dataset.end = bm.end;
+      cb.onclick = (e) => { e.stopPropagation(); updateBatchState("bm"); };
       li.querySelector(".bookmark-use").onclick = (e) => {
         e.stopPropagation();
         // Set before openItem — it consumes the value in its prologue.
@@ -1281,6 +1333,147 @@ let pendingBookmarkClip = null;
 
 $("bookmarks-link").onclick = () => browseBookmarks();
 $("all-bm-back-lib").onclick = () => browse(null);
+
+// --- batch export (clips & bookmarks browsers) -------------------------------
+//
+// Both browsers share the same machinery, parameterized by an id prefix:
+//   "clips" → #clips-batch bar + .clip-select checkboxes in #clips-entries
+//   "bm"    → #bm-batch bar + .bm-select checkboxes in #all-bookmarks-list
+
+const BATCH = {
+  clips: { listId: "clips-entries", boxClass: "clip-select" },
+  bm: { listId: "all-bookmarks-list", boxClass: "bm-select" },
+};
+
+function batchBoxes(prefix, checkedOnly) {
+  const sel = `#${BATCH[prefix].listId} .${BATCH[prefix].boxClass}` + (checkedOnly ? ":checked" : "");
+  return [...document.querySelectorAll(sel)];
+}
+
+function updateBatchState(prefix) {
+  const n = batchBoxes(prefix, true).length;
+  const btn = $(`${prefix}-batch-export`);
+  btn.disabled = n === 0;
+  btn.textContent = n ? `Export selected (${n})` : "Export selected";
+}
+
+function wireBatchBar(prefix) {
+  // Select all
+  $(`${prefix}-select-all`).onchange = (e) => {
+    batchBoxes(prefix).forEach((cb) => { cb.checked = e.target.checked; });
+    updateBatchState(prefix);
+  };
+  // Split channels implies audio output and rules out passthrough.
+  const applyGuard = () => {
+    const split = $(`${prefix}-batch-split`).checked;
+    if (split) $(`${prefix}-batch-audio`).checked = true;
+    $(`${prefix}-batch-audio`).disabled = split;
+    setPassthroughAllowed($(`${prefix}-batch-format`), !split);
+  };
+  $(`${prefix}-batch-split`).onchange = applyGuard;
+}
+wireBatchBar("clips");
+wireBatchBar("bm");
+
+/** Read the shared export options from a batch bar. */
+function batchOptions(prefix) {
+  const audioOnly = $(`${prefix}-batch-audio`).checked;
+  const split = $(`${prefix}-batch-split`).checked;
+  const fmt = $(`${prefix}-batch-format`).value;
+  return {
+    kind: audioOnly || split ? "audio" : "video",
+    lossless: fmt === "lossless",
+    backend: "auto",
+    embed_subs: !(audioOnly || split),
+    save_to_library: false,
+    split_channels: split,
+    split_format: fmt === "lossless" ? "wav" : fmt,
+  };
+}
+
+/** Poll a set of job ids until all finish, updating a status element. */
+function pollBatch(jobIds, statusEl, onDone) {
+  const total = jobIds.length;
+  if (!total) { statusEl.textContent = ""; if (onDone) onDone(); return; }
+  const tick = async () => {
+    let done = 0, failed = 0;
+    for (const id of jobIds) {
+      try {
+        const j = await getJSON(`/api/jobs/${id}`);
+        if (j.status === "done") done++;
+        else if (j.status === "failed") failed++;
+      } catch {}
+    }
+    if (done + failed >= total) {
+      statusEl.textContent = failed
+        ? `${done}/${total} exported, ${failed} failed`
+        : `${done}/${total} exported ✓ — see the Clips library`;
+      if (onDone) onDone();
+    } else {
+      statusEl.textContent = `Exporting… ${done + failed}/${total}`;
+      setTimeout(tick, 1000);
+    }
+  };
+  tick();
+}
+
+/** Submit one /api/clip job per selected row; bodyFor maps a checkbox to a body. */
+async function runBatchExport(prefix, bodyFor, onDone) {
+  const boxes = batchBoxes(prefix, true);
+  if (!boxes.length) return;
+  const btn = $(`${prefix}-batch-export`);
+  const status = $(`${prefix}-batch-status`);
+  btn.disabled = true;
+  status.textContent = "Submitting…";
+  const jobIds = [];
+  const failures = [];
+  for (const cb of boxes) {
+    try {
+      const r = await postJSON("/api/clip", bodyFor(cb));
+      jobIds.push(r.job_id);
+    } catch (err) {
+      failures.push(err.message);
+    }
+  }
+  if (failures.length) {
+    status.textContent = `${failures.length} failed to submit: ${failures[0]}`;
+  }
+  pollBatch(jobIds, status, () => {
+    btn.disabled = false;
+    if (onDone) onDone();
+  });
+}
+
+$("clips-batch-export").onclick = () => {
+  const opts = batchOptions("clips");
+  runBatchExport(
+    "clips",
+    // Whole file: send start=0 with no end — the backend fills in the duration.
+    (cb) => ({ path: cb.dataset.path, start: 0, before: 0, after: 0, ...opts }),
+    // Refresh so newly exported files appear (exports land in the clips root);
+    // restore the status text the refresh would otherwise wipe.
+    () => {
+      const msg = $("clips-batch-status").textContent;
+      browseClips(currentClipsFolder).then(() => {
+        $("clips-batch-status").textContent = msg;
+      });
+    },
+  );
+};
+
+$("bm-batch-export").onclick = () => {
+  const opts = batchOptions("bm");
+  const before = parseFloat($("bm-batch-before").value) || 0;
+  const after = parseFloat($("bm-batch-after").value) || 0;
+  runBatchExport("bm", (cb) => ({
+    path: cb.dataset.path,
+    start: parseFloat(cb.dataset.start),
+    end: parseFloat(cb.dataset.end),
+    before,
+    after,
+    ...opts,
+  }));
+};
 
 // --- boot -------------------------------------------------------------------
 

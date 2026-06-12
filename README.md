@@ -317,7 +317,11 @@ dialogue, cut clips, and manage bookmarks — all from a browser.
 - **Bookmarks** — save selected dialogue ranges as named bookmarks per file, and
   browse all bookmarks across the library from a top-level Bookmarks view.
 - **Clips as first-class items** — open a finished clip in the full item view:
-  search its dialogue, bookmark it, even cut a clip from a clip.
+  search its dialogue, bookmark it, even cut a clip from a clip. Opening a clip
+  pre-selects the whole file for one-click re-export.
+- **Batch export** — select multiple clips or bookmarks in their library views
+  and export them all at once (audio-only, passthrough/FLAC/WAV, split
+  channels) without opening each one.
 - **Automatic audio transcode** — when the browser can't play a file's audio
   codec (AC3, DTS, FLAC, etc.), the player automatically falls back to an
   on-the-fly remux that copies the video and transcodes audio to Opus, with a

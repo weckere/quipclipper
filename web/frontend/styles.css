@@ -146,11 +146,34 @@ code {
 }
 .clip-options select, .clip-options input[type="number"] {
   background: var(--bg); color: var(--fg); border: 1px solid var(--badge);
-  border-radius: 6px; padding: 0.3rem 0.5rem; width: 6rem;
+  border-radius: 6px; padding: 0.3rem 0.5rem;
 }
+.clip-options input[type="number"] { width: 6rem; }
+/* Selects size to their longest option so labels never get cut off. */
+.clip-options select { width: auto; min-width: 8rem; }
+.clip-options select option:disabled { color: var(--badge); }
 .checkbox-label {
   flex-direction: row !important; align-items: center; gap: 0.4rem !important;
 }
+
+/* Batch export bar (clips & bookmarks browsers) */
+.batch-bar[hidden] { display: none; }
+.batch-bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1.1rem;
+  background: var(--card); border-radius: 10px;
+  padding: 0.55rem 0.9rem; margin: 0.25rem 0 0.75rem;
+  font-size: 0.85rem;
+}
+.batch-bar label { display: flex; align-items: center; gap: 0.35rem; color: var(--muted); }
+.batch-bar select, .batch-bar input[type="number"] {
+  background: var(--bg); color: var(--fg); border: 1px solid var(--badge);
+  border-radius: 6px; padding: 0.25rem 0.45rem;
+}
+.batch-bar select { width: auto; min-width: 8rem; }
+.batch-bar select option:disabled { color: var(--badge); }
+.batch-bar input[type="number"] { width: 4.5rem; }
+.batch-export-btn { padding: 0.35rem 0.9rem; font-size: 0.85rem; }
+.entry-select { flex-shrink: 0; cursor: pointer; }
 .clip-btn {
   background: var(--ok); color: var(--bg); border: none;
   border-radius: 6px; padding: 0.5rem 1.25rem; font-weight: 600;
