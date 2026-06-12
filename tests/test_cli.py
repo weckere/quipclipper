@@ -1,8 +1,12 @@
 import pytest
 import typer
+from typer.testing import CliRunner
 
 import quipclipper.cli as cli
 from quipclipper.models import Cue, Match
+from quipclipper.subtitles import ResolvedSubtitles
+
+runner = CliRunner()
 
 
 def mk(i: int) -> Match:
@@ -64,3 +68,55 @@ def test_select_empty_rejected(monkeypatch):
     monkeypatch.setattr(cli.typer, "prompt", lambda *a, **k: " , ")
     with pytest.raises(typer.BadParameter):
         cli._select_matches(cands)
+
+
+# --- --audio-format (full-mix WAV/FLAC) --------------------------------------
+
+def test_clip_audio_format_rejects_bad_value(tmp_path):
+    v = tmp_path / "movie.mkv"
+    v.write_bytes(b"")
+    res = runner.invoke(cli.app, ["clip", "x", "-v", str(v), "-t", "audio", "--audio-format", "mp3"])
+    assert res.exit_code == 2
+    assert "must be wav or flac" in res.output
+
+
+def test_clip_audio_format_rejects_video(tmp_path):
+    v = tmp_path / "movie.mkv"
+    v.write_bytes(b"")
+    res = runner.invoke(cli.app, ["clip", "x", "-v", str(v), "-t", "video", "--audio-format", "wav"])
+    assert res.exit_code == 2
+    assert "only applies to --type audio" in res.output
+
+
+def test_clip_audio_format_rejects_with_split(tmp_path):
+    v = tmp_path / "movie.mkv"
+    v.write_bytes(b"")
+    res = runner.invoke(
+        cli.app,
+        ["clip", "x", "-v", str(v), "-t", "audio", "--audio-format", "wav", "--split-channels"],
+    )
+    assert res.exit_code == 2
+    assert "can't be combined with --split-channels" in res.output
+
+
+def test_clip_audio_format_passes_codec_to_cut_clip(tmp_path, monkeypatch):
+    v = tmp_path / "movie.mkv"
+    v.write_bytes(b"")
+    cue = Cue(index=0, start=10.0, end=12.0, text="i'll be back")
+    monkeypatch.setattr(cli, "_resolve", lambda *a, **k: ResolvedSubtitles([cue], None))
+    monkeypatch.setattr(cli, "search", lambda *a, **k: [Match(100.0, (cue,), "i'll be back")])
+    captured = {}
+
+    def fake_cut(video, rng, **kwargs):
+        captured.update(kwargs)
+        out = kwargs.get("out") or tmp_path / "clip.wav"
+        return out
+
+    monkeypatch.setattr(cli, "cut_clip", fake_cut)
+    res = runner.invoke(
+        cli.app,
+        ["clip", "be back", "-v", str(v), "-t", "audio", "--audio-format", "flac", "--yes"],
+    )
+    assert res.exit_code == 0, res.output
+    assert captured.get("audio_codec") == "flac"
+    assert "full-mix lossless flac" in res.output

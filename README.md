@@ -39,6 +39,9 @@ and cutting clips from any browser. See [Web App](#web-app) below.
 - **Audio / video / gif output** — pick with `--type`.
 - **Track selection** — keep all audio tracks or pick specific ones with
   `--audio-track`; video clips also retain embedded subtitle tracks.
+- **Full-mix lossless audio** — `--audio-format wav|flac` re-encodes one audio
+  stream keeping **all** channels in a single file (a 5.1 source → a 5.1 WAV),
+  distinct from passthrough (original codec) and `--split-channels`.
 - **Surround channel split** — `--split-channels` exports a 5.1/7.1 track as
   stereo pairs + centre/LFE files, in lossless WAV/FLAC or the source codec.
 - **Subtitles in clips** — embedded subtitle streams are preserved, and external
@@ -164,6 +167,27 @@ Audio:
 Subtitle:
   s:0  subrip  eng
 ```
+
+### Full-mix lossless WAV/FLAC (keeps 5.1)
+
+By default a lossless audio clip is a **passthrough** stream copy (the original
+codec, e.g. AC3/DTS, in a matching container). To get an editable lossless file
+in one piece — keeping the full surround mix — use `--audio-format`:
+
+```bash
+# 5.1 source -> a single 5.1 WAV (pcm_s24le, all channels), no downmix
+quipclipper clip "get to the chopper" -v movie.mkv -t audio --audio-format wav
+
+# or FLAC (lossless compression, bit-exact)
+quipclipper clip "get to the chopper" -v movie.mkv -t audio --audio-format flac
+```
+
+This decodes one audio stream and re-encodes every channel into a single
+WAV/FLAC (WAV stores 5.1 via `WAVE_FORMAT_EXTENSIBLE`). It is lossless relative
+to the decode — PCM verbatim or FLAC bit-exact. It maps a single audio stream
+(the first selected, or `a:0`), since WAV/FLAC hold one stream; to keep *every*
+track use the default passthrough (`.mka`). For separate per-channel files
+instead of one mixed file, use `--split-channels` below.
 
 ### Splitting surround sound into separate files
 

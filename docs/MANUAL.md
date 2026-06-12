@@ -26,6 +26,7 @@ for *why* the code is built the way it is, see [`DESIGN_NOTES.md`](DESIGN_NOTES.
   - [Backends: ffmpeg and mkvmerge](#backends-ffmpeg-and-mkvmerge)
   - [remux-first](#remux-first)
   - [Audio tracks and multichannel audio](#audio-tracks-and-multichannel-audio)
+  - [Full-mix lossless WAV/FLAC](#full-mix-lossless-wavflac)
   - [Splitting surround sound](#splitting-surround-sound)
   - [Subtitles in clips](#subtitles-in-clips)
   - [Searching and the picker](#searching-and-the-picker)
@@ -180,6 +181,7 @@ quipclipper clip QUERY --video FILE [OPTIONS]
 | Option | Default | Description |
 |---|---|---|
 | `--audio-track`, `-A` | all | Audio stream(s) to keep, by `a:N` index, comma-separated (e.g. `0,2`). |
+| `--audio-format` | — | `wav` / `flac`: full-mix lossless re-encode of one audio stream keeping **all** channels (5.1 → 5.1 WAV). Audio only; not with `--split-channels`. |
 | `--split-channels` | off | Split a surround track into per-group files (audio only). |
 | `--split-format` | `wav` | `wav` / `flac` (lossless, no re-encode) or `original` (re-encode to source codec). |
 | `--include-lfe / --no-lfe` | include | Whether to emit the LFE channel as its own file when splitting. |
@@ -297,6 +299,24 @@ streams, use `--audio-track` with the `a:N` indices shown by `quipclipper tracks
 quipclipper clip "i'll be back" -v movie.mkv --audio-track 0      # first audio track only
 quipclipper clip "i'll be back" -v movie.mkv --audio-track 0,2    # tracks 0 and 2
 ```
+
+### Full-mix lossless WAV/FLAC
+
+A lossless audio clip is a **passthrough** stream copy by default (the original
+codec). `--audio-format wav|flac` instead decodes one audio stream and re-encodes
+**every channel** into a single lossless file — a 5.1 source becomes a 5.1 WAV
+(`pcm_s24le`) or FLAC:
+
+```bash
+quipclipper clip "get to the chopper" -v movie.mkv -t audio --audio-format wav
+quipclipper clip "get to the chopper" -v movie.mkv -t audio --audio-format flac
+```
+
+WAV stores 5.1 via `WAVE_FORMAT_EXTENSIBLE`; no downmix is applied. It is lossless
+relative to the decode (PCM verbatim / FLAC bit-exact). Because WAV/FLAC hold a
+single stream, this maps one audio stream (the first `--audio-track`, or `a:0`);
+to keep *all* tracks use the default passthrough (`.mka`). For separate
+per-channel files, use `--split-channels`.
 
 ### Splitting surround sound
 

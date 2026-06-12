@@ -5,6 +5,7 @@ Examples:
     quipclipper clip "i'll be back" --video movie.mkv --type audio
     quipclipper clip "i'll be back" --video movie.mkv --type video --before 5 --after 3
     quipclipper clip "i'll be back" --video movie.mkv --audio-track 0
+    quipclipper clip "i'll be back" --video movie.mkv --type audio --audio-format wav
     quipclipper clip "i'll be back" --video movie.mkv --split-channels --split-format wav
 """
 
@@ -148,6 +149,11 @@ def clip(
         "-A",
         help="Audio stream(s) to keep, by a:N index, comma-separated (e.g. 0,2). Default: all.",
     ),
+    audio_format: Optional[str] = typer.Option(
+        None,
+        "--audio-format",
+        help="Full-mix lossless audio: wav | flac. Re-encodes one audio stream keeping ALL channels (5.1 stays 5.1) into a single file. Audio only; not with --split-channels. Default: passthrough (--lossless) / mp3 (--no-lossless).",
+    ),
     split_channels: bool = typer.Option(
         False,
         "--split-channels",
@@ -208,14 +214,28 @@ def clip(
     if split_format not in ("wav", "flac", "original"):
         typer.secho("--split-format must be wav, flac, or original.", fg="red", err=True)
         raise typer.Exit(code=2)
+    if audio_format is not None:
+        if audio_format not in ("wav", "flac"):
+            typer.secho("--audio-format must be wav or flac.", fg="red", err=True)
+            raise typer.Exit(code=2)
+        if kind != "audio":
+            typer.secho("--audio-format only applies to --type audio.", fg="red", err=True)
+            raise typer.Exit(code=2)
+        if split_channels:
+            typer.secho("--audio-format can't be combined with --split-channels.", fg="red", err=True)
+            raise typer.Exit(code=2)
     if backend not in ("auto", "ffmpeg", "mkvmerge"):
         typer.secho("--backend must be auto, ffmpeg, or mkvmerge.", fg="red", err=True)
         raise typer.Exit(code=2)
     audio_indices = _parse_tracks(audio_track)
 
+    # Full-mix lossless audio (one WAV/FLAC, all channels) is an ffmpeg re-encode,
+    # so it bypasses the mkvmerge/passthrough path.
+    fullmix = kind == "audio" and not split_channels and audio_format is not None
+
     # Decide the backend. mkvmerge only does lossless audio/video cuts (no gif,
-    # no re-encode, no channel split); ffmpeg handles everything else.
-    mkv_capable = lossless and kind in ("audio", "video") and not split_channels
+    # no re-encode, no channel split, no full-mix); ffmpeg handles everything else.
+    mkv_capable = lossless and kind in ("audio", "video") and not split_channels and not fullmix
     if backend == "ffmpeg":
         use_mkvmerge = False
     elif backend == "mkvmerge":
@@ -266,9 +286,11 @@ def clip(
         typer.secho("--out can't be used when clipping multiple matches.", fg="red", err=True)
         raise typer.Exit(code=2)
 
-    is_copy = lossless and kind != "gif" and not split_channels
+    is_copy = lossless and kind != "gif" and not split_channels and not fullmix
     if split_channels:
         mode = f"channel split ({split_format})"
+    elif fullmix:
+        mode = f"full-mix lossless {audio_format} (all channels)"
     elif use_mkvmerge:
         mode = "lossless copy (mkvmerge, remux-first)" if do_remux else "lossless copy (mkvmerge)"
     else:
@@ -317,6 +339,13 @@ def clip(
             "is not a stream copy; wav/flac are lossless from the decode.",
             fg="bright_black",
         )
+    if fullmix:
+        typer.secho(
+            "  note: full-mix re-encodes one audio stream to "
+            f"{audio_format}, keeping every channel (5.1 stays 5.1). Lossless "
+            "from the decode; not a stream copy.",
+            fg="bright_black",
+        )
     if not yes:
         typer.confirm("Proceed?", default=True, abort=True)
 
@@ -343,6 +372,7 @@ def clip(
         return [cut_clip(
             video, rng, kind=kind, lossless=lossless, out=out_path,
             audio_indices=audio_indices, embed_cues=cues_to_embed,
+            audio_codec=(audio_format if fullmix else None),
         )]
 
     single = len(chosen) == 1

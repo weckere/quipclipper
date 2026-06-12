@@ -213,9 +213,11 @@ conflate:
 | **Full-mix WAV/FLAC** (`cut_clip(audio_codec=…)`) | decode **one** stream → `pcm_s24le`/`flac`, one file | **all channels kept** (5.1 → 5.1) | want an editable lossless file without the original codec |
 | **Split channels** (`split_audio_channels`) | decode → one file per channel group | regrouped (stereo pairs + mono) | want the stems separately |
 
-The full-mix path was added because the web "WAV"/"FLAC" options previously fell
-through to the generic re-encode, which produces stereo MP3 — so there was no way
-to get, say, a single 5.1 WAV. WAV holds 5.1 fine: ffmpeg's `wav` muxer writes
+The full-mix path was added because the "WAV"/"FLAC" format options previously
+fell through to the generic re-encode, which produces stereo MP3 — so there was no
+way to get, say, a single 5.1 WAV. It is exposed as `--audio-format wav|flac` on
+the CLI and the `audio_format` field of the web clip request (both feed
+`cut_clip(audio_codec=…)`). WAV holds 5.1 fine: ffmpeg's `wav` muxer writes
 `WAVE_FORMAT_EXTENSIBLE` with the channel mask, so `-c:a pcm_s24le` with **no**
 `-ac` preserves the layout. The path maps exactly one audio stream (the first
 selected, or `a:0`) because the WAV/FLAC containers hold a single stream; keeping
