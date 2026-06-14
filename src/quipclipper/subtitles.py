@@ -228,15 +228,34 @@ def find_sidecar(video_path: str | Path) -> Path | None:
 _SDH_RE = re.compile(r"sdh|hearing|impaired|\bcc\b", re.IGNORECASE)
 _FORCED_RE = re.compile(r"forced", re.IGNORECASE)
 
+# Bitmap subtitle codecs — these are images, not text, so they can't be
+# extracted to SRT/VTT, searched, or shown in the browser player. The engine
+# only handles text subtitles; image tracks are deprioritised in auto-select
+# and filtered out of the web picker.
+IMAGE_SUBTITLE_CODECS = frozenset({
+    "hdmv_pgs_subtitle", "pgssub", "dvd_subtitle", "dvdsub",
+    "dvb_subtitle", "dvbsub", "xsub",
+})
+
+
+def is_text_subtitle(t) -> bool:
+    """True when a track is a text subtitle (extractable to SRT/VTT)."""
+    return (getattr(t, "codec", "") or "").lower() not in IMAGE_SUBTITLE_CODECS
+
 
 def _track_score(t) -> int:
     """Score a subtitle track for dialogue quality.
 
-    English (or untagged) full dialogue > SDH > forced.  Forced tracks carry
-    only foreign-language portions (minimal dialogue), so they rank below SDH
-    even though SDH adds sound descriptions.  Untagged languages count as
-    English so single-language releases without metadata still auto-select.
+    Text full dialogue > text SDH > text forced > any image track.  Image
+    (PGS/VOBSUB) subtitles can't be turned into searchable/displayable text, so
+    they rank below every text track and are only chosen when nothing else
+    exists.  Among text tracks: English (or untagged) outranks other languages;
+    forced tracks carry only foreign-language portions (minimal dialogue) so they
+    rank below SDH; untagged languages count as English so single-language
+    releases without metadata still auto-select.
     """
+    if not is_text_subtitle(t):
+        return -1000
     score = 0
     lang = (t.language or "").lower()
     if not lang or lang.startswith("en"):

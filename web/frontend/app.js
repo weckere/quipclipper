@@ -597,33 +597,53 @@ function renderStreams(streams) {
   }
 }
 
+// Bitmap subtitle codecs the player can't display and we can't search.
+// Mirrors IMAGE_SUBTITLE_CODECS in the engine's subtitles.py.
+const IMAGE_SUBTITLE_CODECS = new Set([
+  "hdmv_pgs_subtitle", "pgssub", "dvd_subtitle", "dvdsub",
+  "dvb_subtitle", "dvbsub", "xsub",
+]);
+const isTextSubtitle = (t) => !IMAGE_SUBTITLE_CODECS.has((t.codec || "").toLowerCase());
+
 function renderSubs(info, path) {
   const box = $("subs-controls");
   box.innerHTML = "";
-  const tracks = info.subtitle_tracks || [];
+  const allTracks = info.subtitle_tracks || [];
+  // Only text tracks can be shown in the player / searched. Image tracks
+  // (PGS/VOBSUB) are filtered out of the picker — selecting one only 500s.
+  const tracks = allTracks.filter(isTextSubtitle);
+  const imageOnlyCount = allTracks.length - tracks.length;
   const hasSubs = tracks.length > 0 || info.has_sidecar;
-  // Only offer reindex when there are subtitles to reindex.
+  // Only offer reindex when there are usable (text) subtitles to reindex.
   $("reindex-item-row").hidden = !hasSubs;
   $("reindex-item-status").hidden = true;
 
   if (!hasSubs) {
-    box.innerHTML = '<span class="muted">No subtitles found (sidecar or embedded).</span>';
+    box.innerHTML = allTracks.length
+      ? `<span class="muted">No text subtitles — this file only has image-based subtitles (PGS/VOBSUB), which can't be displayed or searched.</span>`
+      : '<span class="muted">No subtitles found (sidecar or embedded).</span>';
     return;
   }
 
   const note = document.createElement("p");
   note.className = "muted";
+  const imgNote = imageOnlyCount
+    ? ` (${imageOnlyCount} image-based track${imageOnlyCount > 1 ? "s" : ""} hidden)`
+    : "";
   note.textContent = info.has_sidecar
     ? "Using the sidecar subtitle file."
-    : `${tracks.length} embedded subtitle track(s).`;
+    : `${tracks.length} text subtitle track(s)${imgNote}.`;
   box.appendChild(note);
 
-  // A picker when there are embedded tracks; otherwise just load the default.
+  // A picker when there are several text tracks; otherwise load the single one.
   if (tracks.length > 1) {
-    // The backend is the single source of truth for auto-selection (full
-    // dialogue > SDH > forced). Requesting its chosen index means our request
+    // The backend is the single source of truth for auto-selection (text >
+    // SDH > forced > image). Requesting its chosen index means our request
     // matches the cache key that pre-indexing warmed — no duplicate extraction.
-    const bestIdx = info.best_track != null ? info.best_track : tracks[0].index;
+    // Fall back to the first *text* track if the backend picked an image one
+    // (or didn't report one).
+    const bestIsText = tracks.some((t) => t.index === info.best_track);
+    const bestIdx = bestIsText ? info.best_track : tracks[0].index;
 
     const sel = document.createElement("select");
     tracks.forEach((t) => {
@@ -642,9 +662,17 @@ function renderSubs(info, path) {
     sel.value = bestIdx;
     loadSubtitleTrack(path, bestIdx);
     loadScript(path, bestIdx);
-  } else {
+  } else if (info.has_sidecar) {
+    // A sidecar wins (the backend resolves it before embedded tracks), so let
+    // it auto-resolve with no explicit track.
     loadSubtitleTrack(path, null);
     loadScript(path, null);
+  } else {
+    // Exactly one text track (possibly alongside hidden image tracks): request
+    // it explicitly so we don't accidentally resolve to an image track.
+    const only = tracks[0].index;
+    loadSubtitleTrack(path, only);
+    loadScript(path, only);
   }
 }
 

@@ -389,12 +389,19 @@ with multiple selections.
 
 When a video has multiple embedded subtitle tracks and no `--track` is given,
 quipclipper auto-selects the best dialogue track. Tracks are scored so that
-**English full dialogue beats SDH, which beats forced** (forced tracks carry
-only foreign-language portions, so they have minimal dialogue); a track with no
-language tag counts as English so single-language releases without metadata
-still resolve. SDH and forced are detected from the container's
-`hearing_impaired`/`forced` dispositions, with a title-text fallback
+**text beats image, then English full dialogue beats SDH, which beats forced**
+(forced tracks carry only foreign-language portions, so they have minimal
+dialogue); a track with no language tag counts as English so single-language
+releases without metadata still resolve. SDH and forced are detected from the
+container's `hearing_impaired`/`forced` dispositions, with a title-text fallback
 (`SDH`, `forced`, …). Ties keep container order.
+
+**Image subtitles (PGS/VOBSUB) are not usable.** Blu-ray `.sup` (PGS) and DVD
+VOBSUB tracks are bitmaps, not text — they can't be extracted to SRT, searched,
+or displayed. quipclipper only handles text subtitles, so image tracks rank
+below every text track in auto-selection (chosen only if nothing else exists,
+then erroring with "supply an .srt"), and the web app hides them from its picker.
+If a file has *only* image subtitles, supply a text sidecar with `--subs`.
 
 Run `quipclipper tracks <video>` to see all tracks, and pass `--track N` to
 override the automatic choice. The same scoring drives the web app's subtitle

@@ -402,6 +402,18 @@ keep container order. SDH/forced are detected from ffprobe's
    `best_track` so the frontend preselects rather than recomputing. The CLI no
    longer prompts.
 
+**Why image subtitles rank below every text track:** bitmap formats (PGS on
+Blu-ray, VOBSUB on DVD) are *pictures* of text — ffmpeg can't turn them into
+SRT/VTT without OCR, so they can't be searched, shown in the browser player, or
+rendered in the script panel. `best_track` gives any image track a large
+negative score (`is_text_subtitle` / `IMAGE_SUBTITLE_CODECS`), so a text track
+always wins when one exists; an image track is chosen only when it is the *only*
+option (and then extraction fails cleanly with "supply an .srt"). This was a real
+bug: *The NeverEnding Story* ships one English `subrip` track plus eight PGS
+tracks, and the old picker listed all nine — selecting a `.sup` track silently
+showed nothing (HTTP 500). The web picker now filters image tracks out entirely
+and notes how many were hidden.
+
 **Why forced ranks below SDH:** forced tracks contain only the foreign-language
 portions of a film — minimal dialogue — so for a dialogue-search tool they are
 nearly useless. SDH adds sound descriptions to otherwise-complete dialogue,

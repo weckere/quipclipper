@@ -72,9 +72,9 @@ def test_resolve_subtitles_requires_a_source():
 
 # --- best_track: single source of truth for auto-selection -------------------
 
-def _trk(index, language=None, title=None, forced=False, hearing_impaired=False):
+def _trk(index, language=None, title=None, forced=False, hearing_impaired=False, codec="subrip"):
     return SubtitleTrack(
-        index=index, codec="subrip", language=language, title=title,
+        index=index, codec=codec, language=language, title=title,
         forced=forced, hearing_impaired=hearing_impaired,
     )
 
@@ -119,4 +119,33 @@ def test_best_track_treats_untagged_language_as_english():
 
 def test_best_track_ties_keep_container_order():
     tracks = [_trk(0, "eng"), _trk(1, "eng")]
+    assert best_track(tracks).index == 0
+
+
+def test_best_track_prefers_text_over_image():
+    # The NeverEnding Story case: a text English track (subrip) plus several
+    # PGS image tracks. The text track must win even though both are English,
+    # because image subtitles can't be extracted/displayed/searched.
+    tracks = [
+        _trk(0, "eng", title="English SDH", codec="subrip"),
+        _trk(1, "eng", title="English SDH", codec="hdmv_pgs_subtitle"),
+        _trk(2, "dan", codec="hdmv_pgs_subtitle"),
+    ]
+    assert best_track(tracks).index == 0
+
+
+def test_best_track_text_wins_even_when_image_is_plain_dialogue():
+    # A plain (non-SDH) English image track must still lose to a text track,
+    # even an SDH/forced one — unusable beats slightly-worse-but-usable.
+    tracks = [
+        _trk(0, "eng", forced=True, codec="subrip"),         # text, forced
+        _trk(1, "eng", codec="hdmv_pgs_subtitle"),           # image, full dialogue
+    ]
+    assert best_track(tracks).index == 0
+
+
+def test_best_track_falls_back_to_image_when_only_option():
+    tracks = [_trk(0, "eng", codec="hdmv_pgs_subtitle"), _trk(1, "spa", codec="dvd_subtitle")]
+    # No text track exists; still returns the best-scored (English) image track
+    # rather than None, so callers get a defined choice.
     assert best_track(tracks).index == 0
