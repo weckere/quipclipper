@@ -763,3 +763,25 @@ def test_folder_dialogue_search_not_a_dir(tmp_path: Path) -> None:
         params={"path": str(f), "query": "test"},
     )
     assert resp.status_code == 400
+
+
+def test_recursive_scan_skips_appledouble_files(tmp_path: Path) -> None:
+    """macOS ._* sidecars (and other dotfiles) must not be counted as videos —
+    otherwise they inflate the index count and can never be indexed."""
+    season = tmp_path / "Season 1"
+    season.mkdir()
+    (season / "episode1.mkv").write_bytes(b"")
+    (season / "episode1.srt").write_text(SRT)
+    # AppleDouble junk: same name/extension, not a real video.
+    (season / "._episode1.mkv").write_bytes(b"\x00\x05\x16\x07")
+    (tmp_path / ".hidden.mkv").write_bytes(b"")
+
+    client = _client(tmp_path)
+    # Folder dialogue search scans only the one real video.
+    resp = client.get("/api/search/folder", params={"path": str(tmp_path), "query": "force"})
+    assert resp.status_code == 200
+    assert resp.json()["files_scanned"] == 1
+    # index-status counts only the real video (total = 1, fully indexable).
+    status = client.get("/api/search/folder/index-status", params={"path": str(tmp_path)})
+    assert status.status_code == 200
+    assert status.json()["total"] == 1

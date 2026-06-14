@@ -49,6 +49,22 @@ from quipclipper_web.jellyfin import JellyfinClient
 from quipclipper_web.jobs import JobRegistry
 from quipclipper_web.sub_cache import SubtitleCache
 
+def _is_video_file(p: Path) -> bool:
+    """A real, indexable video file.
+
+    Excludes hidden/dotfiles — notably macOS AppleDouble ``._*`` sidecars, which
+    share a video's name and extension on non-Mac filesystems (NAS/SMB) but are
+    tiny resource-fork metadata blobs that ffprobe rejects. The library browser
+    already skips dotfiles; the recursive folder scans must too, or these junk
+    files inflate the index count and can never be indexed.
+    """
+    return (
+        p.is_file()
+        and not p.name.startswith(".")
+        and p.suffix.lower() in VIDEO_EXTS
+    )
+
+
 # Containers/extensions a browser can usually play in a <video> element. Used to
 # hint the UI; the engine still works on anything ffmpeg can read.
 _BROWSER_MIME = {
@@ -328,7 +344,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         videos: list[Path] = []
         for folder in folders:
             for c in folder.rglob("*"):
-                if c.is_file() and c.suffix.lower() in VIDEO_EXTS:
+                if _is_video_file(c):
                     rp = c.resolve()
                     if rp not in seen:
                         seen.add(rp)
@@ -391,7 +407,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail=f"Not a directory: {self_path}")
         videos: list[Path] = []
         for c in folder.rglob("*"):
-            if c.is_file() and c.suffix.lower() in VIDEO_EXTS:
+            if _is_video_file(c):
                 videos.append(c)
                 if cap is not None and len(videos) > cap:
                     return videos, True
