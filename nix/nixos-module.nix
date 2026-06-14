@@ -165,6 +165,15 @@ in
         locations."/" = {
           tryFiles = "$uri $uri/ /index.html";
         };
+        # App shell + assets have no content hash, so always revalidate (nginx
+        # still 304s when unchanged) — a deploy is picked up without a hard
+        # refresh instead of being served stale from the browser cache.
+        locations."~* \\.(?:html|js|css)$" = {
+          tryFiles = "$uri /index.html";
+          extraConfig = ''
+            add_header Cache-Control "no-cache";
+          '';
+        };
         locations."/api/" = {
           proxyPass = "http://${cfg.listenAddress}:${toString cfg.listenPort}";
         };
