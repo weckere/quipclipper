@@ -52,6 +52,7 @@
         <div id="clips-batch" class="batch-bar" hidden>
           <label class="checkbox-label"><input id="clips-select-all" type="checkbox" /> Select all</label>
           <label class="checkbox-label"><input id="clips-batch-audio" type="checkbox" checked /> Audio only</label>
+          <label class="checkbox-label"><input id="clips-batch-split" type="checkbox" /> Split channels</label>
           <label>Format
             <select id="clips-batch-format">
               <option value="lossless" selected>Passthrough</option>
@@ -59,7 +60,6 @@
               <option value="wav">WAV</option>
             </select>
           </label>
-          <label class="checkbox-label"><input id="clips-batch-split" type="checkbox" /> Split channels</label>
           <button id="clips-batch-export" class="clip-btn batch-export-btn" disabled>Export selected</button>
           <span id="clips-batch-status" class="muted"></span>
         </div>
@@ -76,6 +76,7 @@
         <div id="bm-batch" class="batch-bar" hidden>
           <label class="checkbox-label"><input id="bm-select-all" type="checkbox" /> Select all</label>
           <label class="checkbox-label"><input id="bm-batch-audio" type="checkbox" checked /> Audio only</label>
+          <label class="checkbox-label"><input id="bm-batch-split" type="checkbox" /> Split channels</label>
           <label>Format
             <select id="bm-batch-format">
               <option value="lossless" selected>Passthrough</option>
@@ -83,7 +84,6 @@
               <option value="wav">WAV</option>
             </select>
           </label>
-          <label class="checkbox-label"><input id="bm-batch-split" type="checkbox" /> Split channels</label>
           <label>Before (s)
             <input id="bm-batch-before" type="number" value="2" min="0" max="60" step="0.5" />
           </label>
@@ -112,13 +112,17 @@
         <p id="preview-note" class="muted"></p>
 
         <div class="panel marks-panel">
-          <div class="marks-row">
-            <h3>Marks</h3>
-            <span id="mark-range-display" class="mark-range-display"></span>
+          <div class="marks-header">
+            <div class="marks-header-info">
+              <div class="marks-titlerow">
+                <h3>Marks</h3>
+                <span id="mark-range-display" class="mark-range-display"></span>
+              </div>
+              <div id="marks-hint" class="script-hint" hidden>Click a line to seek. Hover to set <strong>Start</strong> / <strong>End</strong> of the clip range.</div>
+            </div>
             <button id="mark-save" class="mark-btn mark-save-btn" disabled title="Save as bookmark"><span class="star">★</span> Save</button>
           </div>
           <div id="script-wrap" class="script-wrap" hidden>
-            <div class="script-hint">Click a line to seek. Hover to set <strong>Start</strong> / <strong>End</strong> of the clip range.</div>
             <div id="script-list" class="script-list"></div>
           </div>
         </div>
@@ -149,9 +153,14 @@
             <label>After (s)
               <input id="clip-after" type="number" value="2" min="0" max="60" step="0.5" />
             </label>
-            <label class="checkbox-label">
-              <input id="clip-audio-only" type="checkbox" /> Audio only
-            </label>
+            <div class="clip-audio-group">
+              <label class="checkbox-label">
+                <input id="clip-audio-only" type="checkbox" /> Audio only
+              </label>
+              <label class="checkbox-label clip-suboption">
+                <input id="clip-split-channels" type="checkbox" /> Split channels
+              </label>
+            </div>
             <label class="checkbox-label">
               <input id="clip-embed-subs" type="checkbox" checked /> Embed subs
             </label>
@@ -161,9 +170,6 @@
                 <option value="flac">FLAC</option>
                 <option value="wav">WAV</option>
               </select>
-            </label>
-            <label class="checkbox-label">
-              <input id="clip-split-channels" type="checkbox" /> Split channels
             </label>
             <label class="checkbox-label" id="clip-save-lib-label" hidden>
               <input id="clip-save-lib" type="checkbox" checked /> Save to library

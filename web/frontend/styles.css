@@ -155,6 +155,11 @@ code {
 .checkbox-label {
   flex-direction: row !important; align-items: center; gap: 0.4rem !important;
 }
+/* Audio only + its Split-channels sub-option stack vertically. */
+.clip-audio-group { display: flex; flex-direction: column; gap: 0.35rem; }
+.clip-audio-group .clip-suboption { margin-left: 1.2rem; }
+/* Grey out a checkbox's label text while its input is disabled. */
+.checkbox-label:has(input:disabled) { opacity: 0.45; }
 
 /* Batch export bar (clips & bookmarks browsers) */
 .batch-bar[hidden] { display: none; }
@@ -196,11 +201,14 @@ code {
 .download-link:hover { opacity: 0.85; }
 
 .marks-panel { margin-top: 0.5rem; padding-top: 0.4rem; padding-bottom: 0.4rem; }
-.marks-row {
-  display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
+/* The Save button is vertically centered against the title+hint block, so it
+   sits midway between the top of the panel and the cue box below it. */
+.marks-header { display: flex; align-items: center; gap: 0.6rem; }
+.marks-header-info {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.3rem;
 }
-/* Title sits inline with the range display and Save button */
-.marks-row h3 { margin: 0; flex-shrink: 0; }
+.marks-titlerow { display: flex; align-items: center; gap: 0.5rem; }
+.marks-titlerow h3 { margin: 0; flex-shrink: 0; }
 .mark-btn {
   background: var(--badge); color: var(--fg); border: 1px solid var(--badge);
   border-radius: 6px; padding: 0.35rem 0.75rem; cursor: pointer; font-size: 0.85rem;
@@ -218,7 +226,7 @@ code {
   opacity: 0.6; transition: opacity 0.1s;
 }
 .mark-clear-inline:hover { opacity: 1; color: var(--error); }
-.mark-save-btn { font-size: 0.85rem; }
+.mark-save-btn { font-size: 0.85rem; flex-shrink: 0; }
 .mark-save-btn .star { color: #ffd24a; }
 .mark-save-btn:disabled { opacity: 0.5; cursor: default; }
 .mark-save-btn:disabled .star { color: var(--muted); }

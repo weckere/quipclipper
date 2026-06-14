@@ -437,6 +437,7 @@ async function openItem(path, name, opts) {
   scriptCues = [];
   scriptActiveIdx = -1;
   $("script-wrap").hidden = true;
+  $("marks-hint").hidden = true;
   $("script-list").innerHTML = "";
   if (jobPollTimer) { clearTimeout(jobPollTimer); jobPollTimer = null; }
 
@@ -893,6 +894,7 @@ async function loadScript(path, track) {
   // Show a loading placeholder — extraction from large files can take
   // several seconds the first time, and a blank panel looks broken.
   wrap.hidden = false;
+  $("marks-hint").hidden = false;
   list.innerHTML = '<div class="script-loading muted">Extracting subtitles… (first load can take a few seconds for large files)</div>';
 
   let url = `/api/items/subtitles?fmt=json&path=${encodeURIComponent(path)}`;
@@ -1179,19 +1181,36 @@ function setPassthroughAllowed(sel, allowed) {
   if (!allowed && sel.value === "lossless") sel.value = "wav";
 }
 
+// Remember the user's manual Embed-subs choice so it can be restored after
+// Audio only is toggled off (Embed subs is force-unchecked while it's on).
+let embedSubsUserPref = true;
+$("clip-embed-subs").addEventListener("change", () => {
+  // Only a genuine user toggle counts — the box is enabled only when Audio
+  // only is off; programmatic changes below don't fire this event.
+  if (!$("clip-embed-subs").disabled) embedSubsUserPref = $("clip-embed-subs").checked;
+});
+
 function updateClipOptionVisibility() {
-  const split = $("clip-split-channels").checked;
-  // Split channels implies audio output (the backend rejects split for video).
-  if (split) $("clip-audio-only").checked = true;
-  $("clip-audio-only").disabled = split;
   const audioOnly = $("clip-audio-only").checked;
-  // Embed subs only makes sense for video
-  $("clip-embed-subs").disabled = audioOnly;
-  if (audioOnly) $("clip-embed-subs").checked = false;
-  setPassthroughAllowed($("clip-format"), !split);
+
+  // Split channels is a sub-option of Audio only: usable only with audio
+  // output. Disable it (and force it off) whenever Audio only is unchecked.
+  const split = $("clip-split-channels");
+  split.disabled = !audioOnly;
+  if (!audioOnly) split.checked = false;
+
+  // Embed subs applies to video output only. Force it off + disable while
+  // Audio only is checked; restore the user's last manual choice otherwise.
+  const embed = $("clip-embed-subs");
+  embed.disabled = audioOnly;
+  embed.checked = audioOnly ? false : embedSubsUserPref;
+
+  // Splitting always decodes, so Passthrough (no re-encode) isn't available.
+  setPassthroughAllowed($("clip-format"), !split.checked);
 }
 $("clip-audio-only").onchange = updateClipOptionVisibility;
 $("clip-split-channels").onchange = updateClipOptionVisibility;
+updateClipOptionVisibility();  // set initial disabled/checked states
 
 // --- clips library ----------------------------------------------------------
 
@@ -1393,14 +1412,18 @@ function wireBatchBar(prefix) {
     batchBoxes(prefix).forEach((cb) => { cb.checked = e.target.checked; });
     updateBatchState(prefix);
   };
-  // Split channels implies audio output and rules out passthrough.
+  // Split channels is a sub-option of Audio only (same as the clip panel):
+  // enabled only when Audio only is checked, forced off otherwise.
   const applyGuard = () => {
-    const split = $(`${prefix}-batch-split`).checked;
-    if (split) $(`${prefix}-batch-audio`).checked = true;
-    $(`${prefix}-batch-audio`).disabled = split;
-    setPassthroughAllowed($(`${prefix}-batch-format`), !split);
+    const audioOnly = $(`${prefix}-batch-audio`).checked;
+    const split = $(`${prefix}-batch-split`);
+    split.disabled = !audioOnly;
+    if (!audioOnly) split.checked = false;
+    setPassthroughAllowed($(`${prefix}-batch-format`), !split.checked);
   };
+  $(`${prefix}-batch-audio`).onchange = applyGuard;
   $(`${prefix}-batch-split`).onchange = applyGuard;
+  applyGuard();  // set initial disabled state
 }
 wireBatchBar("clips");
 wireBatchBar("bm");
