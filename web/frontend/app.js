@@ -524,6 +524,7 @@ async function openItem(path, name, opts) {
       player.removeEventListener("loadedmetadata", onMeta);
       settingSrc = false;
       if (autoplay) player.play().catch(() => {});
+      updatePlaybackUI();  // sync the play/pause icon once the reload settles
     }, { once: true });
     $("preview-note").textContent = "";
     // With -c:v copy, ffmpeg starts from the nearest keyframe before
@@ -589,7 +590,11 @@ async function openItem(path, name, opts) {
   player.addEventListener("timeupdate", () => {
     if (myGen !== itemGen || settingSrc || !hasClipRange()) return;
     const absTime = player.currentTime + transcodeOffset;
-    if (absTime >= clipEnd() - 0.04) seekAbs(clipStart(), false);
+    if (absTime >= clipEnd() - 0.04) {
+      player.pause();              // paused attribute flips synchronously
+      seekAbs(clipStart(), false); // return to start (transcode reload stays paused)
+      updatePlaybackUI();          // reflect the paused state on the icon now
+    }
   });
 
   seekSlider.addEventListener("input", () => {
