@@ -250,6 +250,27 @@ def test_clip_audio_format_wav_is_fullmix_reencode(tmp_path: Path) -> None:
     assert str(kwargs["out"]).endswith(".wav")
 
 
+def test_clip_split_groups_reach_splitter(tmp_path: Path) -> None:
+    """split_groups from the request is passed through to split_audio_channels
+    as `categories` so only the chosen channel groups are exported."""
+    video = tmp_path / "movie.mkv"
+    video.write_bytes(b"")
+    out = tmp_path / "movie_front.wav"
+    out.write_bytes(b"x")
+
+    client = _client(tmp_path)
+    with patch("quipclipper_web.app.split_audio_channels", return_value=[out]) as mock_split:
+        resp = client.post("/api/clip", json={
+            "path": str(video), "start": 10, "end": 12,
+            "kind": "audio", "split_channels": True, "split_format": "wav",
+            "split_groups": ["center", "surround"],
+        })
+        assert resp.status_code == 200
+        job = _wait_done(client, resp.json()["job_id"])
+        assert job["status"] == "done"
+        assert mock_split.call_args.kwargs["categories"] == ["center", "surround"]
+
+
 def test_clip_whole_file_when_end_omitted(tmp_path: Path) -> None:
     """start given with no end = whole file: the backend fills the end from the
     probed duration (used by batch export in the clips library)."""

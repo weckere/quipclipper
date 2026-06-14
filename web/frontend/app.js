@@ -390,6 +390,28 @@ function renderBreadcrumb(path) {
 
 let currentItem = null;
 let transcodeOffset = 0;  // ffmpeg -ss offset for current transcode segment
+// Bumped on every openItem; per-item timeupdate handlers bail when stale so a
+// previous item's loop can't drive the new player (they accumulate on #player).
+let itemGen = 0;
+// Range-aware playback controls, rebuilt per item by openItem (see there).
+let pb = null;
+
+/** Reflect the player's play/pause state on the custom control + range note. */
+function updatePlaybackUI() {
+  const player = $("player");
+  $("pb-playpause").textContent = player.paused ? "▶" : "⏸";
+  const note = $("pb-range-note");
+  if (hasClipRange()) {
+    note.hidden = false;
+    note.textContent = `▶ plays the selection (${formatTime(clipStart())} – ${formatTime(clipEnd())}), looping`;
+  } else {
+    note.hidden = true;
+  }
+}
+$("player").addEventListener("play", updatePlaybackUI);
+$("player").addEventListener("pause", updatePlaybackUI);
+$("pb-restart").onclick = () => pb && pb.restart();
+$("pb-playpause").onclick = () => pb && pb.toggle();
 
 /** Absolute playback position in the source file. */
 function playerTime() {
@@ -408,6 +430,17 @@ function seekTo(seconds) {
   player.play().catch(() => {});
 }
 
+/** A clean display title for an item: the containing folder's name (movies
+ *  live in a per-title folder), stepping up past a "Season N"/Specials folder
+ *  to the series name. Falls back to the filename. */
+function cleanItemName(path, fileName) {
+  const parts = path.split("/").filter(Boolean);
+  let parent = parts.length >= 2 ? parts[parts.length - 2] : "";
+  const grand = parts.length >= 3 ? parts[parts.length - 3] : "";
+  if (/^(season\s*\d+|specials|extras)$/i.test(parent) && grand) parent = grand;
+  return parent || fileName;
+}
+
 async function openItem(path, name, opts) {
   const { searchQuery, seekTo: seekTarget, selectWholeClip } = opts || {};
   showItem();
@@ -416,7 +449,9 @@ async function openItem(path, name, opts) {
   const bookmarkClip = pendingBookmarkClip;
   pendingBookmarkClip = null;
   currentItem = { path, name };
-  $("item-name").textContent = name;
+  const myGen = ++itemGen;
+  $("item-name").textContent = cleanItemName(path, name);
+  $("item-filename").textContent = name;
   $("subs-controls").textContent = "Loading…";
   $("streams").innerHTML = "";
   $("preview-note").textContent = "";
@@ -432,6 +467,7 @@ async function openItem(path, name, opts) {
   clipRangeEnd = null;
   clipFirst = -1;
   clipLast = -1;
+  updatePlaybackUI();  // clear any stale range note / reset the play icon
   $("mark-range-display").innerHTML = "";
   $("mark-save").disabled = true;
   scriptCues = [];
@@ -472,11 +508,13 @@ async function openItem(path, name, opts) {
   let probedDuration = info.duration || 0;
 
   let firstLoad = true;
-  function loadTranscode(startTime) {
+  // `autoplay`: undefined → play unless this is the very first load; or an
+  // explicit boolean (used by the range loop to seek without auto-playing).
+  function loadTranscode(startTime, autoplay) {
     isTranscoding = true;
     settingSrc = true;
     transcodeOffset = startTime;
-    const autoplay = !firstLoad;
+    if (autoplay === undefined) autoplay = !firstLoad;
     firstLoad = false;
     let url = transcodeUrl;
     if (startTime > 0) url += `&start=${startTime}`;
@@ -506,32 +544,88 @@ async function openItem(path, name, opts) {
     }
   }
 
+  // The seekable window: the selected clip range when one exists, else the
+  // whole file. The transcode seek bar and the range loop both use this.
+  function seekBounds() {
+    return hasClipRange() ? [clipStart(), clipEnd()] : [0, probedDuration];
+  }
+
+  // Seek to an absolute time, optionally playing. Works for both the native
+  // (seekable) source and the streaming transcode (which reloads a segment).
+  function seekAbs(t, autoplay) {
+    t = Math.max(0, t);
+    if (isTranscoding) {
+      loadTranscode(t, autoplay);
+    } else {
+      player.currentTime = t;
+      if (autoplay) player.play().catch(() => {}); else player.pause();
+    }
+  }
+
   // Custom seek bar for transcoded streams (native scrubber can't seek
-  // on a non-seekable streaming source).
+  // on a non-seekable streaming source). Restricted to the selected range.
   function updateSeekBar() {
+    if (myGen !== itemGen) return;  // stale handler from a previous item
     if (!isTranscoding || !probedDuration) return;
+    const [lo, hi] = seekBounds();
+    const span = Math.max(0.001, hi - lo);
     const absTime = player.currentTime + transcodeOffset;
-    seekSlider.value = (absTime / probedDuration) * 100;
+    seekSlider.value = Math.min(100, Math.max(0, ((absTime - lo) / span) * 100));
     seekTimeLabel.textContent = formatTime(absTime);
+  }
+
+  // Re-render the seek bar bounds (called when the selected range changes).
+  function refreshSeekBar() {
+    if (!isTranscoding) return;
+    const [, hi] = seekBounds();
+    seekDurLabel.textContent = formatTime(hi);
+    updateSeekBar();
   }
 
   player.addEventListener("timeupdate", updateSeekBar);
 
+  // Range loop: when playback reaches the end of the selected range, pause and
+  // return to the start so the clip can be previewed again.
+  player.addEventListener("timeupdate", () => {
+    if (myGen !== itemGen || settingSrc || !hasClipRange()) return;
+    const absTime = player.currentTime + transcodeOffset;
+    if (absTime >= clipEnd() - 0.04) seekAbs(clipStart(), false);
+  });
+
   seekSlider.addEventListener("input", () => {
-    const absTime = (seekSlider.value / 100) * probedDuration;
-    seekTimeLabel.textContent = formatTime(absTime);
+    const [lo, hi] = seekBounds();
+    seekTimeLabel.textContent = formatTime(lo + (seekSlider.value / 100) * (hi - lo));
   });
 
   seekSlider.addEventListener("change", () => {
     if (!isTranscoding) return;
-    const absTime = (seekSlider.value / 100) * probedDuration;
-    loadTranscode(absTime);
+    const [lo, hi] = seekBounds();
+    loadTranscode(lo + (seekSlider.value / 100) * (hi - lo));
   });
 
   // Custom event for programmatic seeks (search results, bookmarks, etc.)
   player.addEventListener("transcode-seek", (e) => {
     loadTranscode(e.detail);
   });
+
+  // Expose range-aware playback controls to the module-level buttons. The
+  // wiring (below, near boot) calls these; they close over this item's state.
+  pb = {
+    restart() { seekAbs(hasClipRange() ? clipStart() : 0, true); },
+    toggle() {
+      if (!player.paused) { player.pause(); return; }
+      if (hasClipRange()) {
+        const t = player.currentTime + transcodeOffset;
+        if (t < clipStart() - 0.1 || t >= clipEnd() - 0.05) {
+          seekAbs(clipStart(), true);
+          return;
+        }
+      }
+      player.play().catch(() => {});
+    },
+    pause() { player.pause(); },
+    refreshSeekBar,
+  };
 
   const seekHint = $("transcode-hint");
 
@@ -792,12 +886,14 @@ function setClipInAt(idx) {
   clipFirst = idx;
   if (clipLast < clipFirst) clipLast = clipFirst;
   updateClipUI();
+  if (pb) pb.pause();  // stop playback when a clip boundary is set
 }
 
 function setClipOutAt(idx) {
   clipLast = idx;
   if (clipFirst < 0 || clipFirst > clipLast) clipFirst = clipLast;
   updateClipUI();
+  if (pb) pb.pause();
 }
 
 function clearClip() {
@@ -834,6 +930,9 @@ function updateClipUI() {
   }
   // Highlight script lines
   updateScriptHighlight();
+  // Reflect the new range on the seek bar and playback controls.
+  if (pb) pb.refreshSeekBar();
+  updatePlaybackUI();
 }
 
 function formatTime(s) {
@@ -1108,6 +1207,10 @@ async function makeClip() {
     save_to_library: $("clip-save-lib") ? $("clip-save-lib").checked : false,
     split_channels: splitCh,
     split_format: fmt === "lossless" ? "wav" : fmt,
+    // Which channel groups to export when splitting (checked boxes).
+    split_groups: splitCh
+      ? ["center", "front", "surround", "lfe"].filter((g) => $(`clip-ch-${g}`).checked)
+      : undefined,
     // Audio + WAV/FLAC without splitting = full-mix lossless (keeps 5.1, etc.).
     audio_format: (audioOnly && !splitCh && (fmt === "wav" || fmt === "flac")) ? fmt : undefined,
   };
@@ -1207,6 +1310,15 @@ function updateClipOptionVisibility() {
 
   // Splitting always decodes, so Passthrough (no re-encode) isn't available.
   setPassthroughAllowed($("clip-format"), !split.checked);
+
+  // Per-channel selection is a sub-option of Split channels: shown only for
+  // audio output, enabled only while splitting. Disabled boxes keep (remember)
+  // their checked state so re-checking Split restores the prior selection.
+  const splitting = split.checked && !split.disabled;
+  $("clip-channels").hidden = !audioOnly;
+  ["center", "front", "surround", "lfe"].forEach((g) => {
+    $(`clip-ch-${g}`).disabled = !splitting;
+  });
 }
 $("clip-audio-only").onchange = updateClipOptionVisibility;
 $("clip-split-channels").onchange = updateClipOptionVisibility;

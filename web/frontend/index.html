@@ -101,6 +101,7 @@
       <section id="item" hidden>
         <button id="back" class="back">← Back</button>
         <h2 id="item-name"></h2>
+        <div id="item-filename" class="item-filename muted"></div>
 
         <video id="player" controls preload="metadata" crossorigin="anonymous"></video>
         <p id="transcode-hint" class="transcode-hint muted" hidden>The player's built-in timeline cannot seek during audio transcoding — use the seek bar below.</p>
@@ -108,6 +109,11 @@
           <span id="transcode-time" class="transcode-time">0:00</span>
           <input id="transcode-slider" type="range" min="0" max="100" step="0.1" value="0">
           <span id="transcode-duration" class="transcode-time">0:00</span>
+        </div>
+        <div id="playback-controls" class="playback-controls">
+          <button id="pb-restart" class="pb-btn" title="Restart from the beginning of the selection">⏮</button>
+          <button id="pb-playpause" class="pb-btn" title="Play / pause">▶</button>
+          <span id="pb-range-note" class="muted pb-range-note" hidden></span>
         </div>
         <p id="preview-note" class="muted"></p>
 
@@ -160,6 +166,12 @@
               <label class="checkbox-label clip-suboption">
                 <input id="clip-split-channels" type="checkbox" /> Split channels
               </label>
+              <div id="clip-channels" class="clip-channels clip-suboption">
+                <label class="checkbox-label"><input id="clip-ch-center" type="checkbox" checked /> Center</label>
+                <label class="checkbox-label"><input id="clip-ch-front" type="checkbox" /> Front</label>
+                <label class="checkbox-label"><input id="clip-ch-surround" type="checkbox" /> Surround</label>
+                <label class="checkbox-label"><input id="clip-ch-lfe" type="checkbox" /> LFE</label>
+              </div>
             </div>
             <label class="checkbox-label">
               <input id="clip-embed-subs" type="checkbox" checked /> Embed subs

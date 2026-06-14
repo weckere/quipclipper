@@ -8,6 +8,7 @@ from quipclipper.clip import (
     _split_codec,
     compute_range,
     cut_clip,
+    group_category,
     group_channels,
     output_extension,
     render_clip_srt,
@@ -205,6 +206,15 @@ def test_group_channels_can_drop_lfe():
     assert "lfe" not in groups
     assert groups["front"] == ["FL", "FR"]
     assert groups["center"] == ["FC"]
+
+
+def test_group_category_buckets():
+    assert group_category("front") == "front"
+    assert group_category("front_center") == "front"
+    assert group_category("center") == "center"
+    assert group_category("lfe") == "lfe"
+    assert group_category("side") == "surround"
+    assert group_category("back") == "surround"
 
 
 def test_split_codec_wav_and_flac():

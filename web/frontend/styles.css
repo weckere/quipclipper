@@ -89,6 +89,22 @@ video {
   border-radius: 10px; margin: 0.5rem 0;
 }
 
+/* Clean title (folder name) on top, filename in smaller text beneath it. */
+#item-name { margin-bottom: 0.1rem; }
+.item-filename { font-size: 0.82rem; word-break: break-all; margin-bottom: 0.5rem; }
+
+/* Custom playback controls below the seek bar (range-aware play/restart). */
+.playback-controls {
+  display: flex; align-items: center; gap: 0.5rem; margin: 0.1rem 0 0.25rem;
+}
+.pb-btn {
+  background: var(--badge); color: var(--fg); border: 1px solid var(--badge);
+  border-radius: 6px; padding: 0.2rem 0.7rem; cursor: pointer;
+  font-size: 1rem; line-height: 1.2; min-width: 2.4rem;
+}
+.pb-btn:hover { background: var(--hover); border-color: var(--accent); }
+.pb-range-note { font-size: 0.8rem; }
+
 .panel { background: var(--card); border-radius: 12px; padding: 0.75rem 1.1rem; margin-top: 1rem; }
 .panel h3 { margin: 0.25rem 0 0.5rem; font-size: 0.95rem; color: var(--accent); }
 
@@ -158,6 +174,9 @@ code {
 /* Audio only + its Split-channels sub-option stack vertically. */
 .clip-audio-group { display: flex; flex-direction: column; gap: 0.35rem; }
 .clip-audio-group .clip-suboption { margin-left: 1.2rem; }
+/* Per-channel selection, nested under Split channels. */
+.clip-channels { display: flex; flex-wrap: wrap; gap: 0.3rem 0.9rem; margin-left: 2.4rem; }
+.clip-channels[hidden] { display: none; }
 /* Grey out a checkbox's label text while its input is disabled. */
 .checkbox-label:has(input:disabled) { opacity: 0.45; }
 

@@ -245,6 +245,23 @@ def group_channels(channels: list[str], *, include_lfe: bool = True) -> list[tup
     return groups
 
 
+# Map a channel-group label (from group_channels) to a user-facing category,
+# so callers can export just some groups (e.g. only centre + surround).
+_SPLIT_CATEGORY = {
+    "front": "front",
+    "front_center": "front",
+    "center": "center",
+    "lfe": "lfe",
+    "side": "surround",
+    "back": "surround",
+}
+
+
+def group_category(label: str) -> str:
+    """Bucket a channel-group label into center | front | surround | lfe."""
+    return _SPLIT_CATEGORY.get(label, "surround")
+
+
 def _audio_map_args(audio_indices: list[int] | None, *, optional: bool) -> list[str]:
     if audio_indices:
         out: list[str] = []
@@ -424,14 +441,17 @@ def split_audio_channels(
     audio_index: int = 0,
     fmt: str = "wav",
     include_lfe: bool = True,
+    categories: list[str] | None = None,
     out: str | Path | None = None,
 ) -> list[Path]:
     """Split one surround audio stream into per-group files for the clip range.
 
     Produces a stereo file for each L/R pair (front, side, back, ...) and a mono
     file for each standalone channel (centre, LFE — drop LFE with
-    `include_lfe=False`). This decodes the surround mix (it cannot be a stream
-    copy); `fmt` is "wav"/"flac" (lossless, no re-encode of the decoded audio) or
+    `include_lfe=False`). `categories` (a subset of center | front | surround |
+    lfe) selects which groups to export; None exports them all (honouring
+    `include_lfe`). This decodes the surround mix (it cannot be a stream copy);
+    `fmt` is "wav"/"flac" (lossless, no re-encode of the decoded audio) or
     "original" (re-encode to the source codec). Returns the list of files written.
     """
     source = Path(source)
@@ -446,7 +466,16 @@ def split_audio_channels(
             f"Could not determine the channel layout of audio stream a:{audio_index}."
         )
     encoder, ext = _split_codec(fmt, source, audio_index)
-    groups = group_channels(channels, include_lfe=include_lfe)
+    if categories is not None:
+        wanted = set(categories)
+        groups = [
+            g for g in group_channels(channels, include_lfe=True)
+            if group_category(g[0]) in wanted
+        ]
+        if not groups:
+            raise RuntimeError("No matching channel groups to export for this audio layout.")
+    else:
+        groups = group_channels(channels, include_lfe=include_lfe)
 
     base = Path(out) if out else source.with_suffix("")
     base.parent.mkdir(parents=True, exist_ok=True)

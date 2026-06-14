@@ -118,6 +118,9 @@ class ClipRequest(BaseModel):
     split_channels: bool = False
     split_format: str = Field("wav", pattern="^(wav|flac|original)$")
     include_lfe: bool = True
+    # Which channel groups to export when splitting (subset of
+    # center|front|surround|lfe). None = all groups (honours include_lfe).
+    split_groups: list[str] | None = None
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -713,6 +716,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _split_channels = req.split_channels
         _split_format = req.split_format
         _include_lfe = req.include_lfe
+        _split_groups = req.split_groups
         _audio_codec = req.audio_format if fullmix else None
         _out_path = out_path
 
@@ -721,7 +725,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 return split_audio_channels(
                     _video, _rng,
                     audio_index=(_audio_indices[0] if _audio_indices else 0),
-                    fmt=_split_format, include_lfe=_include_lfe, out=_out_path,
+                    fmt=_split_format, include_lfe=_include_lfe,
+                    categories=_split_groups, out=_out_path,
                 )
             if _use_mkvmerge:
                 try:
