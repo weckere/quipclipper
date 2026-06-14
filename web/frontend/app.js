@@ -605,18 +605,20 @@ async function openItem(path, name, opts) {
   });
 
   seekSlider.addEventListener("input", () => {
+    if (myGen !== itemGen) return;  // stale listener from a previous item
     const [lo, hi] = seekBounds();
     seekTimeLabel.textContent = formatTime(lo + (seekSlider.value / 100) * (hi - lo));
   });
 
   seekSlider.addEventListener("change", () => {
-    if (!isTranscoding) return;
+    if (myGen !== itemGen || !isTranscoding) return;
     const [lo, hi] = seekBounds();
     loadTranscode(lo + (seekSlider.value / 100) * (hi - lo));
   });
 
   // Custom event for programmatic seeks (search results, bookmarks, etc.)
   player.addEventListener("transcode-seek", (e) => {
+    if (myGen !== itemGen) return;  // a previous item's loader must not fire
     loadTranscode(e.detail);
   });
 
@@ -675,7 +677,7 @@ async function openItem(path, name, opts) {
   if (searchQuery) doSearch();
   if (seekTarget != null && !needsTranscode) {
     player.addEventListener("loadedmetadata", () => {
-      player.currentTime = seekTarget;
+      if (myGen === itemGen) player.currentTime = seekTarget;
     }, { once: true });
   }
 
