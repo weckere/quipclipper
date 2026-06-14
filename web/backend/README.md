@@ -4,25 +4,17 @@ The web backend for [quipclipper](../../README.md): a small FastAPI app that wra
 the quipclipper engine so clips can be found and cut from a browser. See
 [`docs/WEBAPP_PLAN.md`](../../docs/WEBAPP_PLAN.md) for the full design.
 
-This is **Phase 0**: a booting skeleton (health + config endpoints) that the two
-deployment paths — Docker and the NixOS module — both stand up against a static
-"hello" page served by nginx.
+The backend serves the API and (in dev) the static frontend; in a real
+deployment nginx fronts it. Two deployment paths are supported: Docker Compose
+and a NixOS module.
 
 ## Deploy with Docker
 
-Two compose files live in [`../`](..):
-
-- **`docker-compose.omv.yml`** — *self-contained.* Builds both images straight
-  from the public GitHub repo, so you only need this one file on the server
-  (OpenMediaVault, a NAS, etc.). Edit the two `<-- CHANGE` host paths (your media
-  share, read-only; and a clips folder) and optionally the port, then bring it
-  up. First start builds the images (installs ffmpeg + mkvtoolnix); then browse
-  `http://<host>:8896`.
-- **`docker-compose.yml`** — *for a local checkout.* Builds from the working tree
-  and bind-mounts the frontend/nginx config, so edits show up without a rebuild.
-
-In OMV: **Services → Compose → Files → +**, paste `docker-compose.omv.yml`,
-Save, then **Up**.
+See the [Web App quick start](../../README.md#web-app) in the root README for a
+ready-to-paste `docker-compose.yml` that builds both images directly from the
+GitHub repo — you only need that one file on the server. For local development,
+[`../docker-compose.yml`](../docker-compose.yml) builds from the working tree and
+bind-mounts the frontend/nginx config so edits show up without a rebuild.
 
 ## Run locally (dev)
 

@@ -31,3 +31,13 @@ result
 
 # OS
 .DS_Store
+
+# Claude Code local settings (machine-specific; may reference local paths/hosts)
+.claude/
+
+# Internal dev/handoff notes — kept locally for ongoing work, not for the
+# public repo (they reference personal deploy infra).
+/HANDOFF.md
+/docs/HANDOFF.md
+/docs/WEBAPP_PROGRESS.md
+/web/docker-compose.omv.yml
