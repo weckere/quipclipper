@@ -187,7 +187,8 @@ def output_extension(
 
 
 def _timestamp_slug(seconds: float) -> str:
-    return format_timestamp(seconds).replace(":", "-").replace(".", "_")
+    # Whole-second slug (HH-MM-SS) for clip filenames — no millisecond suffix.
+    return format_timestamp(round(seconds)).split(".", 1)[0].replace(":", "-")
 
 
 def _srt_timestamp(seconds: float) -> str:

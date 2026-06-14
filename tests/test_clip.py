@@ -6,6 +6,7 @@ from quipclipper.clip import (
     ClipRange,
     _ffmpeg_args,
     _split_codec,
+    _timestamp_slug,
     compute_range,
     cut_clip,
     group_category,
@@ -206,6 +207,14 @@ def test_group_channels_can_drop_lfe():
     assert "lfe" not in groups
     assert groups["front"] == ["FL", "FR"]
     assert groups["center"] == ["FC"]
+
+
+def test_timestamp_slug_rounds_to_whole_seconds():
+    assert _timestamp_slug(57.0) == "00-00-57"
+    assert _timestamp_slug(57.4) == "00-00-57"
+    assert _timestamp_slug(57.5) == "00-00-58"
+    assert _timestamp_slug(3661.4) == "01-01-01"
+    assert "_" not in _timestamp_slug(12.345)  # no millisecond suffix
 
 
 def test_group_category_buckets():

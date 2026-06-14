@@ -85,7 +85,10 @@ h1 { margin: 0; font-size: 2rem; letter-spacing: -0.02em; cursor: pointer; displ
 .back:hover { background: var(--hover); }
 
 video {
-  width: 100%; max-height: 420px; background: #000;
+  /* Fixed-aspect box (locked to the real video dimensions after load) so the
+     player keeps a stable size — seeking/reloading a transcode segment no
+     longer collapses the element and reflows the whole page. */
+  width: 100%; aspect-ratio: 16 / 9; object-fit: contain; background: #000;
   border-radius: 10px; margin: 0.5rem 0;
 }
 
@@ -288,6 +291,10 @@ code {
   flex: 1; font-size: 0.9rem; font-weight: 600; color: var(--accent);
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* Clickable names (open the video / load the bookmark for clipping). */
+.clickable { cursor: pointer; }
+.clickable:hover { text-decoration: underline; }
+.bookmark-label.clickable:hover { color: var(--accent); }
 .bm-browser-open {
   background: none; border: 1px solid var(--badge); color: var(--fg);
   border-radius: 5px; padding: 0.2rem 0.5rem; cursor: pointer; font-size: 0.75rem;

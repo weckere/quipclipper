@@ -412,6 +412,12 @@ $("player").addEventListener("play", updatePlaybackUI);
 $("player").addEventListener("pause", updatePlaybackUI);
 $("pb-restart").onclick = () => pb && pb.restart();
 $("pb-playpause").onclick = () => pb && pb.toggle();
+// Lock the player box to the real video aspect once known, so subsequent
+// transcode-segment reloads don't resize it and reflow the page.
+$("player").addEventListener("loadedmetadata", () => {
+  const p = $("player");
+  if (p.videoWidth && p.videoHeight) p.style.aspectRatio = `${p.videoWidth} / ${p.videoHeight}`;
+});
 
 /** Absolute playback position in the source file. */
 function playerTime() {
@@ -486,6 +492,7 @@ async function openItem(path, name, opts) {
   }
 
   const player = $("player");
+  player.style.aspectRatio = "";  // back to the default box until this item's dims load
   const mediaUrl = "/api/media" + qp(path);
   const transcodeUrl = "/api/media/transcode" + qp(path);
   player.querySelectorAll("track").forEach((t) => t.remove());
@@ -949,11 +956,22 @@ function formatTime(s) {
     : `${m}:${sec.padStart(4, "0")}`;
 }
 
+/** Like formatTime but rounded to the whole second (for bookmark/clip names). */
+function formatTimeWhole(s) {
+  const t = Math.round(s);
+  const h = Math.floor(t / 3600);
+  const m = Math.floor((t % 3600) / 60);
+  const sec = t % 60;
+  return h > 0
+    ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`
+    : `${m}:${String(sec).padStart(2, "0")}`;
+}
+
 async function saveBookmark() {
   if (!currentItem || !hasClipRange()) return;
   const s = clipStart(), e = clipEnd();
-  // Build default label: time range + first dialogue line
-  let defaultLabel = `${formatTime(s)} – ${formatTime(e)}`;
+  // Build default label: time range (whole seconds) + first dialogue line
+  let defaultLabel = `${formatTimeWhole(s)} – ${formatTimeWhole(e)}`;
   if (clipFirst >= 0 && scriptCues[clipFirst]) {
     const firstLine = scriptCues[clipFirst].text.slice(0, 60);
     defaultLabel += ` — ${firstLine}`;
@@ -1451,9 +1469,12 @@ async function browseBookmarks() {
     const header = document.createElement("li");
     header.className = "bm-browser-group";
     header.innerHTML =
-      `<span class="bm-browser-file">${escapeHtml(fileName)}</span>` +
+      `<span class="bm-browser-file clickable" title="Open this video">${escapeHtml(fileName)}</span>` +
       `<button class="bm-browser-open" title="Open file">Open ▶</button>`;
-    header.querySelector(".bm-browser-open").onclick = () => openItem(path, fileName);
+    // Clicking the filename opens the source video (same as "Open ▶").
+    const openParent = () => openItem(path, fileName);
+    header.querySelector(".bm-browser-file").onclick = openParent;
+    header.querySelector(".bm-browser-open").onclick = openParent;
     list.appendChild(header);
 
     for (const bm of bookmarks) {
@@ -1461,7 +1482,7 @@ async function browseBookmarks() {
       li.className = "bm-browser-item";
       li.innerHTML =
         `<input type="checkbox" class="entry-select bm-select" title="Select for batch export" />` +
-        `<span class="bookmark-label">${escapeHtml(bm.label)}</span>` +
+        `<span class="bookmark-label clickable" title="Open the video with this bookmark loaded for clipping">${escapeHtml(bm.label)}</span>` +
         `<span class="bookmark-range">${formatTime(bm.start)} – ${formatTime(bm.end)}</span>` +
         `<button class="bookmark-use" title="Open & clip">Clip</button>` +
         `<button class="bookmark-seek" title="Open & seek">▶</button>` +
@@ -1471,12 +1492,15 @@ async function browseBookmarks() {
       cb.dataset.start = bm.start;
       cb.dataset.end = bm.end;
       cb.onclick = (e) => { e.stopPropagation(); updateBatchState("bm"); };
-      li.querySelector(".bookmark-use").onclick = (e) => {
+      // Clicking the bookmark name opens the video with this bookmark preloaded
+      // for clipping (same as the "Clip" button).
+      const openForClip = (e) => {
         e.stopPropagation();
-        // Set before openItem — it consumes the value in its prologue.
-        pendingBookmarkClip = bm;
+        pendingBookmarkClip = bm;  // set before openItem — consumed in its prologue
         openItem(path, fileName, { seekTo: bm.start });
       };
+      li.querySelector(".bookmark-label").onclick = openForClip;
+      li.querySelector(".bookmark-use").onclick = openForClip;
       li.querySelector(".bookmark-seek").onclick = (e) => {
         e.stopPropagation();
         openItem(path, fileName, { seekTo: bm.start });
