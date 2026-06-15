@@ -7,6 +7,7 @@ from quipclipper.mkv import (
     estimate_remux_bytes,
     human_size,
     is_matroska,
+    subtitle_track_ids,
 )
 
 TRACKS = [
@@ -82,6 +83,26 @@ def test_build_args_video_embeds_sidecar_as_extra_input():
     args = _video_args(audio_ids=[1], embed_subs=Path("subs.srt"))
     # sidecar appended after the source input
     assert args.index("subs.srt") > args.index("in.mkv")
+
+
+def test_subtitle_track_ids():
+    tracks = TRACKS + [{"id": 4, "type": "subtitles"}]
+    assert subtitle_track_ids(tracks) == [3, 4]
+
+
+def test_build_args_default_subtitle_flag():
+    """B17c: the chosen subtitle id is flagged default (1), the rest cleared (0),
+    before the source input."""
+    args = _video_args(default_sub_id=4, sub_ids=[3, 4])
+    i_src = args.index("in.mkv")
+    assert "--default-track-flag" in args
+    # both flags precede the source
+    flags = [args[i + 1] for i, a in enumerate(args[:i_src]) if a == "--default-track-flag"]
+    assert "3:0" in flags and "4:1" in flags
+
+
+def test_build_args_no_default_flag_without_selection():
+    assert "--default-track-flag" not in _video_args(sub_ids=[3, 4])
 
 
 def test_human_size():

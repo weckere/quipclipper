@@ -78,6 +78,12 @@ def audio_track_ids(tracks: list[dict], audio_indices: list[int] | None) -> list
     return [audio[i]["id"] for i in audio_indices if 0 <= i < len(audio)]
 
 
+def subtitle_track_ids(tracks: list[dict]) -> list[int]:
+    """mkvmerge global track ids of the subtitle tracks, in container order
+    (so index N matches ffmpeg's s:N)."""
+    return [t["id"] for t in tracks if t.get("type") == "subtitles"]
+
+
 def build_mkvmerge_args(
     *,
     source: Path,
@@ -89,6 +95,8 @@ def build_mkvmerge_args(
     keep_subs: bool,
     keep_chapters: bool,
     embed_subs: Path | None,
+    default_sub_id: int | None = None,
+    sub_ids: list[int] | None = None,
 ) -> list[str]:
     """Build the mkvmerge command line for a single-range lossless cut."""
     cmd = ["mkvmerge", "-o", str(out), "--split", f"parts:{_ts(rng.start)}-{_ts(rng.end)}"]
@@ -105,10 +113,18 @@ def build_mkvmerge_args(
             cmd += ["-S"]
     if not keep_chapters:
         cmd += ["--no-chapters"]
+    # Per-track default-subtitle flag (B17c): set the selected track default and
+    # clear the others. These are per-input options, so they precede the source.
+    if kind == "video" and keep_subs and default_sub_id is not None and sub_ids:
+        for sid in sub_ids:
+            cmd += ["--default-track-flag", f"{sid}:{1 if sid == default_sub_id else 0}"]
     cmd += [str(source)]
     if kind == "video" and embed_subs is not None:
         # Added as an extra input: mkvmerge muxes it and the --split cut trims and
-        # shifts it to match the clip automatically.
+        # shifts it to match the clip automatically. When an embedded track is the
+        # chosen default, clear this sidecar's default so the chosen track wins.
+        if default_sub_id is not None:
+            cmd += ["--default-track-flag", "0:0"]
         cmd += [str(embed_subs)]
     return cmd
 
@@ -171,6 +187,7 @@ def cut_with_mkvmerge(
     keep_chapters: bool = True,
     embed_subs: str | Path | None = None,
     remux_first: bool = False,
+    default_sub_track: int | None = None,
 ) -> Path:
     """Cut a Matroska `source` losslessly with mkvmerge. Returns the path written.
 
@@ -221,10 +238,18 @@ def cut_with_mkvmerge(
         if not all_audio and not audio_ids:
             raise RuntimeError("None of the requested --audio-track indices exist in the source.")
 
+        sub_ids = subtitle_track_ids(tracks)
+        default_sub_id = (
+            sub_ids[default_sub_track]
+            if default_sub_track is not None and 0 <= default_sub_track < len(sub_ids)
+            else None
+        )
+
         args = build_mkvmerge_args(
             source=work_source, rng=cut_rng, kind=kind, out=out, audio_ids=audio_ids,
             all_audio=all_audio, keep_subs=keep_subs, keep_chapters=keep_chapters,
             embed_subs=embed_subs_path,
+            default_sub_id=default_sub_id, sub_ids=sub_ids,
         )
         proc = subprocess.run(args, capture_output=True, text=True)
         if proc.returncode not in (0, 1):

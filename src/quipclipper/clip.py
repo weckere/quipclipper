@@ -291,6 +291,8 @@ def _ffmpeg_args(
     audio_indices: list[int] | None = None,
     embed_subs: Path | None = None,
     audio_codec: str | None = None,
+    default_sub_index: int | None = None,
+    sub_count: int = 0,
 ) -> list[str]:
     head = ["ffmpeg", "-y", "-v", "error"]
     inputs = ["-ss", f"{rng.start:.3f}", "-i", str(source)]
@@ -328,7 +330,14 @@ def _ffmpeg_args(
         maps = ["-map", "0:v?"] + _audio_map_args(audio_indices, optional=True) + ["-map", "0:s?"]
         if subs_input is not None:
             maps += ["-map", f"{subs_input}:0"]
-        return head + inputs + dur + maps + common + [str(out)]
+        # Default-subtitle flag (B17c): mark the selected output subtitle default,
+        # clear the rest. Output subtitle order follows input order, so s:N is the
+        # selected embedded track.
+        disp: list[str] = []
+        if default_sub_index is not None and sub_count:
+            for i in range(sub_count):
+                disp += [f"-disposition:s:{i}", "default" if i == default_sub_index else "0"]
+        return head + inputs + dur + maps + common + disp + [str(out)]
 
     # re-encode (no subtitle handling here — that is a lossless feature)
     if kind == "audio":
@@ -350,6 +359,7 @@ def cut_clip(
     audio_indices: list[int] | None = None,
     embed_cues: list[Cue] | None = None,
     audio_codec: str | None = None,
+    default_sub_track: int | None = None,
 ) -> Path:
     """Cut `source` between `rng.start` and `rng.end` into the chosen `kind`.
 
@@ -403,11 +413,20 @@ def cut_clip(
             tmp.close()
             embed_subs = Path(tmp.name)
 
+    # For the default-subtitle flag (B17c) count the output subtitle streams:
+    # the source's embedded subtitles plus the muxed sidecar, if any.
+    sub_count = 0
+    if kind == "video" and lossless and default_sub_track is not None:
+        sub_count = len(_probe_streams(source, "s", fields="codec_type"))
+        if embed_subs is not None:
+            sub_count += 1
+
     try:
         args = _ffmpeg_args(
             source=source, rng=rng, kind=kind, out=out, lossless=lossless, fps=fps,
             width=width, audio_indices=audio_indices, embed_subs=embed_subs,
             audio_codec=audio_codec,
+            default_sub_index=default_sub_track, sub_count=sub_count,
         )
         proc = subprocess.run(args, capture_output=True, text=True)
         if proc.returncode != 0:

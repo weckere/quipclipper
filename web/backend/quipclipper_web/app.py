@@ -230,6 +230,9 @@ class ClipRequest(BaseModel):
     # Output naming: a path template (see _render_clip_template). "/" makes
     # subfolders; absent tokens are dropped. None/blank = DEFAULT_CLIP_TEMPLATE.
     template: str | None = None
+    # Subtitle track (s:N) to mark as the default in the saved video clip (B17c);
+    # all subtitle streams are still kept. None = leave source defaults.
+    default_sub_track: int | None = None
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -914,6 +917,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _include_lfe = req.include_lfe
         _split_groups = req.split_groups
         _audio_codec = req.audio_format if fullmix else None
+        _default_sub_track = req.default_sub_track
         _out_path = out_path
 
         def do_cut() -> list[Path]:
@@ -930,7 +934,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         _video, _rng, kind=_kind, out=_out_path,
                         audio_indices=_audio_indices, keep_subs=True,
                         keep_chapters=_chapters, embed_subs=_embed_subs_path,
-                        remux_first=_do_remux,
+                        remux_first=_do_remux, default_sub_track=_default_sub_track,
                     )]
                 except RuntimeError:
                     # mkvmerge can't split some track types (e.g. FLAC).
@@ -939,11 +943,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     return [cut_clip(
                         _video, _rng, kind=_kind, lossless=_lossless, out=_out_path,
                         audio_indices=_audio_indices, embed_cues=_embed_cues,
+                        default_sub_track=_default_sub_track,
                     )]
             return [cut_clip(
                 _video, _rng, kind=_kind, lossless=_lossless, out=_out_path,
                 audio_indices=_audio_indices, embed_cues=_embed_cues,
-                audio_codec=_audio_codec,
+                audio_codec=_audio_codec, default_sub_track=_default_sub_track,
             )]
 
         job = jobs.submit(do_cut, label=label)

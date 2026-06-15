@@ -90,6 +90,26 @@ def test_ffmpeg_args_lossless_video_copies_all_av_and_subtitle_streams():
     assert args[args.index("-c") + 1] == "copy"
 
 
+def test_ffmpeg_args_default_subtitle_disposition():
+    """B17c: the selected subtitle output stream is flagged default, others cleared."""
+    args = _ffmpeg_args(
+        source=Path("in.mkv"), rng=ClipRange(0.0, 4.0), kind="video",
+        out=Path("out.mkv"), lossless=True, fps=15, width=480,
+        default_sub_index=1, sub_count=3,
+    )
+    assert args[args.index("-disposition:s:0") + 1] == "0"
+    assert args[args.index("-disposition:s:1") + 1] == "default"
+    assert args[args.index("-disposition:s:2") + 1] == "0"
+
+
+def test_ffmpeg_args_no_disposition_without_default_sub():
+    args = _ffmpeg_args(
+        source=Path("in.mkv"), rng=ClipRange(0.0, 4.0), kind="video",
+        out=Path("out.mkv"), lossless=True, fps=15, width=480,
+    )
+    assert not any(a.startswith("-disposition") for a in args)
+
+
 def test_ffmpeg_args_reencode_video_uses_libx264():
     args = _ffmpeg_args(
         source=Path("in.mkv"), rng=ClipRange(0.0, 4.0), kind="video",

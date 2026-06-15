@@ -1411,6 +1411,9 @@ async function makeClip() {
     audio_format: (audioOnly && !splitCh && (fmt === "wav" || fmt === "flac")) ? fmt : undefined,
     // Selected audio stream from the stream selector.
     audio_tracks: aud != null ? [aud] : undefined,
+    // For a video clip, make the selected embedded subtitle the default track.
+    default_sub_track: (kind === "video" && getSelectedTrack() != null)
+      ? parseInt(getSelectedTrack()) : undefined,
     template: clipTemplate(),
   };
 
