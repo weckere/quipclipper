@@ -84,10 +84,61 @@ def _clean_title(path: Path) -> str:
 
 def _slugify(text: str) -> str:
     """Filesystem-safe slug: keep word chars/spaces/apostrophes/hyphens, collapse
-    whitespace, join with underscores."""
+    whitespace, join with underscores. Strips ``/`` and ``.`` so token values
+    can't inject path separators or traversal."""
     text = re.sub(r"[^\w\s'\-]", "", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text.replace(" ", "_")
+
+
+# Output naming (B9). The default reproduces the Phase 2 layout exactly.
+DEFAULT_CLIP_TEMPLATE = "{source}/{timestamp}_{cue}_{title}"
+_YEAR_RE = re.compile(r"(?<!\d)(?:19|20)\d{2}(?!\d)")
+_SXXEXX_RE = re.compile(r"(?i)s(\d{1,2})e(\d{1,2})")
+_TOKEN_RE = re.compile(r"\{(\w+)\}")
+
+
+def _clip_template_context(video: Path, rng, cue_text: str) -> dict[str, str]:
+    """Resolve the placeholder values for a clip. Media-derived tokens (cue,
+    title, source) are slugified; the rest are already filesystem-safe."""
+    from datetime import date
+
+    from quipclipper.clip import _timestamp_slug
+
+    stem = video.stem
+    year_m = _YEAR_RE.search(stem)
+    se_m = _SXXEXX_RE.search(stem)
+    return {
+        "timestamp": _timestamp_slug(rng.start),
+        "end": _timestamp_slug(rng.end),
+        "duration": str(int(round(rng.end - rng.start))),
+        "cue": _slugify(cue_text[:80]) if cue_text else "",
+        "title": _slugify(_clean_title(video)),
+        "source": stem,
+        "year": year_m.group(0) if year_m else "",
+        "season": f"{int(se_m.group(1)):02d}" if se_m else "",
+        "episode": f"{int(se_m.group(2)):02d}" if se_m else "",
+        "date": date.today().isoformat(),
+    }
+
+
+def _render_clip_template(template: str, ctx: dict[str, str]) -> str:
+    """Render a clip path template into a safe relative path *without* extension.
+
+    Unknown/absent tokens become empty. Per path segment, runs of separators
+    left by dropped tokens are collapsed and edges trimmed; empty, ``.`` and
+    ``..`` segments are dropped (traversal is also rejected by the clips-dir
+    containment check at the call site). ``/`` yields subfolders."""
+    rendered = _TOKEN_RE.sub(lambda mt: ctx.get(mt.group(1), ""), template)
+    segments = []
+    for raw in rendered.split("/"):
+        seg = re.sub(r"_{2,}", "_", raw)
+        seg = re.sub(r"-{2,}", "-", seg)
+        seg = seg.strip("_-. ")
+        if seg in ("", ".", ".."):
+            continue
+        segments.append(seg)
+    return "/".join(segments)
 
 
 # Containers/extensions a browser can usually play in a <video> element. Used to
@@ -143,6 +194,9 @@ class ClipRequest(BaseModel):
     # Which channel groups to export when splitting (subset of
     # center|front|surround|lfe). None = all groups (honours include_lfe).
     split_groups: list[str] | None = None
+    # Output naming: a path template (see _render_clip_template). "/" makes
+    # subfolders; absent tokens are dropped. None/blank = DEFAULT_CLIP_TEMPLATE.
+    template: str | None = None
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -600,6 +654,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Determine the clip range: explicit start (with optional end) or
         # search-based. Omitting end with start set means "to the end of the
         # file" — used by batch export to re-process a whole clip.
+        cue_text = ""  # matched dialogue, for the {cue} naming token (search only)
         if req.start is not None:
             end = req.end
             if end is None:
@@ -622,6 +677,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if req.match_index >= len(matches):
                 raise HTTPException(status_code=404, detail="Match index out of range.")
             m = matches[req.match_index]
+            cue_text = m.text
             rng = compute_range(m, before=req.before, after=req.after)
             label = f"{req.kind} clip: \"{req.query}\" → {m.text[:60]}"
         else:
@@ -676,11 +732,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             except Exception:
                 pass  # non-fatal: skip subtitle embedding
 
-        # Clips are always filed into a per-source subfolder named after the
-        # source file (its stem).
-        clips_dir = settings.clips_dir / video.stem
-        clips_dir.mkdir(parents=True, exist_ok=True)
-
         # Determine extension.
         if fullmix:
             ext = req.audio_format  # "wav" | "flac"
@@ -696,21 +747,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     codecs = [codecs[i] for i in req.audio_tracks if i < len(codecs)]
             ext = output_extension(req.kind, lossless=req.lossless, audio_codecs=codecs)
 
-        from quipclipper.clip import _timestamp_slug
-        # Filename template: {timestamp}_{cue text}_{clean name}. Cue text is
-        # present only for dialogue-search clips; absent fields are dropped.
-        # Split-channel clips get a per-channel suffix appended by the splitter.
-        fields = [_timestamp_slug(rng.start)]
-        if req.query and m.text:
-            cue = _slugify(m.text[:80])
-            if cue:
-                fields.append(cue)
-        clean = _slugify(_clean_title(video))
-        if clean:
-            fields.append(clean)
-        base_name = "_".join(fields)
-        # Split passes the base (no extension) so it can append "_<channel>.<ext>".
-        out_path = clips_dir / (base_name if req.split_channels else f"{base_name}.{ext}")
+        # Output path from the user template (B9). The default reproduces the
+        # Phase 2 layout: {source}/{timestamp}_{cue}_{title}. "/" makes
+        # subfolders; absent tokens (e.g. {cue} on non-search clips) are dropped.
+        # Split-channel clips get a per-channel suffix appended by the splitter,
+        # so they pass the extensionless base.
+        ctx = _clip_template_context(video, rng, cue_text)
+        template = (req.template or "").strip() or DEFAULT_CLIP_TEMPLATE
+        rel = _render_clip_template(template, ctx) or ctx["timestamp"] or "clip"
+        clips_root = settings.clips_dir.resolve()
+        out_path = (clips_root / (rel if req.split_channels else f"{rel}.{ext}")).resolve()
+        if out_path != clips_root and not out_path.is_relative_to(clips_root):
+            raise HTTPException(
+                status_code=400, detail="Naming template resolves outside the clips directory."
+            )
+        out_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Capture all values for the closure.
         _video = video

@@ -1242,6 +1242,7 @@ async function makeClip() {
       : undefined,
     // Audio + WAV/FLAC without splitting = full-mix lossless (keeps 5.1, etc.).
     audio_format: (audioOnly && !splitCh && (fmt === "wav" || fmt === "flac")) ? fmt : undefined,
+    template: clipTemplate(),
   };
 
   if (selectedMatch) {
@@ -1299,6 +1300,32 @@ function pollJob() {
 }
 
 $("clip-btn").onclick = makeClip;
+
+// --- clip name template (B9) ------------------------------------------------
+const DEFAULT_CLIP_TEMPLATE = "{source}/{timestamp}_{cue}_{title}";
+const CLIP_TEMPLATE_KEY = "qc_clip_template";
+
+/** The effective name template: the field's value, falling back to the
+ *  remembered one, then the default. Used by both single and batch clips. */
+function clipTemplate() {
+  const el = $("clip-template");
+  const fromField = el ? el.value.trim() : "";
+  if (fromField) return fromField;
+  const saved = (localStorage.getItem(CLIP_TEMPLATE_KEY) || "").trim();
+  return saved || DEFAULT_CLIP_TEMPLATE;
+}
+
+// Prefill from the last-used template (or the default) and remember edits.
+(() => {
+  const el = $("clip-template");
+  if (!el) return;
+  el.value = (localStorage.getItem(CLIP_TEMPLATE_KEY) || "").trim() || DEFAULT_CLIP_TEMPLATE;
+  el.addEventListener("input", () => {
+    const v = el.value.trim();
+    if (v) localStorage.setItem(CLIP_TEMPLATE_KEY, v);
+    else localStorage.removeItem(CLIP_TEMPLATE_KEY);
+  });
+})();
 
 // Clip option interactions
 
@@ -1583,6 +1610,7 @@ function batchOptions(prefix) {
     split_format: fmt === "lossless" ? "wav" : fmt,
     // Full-mix lossless WAV/FLAC (keeps 5.1) when audio + not splitting.
     audio_format: (!split && (fmt === "wav" || fmt === "flac")) ? fmt : undefined,
+    template: clipTemplate(),
   };
 }
 

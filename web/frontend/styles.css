@@ -184,6 +184,21 @@ code {
 /* Grey out a checkbox's label text while its input is disabled. */
 .checkbox-label:has(input:disabled) { opacity: 0.45; }
 
+/* Clip name template (B9) */
+.clip-template-row { margin: 0.6rem 0 0.2rem; }
+.clip-template-label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.85rem; }
+.clip-template-label input {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem; padding: 0.35rem 0.5rem;
+  border: 1px solid var(--badge); border-radius: 6px;
+  background: var(--bg); color: var(--fg);
+}
+.clip-template-help { margin: 0.35rem 0 0; font-size: 0.75rem; line-height: 1.5; }
+.clip-template-help code {
+  font-size: 0.72rem; padding: 0.05rem 0.25rem;
+  background: var(--card); border-radius: 4px;
+}
+
 /* Batch export bar (clips & bookmarks browsers) */
 .batch-bar[hidden] { display: none; }
 .batch-bar {

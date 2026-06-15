@@ -185,6 +185,19 @@
               </select>
             </label>
           </div>
+          <div class="clip-template-row">
+            <label class="clip-template-label">Name template
+              <input id="clip-template" type="text" autocomplete="off" spellcheck="false"
+                     placeholder="{source}/{timestamp}_{cue}_{title}" />
+            </label>
+            <p class="clip-template-help muted">
+              <code>/</code> makes subfolders. Tokens:
+              <code>{source}</code> <code>{timestamp}</code> <code>{end}</code>
+              <code>{duration}</code> <code>{cue}</code> <code>{title}</code>
+              <code>{year}</code> <code>{season}</code> <code>{episode}</code>
+              <code>{date}</code>. Empty tokens are dropped.
+            </p>
+          </div>
           <button id="clip-btn" class="clip-btn">Make clip</button>
         </div>
 

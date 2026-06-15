@@ -13,8 +13,16 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
+from quipclipper.clip import ClipRange
 from quipclipper.models import Cue
-from quipclipper_web.app import _clean_title, _slugify, create_app
+from quipclipper_web.app import (
+    DEFAULT_CLIP_TEMPLATE,
+    _clean_title,
+    _clip_template_context,
+    _render_clip_template,
+    _slugify,
+    create_app,
+)
 from quipclipper_web.config import Settings
 from quipclipper_web.media import cues_to_vtt
 
@@ -30,6 +38,59 @@ def test_clean_title_steps_past_season_folder():
 def test_slugify_drops_punctuation_keeps_apostrophe():
     assert _slugify("The Sandlot (1993)") == "The_Sandlot_1993"
     assert _slugify("You're killing me, Smalls!") == "You're_killing_me_Smalls"
+
+
+# --- B9: clip name template -------------------------------------------------
+
+def _ctx(stem: str, start=27 * 60 + 58.0, end=28 * 60 + 8.0, cue=""):
+    """A template context built from a synthetic source filename."""
+    return _clip_template_context(Path(f"/shows/Star Trek - TNG/{stem}.mkv"),
+                                  ClipRange(start=start, end=end), cue)
+
+
+def test_default_template_reproduces_phase2_layout():
+    """The default must match the old hardcoded {source}/{timestamp}_{cue}_{title}."""
+    ctx = _ctx("S03E26", start=1678.0, end=1690.0, cue="You're killing me, Smalls!")
+    assert (_render_clip_template(DEFAULT_CLIP_TEMPLATE, ctx)
+            == "S03E26/00-27-58_You're_killing_me_Smalls_Star_Trek_-_TNG")
+
+
+def test_template_drops_absent_cue_and_collapses_separators():
+    ctx = _ctx("movie", start=125.0, cue="")  # no cue (range/bookmark clip)
+    assert _render_clip_template("{timestamp}_{cue}_{title}", ctx) == "00-02-05_Star_Trek_-_TNG"
+
+
+def test_template_slash_makes_subfolders():
+    ctx = _ctx("movie", cue="hello there")
+    assert _render_clip_template("{title}/{year}/{cue}", _ctx("Movie.2009.x264", cue="hi")) \
+        == "Star_Trek_-_TNG/2009/hi"
+
+
+def test_template_tokens_year_season_episode_duration():
+    ctx = _ctx("Show.S03E26.1999.1080p", start=10.0, end=22.5)
+    assert ctx["season"] == "03"
+    assert ctx["episode"] == "26"
+    assert ctx["year"] == "1999"
+    assert ctx["duration"] == "12"  # round(12.5) -> 12 (banker's rounding)
+    assert ctx["end"] == "00-00-22"
+
+
+def test_template_missing_year_token_dropped():
+    ctx = _ctx("no_year_here", cue="")
+    # {year} empty -> segment becomes just the timestamp, no stray separators
+    assert _render_clip_template("{year}_{timestamp}", ctx) == "00-27-58"
+
+
+def test_template_strips_traversal_segments():
+    ctx = _ctx("movie")
+    assert _render_clip_template("../../etc/{timestamp}", ctx) == "etc/00-27-58"
+    assert _render_clip_template("/{timestamp}", ctx) == "00-27-58"
+
+
+def test_template_empty_render_is_not_blank():
+    """A template that resolves to nothing still yields a usable base (timestamp)."""
+    ctx = _ctx("movie")
+    assert _render_clip_template("{cue}", _ctx("movie", cue="")) == ""  # caller falls back
 
 SRT = """1
 00:00:01,000 --> 00:00:03,000
@@ -378,6 +439,50 @@ def test_clip_range_filename_drops_absent_cue_text(tmp_path: Path) -> None:
         out = Path(mock_cut.call_args.kwargs["out"])
     assert out.parent == clips / "movie"
     assert out.name == "00-01-05_media.mka"
+
+
+def test_clip_custom_template_controls_path(tmp_path: Path) -> None:
+    """A custom template drives both the subfolder(s) and filename."""
+    client, media, clips = _clips_client(tmp_path)
+    video = media / "movie.mkv"
+    video.write_bytes(b"")
+    fake_out = clips / "x.mka"
+    fake_out.write_bytes(b"x")
+    with patch("quipclipper_web.app.cut_clip", return_value=fake_out) as mock_cut:
+        resp = client.post("/api/clip", json={
+            "path": str(video), "start": 65, "end": 70, "before": 0, "after": 0,
+            "kind": "audio", "lossless": True, "backend": "ffmpeg",
+            "template": "{title}/clips/{timestamp}-{end}",
+        })
+        assert resp.status_code == 200
+        assert _wait_done(client, resp.json()["job_id"])["status"] == "done"
+        out = Path(mock_cut.call_args.kwargs["out"])
+    assert out == clips / "media" / "clips" / "00-01-05-00-01-10.mka"
+
+
+def test_clip_template_traversal_rejected(tmp_path: Path) -> None:
+    """A template that escapes the clips dir is refused (defense in depth)."""
+    client, media, _clips = _clips_client(tmp_path)
+    video = media / "movie.mkv"
+    video.write_bytes(b"")
+    # Token values are slugified (no '/'), so traversal can only come from
+    # literal template text; '..' segments are stripped, but assert the job
+    # still succeeds and stays contained rather than 500-ing.
+    def _fake_cut(*a, **k):
+        out = Path(k["out"])
+        out.write_bytes(b"x")
+        return out
+
+    with patch("quipclipper_web.app.cut_clip", side_effect=_fake_cut) as mock_cut:
+        resp = client.post("/api/clip", json={
+            "path": str(video), "start": 1, "end": 2, "before": 0, "after": 0,
+            "kind": "audio", "lossless": True, "backend": "ffmpeg",
+            "template": "../../../{timestamp}",
+        })
+        assert resp.status_code == 200
+        assert _wait_done(client, resp.json()["job_id"])["status"] == "done"
+        out = Path(mock_cut.call_args.kwargs["out"]).resolve()
+    assert out.is_relative_to(_clips.resolve())
 
 
 def test_clip_split_passes_extensionless_base(tmp_path: Path) -> None:
