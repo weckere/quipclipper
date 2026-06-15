@@ -11,6 +11,7 @@ import subprocess
 from pathlib import Path
 
 from quipclipper.models import Cue, format_timestamp
+from quipclipper.clip import channels_for_layout, group_channels
 from quipclipper.subtitles import StreamInfo, best_track, find_sidecar, list_streams
 
 
@@ -69,7 +70,7 @@ def probe_keyframe_before(path: Path, target: float) -> float:
 
 
 def stream_dict(s: StreamInfo) -> dict:
-    return {
+    d = {
         "kind": s.kind,
         "index": s.type_index,
         "selector": s.selector,
@@ -82,6 +83,12 @@ def stream_dict(s: StreamInfo) -> dict:
         "hearing_impaired": s.hearing_impaired,
         "label": s.label(),
     }
+    # For multichannel audio, the selectable channel groups (front/center/lfe/
+    # side/back) so the stream selector can offer a channel subset (B17).
+    if s.kind == "audio":
+        chans = channels_for_layout(s.channel_layout, s.channels)
+        d["groups"] = [lbl for lbl, _ in group_channels(chans)] if chans else []
+    return d
 
 
 def item_info(path: Path) -> dict:

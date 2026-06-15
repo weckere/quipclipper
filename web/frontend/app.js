@@ -301,10 +301,10 @@ $("reindex-folder-btn").addEventListener("click", async () => {
 });
 
 // Force-reindex the current file's subtitles, then reload the script.
-$("reindex-item-btn").addEventListener("click", async () => {
+$("ss-reindex").addEventListener("click", async () => {
   if (!currentItem) return;
-  const btn = $("reindex-item-btn");
-  const status = $("reindex-item-status");
+  const btn = $("ss-reindex");
+  const status = $("ss-reindex-status");
   btn.classList.add("disabled");
   status.hidden = false;
   status.textContent = "Reindexing…";
@@ -468,8 +468,7 @@ async function openItem(path, name, opts) {
   const signal = itemListeners.signal;
   $("item-name").textContent = cleanItemName(path, name);
   $("item-filename").textContent = name;
-  $("subs-controls").textContent = "Loading…";
-  $("streams").innerHTML = "";
+  $("stream-selector").hidden = true;
   $("preview-note").textContent = "";
   $("search-input").value = searchQuery || "";
   $("search-results").innerHTML = "";
@@ -497,7 +496,7 @@ async function openItem(path, name, opts) {
   try {
     info = await getJSON("/api/items" + qp(path));
   } catch (err) {
-    $("subs-controls").innerHTML = `<span class="error">${escapeHtml(err.message)}</span>`;
+    $("preview-note").innerHTML = `<span class="error">${escapeHtml(err.message)}</span>`;
     return;
   }
 
@@ -541,6 +540,7 @@ async function openItem(path, name, opts) {
     firstLoad = false;
     let url = transcodeUrl;
     if (startTime > 0) url += `&start=${startTime}`;
+    url += streamParams();  // selected audio stream / channel subset (B17)
     player.src = url;
     player.load();
     player.addEventListener("loadedmetadata", function onMeta() {
@@ -566,6 +566,28 @@ async function openItem(path, name, opts) {
     } else {
       loadSubtitleTrack(path, getSelectedTrack(), 0);
     }
+  }
+
+  // Stream-selector query params (selected audio stream / channel subset, B17).
+  function streamParams() {
+    let p = "";
+    const a = getSelectedAudio();
+    if (a != null) p += `&audio=${a}`;
+    const c = getSelectedChan();
+    if (c && c !== "whole") p += `&chan=${encodeURIComponent(c)}`;
+    return p;
+  }
+
+  // Switching audio stream / channel subset requires the transcode path; reload
+  // the current segment at the same position with the new params.
+  function reloadStreams() {
+    const pos = isTranscoding ? (player.currentTime + transcodeOffset) : player.currentTime;
+    const wasPlaying = !player.paused;
+    isTranscoding = true;
+    seekBar.hidden = false;
+    seekHint.hidden = false;
+    seekDurLabel.textContent = formatTime(probedDuration);
+    loadTranscode(pos || 0, wasPlaying);
   }
 
   // The seekable window: the selected clip range (expanded by the before/after
@@ -692,8 +714,7 @@ async function openItem(path, name, opts) {
     loadTranscode(0);
   };
 
-  renderStreams(info.streams);
-  renderSubs(info, path);
+  renderStreamSelector(info, path, reloadStreams);
   loadBookmarks();
 
   if (searchQuery) doSearch();
@@ -718,16 +739,6 @@ async function openItem(path, name, opts) {
   if (bookmarkClip) useBookmarkForClip(bookmarkClip);
 }
 
-function renderStreams(streams) {
-  const ul = $("streams");
-  ul.innerHTML = "";
-  for (const s of streams) {
-    const li = document.createElement("li");
-    li.innerHTML = `<code>${escapeHtml(s.selector)}</code> ${escapeHtml(s.label.replace(s.selector, "").trim())}`;
-    ul.appendChild(li);
-  }
-}
-
 // Bitmap subtitle codecs the player can't display and we can't search.
 // Mirrors IMAGE_SUBTITLE_CODECS in the engine's subtitles.py.
 const IMAGE_SUBTITLE_CODECS = new Set([
@@ -736,75 +747,90 @@ const IMAGE_SUBTITLE_CODECS = new Set([
 ]);
 const isTextSubtitle = (t) => !IMAGE_SUBTITLE_CODECS.has((t.codec || "").toLowerCase());
 
-function renderSubs(info, path) {
-  const box = $("subs-controls");
-  box.innerHTML = "";
+const CHAN_LABELS = {
+  front: "Front (L/R)", center: "Center", lfe: "LFE",
+  side: "Surround (side)", back: "Surround (back)", surround: "Surround",
+};
+const chanLabel = (g) => CHAN_LABELS[g] || g;
+
+// The unified stream selector under the seek bar (B17): pick the subtitle
+// track, the audio stream, and — for multichannel audio — a channel subset.
+// `onStreamChange` (an openItem closure) reloads the transcode when the audio
+// stream or channel subset changes. Subtitle changes are handled inline.
+function renderStreamSelector(info, path, onStreamChange) {
+  const wrap = $("stream-selector");
+  const subSel = $("ss-subs"), audSel = $("ss-audio"), chanSel = $("ss-chan");
+
+  // --- Subtitles ---
   const allTracks = info.subtitle_tracks || [];
-  // Only text tracks can be shown in the player / searched. Image tracks
-  // (PGS/VOBSUB) are filtered out of the picker — selecting one only 500s.
-  const tracks = allTracks.filter(isTextSubtitle);
-  const imageOnlyCount = allTracks.length - tracks.length;
+  const tracks = allTracks.filter(isTextSubtitle);  // image tracks can't be shown
   const hasSubs = tracks.length > 0 || info.has_sidecar;
-  // Only offer reindex when there are usable (text) subtitles to reindex.
-  $("reindex-item-row").hidden = !hasSubs;
-  $("reindex-item-status").hidden = true;
+  subSel.innerHTML = "";
+  $("ss-subs-field").hidden = !hasSubs;
+  $("ss-reindex").hidden = !hasSubs;
+  $("ss-reindex-status").hidden = true;
 
-  if (!hasSubs) {
-    box.innerHTML = allTracks.length
-      ? `<span class="muted">No text subtitles — this file only has image-based subtitles (PGS/VOBSUB), which can't be displayed or searched.</span>`
-      : '<span class="muted">No subtitles found (sidecar or embedded).</span>';
-    return;
-  }
-
-  const note = document.createElement("p");
-  note.className = "muted";
-  const imgNote = imageOnlyCount
-    ? ` (${imageOnlyCount} image-based track${imageOnlyCount > 1 ? "s" : ""} hidden)`
-    : "";
-  note.textContent = info.has_sidecar
-    ? "Using the sidecar subtitle file."
-    : `${tracks.length} text subtitle track(s)${imgNote}.`;
-  box.appendChild(note);
-
-  // A picker when there are several text tracks; otherwise load the single one.
-  if (tracks.length > 1) {
-    // The backend is the single source of truth for auto-selection (text >
-    // SDH > forced > image). Requesting its chosen index means our request
-    // matches the cache key that pre-indexing warmed — no duplicate extraction.
-    // Fall back to the first *text* track if the backend picked an image one
-    // (or didn't report one).
+  let initialTrack;  // undefined => nothing to load
+  if (hasSubs) {
+    if (info.has_sidecar) {
+      const o = document.createElement("option");
+      o.value = ""; o.textContent = "Sidecar file"; subSel.appendChild(o);
+    }
+    // Backend is the source of truth for auto-selection; fall back to first text.
     const bestIsText = tracks.some((t) => t.index === info.best_track);
-    const bestIdx = bestIsText ? info.best_track : tracks[0].index;
-
-    const sel = document.createElement("select");
+    const bestIdx = bestIsText ? info.best_track : (tracks[0] && tracks[0].index);
     tracks.forEach((t) => {
-      const opt = document.createElement("option");
-      opt.value = t.index;
-      opt.textContent = `s:${t.index} ${t.codec}${t.language ? " " + t.language : ""}${t.title ? " — " + t.title : ""}`;
-      if (t.index === bestIdx) opt.selected = true;
-      sel.appendChild(opt);
+      const o = document.createElement("option");
+      o.value = t.index;
+      o.textContent = `${t.codec}${t.language ? " " + t.language : ""}${t.title ? " — " + t.title : ""}`;
+      subSel.appendChild(o);
     });
-    sel.onchange = () => {
-      // transcodeOffset is module-level and 0 when not transcoding.
-      loadSubtitleTrack(path, sel.value, transcodeOffset);
-      loadScript(path, sel.value);
-    };
-    box.appendChild(sel);
-    sel.value = bestIdx;
-    loadSubtitleTrack(path, bestIdx);
-    loadScript(path, bestIdx);
-  } else if (info.has_sidecar) {
-    // A sidecar wins (the backend resolves it before embedded tracks), so let
-    // it auto-resolve with no explicit track.
-    loadSubtitleTrack(path, null);
-    loadScript(path, null);
-  } else {
-    // Exactly one text track (possibly alongside hidden image tracks): request
-    // it explicitly so we don't accidentally resolve to an image track.
-    const only = tracks[0].index;
-    loadSubtitleTrack(path, only);
-    loadScript(path, only);
+    if (info.has_sidecar) { subSel.value = ""; initialTrack = null; }
+    else { subSel.value = String(bestIdx); initialTrack = bestIdx; }
   }
+  subSel.onchange = () => {
+    const t = getSelectedTrack();
+    loadSubtitleTrack(path, t, transcodeOffset || 0);
+    loadScript(path, t);
+  };
+  if (hasSubs) { loadSubtitleTrack(path, initialTrack); loadScript(path, initialTrack); }
+
+  // --- Audio streams ---
+  const audios = (info.streams || []).filter((s) => s.kind === "audio");
+  audSel.innerHTML = "";
+  audios.forEach((s) => {
+    const o = document.createElement("option");
+    o.value = s.index;
+    o.textContent =
+      `${s.codec}${s.channel_layout ? " " + s.channel_layout : ""}` +
+      `${s.language ? " " + s.language : ""}${s.title ? " — " + s.title : ""}`;
+    audSel.appendChild(o);
+  });
+  if (audios.length) audSel.value = String(audios[0].index);
+  // Audio-stream switching needs the transcode reload path (not iOS HLS).
+  $("ss-audio-field").hidden = audios.length <= 1 || IS_IOS;
+
+  // --- Channel subset (depends on the selected audio stream's groups) ---
+  function buildChan() {
+    const aidx = audSel.value;
+    const aud = audios.find((s) => String(s.index) === String(aidx)) || audios[0];
+    const groups = (aud && aud.groups) || [];
+    $("ss-chan-field").hidden = groups.length <= 1 || IS_IOS;  // multichannel only
+    chanSel.innerHTML = "";
+    const all = document.createElement("option");
+    all.value = "whole"; all.textContent = "All channels"; chanSel.appendChild(all);
+    groups.forEach((g) => {
+      const o = document.createElement("option");
+      o.value = g; o.textContent = chanLabel(g); chanSel.appendChild(o);
+    });
+    chanSel.value = "whole";
+  }
+  buildChan();
+  audSel.onchange = () => { buildChan(); onStreamChange(); };
+  chanSel.onchange = () => onStreamChange();
+
+  // Show the bar if there's anything to pick.
+  wrap.hidden = !hasSubs && $("ss-audio-field").hidden && $("ss-chan-field").hidden;
 }
 
 function loadSubtitleTrack(path, track, offset) {
@@ -825,9 +851,24 @@ function loadSubtitleTrack(path, track, offset) {
 
 // --- dialogue search --------------------------------------------------------
 
+// The selected subtitle track index from the stream selector; null = sidecar/
+// auto (empty option) or no subtitles, matching the backend's auto-resolve.
 function getSelectedTrack() {
-  const sel = $("subs-controls")?.querySelector("select");
-  return sel ? sel.value : null;
+  const sel = $("ss-subs");
+  if (!sel || $("ss-subs-field").hidden || sel.value === "") return null;
+  return sel.value;
+}
+
+// Selected audio stream index (null = default/single) and channel subset.
+function getSelectedAudio() {
+  const sel = $("ss-audio");
+  if (!sel || $("ss-audio-field").hidden || sel.value === "") return null;
+  return parseInt(sel.value);
+}
+function getSelectedChan() {
+  const sel = $("ss-chan");
+  if (!sel || $("ss-chan-field").hidden) return "whole";
+  return sel.value;
 }
 
 async function doSearch() {

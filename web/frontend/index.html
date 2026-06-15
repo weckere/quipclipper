@@ -111,6 +111,20 @@
           <label class="checkbox-label pb-loop-label" title="Keep the selection playing on a loop"><input id="pb-loop" type="checkbox" /> Loop playback</label>
           <span id="pb-range-note" class="muted pb-range-note" hidden></span>
         </div>
+        <div id="stream-selector" class="stream-selector" hidden>
+          <label class="ss-field" id="ss-subs-field">Subtitles
+            <select id="ss-subs"></select>
+          </label>
+          <label class="ss-field" id="ss-audio-field" hidden>Audio
+            <select id="ss-audio"></select>
+          </label>
+          <label class="ss-field" id="ss-chan-field" hidden>Channels
+            <select id="ss-chan"></select>
+          </label>
+          <span class="ss-spacer"></span>
+          <a id="ss-reindex" class="reindex-link" title="Clear and re-extract subtitles for this file (use if subtitles changed)" hidden>↻ Reindex subtitles</a>
+          <span id="ss-reindex-status" class="muted reindex-status" hidden></span>
+        </div>
         <p id="preview-note" class="muted"></p>
 
         <div class="panel marks-panel">
@@ -199,20 +213,6 @@
         <div class="panel" id="job-panel" hidden>
           <h3>Job status</h3>
           <div id="job-status"></div>
-        </div>
-
-        <div class="panel">
-          <h3>Subtitles</h3>
-          <div id="subs-controls"></div>
-          <div id="reindex-item-row" class="reindex-row" hidden>
-            <a id="reindex-item-btn" class="reindex-link" title="Clear and re-extract subtitles for this file (use if subtitles changed)">↻ Reindex subtitles</a>
-            <span id="reindex-item-status" class="muted reindex-status" hidden></span>
-          </div>
-        </div>
-
-        <div class="panel">
-          <h3>Streams</h3>
-          <ul id="streams" class="streams"></ul>
         </div>
       </section>
     </main>

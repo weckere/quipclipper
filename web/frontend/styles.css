@@ -117,8 +117,19 @@ select {
   border-radius: 6px; padding: 0.3rem 0.5rem; margin-top: 0.4rem;
 }
 
-.streams { list-style: none; margin: 0; padding: 0; }
-.streams li { padding: 0.2rem 0; font-size: 0.95rem; }
+/* Unified stream selector under the seek bar (B17). */
+.stream-selector[hidden] { display: none; }
+.stream-selector {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.9rem;
+  margin: 0.1rem 0 0.4rem;
+}
+.ss-field[hidden] { display: none; }
+.ss-field {
+  display: inline-flex; align-items: center; gap: 0.35rem;
+  font-size: 0.8rem; color: var(--muted);
+}
+.ss-field select { margin-top: 0; max-width: 22rem; font-size: 0.82rem; }
+.ss-spacer { flex: 1; }
 
 code {
   background: rgba(255, 255, 255, 0.07);

@@ -32,8 +32,11 @@ from quipclipper.clip import (
     ClipRange,
     compute_range,
     cut_clip,
+    group_category,
+    group_channels,
     output_extension,
     probe_audio_streams,
+    probe_channel_layout,
     split_audio_channels,
 )
 from quipclipper.models import Match, format_timestamp
@@ -141,6 +144,21 @@ def _render_clip_template(template: str, ctx: dict[str, str]) -> str:
             continue
         segments.append(seg)
     return "/".join(segments)
+
+
+def _live_pan_filter(p: Path, audio_index: int, chan: str) -> str | None:
+    """A `pan` filter that downmixes one channel group of an audio stream to
+    stereo/mono for live preview (B17). ``chan`` is a group label
+    (front/center/lfe/side/back) or category (surround). None if unresolved."""
+    channels = probe_channel_layout(p, audio_index)
+    if not channels:
+        return None
+    for label, chans in group_channels(channels):
+        if label == chan or group_category(label) == chan:
+            if len(chans) == 2:
+                return f"pan=stereo|c0={chans[0]}|c1={chans[1]}"
+            return f"pan=mono|c0={chans[0]}"
+    return None
 
 
 # Containers/extensions a browser can usually play in a <video> element. Used to
@@ -601,6 +619,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         path: str = Query(...),
         start: float | None = Query(None, ge=0),
         end: float | None = Query(None, ge=0),
+        audio: int | None = Query(None, ge=0),
+        chan: str | None = Query(None),
     ) -> StreamingResponse:
         """Remux with audio transcode to browser-friendly Matroska (desktop).
 
@@ -608,12 +628,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         Supports optional start/end params for segment-based seeking — ffmpeg's
         -ss is placed before -i for fast seek. (iOS uses the HLS path instead;
         Safari can't demux Matroska/Opus.)
+
+        ``audio`` selects a specific audio stream (a:N); ``chan`` plays only one
+        channel group (front/center/lfe/side/back/surround) via a ``pan`` filter
+        — both for the stream selector (B17).
         """
         p = _resolve_any(path)
         if not p.is_file():
             raise HTTPException(status_code=404, detail=f"Not found: {path}")
 
         duration = media.probe_duration(p)
+        # Which audio stream the pan (if any) operates on; default a:0.
+        aidx = audio if audio is not None else (0 if chan and chan != "whole" else None)
+        pan = _live_pan_filter(p, aidx or 0, chan) if chan and chan != "whole" else None
 
         cmd = ["ffmpeg"]
         if start is not None:
@@ -621,12 +648,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         cmd += ["-i", str(p)]
         if end is not None:
             cmd += ["-to", str(end - (start or 0))]
-        cmd += [
-            "-c:v", "copy",
-            "-c:a", "libopus",
-            "-b:a", "192k",
-            "-ac", "2",
-        ]
+        if aidx is not None:
+            cmd += ["-map", "0:v:0?", "-map", f"0:a:{aidx}"]
+        cmd += ["-c:v", "copy"]
+        if pan:
+            cmd += ["-filter:a", pan]
+        cmd += ["-c:a", "libopus", "-b:a", "192k"]
+        if not pan:
+            cmd += ["-ac", "2"]
         if duration:
             cmd += ["-metadata", f"DURATION={duration}"]
         cmd += ["-f", "matroska", "-"]

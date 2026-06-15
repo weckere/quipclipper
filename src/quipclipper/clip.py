@@ -131,19 +131,23 @@ def probe_audio_streams(source: str | Path) -> list[str]:
     return [s.get("codec_name", "") for s in _probe_streams(source, "a")]
 
 
+def channels_for_layout(layout: str | None, count: int | None = None) -> list[str] | None:
+    """Resolve channel names (FL, FR, FC, …) from an ffprobe channel-layout
+    string, falling back to the channel count. None if neither is recognised."""
+    if layout and layout.strip() in LAYOUT_CHANNELS:
+        return list(LAYOUT_CHANNELS[layout.strip()])
+    if isinstance(count, int) and count in COUNT_LAYOUT:
+        return list(LAYOUT_CHANNELS[COUNT_LAYOUT[count]])
+    return None
+
+
 def probe_channel_layout(source: str | Path, audio_index: int = 0) -> list[str] | None:
     """Return the channel names of one audio stream (e.g. FL, FR, FC, LFE, ...)."""
     streams = _probe_streams(source, f"a:{audio_index}", fields="channels,channel_layout")
     if not streams:
         return None
     info = streams[0]
-    layout = (info.get("channel_layout") or "").strip()
-    if layout in LAYOUT_CHANNELS:
-        return list(LAYOUT_CHANNELS[layout])
-    count = info.get("channels")
-    if isinstance(count, int) and count in COUNT_LAYOUT:
-        return list(LAYOUT_CHANNELS[COUNT_LAYOUT[count]])
-    return None
+    return channels_for_layout(info.get("channel_layout"), info.get("channels"))
 
 
 def _probe_streams(source: str | Path, selector: str, fields: str = "codec_name") -> list[dict]:
