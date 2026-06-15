@@ -637,6 +637,48 @@ def test_bookmark_delete_not_found(tmp_path: Path) -> None:
     assert resp.status_code == 404
 
 
+def test_bookmark_stores_and_patches_buffer(tmp_path: Path) -> None:
+    """A bookmark persists its before/after buffer (B16), defaulting to 0, and
+    PATCH can adjust it."""
+    video = tmp_path / "movie.mkv"
+    video.write_bytes(b"")
+    client = _client(tmp_path)
+    client.delete("/api/bookmarks")  # clean slate (state dir is shared in tests)
+
+    # No buffer given -> defaults to 0 (back-compat with old payloads).
+    bm = client.post("/api/bookmarks", json={
+        "path": str(video), "label": "a", "start": 10, "end": 12,
+    }).json()
+    assert bm["before"] == 0 and bm["after"] == 0
+
+    # With a buffer.
+    bm = client.post("/api/bookmarks", json={
+        "path": str(video), "label": "b", "start": 30, "end": 32,
+        "before": 1.5, "after": 2.0,
+    }).json()
+    assert bm["before"] == 1.5 and bm["after"] == 2.0
+
+    # PATCH adjusts only the given fields.
+    patched = client.patch(f"/api/bookmarks/{bm['id']}", json={"after": 3.5}).json()
+    assert patched["before"] == 1.5 and patched["after"] == 3.5
+
+    assert client.patch("/api/bookmarks/nope", json={"after": 1}).status_code == 404
+
+
+def test_bookmark_clear_all(tmp_path: Path) -> None:
+    video = tmp_path / "movie.mkv"
+    video.write_bytes(b"")
+    client = _client(tmp_path)
+    client.delete("/api/bookmarks")  # clean slate (state dir is shared in tests)
+    for i in range(3):
+        client.post("/api/bookmarks", json={
+            "path": str(video), "label": f"b{i}", "start": i, "end": i + 1,
+        })
+    resp = client.delete("/api/bookmarks")
+    assert resp.status_code == 200 and resp.json()["deleted"] == 3
+    assert client.get("/api/bookmarks").json()["bookmarks"] == []
+
+
 # --- clips library -----------------------------------------------------------
 
 

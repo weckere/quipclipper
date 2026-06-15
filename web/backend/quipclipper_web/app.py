@@ -163,6 +163,16 @@ class BookmarkCreate(BaseModel):
     label: str = ""
     start: float
     end: float
+    before: float = Field(0.0, ge=0, le=60)
+    after: float = Field(0.0, ge=0, le=60)
+
+
+class BookmarkUpdate(BaseModel):
+    """JSON body for PATCH /api/bookmarks/{id} — all fields optional."""
+
+    label: str | None = None
+    before: float | None = Field(None, ge=0, le=60)
+    after: float | None = Field(None, ge=0, le=60)
 
 
 class ClipRequest(BaseModel):
@@ -947,8 +957,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _resolve_any(req.path)  # path-safety check
         if not req.label:
             req.label = f"{format_timestamp(req.start)} – {format_timestamp(req.end)}"
-        bm = bookmarks.add(req.path, req.label, req.start, req.end)
+        bm = bookmarks.add(
+            req.path, req.label, req.start, req.end,
+            before=req.before, after=req.after,
+        )
         return bm.to_dict()
+
+    @app.patch("/api/bookmarks/{bookmark_id}")
+    def update_bookmark(bookmark_id: str, req: BookmarkUpdate) -> dict:
+        bm = bookmarks.update(
+            bookmark_id, label=req.label, before=req.before, after=req.after,
+        )
+        if bm is None:
+            raise HTTPException(status_code=404, detail="Bookmark not found.")
+        return bm.to_dict()
+
+    @app.delete("/api/bookmarks")
+    def clear_bookmarks() -> dict:
+        """Delete every bookmark (the bookmarks page 'Clear all')."""
+        return {"deleted": bookmarks.clear_all()}
 
     @app.delete("/api/bookmarks/{bookmark_id}")
     def delete_bookmark(bookmark_id: str) -> dict:

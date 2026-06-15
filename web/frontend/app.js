@@ -410,7 +410,7 @@ function updatePlaybackUI() {
   const note = $("pb-range-note");
   if (hasClipRange()) {
     note.hidden = false;
-    note.textContent = `▶ ${formatTime(clipStart())} – ${formatTime(clipEnd())}`;
+    note.textContent = `▶ ${formatTime(bufStart())} – ${formatTime(bufEnd())}`;
   } else {
     note.hidden = true;
   }
@@ -528,6 +528,7 @@ async function openItem(path, name, opts) {
   const seekTimeLabel = $("transcode-time");
   const seekDurLabel = $("transcode-duration");
   let probedDuration = info.duration || 0;
+  currentDuration = probedDuration;  // module-level, for the buffered preview range
 
   let firstLoad = true;
   // `autoplay`: undefined → play unless this is the very first load; or an
@@ -567,10 +568,11 @@ async function openItem(path, name, opts) {
     }
   }
 
-  // The seekable window: the selected clip range when one exists, else the
-  // whole file. The transcode seek bar and the range loop both use this.
+  // The seekable window: the selected clip range (expanded by the before/after
+  // buffer) when one exists, else the whole file. The transcode seek bar and the
+  // range loop both use this.
   function seekBounds() {
-    return hasClipRange() ? [clipStart(), clipEnd()] : [0, probedDuration];
+    return hasClipRange() ? [bufStart(), bufEnd()] : [0, probedDuration];
   }
 
   // Seek to an absolute time, optionally playing. Works for both the native
@@ -611,12 +613,12 @@ async function openItem(path, name, opts) {
   player.addEventListener("timeupdate", () => {
     if (settingSrc || !hasClipRange()) return;
     const absTime = player.currentTime + transcodeOffset;
-    if (absTime >= clipEnd() - 0.04) {
+    if (absTime >= bufEnd() - 0.04) {
       if ($("pb-loop").checked) {
-        seekAbs(clipStart(), true);  // keep playing — continuous loop
+        seekAbs(bufStart(), true);   // keep playing — continuous loop
       } else {
         player.pause();              // paused attribute flips synchronously
-        seekAbs(clipStart(), false); // return to start, paused, ready to replay
+        seekAbs(bufStart(), false);  // return to start, paused, ready to replay
         updatePlaybackUI();          // reflect the paused state on the icon now
       }
     }
@@ -641,13 +643,13 @@ async function openItem(path, name, opts) {
   // Expose range-aware playback controls to the module-level buttons. The
   // wiring (below, near boot) calls these; they close over this item's state.
   pb = {
-    restart() { seekAbs(hasClipRange() ? clipStart() : 0, true); },
+    restart() { seekAbs(hasClipRange() ? bufStart() : 0, true); },
     toggle() {
       if (!player.paused) { player.pause(); return; }
       if (hasClipRange()) {
         const t = player.currentTime + transcodeOffset;
-        if (t < clipStart() - 0.1 || t >= clipEnd() - 0.05) {
-          seekAbs(clipStart(), true);
+        if (t < bufStart() - 0.1 || t >= bufEnd() - 0.05) {
+          seekAbs(bufStart(), true);
           return;
         }
       }
@@ -916,6 +918,21 @@ function hasClipRange() {
   return clipFirst >= 0 && clipLast >= 0 && clipLast >= clipFirst;
 }
 
+// Buffer (before/after padding) — part of the selection (B16). The previewed /
+// looped range is the cue range expanded by the buffer (clamped to the file).
+let currentDuration = 0;  // set per item in openItem (probed duration)
+function clipPadBefore() { const v = parseFloat($("clip-before").value); return v > 0 ? v : 0; }
+function clipPadAfter() { const v = parseFloat($("clip-after").value); return v > 0 ? v : 0; }
+/** Buffered start of the previewed clip (cue start − before, clamped ≥ 0). */
+function bufStart() { const s = clipStart(); return s === null ? null : Math.max(0, s - clipPadBefore()); }
+/** Buffered end of the previewed clip (cue end + after, clamped ≤ duration). */
+function bufEnd() {
+  const e = clipEnd();
+  if (e === null) return null;
+  const padded = e + clipPadAfter();
+  return currentDuration ? Math.min(currentDuration, padded) : padded;
+}
+
 function setClipInAt(idx) {
   clipFirst = idx;
   if (clipLast < clipFirst) clipLast = clipFirst;
@@ -945,22 +962,26 @@ function updateClipUI() {
     // Hide clip panel only if it wasn't opened by a search result
     if (!selectedMatch) $("clip-panel").hidden = true;
   } else {
+    // Display the buffered range (cue range ± before/after) — what actually
+    // plays and gets clipped. The raw cue range still drives clipRangeStart/End
+    // (the server applies the padding once at cut time).
     const s = clipStart(), e = clipEnd();
-    const dur = e - s;
+    const bs = bufStart(), be = bufEnd();
+    const dur = be - bs;
     const nLines = clipLast - clipFirst + 1;
     el.innerHTML =
-      `<span class="range-times">${formatTime(s)} – ${formatTime(e)}</span> ` +
+      `<span class="range-times">${formatTime(bs)} – ${formatTime(be)}</span> ` +
       `<span>(${dur.toFixed(1)}s, ${nLines} line${nLines > 1 ? "s" : ""})</span>` +
       ` <button class="mark-clear-inline" title="Clear selection">×</button>`;
     el.querySelector(".mark-clear-inline").onclick = clearClip;
     $("mark-save").disabled = false;
-    // Auto-show clip panel and populate range
+    // Auto-show clip panel and populate range (raw cue range; server pads).
     selectedMatch = null;
     clipRangeStart = s;
     clipRangeEnd = e;
     $("clip-panel").hidden = false;
     $("clip-range-display").textContent =
-      `${formatTime(s)} – ${formatTime(e)} (${dur.toFixed(1)}s)`;
+      `${formatTime(bs)} – ${formatTime(be)} (${dur.toFixed(1)}s)`;
   }
   // Highlight script lines
   updateScriptHighlight();
@@ -1006,6 +1027,8 @@ async function saveBookmark() {
       label: label || defaultLabel,
       start: s,
       end: e,
+      before: clipPadBefore(),
+      after: clipPadAfter(),
     });
     loadBookmarks();
   } catch (err) {
@@ -1014,6 +1037,11 @@ async function saveBookmark() {
 }
 
 $("mark-save").onclick = saveBookmark;
+
+// Before/After buffer inputs (B16): re-render the previewed range live.
+["clip-before", "clip-after"].forEach((id) =>
+  $(id).addEventListener("input", () => { if (hasClipRange()) updateClipUI(); })
+);
 
 // --- subtitle script view ---------------------------------------------------
 
@@ -1173,19 +1201,22 @@ async function loadBookmarks() {
   for (const bm of data.bookmarks) {
     const li = document.createElement("li");
     li.className = "bookmark-item";
+    const [bs, be] = bmBuffered(bm);
     li.innerHTML =
       `<span class="bookmark-label">${escapeHtml(bm.label)}</span>` +
-      `<span class="bookmark-range">${formatTime(bm.start)} – ${formatTime(bm.end)}</span>` +
+      `<span class="bookmark-range">${formatTime(bs)} – ${formatTime(be)}</span>` +
+      bmBufferControls(bm) +
       `<button class="bookmark-use" title="Load as clip range">Clip</button>` +
       `<button class="bookmark-seek" title="Seek to start">▶</button>` +
       `<button class="bookmark-del" title="Delete">✕</button>`;
+    wireBmBufferControls(li, bm, () => loadBookmarks());
     li.querySelector(".bookmark-use").onclick = (e) => {
       e.stopPropagation();
       useBookmarkForClip(bm);
     };
     li.querySelector(".bookmark-seek").onclick = (e) => {
       e.stopPropagation();
-      seekTo(bm.start);
+      seekTo(bs);
     };
     li.querySelector(".bookmark-del").onclick = (e) => {
       e.stopPropagation();
@@ -1195,13 +1226,56 @@ async function loadBookmarks() {
   }
 }
 
+/** Buffered [start, end] of a bookmark (cue range ± its saved before/after). */
+function bmBuffered(bm) {
+  return [Math.max(0, bm.start - (bm.before || 0)), bm.end + (bm.after || 0)];
+}
+
+/** Inline before/after editors for a bookmark row (PATCH on change). */
+function bmBufferControls(bm) {
+  return (
+    `<span class="bm-buffer" title="Padding around the bookmark (seconds)">` +
+    `<label>−<input class="bm-before" type="number" min="0" max="60" step="0.5" value="${bm.before || 0}" /></label>` +
+    `<label>+<input class="bm-after" type="number" min="0" max="60" step="0.5" value="${bm.after || 0}" /></label>` +
+    `</span>`
+  );
+}
+
+function wireBmBufferControls(li, bm, onSaved) {
+  const before = li.querySelector(".bm-before");
+  const after = li.querySelector(".bm-after");
+  const save = async (e) => {
+    e.stopPropagation();
+    const b = parseFloat(before.value) || 0;
+    const a = parseFloat(after.value) || 0;
+    try {
+      await fetch(`/api/bookmarks/${bm.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ before: b, after: a }),
+      });
+      bm.before = b; bm.after = a;
+      if (onSaved) onSaved();
+    } catch {}
+  };
+  before.onchange = save;
+  after.onchange = save;
+  before.onclick = (e) => e.stopPropagation();
+  after.onclick = (e) => e.stopPropagation();
+}
+
 function useBookmarkForClip(bm) {
   selectedMatch = null;
   clipRangeStart = bm.start;
   clipRangeEnd = bm.end;
+  // Restore the bookmark's saved buffer into the inputs (B16).
+  $("clip-before").value = bm.before ?? 0;
+  $("clip-after").value = bm.after ?? 0;
   $("clip-panel").hidden = false;
+  const bs = Math.max(0, bm.start - (bm.before || 0));
+  const be = bm.end + (bm.after || 0);
   $("clip-range-display").textContent =
-    `"${bm.label}" — ${formatTime(bm.start)} – ${formatTime(bm.end)}`;
+    `"${bm.label}" — ${formatTime(bs)} – ${formatTime(be)}`;
 }
 
 async function deleteBookmark(id) {
@@ -1525,17 +1599,22 @@ async function browseBookmarks() {
     for (const bm of bookmarks) {
       const li = document.createElement("li");
       li.className = "bm-browser-item";
+      const [bs, be] = bmBuffered(bm);
       li.innerHTML =
         `<input type="checkbox" class="entry-select bm-select" title="Select for batch export" />` +
         `<span class="bookmark-label clickable" title="Open the video with this bookmark loaded for clipping">${escapeHtml(bm.label)}</span>` +
-        `<span class="bookmark-range">${formatTime(bm.start)} – ${formatTime(bm.end)}</span>` +
+        `<span class="bookmark-range">${formatTime(bs)} – ${formatTime(be)}</span>` +
+        bmBufferControls(bm) +
         `<button class="bookmark-seek" title="Open & seek">▶</button>` +
         `<button class="bookmark-del" title="Delete">✕</button>`;
       const cb = li.querySelector(".bm-select");
       cb.dataset.path = bm.path;
       cb.dataset.start = bm.start;
       cb.dataset.end = bm.end;
+      cb.dataset.before = bm.before || 0;
+      cb.dataset.after = bm.after || 0;
       cb.onclick = (e) => { e.stopPropagation(); updateBatchState("bm"); };
+      wireBmBufferControls(li, bm, () => browseBookmarks());
       // Clicking the bookmark name opens the video with this bookmark preloaded
       // for clipping.
       li.querySelector(".bookmark-label").onclick = (e) => {
@@ -1701,16 +1780,25 @@ $("clips-batch-export").onclick = () => {
 
 $("bm-batch-export").onclick = () => {
   const opts = batchOptions("bm");
-  const before = parseFloat($("bm-batch-before").value) || 0;
-  const after = parseFloat($("bm-batch-after").value) || 0;
+  // Each bookmark carries its own saved buffer (B16).
   runBatchExport("bm", (cb) => ({
     path: cb.dataset.path,
     start: parseFloat(cb.dataset.start),
     end: parseFloat(cb.dataset.end),
-    before,
-    after,
+    before: parseFloat(cb.dataset.before) || 0,
+    after: parseFloat(cb.dataset.after) || 0,
     ...opts,
   }));
+};
+
+$("bm-clear-all").onclick = async () => {
+  if (!confirm("Delete ALL bookmarks? This cannot be undone.")) return;
+  try {
+    await fetch("/api/bookmarks", { method: "DELETE" });
+    browseBookmarks();
+  } catch (err) {
+    alert("Failed to clear bookmarks: " + err.message);
+  }
 };
 
 // --- boot -------------------------------------------------------------------

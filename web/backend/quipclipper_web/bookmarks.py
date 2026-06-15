@@ -30,6 +30,10 @@ class Bookmark:
     label: str
     start: float
     end: float
+    # Padding applied around the cue range at preview/clip time. Part of the
+    # selection (B16); defaults keep older bookmarks (which lack these) valid.
+    before: float = 0.0
+    after: float = 0.0
     created: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     def to_dict(self) -> dict:
@@ -78,7 +82,10 @@ class BookmarkStore:
         )
         return bookmarks[:limit]
 
-    def add(self, path: str, label: str, start: float, end: float) -> Bookmark:
+    def add(
+        self, path: str, label: str, start: float, end: float,
+        before: float = 0.0, after: float = 0.0,
+    ) -> Bookmark:
         """Create a new bookmark and persist it."""
         bm = Bookmark(
             id=uuid.uuid4().hex[:12],
@@ -86,12 +93,31 @@ class BookmarkStore:
             label=label,
             start=start,
             end=end,
+            before=before,
+            after=after,
         )
         with self._lock:
             data = self._read()
             data.append(bm.to_dict())
             self._write(data)
         return bm
+
+    # Fields a client may change on an existing bookmark.
+    _UPDATABLE = ("label", "before", "after", "start", "end")
+
+    def update(self, bookmark_id: str, **changes) -> Bookmark | None:
+        """Apply changes to a bookmark and persist. Returns the updated bookmark,
+        or None if not found. Only ``_UPDATABLE`` fields with non-None values
+        are applied."""
+        changes = {k: v for k, v in changes.items() if k in self._UPDATABLE and v is not None}
+        with self._lock:
+            data = self._read()
+            for d in data:
+                if d.get("id") == bookmark_id:
+                    d.update(changes)
+                    self._write(data)
+                    return Bookmark(**d)
+        return None
 
     def delete(self, bookmark_id: str) -> bool:
         """Remove a bookmark by id. Returns True if found and deleted."""
@@ -102,6 +128,14 @@ class BookmarkStore:
                 return False
             self._write(filtered)
             return True
+
+    def clear_all(self) -> int:
+        """Delete every bookmark. Returns the number removed."""
+        with self._lock:
+            data = self._read()
+            n = len(data)
+            self._write([])
+            return n
 
     def get(self, bookmark_id: str) -> Bookmark | None:
         """Look up a single bookmark by id."""
