@@ -390,9 +390,10 @@ function renderBreadcrumb(path) {
 
 let currentItem = null;
 let transcodeOffset = 0;  // ffmpeg -ss offset for current transcode segment
-// Bumped on every openItem; per-item timeupdate handlers bail when stale so a
-// previous item's loop can't drive the new player (they accumulate on #player).
-let itemGen = 0;
+// Per-item listeners on the persistent #player / seek slider are scoped to this
+// controller; openItem aborts the previous one so they're removed, not just
+// neutralized — a previous item's loop can't drive the new player.
+let itemListeners = null;
 // Range-aware playback controls, rebuilt per item by openItem (see there).
 let pb = null;
 
@@ -455,7 +456,10 @@ async function openItem(path, name, opts) {
   const bookmarkClip = pendingBookmarkClip;
   pendingBookmarkClip = null;
   currentItem = { path, name };
-  const myGen = ++itemGen;
+  // Remove the previous item's player/slider listeners before wiring this one's.
+  if (itemListeners) itemListeners.abort();
+  itemListeners = new AbortController();
+  const signal = itemListeners.signal;
   $("item-name").textContent = cleanItemName(path, name);
   $("item-filename").textContent = name;
   $("subs-controls").textContent = "Loading…";
@@ -573,7 +577,6 @@ async function openItem(path, name, opts) {
   // Custom seek bar for transcoded streams (native scrubber can't seek
   // on a non-seekable streaming source). Restricted to the selected range.
   function updateSeekBar() {
-    if (myGen !== itemGen) return;  // stale handler from a previous item
     if (!isTranscoding || !probedDuration) return;
     const [lo, hi] = seekBounds();
     const span = Math.max(0.001, hi - lo);
@@ -590,12 +593,12 @@ async function openItem(path, name, opts) {
     updateSeekBar();
   }
 
-  player.addEventListener("timeupdate", updateSeekBar);
+  player.addEventListener("timeupdate", updateSeekBar, { signal });
 
   // Range loop: when playback reaches the end of the selected range, pause and
   // return to the start so the clip can be previewed again.
   player.addEventListener("timeupdate", () => {
-    if (myGen !== itemGen || settingSrc || !hasClipRange()) return;
+    if (settingSrc || !hasClipRange()) return;
     const absTime = player.currentTime + transcodeOffset;
     if (absTime >= clipEnd() - 0.04) {
       if ($("pb-loop").checked) {
@@ -606,25 +609,23 @@ async function openItem(path, name, opts) {
         updatePlaybackUI();          // reflect the paused state on the icon now
       }
     }
-  });
+  }, { signal });
 
   seekSlider.addEventListener("input", () => {
-    if (myGen !== itemGen) return;  // stale listener from a previous item
     const [lo, hi] = seekBounds();
     seekTimeLabel.textContent = formatTime(lo + (seekSlider.value / 100) * (hi - lo));
-  });
+  }, { signal });
 
   seekSlider.addEventListener("change", () => {
-    if (myGen !== itemGen || !isTranscoding) return;
+    if (!isTranscoding) return;
     const [lo, hi] = seekBounds();
     loadTranscode(lo + (seekSlider.value / 100) * (hi - lo));
-  });
+  }, { signal });
 
   // Custom event for programmatic seeks (search results, bookmarks, etc.)
   player.addEventListener("transcode-seek", (e) => {
-    if (myGen !== itemGen) return;  // a previous item's loader must not fire
     loadTranscode(e.detail);
-  });
+  }, { signal });
 
   // Expose range-aware playback controls to the module-level buttons. The
   // wiring (below, near boot) calls these; they close over this item's state.
@@ -681,8 +682,8 @@ async function openItem(path, name, opts) {
   if (searchQuery) doSearch();
   if (seekTarget != null && !needsTranscode) {
     player.addEventListener("loadedmetadata", () => {
-      if (myGen === itemGen) player.currentTime = seekTarget;
-    }, { once: true });
+      player.currentTime = seekTarget;
+    }, { once: true, signal });
   }
 
   // When opening a clip from the clips library, pre-select the whole file
