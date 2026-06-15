@@ -13,9 +13,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import re
 import shutil
+import time
 from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -589,20 +591,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         path: str = Query(...),
         start: float | None = Query(None, ge=0),
         end: float | None = Query(None, ge=0),
-        fmt: str = Query("webm", pattern="^(webm|mp4)$"),
     ) -> StreamingResponse:
-        """Remux with audio transcode for in-browser playback.
+        """Remux with audio transcode to browser-friendly Matroska (desktop).
 
-        Video is stream-copied (no re-encode); audio is transcoded so the
-        browser can play it. Two container/codec profiles:
-
-        - ``fmt=webm`` (default, desktop): Matroska + Opus, served ``video/webm``.
-        - ``fmt=mp4`` (iOS): fragmented MP4 + AAC, served ``video/mp4`` — iOS
-          Safari has no Matroska/Opus support but plays H.264/HEVC + AAC in a
-          fragmented MP4. Video is still copied (iOS decodes both H.264 and HEVC).
-
-        Optional start/end params drive segment-based seeking — ffmpeg's ``-ss``
-        is placed before ``-i`` for a fast seek.
+        Video is stream-copied (no re-encode), audio is transcoded to Opus.
+        Supports optional start/end params for segment-based seeking — ffmpeg's
+        -ss is placed before -i for fast seek. (iOS uses the HLS path instead;
+        Safari can't demux Matroska/Opus.)
         """
         p = _resolve_any(path)
         if not p.is_file():
@@ -616,24 +611,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         cmd += ["-i", str(p)]
         if end is not None:
             cmd += ["-to", str(end - (start or 0))]
-        cmd += ["-c:v", "copy"]
-        if fmt == "mp4":
-            # iOS: AAC audio in a fragmented MP4 (streamable, no moov-at-end).
-            cmd += [
-                "-c:a", "aac",
-                "-b:a", "192k",
-                "-ac", "2",
-                "-movflags", "+frag_keyframe+empty_moov+default_base_moof",
-                "-f", "mp4",
-            ]
-            media_type = "video/mp4"
-        else:
-            cmd += ["-c:a", "libopus", "-b:a", "192k", "-ac", "2"]
-            if duration:
-                cmd += ["-metadata", f"DURATION={duration}"]
-            cmd += ["-f", "matroska"]
-            media_type = "video/webm"
-        cmd += ["-"]
+        cmd += [
+            "-c:v", "copy",
+            "-c:a", "libopus",
+            "-b:a", "192k",
+            "-ac", "2",
+        ]
+        if duration:
+            cmd += ["-metadata", f"DURATION={duration}"]
+        cmd += ["-f", "matroska", "-"]
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -655,9 +641,100 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         return StreamingResponse(
             _stream(),
-            media_type=media_type,
+            media_type="video/webm",
             headers={"Accept-Ranges": "none"},
         )
+
+    # --- HLS (iOS playback) ---------------------------------------------------
+    # iOS Safari can't play progressive Matroska/Opus, raw .mkv, or a chunked
+    # MP4 (it needs HTTP range support a live ffmpeg pipe can't give). HLS is its
+    # native streaming format: ffmpeg segments the file (video stream-copied,
+    # audio -> AAC) as fMP4 into a temp dir under the state dir; we serve the
+    # playlist + segments and iOS handles seeking natively.
+    _hls_root = settings.state_dir / "hls"
+    _hls_procs: dict[str, asyncio.subprocess.Process] = {}
+    _HLS_FILE_RE = re.compile(r"^(init\.mp4|seg\d+\.m4s)$")
+
+    def _hls_token(p: Path) -> str:
+        return hashlib.sha256(str(p).encode()).hexdigest()[:16]
+
+    def _prune_hls(max_age: float = 2 * 3600) -> None:
+        if not _hls_root.is_dir():
+            return
+        now = time.time()
+        for d in _hls_root.iterdir():
+            with contextlib.suppress(OSError):
+                if d.is_dir() and now - d.stat().st_mtime > max_age:
+                    shutil.rmtree(d, ignore_errors=True)
+
+    @app.get("/api/media/hls")
+    async def hls_playlist(path: str = Query(...)) -> Response:
+        """Start (or reuse) an on-the-fly HLS transcode; return its playlist.
+
+        Segment/init URIs are rewritten to absolute API paths so the playlist's
+        query-string URL doesn't break relative resolution. The player reloads
+        this URL to pick up new segments; ffmpeg (video copy + AAC) races ahead
+        of real time and appends EXT-X-ENDLIST when done, enabling full seeking.
+        """
+        p = _resolve_any(path)
+        if not p.is_file():
+            raise HTTPException(status_code=404, detail=f"Not found: {path}")
+        token = _hls_token(p)
+        d = _hls_root / token
+        playlist = d / "index.m3u8"
+
+        proc = _hls_procs.get(token)
+        running = proc is not None and proc.returncode is None
+        if not playlist.exists() and not running:
+            _prune_hls()
+            shutil.rmtree(d, ignore_errors=True)
+            d.mkdir(parents=True, exist_ok=True)
+            cmd = [
+                "ffmpeg", "-nostdin", "-i", str(p),
+                "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ac", "2",
+                "-f", "hls", "-hls_time", "6", "-hls_list_size", "0",
+                "-hls_playlist_type", "event", "-hls_flags", "independent_segments",
+                "-hls_segment_type", "fmp4", "-hls_fmp4_init_filename", "init.mp4",
+                "-hls_segment_filename", str(d / "seg%05d.m4s"),
+                str(playlist),
+            ]
+            _hls_procs[token] = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+            )
+
+        for _ in range(150):  # wait up to ~15s for the playlist + first segment
+            if playlist.exists() and any(d.glob("seg*.m4s")):
+                break
+            await asyncio.sleep(0.1)
+        if not playlist.exists():
+            raise HTTPException(status_code=504, detail="HLS transcode did not start in time.")
+
+        base = f"/api/media/hls/{token}/"
+        lines = []
+        for line in playlist.read_text(encoding="utf-8").splitlines():
+            if line.startswith("#EXT-X-MAP:"):
+                line = line.replace('URI="init.mp4"', f'URI="{base}init.mp4"')
+            elif _HLS_FILE_RE.match(line):
+                line = base + line
+            lines.append(line)
+        return Response(
+            content="\n".join(lines) + "\n",
+            media_type="application/vnd.apple.mpegurl",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.get("/api/media/hls/{token}/{name}")
+    async def hls_file(token: str, name: str) -> FileResponse:
+        if not re.fullmatch(r"[0-9a-f]{16}", token) or not _HLS_FILE_RE.match(name):
+            raise HTTPException(status_code=404, detail="Not found")
+        f = _hls_root / token / name
+        for _ in range(50):  # a segment may be requested just before ffmpeg flushes it
+            if f.is_file():
+                break
+            await asyncio.sleep(0.1)
+        if not f.is_file():
+            raise HTTPException(status_code=404, detail="Segment not ready")
+        return FileResponse(f, media_type="video/mp4")
 
     # --- clipping & jobs -------------------------------------------------------
 

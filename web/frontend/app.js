@@ -504,19 +504,20 @@ async function openItem(path, name, opts) {
   const player = $("player");
   player.style.aspectRatio = "";  // back to the default box until this item's dims load
   const mediaUrl = "/api/media" + qp(path);
-  // iOS Safari can't play Matroska/Opus or raw .mkv; route it through the
-  // fragmented-MP4 + AAC transcode (video stream-copied — iOS plays H.264/HEVC).
-  const transcodeUrl = "/api/media/transcode" + qp(path) + (IS_IOS ? "&fmt=mp4" : "");
+  const transcodeUrl = "/api/media/transcode" + qp(path);
+  // iOS Safari can't play Matroska/Opus, raw .mkv, or a chunked progressive MP4
+  // (it needs HTTP range support). It plays HLS natively, so iOS uses the HLS
+  // endpoint with the browser's own controls/seeking instead of our transcode.
+  const hlsUrl = "/api/media/hls" + qp(path);
   player.querySelectorAll("track").forEach((t) => t.remove());
 
   // Check if the primary audio codec is browser-playable; if not, use
   // the transcode endpoint from the start (browsers silently ignore
   // unsupported audio codecs like AC3/DTS/FLAC without firing onerror).
-  // On iOS we always transcode, even for browser-native audio, to escape the
-  // Matroska container that iOS Safari can't demux.
+  // iOS never uses the desktop transcode path — it goes through HLS below.
   const BROWSER_AUDIO = new Set(["aac", "mp3", "opus", "vorbis"]);
   const primaryAudio = info.streams.find((s) => s.kind === "audio");
-  const needsTranscode = IS_IOS || (primaryAudio && !BROWSER_AUDIO.has(primaryAudio.codec));
+  const needsTranscode = !IS_IOS && primaryAudio && !BROWSER_AUDIO.has(primaryAudio.codec);
 
   // Transcode seek state
   let isTranscoding = false;
@@ -665,14 +666,18 @@ async function openItem(path, name, opts) {
     seekSlider.max = 100;
     loadTranscode(seekTarget || 0);
   } else {
+    // Native playback: raw source on desktop, HLS on iOS (Safari seeks both
+    // natively, so the custom transcode seek bar stays hidden).
     seekBar.hidden = true;
     seekHint.hidden = true;
     transcodeOffset = 0;
-    player.src = mediaUrl;
+    player.src = IS_IOS ? hlsUrl : mediaUrl;
   }
 
   player.onerror = () => {
-    if (isTranscoding || player.src.includes("/api/media/transcode")) {
+    // On iOS (HLS) there's no further fallback; the desktop transcode path is
+    // unplayable there, so just surface the message.
+    if (IS_IOS || isTranscoding || player.src.includes("/api/media/transcode")) {
       $("preview-note").textContent =
         "Preview can't play this file in the browser. " +
         "Dialogue search still works — try the search box below.";
