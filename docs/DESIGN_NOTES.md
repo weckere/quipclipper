@@ -203,6 +203,13 @@ layouts (`5.1`, `5.1(side)`, `7.1`, etc.), with a fall back keyed on channel cou
 A two-stage seek (fast seek to just before the start, then an accurate trim) makes
 the split sample-accurate, which is affordable because splitting re-encodes anyway.
 
+**Output labels:** groups are named `front`, `center`, `lfe`, and the surround
+pair(s). A 5.1 mix has a single surround pair (whether the layout calls it `side`
+or `back`), so that one file is labelled `surround`; a 7.1 mix has both, kept
+distinct as `side` and `back`. The web app's channel-group filter buckets all of
+these into `center | front | surround | lfe` (`group_category`), so a user can
+export, say, only centre + surround.
+
 **Three distinct audio output modes.** It is worth being precise about how the
 surround handling relates to the other audio paths, since they are easy to
 conflate:

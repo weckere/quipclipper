@@ -320,8 +320,10 @@ per-channel files, use `--split-channels`.
 
 ### Splitting surround sound
 
-`--split-channels` writes one file per channel group — a stereo file for each L/R
-pair (front, side, back) plus a mono file for the centre and LFE channels:
+`--split-channels` writes one file per channel group — a stereo file for the front
+pair and the surround pair(s), plus a mono file for the centre and LFE channels.
+A 5.1 source has a single surround pair, written as `surround`; a 7.1 source has
+two, kept distinct as `side` and `back`:
 
 ```bash
 quipclipper clip "get to the chopper" -v movie.mkv --split-channels                  # WAV (pcm_s24le)

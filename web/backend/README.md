@@ -36,13 +36,13 @@ Environment variables (mirrored 1:1 by the NixOS module options):
 | `QC_MEDIA_ROOTS` | (empty) | `:`-separated whitelist of media dirs |
 | `QC_CLIPS_DIR` | `./clips` | where finished clips are written |
 | `QC_CLIPS_URL_PREFIX` | (empty) | URL prefix where a front proxy serves the clips dir directly; empty = download via the backend API |
-| `QC_STATE_DIR` | `./state` | bookmark store, etc. |
-| `QC_SAVE_TO_LIBRARY` | `false` | also file clips into the clips library |
+| `QC_STATE_DIR` | `./state` | bookmark store, subtitle cache, etc. |
 | `QC_BIND` | `127.0.0.1` | backend listen address |
 | `QC_PORT` | `8000` | backend listen port |
 | `QC_MAX_CONCURRENT_JOBS` | `2` | ffmpeg job cap |
-| `QC_PASSWORD` | (unset) | presence enables the auth gate (handled by nginx) |
-| `QC_JELLYFIN_URL` | (unset) | optional metadata enrichment |
+| `QC_PASSWORD` | (unset) | reserved for the planned password gate (phase 6) — **not yet enforced**; only reported via `/api/config` |
+| `QC_JELLYFIN_URL` | (unset) | optional Jellyfin metadata enrichment |
+| `QC_JELLYFIN_API_KEY` | (unset) | Jellyfin API key (required if the URL is set) |
 
 ## Test
 

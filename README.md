@@ -191,11 +191,13 @@ instead of one mixed file, use `--split-channels` below.
 
 ### Splitting surround sound into separate files
 
-`--split-channels` writes one file per channel group — a stereo file for each
-L/R pair (front, side, back) plus a mono file for the centre and LFE channels:
+`--split-channels` writes one file per channel group — a stereo file for the
+front pair and the surround pair(s), plus a mono file for the centre and LFE
+channels. A 5.1 source has a single surround pair, written as `surround`; a 7.1
+source has two, kept distinct as `side` and `back`:
 
 ```bash
-# 5.1 -> front.wav (stereo) + side/back.wav + center.wav + lfe.wav  (lossless PCM)
+# 5.1 -> front.wav (stereo) + surround.wav + center.wav + lfe.wav  (lossless PCM)
 quipclipper clip "get to the chopper" -v movie.mkv --split-channels
 
 # lossless FLAC instead of WAV
@@ -353,9 +355,14 @@ dialogue, cut clips, and manage bookmarks — all from a browser.
   codec (AC3, DTS, FLAC, etc.), the player automatically falls back to an
   on-the-fly remux that copies the video and transcodes audio to Opus, with a
   custom seek bar and keyframe-aligned subtitles.
-- **Dialogue in filenames** — clips made from a dialogue search include the
-  matched text in the filename
-  (e.g. `Movie_00-01-23_Ill_be_back.mkv`).
+- **Custom clip naming** — clips are filed into a per-source subfolder, named
+  from a configurable template (default `{source}/{timestamp}_{cue}_{title}`,
+  remembered per browser). Tokens cover the timestamp, matched dialogue,
+  cleaned title, source filename, year, season/episode, duration and date, and
+  `/` makes subfolders. With the default, `{source}` is the source file's stem
+  (the subfolder) and `{title}` is the cleaned parent-folder/series name, so a
+  dialogue-search clip lands at e.g.
+  `The.Sandlot.1993.1080p/00-27-58_Youre_killing_me_Smalls_The_Sandlot_1993.mkv`.
 - **Jellyfin enrichment** — optionally pull poster art and metadata from a
   Jellyfin server on your network.
 
@@ -414,7 +421,6 @@ All settings are environment variables on the `app` service:
 | `QC_CLIPS_DIR` | `/clips` | Where finished clips are saved |
 | `QC_CLIPS_URL_PREFIX` | *(empty)* | URL prefix where a front proxy (nginx) serves the clips dir directly; empty = download via the backend API |
 | `QC_STATE_DIR` | `/state` | Bookmarks, subtitle cache, and other persistent state |
-| `QC_SAVE_TO_LIBRARY` | `false` | Default for the "save to library" toggle (files clips into per-source subfolders) |
 | `QC_MAX_CONCURRENT_JOBS` | `2` | Clip-job thread-pool size |
 | `QC_PASSWORD` | *(none)* | Reserved for the planned password gate (phase 6) — **not yet enforced**; only reported via `/api/config` |
 | `QC_JELLYFIN_URL` | *(none)* | Jellyfin server URL for metadata enrichment |
