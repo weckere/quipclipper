@@ -33,12 +33,6 @@ in
       description = "Directory where finished clips are written and served from.";
     };
 
-    saveToLibrary = lib.mkOption {
-      type = lib.types.bool;
-      default = false;
-      description = "Also file finished clips into the clips library.";
-    };
-
     listenAddress = lib.mkOption {
       type = lib.types.str;
       default = "127.0.0.1";
@@ -127,7 +121,6 @@ in
         # nginx serves the clips dir directly at /clips/ (see virtualHost below)
         QC_CLIPS_URL_PREFIX = "/clips";
         QC_STATE_DIR = "/var/lib/quipclipper-web/state";
-        QC_SAVE_TO_LIBRARY = lib.boolToString cfg.saveToLibrary;
         QC_BIND = cfg.listenAddress;
         QC_PORT = toString cfg.listenPort;
         QC_MAX_CONCURRENT_JOBS = toString cfg.maxConcurrentJobs;

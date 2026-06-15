@@ -23,13 +23,11 @@ def test_health_ok() -> None:
 def test_config_reflects_env() -> None:
     env = {
         "QC_MEDIA_ROOTS": "/srv/movies:/srv/tv",
-        "QC_SAVE_TO_LIBRARY": "true",
         "QC_PASSWORD": "hunter2",
         "QC_JELLYFIN_URL": "http://localhost:8096",
     }
     body = _client(env).get("/api/config").json()
     assert body["media_roots"] == ["/srv/movies", "/srv/tv"]
-    assert body["save_to_library"] is True
     assert body["auth_required"] is True
     assert body["jellyfin_enabled"] is True
 
@@ -37,6 +35,5 @@ def test_config_reflects_env() -> None:
 def test_config_defaults() -> None:
     body = _client().get("/api/config").json()
     assert body["media_roots"] == []
-    assert body["save_to_library"] is False
     assert body["auth_required"] is False
     assert body["jellyfin_enabled"] is False

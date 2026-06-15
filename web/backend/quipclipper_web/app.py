@@ -237,7 +237,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """Non-secret configuration the frontend needs to render itself."""
         return {
             "media_roots": [str(p) for p in settings.media_roots],
-            "save_to_library": settings.save_to_library,
             "auth_required": settings.auth_required,
             "jellyfin_enabled": settings.jellyfin_url is not None,
             "max_concurrent_jobs": settings.max_concurrent_jobs,

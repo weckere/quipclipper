@@ -14,12 +14,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-def _bool(raw: str | None, default: bool = False) -> bool:
-    if raw is None:
-        return default
-    return raw.strip().lower() in ("1", "true", "yes", "on")
-
-
 def _roots(raw: str | None) -> list[Path]:
     if not raw:
         return []
@@ -34,7 +28,6 @@ class Settings:
     clips_dir: Path
     clips_url_prefix: str
     state_dir: Path
-    save_to_library: bool
     listen_address: str
     listen_port: int
     max_concurrent_jobs: int
@@ -52,7 +45,6 @@ class Settings:
             # directly. Empty = downloads go through the backend API.
             clips_url_prefix=e.get("QC_CLIPS_URL_PREFIX", "").rstrip("/"),
             state_dir=Path(e.get("QC_STATE_DIR", "./state")).expanduser(),
-            save_to_library=_bool(e.get("QC_SAVE_TO_LIBRARY")),
             listen_address=e.get("QC_BIND", "127.0.0.1"),
             listen_port=int(e.get("QC_PORT", "8000")),
             max_concurrent_jobs=int(e.get("QC_MAX_CONCURRENT_JOBS", "2")),
