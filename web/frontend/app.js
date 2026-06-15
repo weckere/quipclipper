@@ -1233,7 +1233,6 @@ async function makeClip() {
     after: parseFloat($("clip-after").value) || 0,
     backend: "auto",
     embed_subs: !audioOnly && $("clip-embed-subs").checked,
-    save_to_library: $("clip-save-lib") ? $("clip-save-lib").checked : false,
     split_channels: splitCh,
     split_format: fmt === "lossless" ? "wav" : fmt,
     // Which channel groups to export when splitting (checked boxes).
@@ -1579,7 +1578,6 @@ function batchOptions(prefix) {
     lossless: fmt === "lossless",
     backend: "auto",
     embed_subs: !(audioOnly || split),
-    save_to_library: false,
     split_channels: split,
     split_format: fmt === "lossless" ? "wav" : fmt,
     // Full-mix lossless WAV/FLAC (keeps 5.1) when audio + not splitting.
@@ -1686,12 +1684,9 @@ async function loadStatus() {
   } catch (err) {
     $("status").textContent = `backend unreachable: ${err.message}`;
   }
-  // Load config for save_to_library and jellyfin_enabled flags
+  // Load config (jellyfin_enabled, etc.)
   try {
     appConfig = await getJSON("/api/config");
-    // Always show the "Save to library" checkbox — it can be toggled per-clip
-    $("clip-save-lib-label").hidden = false;
-    $("clip-save-lib").checked = appConfig.save_to_library || false;
   } catch {}
   // Load media roots so the breadcrumb can offer clickable path segments.
   try {

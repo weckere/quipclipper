@@ -478,9 +478,19 @@ def split_audio_channels(
     else:
         groups = group_channels(channels, include_lfe=include_lfe)
 
-    base = Path(out) if out else source.with_suffix("")
+    # `out`, when given, is the exact filename prefix (caller already encoded the
+    # timestamp etc.); we only append the channel label. When auto-naming, build
+    # the prefix from the source stem + timestamp slug.
+    if out:
+        base = Path(out)
+    else:
+        base = source.with_name(f"{source.stem}_{_timestamp_slug(rng.start)}")
     base.parent.mkdir(parents=True, exist_ok=True)
-    slug = _timestamp_slug(rng.start)
+
+    # 5.1 has a single surround pair (side OR back) — label that file "surround".
+    # 7.1 has both side and back pairs, so keep them distinct.
+    surround_labels = [lbl for lbl, _ in groups if lbl in ("side", "back")]
+    rename = {surround_labels[0]: "surround"} if len(surround_labels) == 1 else {}
 
     # Accurate two-stage seek: fast-seek to just before the start, then trim
     # precisely. Splitting re-encodes anyway, so we can be sample-exact.
@@ -488,7 +498,7 @@ def split_audio_channels(
 
     written: list[Path] = []
     for label, chans in groups:
-        target = Path(f"{base}_{slug}_{label}.{ext}")
+        target = Path(f"{base}_{rename.get(label, label)}.{ext}")
         pan = (
             f"pan=stereo|c0={chans[0]}|c1={chans[1]}"
             if len(chans) == 2

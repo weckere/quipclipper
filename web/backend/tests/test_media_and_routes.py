@@ -14,9 +14,22 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from quipclipper.models import Cue
-from quipclipper_web.app import create_app
+from quipclipper_web.app import _clean_title, _slugify, create_app
 from quipclipper_web.config import Settings
 from quipclipper_web.media import cues_to_vtt
+
+
+def test_clean_title_uses_parent_folder():
+    assert _clean_title(Path("/movies/The Sandlot (1993)/file.mkv")) == "The Sandlot (1993)"
+
+
+def test_clean_title_steps_past_season_folder():
+    assert _clean_title(Path("/shows/Star Trek - TNG/Season 4/ep.mkv")) == "Star Trek - TNG"
+
+
+def test_slugify_drops_punctuation_keeps_apostrophe():
+    assert _slugify("The Sandlot (1993)") == "The_Sandlot_1993"
+    assert _slugify("You're killing me, Smalls!") == "You're_killing_me_Smalls"
 
 SRT = """1
 00:00:01,000 --> 00:00:03,000
@@ -307,72 +320,96 @@ def test_clip_whole_file_fails_cleanly_without_duration(tmp_path: Path) -> None:
     assert "duration" in resp.json()["detail"].lower()
 
 
-def test_clip_save_to_library_can_be_overridden_off(tmp_path: Path) -> None:
-    """With the global default ON, an explicit save_to_library=false must win
-    (the clip lands in the clips root, not a per-source subfolder) — R2."""
+def _clips_client(tmp_path: Path):
+    """Client + (media, clips) dirs for clip-output tests."""
     media = tmp_path / "media"
     media.mkdir()
-    video = media / "movie.mkv"
-    video.write_bytes(b"")
-    (media / "movie.srt").write_text(SRT, encoding="utf-8")
     clips = tmp_path / "clips"
     clips.mkdir()
-    fake_out = clips / "out.mkv"
-    fake_out.write_bytes(b"x")
-
     client = TestClient(create_app(Settings.from_env({
         "QC_MEDIA_ROOTS": str(media),
         "QC_CLIPS_DIR": str(clips),
         "QC_STATE_DIR": str(tmp_path / "state"),
-        "QC_SAVE_TO_LIBRARY": "true",  # global default ON
     })))
-
-    with patch("quipclipper_web.app.cut_clip", return_value=fake_out) as mock_cut:
-        resp = client.post("/api/clip", json={
-            "path": str(video), "query": "be back", "kind": "video",
-            "lossless": True, "backend": "ffmpeg",
-            "save_to_library": False,  # override the default OFF
-        })
-        assert resp.status_code == 200
-        job = _wait_done(client, resp.json()["job_id"])
-        assert job["status"] == "done"
-        out_arg = Path(mock_cut.call_args.kwargs["out"])
-    # Override respected: no per-source subfolder.
-    assert out_arg.parent == clips
+    return client, media, clips
 
 
-def test_clip_save_to_library_default_applies_when_unset(tmp_path: Path) -> None:
-    """When the request omits save_to_library, the server default ON files the
-    clip into a per-source subfolder — R2 (None falls back to the default)."""
-    media = tmp_path / "media"
-    media.mkdir()
+def test_clip_search_filed_in_subfolder_with_template(tmp_path: Path) -> None:
+    """A dialogue-search clip lands in clips/<source stem>/ named
+    {timestamp}_{cue text}_{clean name}.ext (clean name = parent folder) — B5/B7."""
+    client, media, clips = _clips_client(tmp_path)
     video = media / "movie.mkv"
     video.write_bytes(b"")
     (media / "movie.srt").write_text(SRT, encoding="utf-8")
-    clips = tmp_path / "clips"
-    clips.mkdir()
     fake_out = clips / "movie" / "out.mkv"
     fake_out.parent.mkdir(parents=True)
     fake_out.write_bytes(b"x")
 
-    client = TestClient(create_app(Settings.from_env({
-        "QC_MEDIA_ROOTS": str(media),
-        "QC_CLIPS_DIR": str(clips),
-        "QC_STATE_DIR": str(tmp_path / "state"),
-        "QC_SAVE_TO_LIBRARY": "true",
-    })))
-
     with patch("quipclipper_web.app.cut_clip", return_value=fake_out) as mock_cut:
         resp = client.post("/api/clip", json={
             "path": str(video), "query": "be back", "kind": "video",
-            "lossless": True, "backend": "ffmpeg",
-            # save_to_library omitted → None → use the server default (ON)
+            "lossless": True, "backend": "ffmpeg", "before": 0, "after": 0,
         })
         assert resp.status_code == 200
-        job = _wait_done(client, resp.json()["job_id"])
-        assert job["status"] == "done"
-        out_arg = Path(mock_cut.call_args.kwargs["out"])
-    assert out_arg.parent == clips / "movie"
+        assert _wait_done(client, resp.json()["job_id"])["status"] == "done"
+        out = Path(mock_cut.call_args.kwargs["out"])
+    assert out.parent == clips / "movie"        # always a per-source subfolder
+    assert out.name.startswith("00-00-01_")     # whole-second timestamp (cue at 1.0)
+    assert out.name.endswith("_media.mkv")      # clean name (parent folder) last
+    assert "back" in out.name.lower()           # cue text included
+
+
+def test_clip_range_filename_drops_absent_cue_text(tmp_path: Path) -> None:
+    """A range clip has no cue text, so the filename is just {timestamp}_{clean}."""
+    client, media, clips = _clips_client(tmp_path)
+    video = media / "movie.mkv"
+    video.write_bytes(b"")
+    fake_out = clips / "movie" / "out.mka"
+    fake_out.parent.mkdir(parents=True)
+    fake_out.write_bytes(b"x")
+
+    with patch("quipclipper_web.app.cut_clip", return_value=fake_out) as mock_cut:
+        resp = client.post("/api/clip", json={
+            "path": str(video), "start": 65, "end": 70, "before": 0, "after": 0,
+            "kind": "audio", "lossless": True, "backend": "ffmpeg",
+        })
+        assert resp.status_code == 200
+        assert _wait_done(client, resp.json()["job_id"])["status"] == "done"
+        out = Path(mock_cut.call_args.kwargs["out"])
+    assert out.parent == clips / "movie"
+    assert out.name == "00-01-05_media.mka"
+
+
+def test_clip_split_passes_extensionless_base(tmp_path: Path) -> None:
+    """For split-channels, the splitter gets the base WITHOUT extension so it can
+    append '_<channel>.<ext>' (no doubled slug / mid-name extension)."""
+    client, media, clips = _clips_client(tmp_path)
+    video = media / "movie.mkv"
+    video.write_bytes(b"")
+    out = clips / "movie" / "00-01-05_media_front.wav"
+    out.parent.mkdir(parents=True)
+    out.write_bytes(b"x")
+    with patch("quipclipper_web.app.split_audio_channels", return_value=[out]) as mock_split:
+        resp = client.post("/api/clip", json={
+            "path": str(video), "start": 65, "end": 70, "before": 0, "after": 0,
+            "kind": "audio", "split_channels": True, "split_format": "wav",
+        })
+        assert resp.status_code == 200
+        assert _wait_done(client, resp.json()["job_id"])["status"] == "done"
+        base = Path(mock_split.call_args.kwargs["out"])
+    assert base == clips / "movie" / "00-01-05_media"   # no extension, no channel yet
+
+
+def test_clips_library_hides_empty_subfolders(tmp_path: Path) -> None:
+    """Subfolders with no clips (e.g. left after deleting their clips) are
+    hidden from the library — B8."""
+    client, media, clips = _clips_client(tmp_path)
+    (clips / "empty").mkdir()                     # no clips -> hidden
+    full = clips / "full"
+    full.mkdir()
+    (full / "clip.mka").write_bytes(b"x")         # has a clip -> shown
+    data = client.get("/api/clips").json()
+    assert data["folders"] == ["full"]
 
 
 def test_clips_browse_rejects_sibling_dir_traversal(tmp_path: Path) -> None:

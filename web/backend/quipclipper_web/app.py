@@ -65,6 +65,31 @@ def _is_video_file(p: Path) -> bool:
     )
 
 
+# Output extensions a finished clip can have (for listing the clips library).
+_CLIP_EXTS = (".mkv", ".mka", ".mp4", ".m4v", ".webm", ".gif", ".wav", ".flac", ".ogg", ".mp3")
+
+_SEASON_RE = re.compile(r"(?i)^(season\s*\d+|specials|extras)$")
+
+
+def _clean_title(path: Path) -> str:
+    """A clean display/clip title: the containing folder's name, stepping up past
+    a ``Season N``/``Specials`` folder to the series name. Falls back to the stem.
+    Mirrors the frontend's ``cleanItemName``."""
+    parent = path.parent
+    name = parent.name
+    if _SEASON_RE.match(name) and parent.parent != parent:
+        name = parent.parent.name
+    return name or path.stem
+
+
+def _slugify(text: str) -> str:
+    """Filesystem-safe slug: keep word chars/spaces/apostrophes/hyphens, collapse
+    whitespace, join with underscores."""
+    text = re.sub(r"[^\w\s'\-]", "", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text.replace(" ", "_")
+
+
 # Containers/extensions a browser can usually play in a <video> element. Used to
 # hint the UI; the engine still works on anything ffmpeg can read.
 _BROWSER_MIME = {
@@ -111,9 +136,6 @@ class ClipRequest(BaseModel):
     chapters: bool = True
     remux_first: bool = False
     embed_subs: bool = True
-    # Save to library (organize into subfolder by source).
-    # None = use the server default; an explicit bool overrides it per-clip.
-    save_to_library: bool | None = None
     # Channel split
     split_channels: bool = False
     split_format: str = Field("wav", pattern="^(wav|flac|original)$")
@@ -654,18 +676,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             except Exception:
                 pass  # non-fatal: skip subtitle embedding
 
-        # Build the output path inside clips_dir.
-        # When save_to_library is enabled, organize clips into a subfolder named
-        # after the source file. The request value wins when set (so the UI can
-        # turn it off even when the server default is on); otherwise the default.
-        do_save_lib = (
-            req.save_to_library if req.save_to_library is not None
-            else settings.save_to_library
-        )
-        if do_save_lib:
-            clips_dir = settings.clips_dir / video.stem
-        else:
-            clips_dir = settings.clips_dir
+        # Clips are always filed into a per-source subfolder named after the
+        # source file (its stem).
+        clips_dir = settings.clips_dir / video.stem
         clips_dir.mkdir(parents=True, exist_ok=True)
 
         # Determine extension.
@@ -684,23 +697,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ext = output_extension(req.kind, lossless=req.lossless, audio_codecs=codecs)
 
         from quipclipper.clip import _timestamp_slug
-        # Build a filename: source_timestamp[_dialogue].ext
-        # When the clip comes from a dialogue search, append a sanitised
-        # snippet so the file is self-describing.
-        ts_slug = _timestamp_slug(rng.start)
-        if req.query:
-            text = m.text[:80].strip()
-            # Keep only alphanumeric, spaces, hyphens, apostrophes; collapse whitespace
-            text_slug = re.sub(r"[^\w\s'\-]", "", text)
-            text_slug = re.sub(r"\s+", " ", text_slug).strip()
-            text_slug = text_slug.replace(" ", "_")
-            if text_slug:
-                out_name = f"{video.stem}_{ts_slug}_{text_slug}.{ext}"
-            else:
-                out_name = f"{video.stem}_{ts_slug}.{ext}"
-        else:
-            out_name = f"{video.stem}_{ts_slug}.{ext}"
-        out_path = clips_dir / out_name
+        # Filename template: {timestamp}_{cue text}_{clean name}. Cue text is
+        # present only for dialogue-search clips; absent fields are dropped.
+        # Split-channel clips get a per-channel suffix appended by the splitter.
+        fields = [_timestamp_slug(rng.start)]
+        if req.query and m.text:
+            cue = _slugify(m.text[:80])
+            if cue:
+                fields.append(cue)
+        clean = _slugify(_clean_title(video))
+        if clean:
+            fields.append(clean)
+        base_name = "_".join(fields)
+        # Split passes the base (no extension) so it can append "_<channel>.<ext>".
+        out_path = clips_dir / (base_name if req.split_channels else f"{base_name}.{ext}")
 
         # Capture all values for the closure.
         _video = video
@@ -819,8 +829,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         else:
             target = base
 
+        def _has_clip(d: Path) -> bool:
+            try:
+                return any(
+                    f.is_file() and f.suffix.lower() in _CLIP_EXTS for f in d.iterdir()
+                )
+            except OSError:
+                return False
+
+        # Only show subfolders that actually contain clips — empty folders left
+        # behind after deleting their clips shouldn't clutter the library.
         folders = sorted(
-            [d.name for d in target.iterdir() if d.is_dir()],
+            d.name for d in target.iterdir() if d.is_dir() and _has_clip(d)
         )
         # When a front proxy serves the clips dir directly (QC_CLIPS_URL_PREFIX,
         # e.g. "/clips"), point downloads there so large files bypass uvicorn.
@@ -836,7 +856,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "stream_url": f"/api/clips/stream/{quote(((folder + '/') if folder else '') + f.name)}",
                 }
                 for f in target.iterdir()
-                if f.is_file() and f.suffix.lower() in (".mkv", ".mka", ".mp4", ".m4v", ".webm", ".gif", ".wav", ".flac", ".ogg", ".mp3")
+                if f.is_file() and f.suffix.lower() in _CLIP_EXTS
             ],
             key=lambda c: c["name"],
         )
