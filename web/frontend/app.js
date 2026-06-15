@@ -403,7 +403,7 @@ function updatePlaybackUI() {
   const note = $("pb-range-note");
   if (hasClipRange()) {
     note.hidden = false;
-    note.textContent = `▶ plays the selection (${formatTime(clipStart())} – ${formatTime(clipEnd())}), looping`;
+    note.textContent = `▶ ${formatTime(clipStart())} – ${formatTime(clipEnd())}`;
   } else {
     note.hidden = true;
   }
@@ -598,9 +598,13 @@ async function openItem(path, name, opts) {
     if (myGen !== itemGen || settingSrc || !hasClipRange()) return;
     const absTime = player.currentTime + transcodeOffset;
     if (absTime >= clipEnd() - 0.04) {
-      player.pause();              // paused attribute flips synchronously
-      seekAbs(clipStart(), false); // return to start (transcode reload stays paused)
-      updatePlaybackUI();          // reflect the paused state on the icon now
+      if ($("pb-loop").checked) {
+        seekAbs(clipStart(), true);  // keep playing — continuous loop
+      } else {
+        player.pause();              // paused attribute flips synchronously
+        seekAbs(clipStart(), false); // return to start, paused, ready to replay
+        updatePlaybackUI();          // reflect the paused state on the icon now
+      }
     }
   });
 
@@ -1225,8 +1229,8 @@ async function makeClip() {
     path: currentItem.path,
     kind: audioOnly ? "audio" : "video",
     lossless: fmt === "lossless",
-    before: parseFloat($("clip-before").value) || 2,
-    after: parseFloat($("clip-after").value) || 2,
+    before: parseFloat($("clip-before").value) || 0,
+    after: parseFloat($("clip-after").value) || 0,
     backend: "auto",
     embed_subs: !audioOnly && $("clip-embed-subs").checked,
     save_to_library: $("clip-save-lib") ? $("clip-save-lib").checked : false,
@@ -1471,12 +1475,9 @@ async function browseBookmarks() {
     const header = document.createElement("li");
     header.className = "bm-browser-group";
     header.innerHTML =
-      `<span class="bm-browser-file clickable" title="Open this video">${escapeHtml(fileName)}</span>` +
-      `<button class="bm-browser-open" title="Open file">Open ▶</button>`;
-    // Clicking the filename opens the source video (same as "Open ▶").
-    const openParent = () => openItem(path, fileName);
-    header.querySelector(".bm-browser-file").onclick = openParent;
-    header.querySelector(".bm-browser-open").onclick = openParent;
+      `<span class="bm-browser-file clickable" title="Open this video">${escapeHtml(fileName)}</span>`;
+    // Clicking the filename opens the source video.
+    header.querySelector(".bm-browser-file").onclick = () => openItem(path, fileName);
     list.appendChild(header);
 
     for (const bm of bookmarks) {
@@ -1486,7 +1487,6 @@ async function browseBookmarks() {
         `<input type="checkbox" class="entry-select bm-select" title="Select for batch export" />` +
         `<span class="bookmark-label clickable" title="Open the video with this bookmark loaded for clipping">${escapeHtml(bm.label)}</span>` +
         `<span class="bookmark-range">${formatTime(bm.start)} – ${formatTime(bm.end)}</span>` +
-        `<button class="bookmark-use" title="Open & clip">Clip</button>` +
         `<button class="bookmark-seek" title="Open & seek">▶</button>` +
         `<button class="bookmark-del" title="Delete">✕</button>`;
       const cb = li.querySelector(".bm-select");
@@ -1495,14 +1495,12 @@ async function browseBookmarks() {
       cb.dataset.end = bm.end;
       cb.onclick = (e) => { e.stopPropagation(); updateBatchState("bm"); };
       // Clicking the bookmark name opens the video with this bookmark preloaded
-      // for clipping (same as the "Clip" button).
-      const openForClip = (e) => {
+      // for clipping.
+      li.querySelector(".bookmark-label").onclick = (e) => {
         e.stopPropagation();
         pendingBookmarkClip = bm;  // set before openItem — consumed in its prologue
         openItem(path, fileName, { seekTo: bm.start });
       };
-      li.querySelector(".bookmark-label").onclick = openForClip;
-      li.querySelector(".bookmark-use").onclick = openForClip;
       li.querySelector(".bookmark-seek").onclick = (e) => {
         e.stopPropagation();
         openItem(path, fileName, { seekTo: bm.start });

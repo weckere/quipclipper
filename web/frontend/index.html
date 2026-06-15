@@ -113,6 +113,7 @@
         <div id="playback-controls" class="playback-controls">
           <button id="pb-restart" class="pb-btn" title="Restart from the beginning of the selection">⏮</button>
           <button id="pb-playpause" class="pb-btn" title="Play / pause">▶</button>
+          <label class="checkbox-label pb-loop-label" title="Keep the selection playing on a loop"><input id="pb-loop" type="checkbox" /> Loop playback</label>
           <span id="pb-range-note" class="muted pb-range-note" hidden></span>
         </div>
         <p id="preview-note" class="muted"></p>
@@ -154,10 +155,10 @@
           <div class="clip-range" id="clip-range-display"></div>
           <div class="clip-options">
             <label>Before (s)
-              <input id="clip-before" type="number" value="2" min="0" max="60" step="0.5" />
+              <input id="clip-before" type="number" value="0" min="0" max="60" step="0.5" />
             </label>
             <label>After (s)
-              <input id="clip-after" type="number" value="2" min="0" max="60" step="0.5" />
+              <input id="clip-after" type="number" value="0" min="0" max="60" step="0.5" />
             </label>
             <div class="clip-audio-group">
               <label class="checkbox-label">

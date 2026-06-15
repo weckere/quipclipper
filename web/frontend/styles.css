@@ -107,6 +107,7 @@ video {
 }
 .pb-btn:hover { background: var(--hover); border-color: var(--accent); }
 .pb-range-note { font-size: 0.8rem; }
+.pb-loop-label { font-size: 0.82rem; color: var(--muted); }
 
 .panel { background: var(--card); border-radius: 12px; padding: 0.75rem 1.1rem; margin-top: 1rem; }
 .panel h3 { margin: 0.25rem 0 0.5rem; font-size: 0.95rem; color: var(--accent); }
