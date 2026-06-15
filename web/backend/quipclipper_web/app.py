@@ -589,12 +589,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         path: str = Query(...),
         start: float | None = Query(None, ge=0),
         end: float | None = Query(None, ge=0),
+        fmt: str = Query("webm", pattern="^(webm|mp4)$"),
     ) -> StreamingResponse:
-        """Remux with audio transcode to browser-friendly Matroska.
+        """Remux with audio transcode for in-browser playback.
 
-        Video is stream-copied (no re-encode), audio is transcoded to Opus.
-        Supports optional start/end params for segment-based seeking — ffmpeg's
-        -ss is placed before -i for fast seek.
+        Video is stream-copied (no re-encode); audio is transcoded so the
+        browser can play it. Two container/codec profiles:
+
+        - ``fmt=webm`` (default, desktop): Matroska + Opus, served ``video/webm``.
+        - ``fmt=mp4`` (iOS): fragmented MP4 + AAC, served ``video/mp4`` — iOS
+          Safari has no Matroska/Opus support but plays H.264/HEVC + AAC in a
+          fragmented MP4. Video is still copied (iOS decodes both H.264 and HEVC).
+
+        Optional start/end params drive segment-based seeking — ffmpeg's ``-ss``
+        is placed before ``-i`` for a fast seek.
         """
         p = _resolve_any(path)
         if not p.is_file():
@@ -608,15 +616,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         cmd += ["-i", str(p)]
         if end is not None:
             cmd += ["-to", str(end - (start or 0))]
-        cmd += [
-            "-c:v", "copy",
-            "-c:a", "libopus",
-            "-b:a", "192k",
-            "-ac", "2",
-        ]
-        if duration:
-            cmd += ["-metadata", f"DURATION={duration}"]
-        cmd += ["-f", "matroska", "-"]
+        cmd += ["-c:v", "copy"]
+        if fmt == "mp4":
+            # iOS: AAC audio in a fragmented MP4 (streamable, no moov-at-end).
+            cmd += [
+                "-c:a", "aac",
+                "-b:a", "192k",
+                "-ac", "2",
+                "-movflags", "+frag_keyframe+empty_moov+default_base_moof",
+                "-f", "mp4",
+            ]
+            media_type = "video/mp4"
+        else:
+            cmd += ["-c:a", "libopus", "-b:a", "192k", "-ac", "2"]
+            if duration:
+                cmd += ["-metadata", f"DURATION={duration}"]
+            cmd += ["-f", "matroska"]
+            media_type = "video/webm"
+        cmd += ["-"]
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -638,7 +655,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         return StreamingResponse(
             _stream(),
-            media_type="video/webm",
+            media_type=media_type,
             headers={"Accept-Ranges": "none"},
         )
 

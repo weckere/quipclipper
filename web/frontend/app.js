@@ -388,6 +388,12 @@ function renderBreadcrumb(path) {
 
 // --- item / inspection view -------------------------------------------------
 
+// iOS/iPadOS detection. iPadOS 13+ reports as "MacIntel" but is touch-capable,
+// so check maxTouchPoints too. iOS Safari can't play Matroska/Opus or raw .mkv,
+// so these devices use the fragmented-MP4 transcode path (see openItem).
+const IS_IOS = /iP(hone|ad|od)/.test(navigator.userAgent) ||
+  (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+
 let currentItem = null;
 let transcodeOffset = 0;  // ffmpeg -ss offset for current transcode segment
 // Per-item listeners on the persistent #player / seek slider are scoped to this
@@ -498,15 +504,19 @@ async function openItem(path, name, opts) {
   const player = $("player");
   player.style.aspectRatio = "";  // back to the default box until this item's dims load
   const mediaUrl = "/api/media" + qp(path);
-  const transcodeUrl = "/api/media/transcode" + qp(path);
+  // iOS Safari can't play Matroska/Opus or raw .mkv; route it through the
+  // fragmented-MP4 + AAC transcode (video stream-copied — iOS plays H.264/HEVC).
+  const transcodeUrl = "/api/media/transcode" + qp(path) + (IS_IOS ? "&fmt=mp4" : "");
   player.querySelectorAll("track").forEach((t) => t.remove());
 
   // Check if the primary audio codec is browser-playable; if not, use
   // the transcode endpoint from the start (browsers silently ignore
   // unsupported audio codecs like AC3/DTS/FLAC without firing onerror).
+  // On iOS we always transcode, even for browser-native audio, to escape the
+  // Matroska container that iOS Safari can't demux.
   const BROWSER_AUDIO = new Set(["aac", "mp3", "opus", "vorbis"]);
   const primaryAudio = info.streams.find((s) => s.kind === "audio");
-  const needsTranscode = primaryAudio && !BROWSER_AUDIO.has(primaryAudio.codec);
+  const needsTranscode = IS_IOS || (primaryAudio && !BROWSER_AUDIO.has(primaryAudio.codec));
 
   // Transcode seek state
   let isTranscoding = false;
