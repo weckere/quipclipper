@@ -34,6 +34,11 @@ class Bookmark:
     # selection (B16); defaults keep older bookmarks (which lack these) valid.
     before: float = 0.0
     after: float = 0.0
+    # Stream selection saved with the bookmark (B17): subtitle track index,
+    # audio stream index, and channel subset (whole/front/center/lfe/side/back).
+    sub_track: int | None = None
+    audio_track: int | None = None
+    channel_subset: str | None = None
     created: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     def to_dict(self) -> dict:
@@ -85,6 +90,8 @@ class BookmarkStore:
     def add(
         self, path: str, label: str, start: float, end: float,
         before: float = 0.0, after: float = 0.0,
+        sub_track: int | None = None, audio_track: int | None = None,
+        channel_subset: str | None = None,
     ) -> Bookmark:
         """Create a new bookmark and persist it."""
         bm = Bookmark(
@@ -95,6 +102,9 @@ class BookmarkStore:
             end=end,
             before=before,
             after=after,
+            sub_track=sub_track,
+            audio_track=audio_track,
+            channel_subset=channel_subset,
         )
         with self._lock:
             data = self._read()

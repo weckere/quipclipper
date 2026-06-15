@@ -473,7 +473,7 @@ async function openItem(path, name, opts) {
   $("search-input").value = searchQuery || "";
   $("search-results").innerHTML = "";
   $("search-empty").hidden = true;
-  $("clip-panel").hidden = true;
+  showClipTarget(false);
   $("job-panel").hidden = true;
   selectedMatch = null;
   lastSearchQuery = null;
@@ -730,7 +730,7 @@ async function openItem(path, name, opts) {
     selectedMatch = null;
     clipRangeStart = 0;
     clipRangeEnd = info.duration;
-    $("clip-panel").hidden = false;
+    showClipTarget(true);
     $("clip-range-display").textContent =
       `Entire file — 0:00.0 – ${formatTime(info.duration)} (${info.duration.toFixed(1)}s)`;
   }
@@ -1000,8 +1000,8 @@ function updateClipUI() {
   if (!hasClipRange()) {
     el.innerHTML = "";
     $("mark-save").disabled = true;
-    // Hide clip panel only if it wasn't opened by a search result
-    if (!selectedMatch) $("clip-panel").hidden = true;
+    // Hide the clip target only if it wasn't opened by a search result
+    if (!selectedMatch) showClipTarget(false);
   } else {
     // Display the buffered range (cue range ± before/after) — what actually
     // plays and gets clipped. The raw cue range still drives clipRangeStart/End
@@ -1020,7 +1020,7 @@ function updateClipUI() {
     selectedMatch = null;
     clipRangeStart = s;
     clipRangeEnd = e;
-    $("clip-panel").hidden = false;
+    showClipTarget(true);
     $("clip-range-display").textContent =
       `${formatTime(bs)} – ${formatTime(be)} (${dur.toFixed(1)}s)`;
   }
@@ -1063,6 +1063,7 @@ async function saveBookmark() {
   const label = prompt("Bookmark label:", defaultLabel);
   if (label === null) return;
   try {
+    const t = getSelectedTrack();
     await postJSON("/api/bookmarks", {
       path: currentItem.path,
       label: label || defaultLabel,
@@ -1070,6 +1071,9 @@ async function saveBookmark() {
       end: e,
       before: clipPadBefore(),
       after: clipPadAfter(),
+      sub_track: t != null ? parseInt(t) : null,
+      audio_track: getSelectedAudio(),
+      channel_subset: getSelectedChan(),
     });
     loadBookmarks();
   } catch (err) {
@@ -1312,11 +1316,27 @@ function useBookmarkForClip(bm) {
   // Restore the bookmark's saved buffer into the inputs (B16).
   $("clip-before").value = bm.before ?? 0;
   $("clip-after").value = bm.after ?? 0;
-  $("clip-panel").hidden = false;
+  // Restore the saved stream selection (B17), best-effort (only if the option
+  // exists for this file).
+  restoreSelect("ss-subs", bm.sub_track);
+  restoreSelect("ss-audio", bm.audio_track);
+  restoreSelect("ss-chan", bm.channel_subset);
+  showClipTarget(true);
   const bs = Math.max(0, bm.start - (bm.before || 0));
   const be = bm.end + (bm.after || 0);
   $("clip-range-display").textContent =
     `"${bm.label}" — ${formatTime(bs)} – ${formatTime(be)}`;
+}
+
+/** Set a <select> to a saved value if that option exists, firing change. */
+function restoreSelect(id, value) {
+  if (value == null) return;
+  const sel = $(id);
+  const v = String(value);
+  if (sel && [...sel.options].some((o) => o.value === v) && sel.value !== v) {
+    sel.value = v;
+    sel.dispatchEvent(new Event("change"));
+  }
 }
 
 async function deleteBookmark(id) {
@@ -1339,10 +1359,24 @@ function selectMatchForClip(m) {
   selectedMatch = m;
   clipRangeStart = null;
   clipRangeEnd = null;
-  $("clip-panel").hidden = false;
+  showClipTarget(true);
   $("clip-range-display").textContent =
     `"${m.text.length > 80 ? m.text.slice(0, 77) + "…" : m.text}" — ${m.start_ts} – ${m.end_ts}`;
 }
+
+// Enable the Make-clip button + reveal the name/template row when there's a
+// clip target (cue selection, search match, or loaded bookmark); hide otherwise.
+function showClipTarget(on) {
+  $("clip-btn").disabled = !on;
+  $("clip-name-row").hidden = !on;
+}
+
+// Map a channel-group label from the stream selector to a clip split category.
+const CHAN_CATEGORY = {
+  front: "front", center: "center", lfe: "lfe",
+  side: "surround", back: "surround", surround: "surround",
+};
+const chanCategory = (g) => CHAN_CATEGORY[g] || g;
 
 async function makeClip() {
   if (!currentItem) return;
@@ -1352,26 +1386,31 @@ async function makeClip() {
   $("job-panel").hidden = false;
   $("job-status").innerHTML = '<span class="job-running">Submitting…</span>';
 
-  const audioOnly = $("clip-audio-only").checked;
   const fmt = $("clip-format").value;
-  const splitCh = $("clip-split-channels").checked;
+  // The stream selector drives the output (B17): a channel subset extracts one
+  // group (split → audio-only re-encode); the audio stream picks the track.
+  const chan = getSelectedChan();
+  const chanSubset = chan && chan !== "whole";
+  const splitCh = chanSubset;
+  const audioOnly = $("clip-audio-only").checked || chanSubset;
+  const kind = audioOnly ? "audio" : "video";
+  const aud = getSelectedAudio();
 
   const body = {
     path: currentItem.path,
-    kind: audioOnly ? "audio" : "video",
+    kind,
     lossless: fmt === "lossless",
     before: parseFloat($("clip-before").value) || 0,
     after: parseFloat($("clip-after").value) || 0,
     backend: "auto",
-    embed_subs: !audioOnly && $("clip-embed-subs").checked,
+    embed_subs: kind === "video",  // implicit (B17): always embed for video
     split_channels: splitCh,
     split_format: fmt === "lossless" ? "wav" : fmt,
-    // Which channel groups to export when splitting (checked boxes).
-    split_groups: splitCh
-      ? ["center", "front", "surround", "lfe"].filter((g) => $(`clip-ch-${g}`).checked)
-      : undefined,
+    split_groups: splitCh ? [chanCategory(chan)] : undefined,
     // Audio + WAV/FLAC without splitting = full-mix lossless (keeps 5.1, etc.).
     audio_format: (audioOnly && !splitCh && (fmt === "wav" || fmt === "flac")) ? fmt : undefined,
+    // Selected audio stream from the stream selector.
+    audio_tracks: aud != null ? [aud] : undefined,
     template: clipTemplate(),
   };
 
@@ -1470,45 +1509,6 @@ function setPassthroughAllowed(sel, allowed) {
   if (!allowed && sel.value === "lossless") sel.value = "wav";
 }
 
-// Remember the user's manual Embed-subs choice so it can be restored after
-// Audio only is toggled off (Embed subs is force-unchecked while it's on).
-let embedSubsUserPref = true;
-$("clip-embed-subs").addEventListener("change", () => {
-  // Only a genuine user toggle counts — the box is enabled only when Audio
-  // only is off; programmatic changes below don't fire this event.
-  if (!$("clip-embed-subs").disabled) embedSubsUserPref = $("clip-embed-subs").checked;
-});
-
-function updateClipOptionVisibility() {
-  const audioOnly = $("clip-audio-only").checked;
-
-  // Split channels is a sub-option of Audio only: usable only with audio
-  // output. Disable it (and force it off) whenever Audio only is unchecked.
-  const split = $("clip-split-channels");
-  split.disabled = !audioOnly;
-  if (!audioOnly) split.checked = false;
-
-  // Embed subs applies to video output only. Force it off + disable while
-  // Audio only is checked; restore the user's last manual choice otherwise.
-  const embed = $("clip-embed-subs");
-  embed.disabled = audioOnly;
-  embed.checked = audioOnly ? false : embedSubsUserPref;
-
-  // Splitting always decodes, so Passthrough (no re-encode) isn't available.
-  setPassthroughAllowed($("clip-format"), !split.checked);
-
-  // Per-channel selection is a sub-option of Split channels: shown only for
-  // audio output, enabled only while splitting. Disabled boxes keep (remember)
-  // their checked state so re-checking Split restores the prior selection.
-  const splitting = split.checked && !split.disabled;
-  $("clip-channels").hidden = !audioOnly;
-  ["center", "front", "surround", "lfe"].forEach((g) => {
-    $(`clip-ch-${g}`).disabled = !splitting;
-  });
-}
-$("clip-audio-only").onchange = updateClipOptionVisibility;
-$("clip-split-channels").onchange = updateClipOptionVisibility;
-updateClipOptionVisibility();  // set initial disabled/checked states
 
 // --- clips library ----------------------------------------------------------
 

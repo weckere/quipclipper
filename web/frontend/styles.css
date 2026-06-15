@@ -169,34 +169,28 @@ code {
 .clip-range {
   font-size: 0.9rem; color: var(--muted); margin-bottom: 0.6rem;
 }
-.clip-options {
-  display: flex; flex-wrap: wrap; gap: 0.75rem 1.25rem; margin-bottom: 0.75rem;
-}
-.clip-options label {
-  display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.85rem; color: var(--muted);
-}
-.clip-options select, .clip-options input[type="number"] {
-  background: var(--bg); color: var(--fg); border: 1px solid var(--badge);
-  border-radius: 6px; padding: 0.3rem 0.5rem;
-}
-.clip-options input[type="number"] { width: 6rem; }
-/* Selects size to their longest option so labels never get cut off. */
-.clip-options select { width: auto; min-width: 8rem; }
-.clip-options select option:disabled { color: var(--badge); }
 .checkbox-label {
   flex-direction: row !important; align-items: center; gap: 0.4rem !important;
 }
-/* Audio only + its Split-channels sub-option stack vertically. */
-.clip-audio-group { display: flex; flex-direction: column; gap: 0.35rem; }
-.clip-audio-group .clip-suboption { margin-left: 1.2rem; }
-/* Per-channel selection, nested under Split channels. */
-.clip-channels { display: flex; flex-wrap: wrap; gap: 0.3rem 0.9rem; margin-left: 2.4rem; }
-.clip-channels[hidden] { display: none; }
 /* Grey out a checkbox's label text while its input is disabled. */
 .checkbox-label:has(input:disabled) { opacity: 0.45; }
 
-/* Clip name template (B9) */
-.clip-template-row { margin: 0.6rem 0 0.2rem; }
+/* Clip controls now live in the Marks header (B17). */
+.marks-actions { flex-wrap: wrap; }
+.clip-format-label {
+  display: inline-flex; align-items: center; gap: 0.3rem;
+  font-size: 0.8rem; color: var(--muted);
+}
+.clip-format-label select { margin-top: 0; font-size: 0.82rem; }
+.clip-btn[disabled] { opacity: 0.45; cursor: default; }
+
+/* Clip name row (range + B9 name template), under the Marks header. */
+.clip-name-row[hidden] { display: none; }
+.clip-name-row { margin: 0.5rem 0 0.2rem; }
+.clip-name-row .clip-range {
+  font-size: 0.85rem; color: var(--muted); margin-bottom: 0.5rem;
+}
+.clip-template-label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.85rem; }
 .clip-template-label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.85rem; }
 .clip-template-label input {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;

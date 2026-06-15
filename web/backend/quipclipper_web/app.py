@@ -183,6 +183,9 @@ class BookmarkCreate(BaseModel):
     end: float
     before: float = Field(0.0, ge=0, le=60)
     after: float = Field(0.0, ge=0, le=60)
+    sub_track: int | None = None
+    audio_track: int | None = None
+    channel_subset: str | None = None
 
 
 class BookmarkUpdate(BaseModel):
@@ -989,6 +992,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         bm = bookmarks.add(
             req.path, req.label, req.start, req.end,
             before=req.before, after=req.after,
+            sub_track=req.sub_track, audio_track=req.audio_track,
+            channel_subset=req.channel_subset,
         )
         return bm.to_dict()
 
