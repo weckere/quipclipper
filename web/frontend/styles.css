@@ -176,7 +176,6 @@ code {
 .checkbox-label:has(input:disabled) { opacity: 0.45; }
 
 /* Clip controls now live in the Marks header (B17). */
-.marks-actions { flex-wrap: wrap; }
 .clip-format-label {
   display: inline-flex; align-items: center; gap: 0.3rem;
   font-size: 0.8rem; color: var(--muted);
@@ -246,9 +245,12 @@ code {
 .marks-panel { margin-top: 0.5rem; padding-top: 0.4rem; padding-bottom: 0.4rem; }
 /* The Save button is vertically centered against the title+hint block, so it
    sits midway between the top of the panel and the cue box below it. */
-.marks-header { display: flex; align-items: center; gap: 0.6rem; }
-/* Before/After buffer (B16) in the Marks header and on bookmark rows. */
-.marks-actions { display: flex; align-items: center; gap: 0.6rem; flex-shrink: 0; }
+/* The header wraps: the title+hint block keeps a sensible min width, and the
+   action controls drop to their own line(s) on narrow screens (mobile) instead
+   of squeezing the hint into a one-word-per-line column. */
+.marks-header { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.8rem; }
+/* Before/After buffer (B16) + clip controls (B17) in the Marks header. */
+.marks-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.7rem; }
 .marks-buffer, .bm-buffer { display: flex; align-items: center; gap: 0.4rem; }
 .marks-buffer label, .bm-buffer label {
   display: inline-flex; align-items: center; gap: 0.2rem;
@@ -263,7 +265,7 @@ code {
 .bm-clear-all-btn { background: transparent; border-color: var(--badge); }
 .bm-clear-all-btn:hover { border-color: #c0504d; color: #e88; }
 .marks-header-info {
-  flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.3rem;
+  flex: 1 1 14rem; min-width: 0; display: flex; flex-direction: column; gap: 0.3rem;
 }
 .marks-titlerow { display: flex; align-items: center; gap: 0.5rem; }
 .marks-titlerow h3 { margin: 0; flex-shrink: 0; }
