@@ -354,7 +354,9 @@ dialogue, cut clips, and manage bookmarks — all from a browser.
 - **Automatic audio transcode** — when the browser can't play a file's audio
   codec (AC3, DTS, FLAC, etc.), the player automatically falls back to an
   on-the-fly remux that copies the video and transcodes audio to Opus, with a
-  custom seek bar and keyframe-aligned subtitles.
+  custom seek bar and keyframe-aligned subtitles. Desktop and Android (Chromium)
+  use this; **iOS** plays through an on-the-fly **HLS** stream instead (Safari
+  can't demux Matroska/Opus), with native controls and inline playback.
 - **Custom clip naming** — clips are filed into a per-source subfolder, named
   from a configurable template (default `{source}/{timestamp}_{cue}_{title}`,
   remembered per browser). Tokens cover the timestamp, matched dialogue,
