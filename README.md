@@ -377,15 +377,14 @@ dialogue, cut clips, and manage bookmarks — all from a browser.
 
 ### Quick start (Docker Compose)
 
-The compose file builds directly from this repo — no images to pull:
+CI publishes prebuilt images to GitHub Container Registry on every push to
+`main`, so the simplest deploy just **pulls** them — no local build:
 
 ```yaml
-# docker-compose.yml (minimal example)
+# docker-compose.yml (minimal example, prebuilt images)
 services:
   app:
-    build:
-      context: "https://github.com/weckere/quipclipper.git#main"
-      dockerfile: web/Dockerfile
+    image: ghcr.io/weckere/quipclipper-app:latest
     environment:
       QC_MEDIA_ROOTS: /media/movies:/media/shows
       QC_CLIPS_DIR: /clips
@@ -399,9 +398,7 @@ services:
       - "8000"
 
   web:
-    build:
-      context: "https://github.com/weckere/quipclipper.git#main"
-      dockerfile: web/nginx/Dockerfile
+    image: ghcr.io/weckere/quipclipper-web:latest
     depends_on:
       - app
     ports:
@@ -412,6 +409,25 @@ services:
 volumes:
   quip-state:
 ```
+
+Then `docker compose pull && docker compose up -d` (update with `pull` again).
+
+<details><summary>Build from source instead (no published images)</summary>
+
+Swap each service's `image:` for a `build:` block pointing at the repo:
+
+```yaml
+  app:
+    build:
+      context: "https://github.com/weckere/quipclipper.git#main"
+      dockerfile: web/Dockerfile
+  web:
+    build:
+      context: "https://github.com/weckere/quipclipper.git#main"
+      dockerfile: web/nginx/Dockerfile
+```
+
+</details>
 
 Then:
 
