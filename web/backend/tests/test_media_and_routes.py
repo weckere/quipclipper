@@ -23,8 +23,9 @@ from quipclipper_web.app import (
     _slugify,
     create_app,
 )
+from quipclipper.subtitles import StreamInfo
 from quipclipper_web.config import Settings
-from quipclipper_web.media import cues_to_vtt
+from quipclipper_web.media import cues_to_vtt, stream_dict
 
 
 def test_clean_title_uses_parent_folder():
@@ -38,6 +39,22 @@ def test_clean_title_steps_past_season_folder():
 def test_slugify_drops_punctuation_keeps_apostrophe():
     assert _slugify("The Sandlot (1993)") == "The_Sandlot_1993"
     assert _slugify("You're killing me, Smalls!") == "You're_killing_me_Smalls"
+
+
+def _audio(channels, layout):
+    return StreamInfo(kind="audio", type_index=0, codec="eac3", language="eng",
+                      title=None, channels=channels, channel_layout=layout)
+
+
+def test_stream_dict_groups_only_from_recognized_layout():
+    """B18: channel groups come only from a known layout tag, never guessed from
+    the channel count — so the Channels dropdown only offers real channels."""
+    # Recognized layout -> exact groups.
+    assert stream_dict(_audio(6, "5.1(side)"))["groups"] == ["front", "side", "center", "lfe"]
+    assert stream_dict(_audio(2, "stereo"))["groups"] == ["front"]  # length 1 -> UI hides it
+    # Missing/unknown layout -> no groups (no count guess), so the dropdown hides.
+    assert stream_dict(_audio(6, None))["groups"] == []
+    assert stream_dict(_audio(6, "weird(layout)"))["groups"] == []
 
 
 # --- B9: clip name template -------------------------------------------------

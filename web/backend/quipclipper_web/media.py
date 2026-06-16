@@ -84,9 +84,12 @@ def stream_dict(s: StreamInfo) -> dict:
         "label": s.label(),
     }
     # For multichannel audio, the selectable channel groups (front/center/lfe/
-    # side/back) so the stream selector can offer a channel subset (B17).
+    # side/back) so the stream selector can offer a channel subset (B17). Derived
+    # ONLY from a recognized channel-layout tag — never guessed from the channel
+    # count — so the Channels dropdown can only ever offer channels that actually
+    # exist (B18). Unknown layout => no groups => the dropdown is hidden.
     if s.kind == "audio":
-        chans = channels_for_layout(s.channel_layout, s.channels)
+        chans = channels_for_layout(s.channel_layout, None)
         d["groups"] = [lbl for lbl, _ in group_channels(chans)] if chans else []
     return d
 
