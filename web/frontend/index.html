@@ -7,12 +7,13 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <header>
+    <header class="app-header">
       <h1 id="home-link">quipclipper</h1>
-      <p class="tagline">Find and cut clips by searching the dialogue.
+      <p class="tagline">Find and cut clips by searching the dialogue.</p>
+      <nav class="app-nav">
         <a id="clips-link" class="clips-nav-link">Clips</a>
         <a id="bookmarks-link" class="clips-nav-link">Bookmarks</a>
-      </p>
+      </nav>
     </header>
 
     <main>
@@ -114,6 +115,7 @@
         <div id="stream-selector" class="stream-selector" hidden>
           <label class="ss-field" id="ss-subs-field">Subtitles
             <select id="ss-subs"></select>
+            <span id="ss-no-subs" class="ss-none muted" hidden>No subtitle stream available</span>
           </label>
           <label class="ss-field" id="ss-audio-field" hidden>Audio
             <select id="ss-audio"></select>

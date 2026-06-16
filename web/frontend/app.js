@@ -766,7 +766,11 @@ function renderStreamSelector(info, path, onStreamChange) {
   const tracks = allTracks.filter(isTextSubtitle);  // image tracks can't be shown
   const hasSubs = tracks.length > 0 || info.has_sidecar;
   subSel.innerHTML = "";
-  $("ss-subs-field").hidden = !hasSubs;
+  // Always show the Subtitles slot: the dropdown when there are subtitles, or a
+  // "No subtitle stream available" note otherwise (B19).
+  $("ss-subs-field").hidden = false;
+  subSel.hidden = !hasSubs;
+  $("ss-no-subs").hidden = hasSubs;
   $("ss-reindex").hidden = !hasSubs;
   $("ss-reindex-status").hidden = true;
 
@@ -830,7 +834,9 @@ function renderStreamSelector(info, path, onStreamChange) {
   chanSel.onchange = () => onStreamChange();
 
   // Show the bar if there's anything to pick.
-  wrap.hidden = !hasSubs && $("ss-audio-field").hidden && $("ss-chan-field").hidden;
+  // The Subtitles slot is always shown (dropdown or "no subtitle" note), so the
+  // selector bar is always visible.
+  wrap.hidden = false;
 }
 
 function loadSubtitleTrack(path, track, offset) {

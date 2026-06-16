@@ -21,10 +21,14 @@ body {
 }
 
 header, main, footer { max-width: 860px; margin: 0 auto; padding: 0 1.25rem; }
-header { padding-top: 2rem; }
+header { padding-top: 0.9rem; padding-bottom: 0.2rem; }
+/* Compact single-row header (B21): title, tagline, and nav share one line and
+   wrap on narrow screens, leaving more room for the main UI below. */
+.app-header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.2rem 0.9rem; }
+.app-nav { margin-left: auto; display: flex; gap: 0.2rem; }
 
-h1 { margin: 0; font-size: 2rem; letter-spacing: -0.02em; cursor: pointer; display: inline-block; }
-.tagline { color: var(--muted); margin-top: 0.25rem; }
+h1 { margin: 0; font-size: 1.45rem; letter-spacing: -0.02em; cursor: pointer; display: inline-block; }
+.tagline { color: var(--muted); margin: 0; font-size: 0.85rem; }
 
 .breadcrumb { margin: 1.5rem 0 0.75rem; font-size: 0.95rem; }
 .breadcrumb a { color: var(--accent); cursor: pointer; }
@@ -129,6 +133,8 @@ select {
   font-size: 0.8rem; color: var(--muted);
 }
 .ss-field select { margin-top: 0; max-width: 22rem; font-size: 0.82rem; }
+.ss-field select[hidden] { display: none; }
+.ss-none { font-size: 0.82rem; font-style: italic; }
 .ss-spacer { flex: 1; }
 
 code {
@@ -309,7 +315,7 @@ code {
 .bookmark-del:hover { border-color: var(--error); color: var(--error); }
 
 .clips-nav-link {
-  color: var(--accent); cursor: pointer; margin-left: 1rem;
+  color: var(--accent); cursor: pointer; padding: 0 0.4rem;
   font-size: 0.85rem; text-decoration: none;
 }
 .clips-nav-link:hover { text-decoration: underline; }
