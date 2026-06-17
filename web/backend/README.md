@@ -44,6 +44,12 @@ Environment variables (mirrored 1:1 by the NixOS module options):
 | `QC_JELLYFIN_URL` | (unset) | optional Jellyfin metadata enrichment |
 | `QC_JELLYFIN_API_KEY` | (unset) | Jellyfin API key (required if the URL is set) |
 
+**Hardware video transcode:** not env-configured — the backend auto-detects an
+Intel iGPU at `/dev/dri/renderD128` (probed once, reported as `hw_encode` in
+`/api/config`) and uses `h264_vaapi` for the browser-preview video re-encode,
+falling back to software `libx264`. Pass the device into the container to enable
+it (see the root README's Docker quick start).
+
 ## Test
 
 ```bash

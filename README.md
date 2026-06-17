@@ -358,12 +358,16 @@ dialogue, cut clips, and manage bookmarks — all from a browser.
 - **Batch export** — select multiple clips or bookmarks in their library views
   and export them all at once (audio-only, passthrough/FLAC/WAV, split
   channels) without opening each one.
-- **Automatic audio transcode** — when the browser can't play a file's audio
-  codec (AC3, DTS, FLAC, etc.), the player automatically falls back to an
-  on-the-fly remux that copies the video and transcodes audio to Opus, with a
-  custom seek bar and keyframe-aligned subtitles. Desktop and Android (Chromium)
-  use this; **iOS** plays through an on-the-fly **HLS** stream instead (Safari
-  can't demux Matroska/Opus), with native controls and inline playback.
+- **Automatic transcode for in-browser playback** — when the browser can't play
+  a file's audio codec (AC3, DTS, FLAC, …) the player remuxes on the fly,
+  copying the video and transcoding audio to Opus, with a custom seek bar and
+  keyframe-aligned subtitles. When the *video* codec also can't be decoded —
+  HEVC on Firefox, or MPEG-4 ASP/XviD AVIs, MPEG-2, VC1 — the video is
+  **re-encoded to H.264**, hardware-accelerated via Intel Quick Sync (VAAPI)
+  when an iGPU is available (else software), with an on-screen indicator that
+  loading/seeking may be slower. Desktop and Android (Chromium) use this path;
+  **iOS** plays through an on-the-fly **HLS** stream instead (Safari can't demux
+  Matroska/Opus), with native controls and inline playback.
 - **Custom clip naming** — clips are filed into a per-source subfolder, named
   from a configurable template (default `{source}/{timestamp}_{cue}_{title}`,
   remembered per browser). Tokens cover the timestamp, matched dialogue,
@@ -411,6 +415,21 @@ volumes:
 ```
 
 Then `docker compose pull && docker compose up -d` (update with `pull` again).
+
+**Optional — hardware video transcode (Intel Quick Sync):** to re-encode
+undecodable video (HEVC for Firefox, XviD/MPEG-4 AVIs, …) on an Intel iGPU
+instead of the CPU, pass the render device into the `app` service:
+
+```yaml
+  app:
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - "<render-group-gid>"   # `getent group render` on the host
+```
+
+The image ships the Intel `iHD` VAAPI driver; without the device it falls back
+to software encoding automatically.
 
 <details><summary>Build from source instead (no published images)</summary>
 
