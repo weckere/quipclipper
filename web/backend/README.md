@@ -40,7 +40,8 @@ Environment variables (mirrored 1:1 by the NixOS module options):
 | `QC_BIND` | `127.0.0.1` | backend listen address |
 | `QC_PORT` | `8000` | backend listen port |
 | `QC_MAX_CONCURRENT_JOBS` | `2` | ffmpeg job cap |
-| `QC_PASSWORD` | (unset) | reserved for the planned password gate (phase 6) — **not yet enforced**; only reported via `/api/config` |
+| `QC_PASSWORD` | (unset) | when set on the **nginx** service, gates the whole site with HTTP basic auth (also reported via `/api/config`) |
+| `QC_USERNAME` | `quip` | basic-auth username (used only when `QC_PASSWORD` is set) |
 | `QC_JELLYFIN_URL` | (unset) | optional Jellyfin metadata enrichment |
 | `QC_JELLYFIN_API_KEY` | (unset) | Jellyfin API key (required if the URL is set) |
 

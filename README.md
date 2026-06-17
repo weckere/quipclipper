@@ -431,6 +431,17 @@ instead of the CPU, pass the render device into the `app` service:
 The image ships the Intel `iHD` VAAPI driver; without the device it falls back
 to software encoding automatically.
 
+**Optional — password gate:** set `QC_PASSWORD` on the **web** (nginx) service to
+gate the whole site behind HTTP basic auth (username defaults to `quip`, override
+with `QC_USERNAME`); leave it unset for an open LAN instance:
+
+```yaml
+  web:
+    environment:
+      QC_PASSWORD: "your-secret"   # or ${QC_PASSWORD}
+      QC_USERNAME: "quip"          # optional
+```
+
 <details><summary>Build from source instead (no published images)</summary>
 
 Swap each service's `image:` for a `build:` block pointing at the repo:
@@ -466,7 +477,8 @@ All settings are environment variables on the `app` service:
 | `QC_CLIPS_URL_PREFIX` | *(empty)* | URL prefix where a front proxy (nginx) serves the clips dir directly; empty = download via the backend API |
 | `QC_STATE_DIR` | `/state` | Bookmarks, subtitle cache, and other persistent state |
 | `QC_MAX_CONCURRENT_JOBS` | `2` | Clip-job thread-pool size |
-| `QC_PASSWORD` | *(none)* | Reserved for the planned password gate (phase 6) — **not yet enforced**; only reported via `/api/config` |
+| `QC_PASSWORD` | *(none)* | When set, nginx gates the whole site with HTTP basic auth (username `QC_USERNAME`). Must be set on the **web** (nginx) service. Unset = open. |
+| `QC_USERNAME` | `quip` | Basic-auth username (only used when `QC_PASSWORD` is set). |
 | `QC_JELLYFIN_URL` | *(none)* | Jellyfin server URL for metadata enrichment |
 | `QC_JELLYFIN_API_KEY` | *(none)* | Jellyfin API key (required if URL is set) |
 
