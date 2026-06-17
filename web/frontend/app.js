@@ -394,6 +394,36 @@ function renderBreadcrumb(path) {
 const IS_IOS = /iP(hone|ad|od)/.test(navigator.userAgent) ||
   (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 
+// Video codecs that play fine via stream-copy in our transcode/raw paths.
+// H.264 always works; HEVC is browser-dependent (Firefox can't decode it).
+const PLAYABLE_VIDEO = new Set(["h264", "avc1", "vp8", "vp9", "av1"]);
+
+/** Whether the source video codec must be re-encoded to H.264 for THIS browser
+ *  (HEVC on Firefox, MPEG-4 ASP/XviD, MPEG-2, VC1, …) — B20/B22. */
+function needsVideoReencode(codec) {
+  const c = (codec || "").toLowerCase();
+  if (PLAYABLE_VIDEO.has(c)) return false;
+  if (c === "hevc" || c === "h265" || c === "hev1" || c === "hvc1") {
+    const v = document.createElement("video");
+    const ok = v.canPlayType('video/mp4; codecs="hvc1.1.6.L93.B0"') ||
+               v.canPlayType('video/mp4; codecs="hev1.1.6.L93.B0"');
+    return !ok;  // re-encode only when this browser can't decode HEVC
+  }
+  return true;  // mpeg4 (ASP/XviD), mpeg2video, vc1, wmv, … → re-encode
+}
+
+/** Show/hide the "video is being re-encoded" indicator. */
+function setVideoReencodeNote(on) {
+  const el = $("video-reencode-note");
+  if (!el) return;
+  el.hidden = !on;
+  if (on) {
+    el.textContent = (appConfig && appConfig.hw_encode)
+      ? "⚙ Re-encoding video to H.264 for your browser (hardware-accelerated) — loading and seeking may be a little slower."
+      : "⚙ Re-encoding video to H.264 for your browser — loading and seeking may be slow.";
+  }
+}
+
 let currentItem = null;
 let transcodeOffset = 0;  // ffmpeg -ss offset for current transcode segment
 // Per-item listeners on the persistent #player / seek slider are scoped to this
@@ -503,7 +533,6 @@ async function openItem(path, name, opts) {
   const player = $("player");
   player.style.aspectRatio = "";  // back to the default box until this item's dims load
   const mediaUrl = "/api/media" + qp(path);
-  const transcodeUrl = "/api/media/transcode" + qp(path);
   // iOS Safari can't play Matroska/Opus, raw .mkv, or a chunked progressive MP4
   // (it needs HTTP range support). It plays HLS natively, so iOS uses the HLS
   // endpoint with the browser's own controls/seeking instead of our transcode.
@@ -516,7 +545,15 @@ async function openItem(path, name, opts) {
   // iOS never uses the desktop transcode path — it goes through HLS below.
   const BROWSER_AUDIO = new Set(["aac", "mp3", "opus", "vorbis"]);
   const primaryAudio = info.streams.find((s) => s.kind === "audio");
-  const needsTranscode = !IS_IOS && primaryAudio && !BROWSER_AUDIO.has(primaryAudio.codec);
+  // Does the primary video codec need re-encoding to H.264 for this browser?
+  // (HEVC on Firefox, MPEG-4 ASP/XviD, MPEG-2, VC1, …) — B20/B22.
+  const primaryVideo = info.streams.find((s) => s.kind === "video");
+  const videoReencode = !IS_IOS && primaryVideo && needsVideoReencode(primaryVideo.codec);
+  const transcodeUrl = "/api/media/transcode" + qp(path) + (videoReencode ? "&venc=1" : "");
+  const needsTranscode = !IS_IOS &&
+    ((primaryAudio && !BROWSER_AUDIO.has(primaryAudio.codec)) || videoReencode);
+  // Show/refresh the video-re-encode indicator (loading/seeking may be slower).
+  setVideoReencodeNote(videoReencode);
 
   // Transcode seek state
   let isTranscoding = false;

@@ -13,10 +13,12 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import hashlib
 import json
 import re
 import shutil
+import subprocess
 import time
 from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -144,6 +146,28 @@ def _render_clip_template(template: str, ctx: dict[str, str]) -> str:
             continue
         segments.append(seg)
     return "/".join(segments)
+
+
+_VAAPI_DEVICE = "/dev/dri/renderD128"
+
+
+@functools.lru_cache(maxsize=1)
+def _vaapi_h264_available() -> bool:
+    """True if the host iGPU can hardware-encode H.264 via VAAPI / Quick Sync
+    (B23). Probed once with a tiny test encode; the transcode falls back to
+    software (libx264) when this is False (no /dev/dri passed in, no driver)."""
+    if not Path(_VAAPI_DEVICE).exists() or shutil.which("ffmpeg") is None:
+        return False
+    try:
+        proc = subprocess.run(
+            ["ffmpeg", "-loglevel", "error", "-vaapi_device", _VAAPI_DEVICE,
+             "-f", "lavfi", "-i", "testsrc=size=64x64:rate=1:duration=1",
+             "-vf", "format=nv12,hwupload", "-c:v", "h264_vaapi", "-f", "null", "-"],
+            capture_output=True, timeout=20,
+        )
+        return proc.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
 
 
 def _live_pan_filter(p: Path, audio_index: int, chan: str) -> str | None:
@@ -276,6 +300,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "auth_required": settings.auth_required,
             "jellyfin_enabled": settings.jellyfin_url is not None,
             "max_concurrent_jobs": settings.max_concurrent_jobs,
+            "hw_encode": _vaapi_h264_available(),  # iGPU H.264 (B23) for video re-encode
         }
 
     # --- library browsing ----------------------------------------------------
@@ -627,13 +652,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         end: float | None = Query(None, ge=0),
         audio: int | None = Query(None, ge=0),
         chan: str | None = Query(None),
+        venc: int = Query(0),
     ) -> StreamingResponse:
         """Remux with audio transcode to browser-friendly Matroska (desktop).
 
-        Video is stream-copied (no re-encode), audio is transcoded to Opus.
-        Supports optional start/end params for segment-based seeking — ffmpeg's
-        -ss is placed before -i for fast seek. (iOS uses the HLS path instead;
-        Safari can't demux Matroska/Opus.)
+        Video is stream-copied (no re-encode) by default, audio is transcoded to
+        Opus. ``venc=1`` instead **re-encodes the video to H.264** for sources the
+        browser can't decode (HEVC on Firefox, MPEG-4 ASP/XviD, MPEG-2, VC1, …) —
+        B20/B22 — using the iGPU (`h264_vaapi`/Quick Sync) when available, else
+        software `libx264`. Supports optional start/end params for segment-based
+        seeking — ffmpeg's -ss is placed before -i for fast seek. (iOS uses the
+        HLS path instead; Safari can't demux Matroska/Opus.)
 
         ``audio`` selects a specific audio stream (a:N); ``chan`` plays only one
         channel group (front/center/lfe/side/back/surround) via a ``pan`` filter
@@ -648,7 +677,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         aidx = audio if audio is not None else (0 if chan and chan != "whole" else None)
         pan = _live_pan_filter(p, aidx or 0, chan) if chan and chan != "whole" else None
 
+        hw = bool(venc) and _vaapi_h264_available()
+
         cmd = ["ffmpeg"]
+        if hw:
+            cmd += ["-vaapi_device", _VAAPI_DEVICE]
         if start is not None:
             cmd += ["-ss", str(start)]
         cmd += ["-i", str(p)]
@@ -656,7 +689,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             cmd += ["-to", str(end - (start or 0))]
         if aidx is not None:
             cmd += ["-map", "0:v:0?", "-map", f"0:a:{aidx}"]
-        cmd += ["-c:v", "copy"]
+        # Video: stream-copy by default; re-encode to H.264 when the browser
+        # can't decode the source codec (B20/B22). HW (VAAPI) when available.
+        if venc:
+            if hw:
+                cmd += ["-vf", "format=nv12,hwupload", "-c:v", "h264_vaapi", "-qp", "24"]
+            else:
+                cmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23"]
+        else:
+            cmd += ["-c:v", "copy"]
         if pan:
             cmd += ["-filter:a", pan]
         cmd += ["-c:a", "libopus", "-b:a", "192k"]
