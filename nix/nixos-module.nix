@@ -15,6 +15,7 @@ let
   webPkg = self.packages.${pkgs.stdenv.hostPlatform.system}.quipclipper-web;
   frontendPkg = self.packages.${pkgs.stdenv.hostPlatform.system}.quipclipper-web-frontend;
   vhostName = if cfg.virtualHost != null then cfg.virtualHost else "quipclipper-web";
+  stateDir = "/var/lib/quipclipper-web/state";
 in
 {
   options.services.quipclipper-web = {
@@ -120,7 +121,7 @@ in
         QC_CLIPS_DIR = toString cfg.clipsDir;
         # nginx serves the clips dir directly at /clips/ (see virtualHost below)
         QC_CLIPS_URL_PREFIX = "/clips";
-        QC_STATE_DIR = "/var/lib/quipclipper-web/state";
+        QC_STATE_DIR = stateDir;
         QC_BIND = cfg.listenAddress;
         QC_PORT = toString cfg.listenPort;
         QC_MAX_CONCURRENT_JOBS = toString cfg.maxConcurrentJobs;
@@ -138,19 +139,26 @@ in
         ExecStart = lib.getExe webPkg;
         User = cfg.user;
         Group = cfg.group;
-        StateDirectory = "quipclipper-web";
         Restart = "on-failure";
 
-        # Hardening. Media roots are exposed read-only; only the state dir
-        # (and clipsDir, if outside it) is writable.
+        # Hardening. Media roots are exposed read-only; only the clips + state
+        # dirs are writable. These are created up front by the tmpfiles rules
+        # below — the namespace bind mounts require them to already exist.
         NoNewPrivileges = true;
         ProtectSystem = "strict";
         ProtectHome = true;
         PrivateTmp = true;
         ReadOnlyPaths = map toString cfg.mediaRoots;
-        ReadWritePaths = [ (toString cfg.clipsDir) ];
+        ReadWritePaths = [ (toString cfg.clipsDir) stateDir ];
       };
     };
+
+    # Create the writable dirs before the service starts (its hardened mount
+    # namespace bind-mounts them, so they must exist), owned by the service user.
+    systemd.tmpfiles.rules = [
+      "d ${stateDir} 0750 ${cfg.user} ${cfg.group} - -"
+      "d ${toString cfg.clipsDir} 0750 ${cfg.user} ${cfg.group} - -"
+    ];
 
     services.nginx = {
       enable = true;
