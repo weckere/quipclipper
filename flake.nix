@@ -89,6 +89,7 @@
               testScript = ''
                 machine.wait_for_unit("quipclipper-web.service")
                 machine.wait_for_unit("nginx.service")
+                machine.wait_for_open_port(8000)  # uvicorn backend bound + ready
                 machine.wait_for_open_port(80)
                 # Basic-auth gate: no credentials is rejected, correct ones pass.
                 machine.fail("curl -fsS http://localhost/")
