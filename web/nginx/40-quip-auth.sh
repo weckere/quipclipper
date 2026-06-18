@@ -12,7 +12,10 @@ if [ -n "${QC_PASSWORD:-}" ]; then
     user="${QC_USERNAME:-quip}"
     # -b: password from args, -m: apr1/MD5 (broadly supported by nginx), -c: create
     htpasswd -bmc "$htpw" "$user" "$QC_PASSWORD" >/dev/null 2>&1
-    chmod 600 "$htpw"
+    # nginx workers run as the 'nginx' user, so the file must be readable by them
+    # (root-only 600 makes credential checks fail with 500). Keep it off world.
+    chown root:nginx "$htpw" 2>/dev/null || true
+    chmod 640 "$htpw"
     {
         echo 'auth_basic "quipclipper";'
         echo "auth_basic_user_file $htpw;"
