@@ -381,8 +381,13 @@ dialogue, cut clips, and manage bookmarks — all from a browser.
 
 ### Quick start (Docker Compose)
 
+The repo ships a ready-to-edit [`docker-compose.example.yml`](docker-compose.example.yml)
+(fully commented, with optional hardware transcode and the password gate). Copy
+it, set your media paths, and `docker compose up -d`.
+
 CI publishes prebuilt images to GitHub Container Registry on every push to
-`main`, so the simplest deploy just **pulls** them — no local build:
+`main`, so the simplest deploy just **pulls** them — no local build. A minimal
+version:
 
 ```yaml
 # docker-compose.yml (minimal example, prebuilt images)
@@ -494,6 +499,37 @@ The web app is two containers:
 Media directories are mounted read-only. All file access is realpath-checked
 against the configured media roots — path traversal and symlink escapes are
 rejected.
+
+### NixOS (declarative)
+
+On NixOS, deploy the web app declaratively with the flake's module instead of
+Docker — it runs the backend as a hardened systemd service and configures the
+host nginx (a VM test in CI exercises the whole flow):
+
+```nix
+{
+  inputs.quipclipper.url = "github:weckere/quipclipper";
+
+  # in configuration.nix:
+  imports = [ inputs.quipclipper.nixosModules.default ];
+
+  services.quipclipper-web = {
+    enable     = true;
+    mediaRoots = [ "/srv/media/movies" "/srv/media/tv" ];
+    clipsDir   = "/srv/clips";
+    listenPort = 8000;        # backend port; nginx fronts it on :80
+    openFirewall = true;
+    # optional: gate the site behind HTTP basic auth (provide an htpasswd file)
+    # passwordFile = "/run/secrets/quip.htpasswd";
+    # optional Jellyfin enrichment:
+    # jellyfin = { url = "http://localhost:8096"; apiKeyFile = "/run/secrets/jellyfin"; };
+  };
+}
+```
+
+The option names mirror the Docker env vars. (Unlike Docker, which builds its
+htpasswd from a plaintext `QC_PASSWORD`, the module takes a ready-made
+`passwordFile`.)
 
 ## How it works
 

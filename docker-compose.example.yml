@@ -1,0 +1,62 @@
+# Example docker-compose for quipclipper-web.
+#
+# Copy this file to docker-compose.yml, edit the media paths, then run:
+#   docker compose up -d        # browse at http://<host>:8896
+#   docker compose pull && docker compose up -d   # update to the latest images
+#
+# It uses the prebuilt public images from GHCR (CI publishes them on every push
+# to main), so there is nothing to build locally.
+
+services:
+  app:
+    image: ghcr.io/weckere/quipclipper-app:latest
+    restart: unless-stopped
+    environment:
+      # Colon-separated media directories to browse/clip from (in-container
+      # paths — they must match the right-hand side of the volume mounts below).
+      QC_MEDIA_ROOTS: /media/movies:/media/shows
+      QC_CLIPS_DIR: /clips
+      QC_STATE_DIR: /state
+      # nginx serves finished clips directly at /clips/ (see the web service).
+      QC_CLIPS_URL_PREFIX: /clips
+      # Optional Jellyfin metadata enrichment (poster art / titles):
+      # QC_JELLYFIN_URL: http://jellyfin:8096
+      # QC_JELLYFIN_API_KEY: your-jellyfin-api-key
+    volumes:
+      # Your media, mounted READ-ONLY. Left = host path, right = the in-container
+      # path referenced by QC_MEDIA_ROOTS above.
+      - /path/to/movies:/media/movies:ro
+      - /path/to/shows:/media/shows:ro
+      # Where finished clips are written (read-write).
+      - /path/to/clips:/clips
+      - quip-state:/state
+    expose:
+      - "8000"
+    # --- Optional: Intel Quick Sync hardware video transcode -----------------
+    # Re-encodes undecodable video (HEVC for Firefox, XviD/MPEG-4 AVIs, …) to
+    # H.264 on an Intel iGPU instead of the CPU. Find the render group GID with
+    # `getent group render` on the host. Without this it falls back to software.
+    # devices:
+    #   - /dev/dri:/dev/dri
+    # group_add:
+    #   - "render"        # or the numeric GID, e.g. "104"
+
+  web:
+    image: ghcr.io/weckere/quipclipper-web:latest
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "8896:80"         # browse at http://<host>:8896
+    volumes:
+      # Same clips directory as the app, read-only — nginx serves downloads.
+      - /path/to/clips:/clips:ro
+    # --- Optional: password gate (HTTP basic auth) ---------------------------
+    # Set QC_PASSWORD to require a login for the whole site (username defaults to
+    # "quip"). Leave it unset for an open LAN instance.
+    # environment:
+    #   QC_PASSWORD: "your-secret"
+    #   QC_USERNAME: "quip"
+
+volumes:
+  quip-state:
