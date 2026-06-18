@@ -1,22 +1,274 @@
 # quipclipper
 
-Find and cut audio/video clips from movies & TV shows by **searching the subtitle dialogue**.
+Find and cut audio/video clips from your movie & TV library by **searching the
+subtitle dialogue** — from any browser.
 
 Subtitles already carry precise timestamps, so the whole trick is: parse the
 subtitles → fuzzy-search the line you remember → map the match back to its time
-span → cut it out with ffmpeg. Point it at a video plus a subtitle file (or let
-it find a sidecar `.srt` / extract an embedded track), type the dialogue, and get
-a clip.
+span → cut it out with ffmpeg. quipclipper is a **self-hosted web app**: point it
+at your media folders, browse to a video (or search dialogue across a whole
+folder), type the line you remember, and cut a lossless clip — all in the
+browser.
+
+A **command-line tool** ([`quipclipper-cli`](#quipclipper-cli)) wraps the same
+engine for scripting and quick one-off cuts.
 
 > **Documentation:** [`docs/MANUAL.md`](docs/MANUAL.md) is the complete user
 > manual; [`docs/DESIGN_NOTES.md`](docs/DESIGN_NOTES.md) explains the design
 > decisions and their rationale.
 
-quipclipper comes in two flavours: a **CLI** for scripting and quick one-off cuts,
-and a **self-hosted web app** for browsing your media library, searching dialogue,
-and cutting clips from any browser. See [Web App](#web-app) below.
-
 ## Features
+
+- **Library browser** — browse multiple media folders (movies, shows, etc.) with
+  a search bar to filter by name and a clickable breadcrumb for jumping up levels.
+- **Dialogue search** — open a video and fuzzy-search its subtitles (sidecar or
+  embedded), with surrounding context and ranked, typo-tolerant matches.
+- **Folder dialogue search** — search subtitles across every video in one or more
+  folders at once (including the folders surfaced by a library search). Useful for
+  finding a line when you don't know which episode it's in. A subtitle cache plus
+  a pre-index button make repeat searches near-instant.
+- **Scrolling script view** — the full subtitle script scrolls with playback;
+  click a line to seek, hover (or tap, on touch) for Start/End buttons to select
+  a clip range by dialogue lines (timestamps are derived from the selected cues).
+  A **Before/After buffer** in the Marks header expands the selection live.
+- **Stream selector** — one menu under the seek bar picks the subtitle track,
+  the audio stream, and (for multichannel audio) a channel subset — affecting
+  live playback. The selection drives the clip output too: the chosen audio
+  stream and channel subset, and the selected subtitle becomes the clip's
+  default track.
+- **Lossless clipping** — mkvmerge with automatic ffmpeg fallback, an async job
+  queue, and a clips library. Audio export offers three lossless modes:
+  **Passthrough** (stream-copy the original codec, all tracks), **WAV/FLAC**
+  (full-mix re-encode keeping every channel — a 5.1 source becomes a 5.1 WAV/FLAC
+  in one file), and **Split channels** (one file per channel group: stereo pairs
+  + centre/LFE).
+- **Bookmarks** — save selected dialogue ranges as named bookmarks per file
+  (with their buffer + stream selection), browse them all from a top-level
+  Bookmarks view, adjust each one's buffer inline, or Clear all.
+- **Clips as first-class items** — open a finished clip in the full item view:
+  search its dialogue, bookmark it, even cut a clip from a clip. Opening a clip
+  pre-selects the whole file for one-click re-export.
+- **Batch export** — select multiple clips or bookmarks in their library views
+  and export them all at once (audio-only, passthrough/FLAC/WAV, split
+  channels) without opening each one.
+- **Automatic transcode for in-browser playback** — when the browser can't play
+  a file's audio codec (AC3, DTS, FLAC, …) the player remuxes on the fly,
+  copying the video and transcoding audio to Opus, with a custom seek bar and
+  keyframe-aligned subtitles. When the *video* codec also can't be decoded —
+  HEVC on Firefox, or MPEG-4 ASP/XviD AVIs, MPEG-2, VC1 — the video is
+  **re-encoded to H.264**, hardware-accelerated via Intel Quick Sync (VAAPI)
+  when an iGPU is available (else software), with an on-screen indicator that
+  loading/seeking may be slower. Desktop and Android (Chromium) use this path;
+  **iOS** plays through an on-the-fly **HLS** stream instead (Safari can't demux
+  Matroska/Opus), with native controls and inline playback.
+- **Custom clip naming** — clips are filed into a per-source subfolder, named
+  from a configurable template (default `{source}/{timestamp}_{cue}_{title}`,
+  remembered per browser). Tokens cover the timestamp, matched dialogue,
+  cleaned title, source filename, year, season/episode, duration and date, and
+  `/` makes subfolders. With the default, `{source}` is the source file's stem
+  (the subfolder) and `{title}` is the cleaned parent-folder/series name, so a
+  dialogue-search clip lands at e.g.
+  `The.Sandlot.1993.1080p/00-27-58_Youre_killing_me_Smalls_The_Sandlot_1993.mkv`.
+- **Jellyfin enrichment** — optionally pull poster art and metadata from a
+  Jellyfin server on your network.
+
+The clipping itself is **lossless by default** — audio/video are stream-copied
+(`-c copy`) with no re-encoding, so the original format is preserved exactly
+(lossy stays lossy), including all audio tracks and 5.1/7.1 channel layouts. See
+[Lossless cutting](#lossless-cutting) for the details.
+
+## Quick start (Docker Compose)
+
+The repo ships a ready-to-edit [`docker-compose.example.yml`](docker-compose.example.yml)
+(fully commented, with optional hardware transcode and the password gate). Copy
+it, set your media paths, and `docker compose up -d`.
+
+CI publishes prebuilt images to GitHub Container Registry on every push to
+`main`, so the simplest deploy just **pulls** them — no local build. A minimal
+version:
+
+```yaml
+# docker-compose.yml (minimal example, prebuilt images)
+services:
+  app:
+    image: ghcr.io/weckere/quipclipper-app:latest
+    environment:
+      QC_MEDIA_ROOTS: /media/movies:/media/shows
+      QC_CLIPS_DIR: /clips
+      QC_STATE_DIR: /state
+    volumes:
+      - /path/to/movies:/media/movies:ro
+      - /path/to/shows:/media/shows:ro
+      - /path/to/clips:/clips
+      - quip-state:/state
+    expose:
+      - "8000"
+
+  web:
+    image: ghcr.io/weckere/quipclipper-web:latest
+    depends_on:
+      - app
+    ports:
+      - "8896:80"
+    volumes:
+      - /path/to/clips:/clips:ro
+
+volumes:
+  quip-state:
+```
+
+Then `docker compose pull && docker compose up -d` (update with `pull` again),
+and browse at `http://localhost:8896`.
+
+**Optional — hardware video transcode (Intel Quick Sync):** to re-encode
+undecodable video (HEVC for Firefox, XviD/MPEG-4 AVIs, …) on an Intel iGPU
+instead of the CPU, pass the render device into the `app` service:
+
+```yaml
+  app:
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - "<render-group-gid>"   # `getent group render` on the host
+```
+
+The image ships the Intel `iHD` VAAPI driver; without the device it falls back
+to software encoding automatically.
+
+**Optional — password gate:** set `QC_PASSWORD` on the **web** (nginx) service to
+gate the whole site behind HTTP basic auth (username defaults to `quip`, override
+with `QC_USERNAME`); leave it unset for an open LAN instance:
+
+```yaml
+  web:
+    environment:
+      QC_PASSWORD: "your-secret"   # or ${QC_PASSWORD}
+      QC_USERNAME: "quip"          # optional
+```
+
+<details><summary>Build from source instead (no published images)</summary>
+
+Swap each service's `image:` for a `build:` block pointing at the repo:
+
+```yaml
+  app:
+    build:
+      context: "https://github.com/weckere/quipclipper.git#main"
+      dockerfile: web/Dockerfile
+  web:
+    build:
+      context: "https://github.com/weckere/quipclipper.git#main"
+      dockerfile: web/nginx/Dockerfile
+```
+
+</details>
+
+## Configuration
+
+All settings are environment variables on the `app` service:
+
+| Variable | Default | Description |
+|---|---|---|
+| `QC_MEDIA_ROOTS` | *(required)* | Colon-separated list of media directories (in-container paths) |
+| `QC_CLIPS_DIR` | `/clips` | Where finished clips are saved |
+| `QC_CLIPS_URL_PREFIX` | *(empty)* | URL prefix where a front proxy (nginx) serves the clips dir directly; empty = download via the backend API |
+| `QC_STATE_DIR` | `/state` | Bookmarks, subtitle cache, and other persistent state |
+| `QC_MAX_CONCURRENT_JOBS` | `2` | Clip-job thread-pool size |
+| `QC_PASSWORD` | *(none)* | When set, nginx gates the whole site with HTTP basic auth (username `QC_USERNAME`). Must be set on the **web** (nginx) service. Unset = open. |
+| `QC_USERNAME` | `quip` | Basic-auth username (only used when `QC_PASSWORD` is set). |
+| `QC_SUBTITLE_LANGS` | `en` | Ordered subtitle-language preference for auto-selection (comma-separated, e.g. `eng,spa`). The UI's **Auto-lang** box overrides it per browser. |
+| `QC_JELLYFIN_URL` | *(none)* | Jellyfin server URL for metadata enrichment |
+| `QC_JELLYFIN_API_KEY` | *(none)* | Jellyfin API key (required if URL is set) |
+
+## Architecture
+
+The web app is two containers:
+
+- **app** — Python (FastAPI + Uvicorn) serving the API and the static frontend.
+  Runs the quipclipper engine for search and clipping via a thread-pool job queue.
+- **web** — Nginx reverse proxy handling static assets, large file downloads
+  (clips), and forwarding API requests to the app.
+
+Media directories are mounted read-only. All file access is realpath-checked
+against the configured media roots — path traversal and symlink escapes are
+rejected.
+
+## NixOS (declarative)
+
+On NixOS, deploy the web app declaratively with the flake's module instead of
+Docker — it runs the backend as a hardened systemd service and configures the
+host nginx (a VM test in CI exercises the whole flow):
+
+```nix
+{
+  inputs.quipclipper.url = "github:weckere/quipclipper";
+
+  # in configuration.nix:
+  imports = [ inputs.quipclipper.nixosModules.default ];
+
+  services.quipclipper-web = {
+    enable     = true;
+    mediaRoots = [ "/srv/media/movies" "/srv/media/tv" ];
+    clipsDir   = "/srv/clips";
+    listenPort = 8000;        # backend port; nginx fronts it on :80
+    openFirewall = true;
+    # optional: gate the site behind HTTP basic auth (provide an htpasswd file)
+    # passwordFile = "/run/secrets/quip.htpasswd";
+    # optional Jellyfin enrichment:
+    # jellyfin = { url = "http://localhost:8096"; apiKeyFile = "/run/secrets/jellyfin"; };
+  };
+}
+```
+
+The option names mirror the Docker env vars. (Unlike Docker, which builds its
+htpasswd from a plaintext `QC_PASSWORD`, the module takes a ready-made
+`passwordFile`.)
+
+## Lossless cutting
+
+Inspired by [LosslessCut](https://github.com/mifi/lossless-cut), clips are cut
+**losslessly by default**: ffmpeg stream-copies (`-c copy`) the original encoded
+packets straight into a new container — there is **no re-encoding at all**. The
+source format is preserved exactly: a lossy AC3/AAC/EAC3 track stays that same
+lossy bitstream, byte-for-byte, and the cut is near-instant.
+
+What "preserve everything" means here:
+
+- **No transcoding** — the encoded audio/video bytes are copied, not re-rendered.
+- **All audio tracks are kept** — quipclipper maps *every* audio stream (e.g. a 5.1
+  EAC3 main track plus a stereo commentary), with their language/title metadata.
+- **Multichannel layouts are intact** — 5.1 / 7.1 channel layouts are part of the
+  copied bitstream, so they come through untouched.
+- **Video mode keeps all video, audio and subtitle tracks** in one `.mkv`.
+
+The one inherent tradeoff — true of every codec — is that a copy can only begin
+at a **keyframe**. quipclipper seeks to the nearest keyframe at or before your start
+time, so a lossless clip may start a little earlier than requested (the **end is
+exact**). For dialogue clips that just adds a small lead-in, which is usually
+welcome.
+
+Containers are chosen to hold the source streams without transcoding:
+
+| Mode | Output container |
+|---|---|
+| Lossless audio, single stream | codec-matched (`.m4a` / `.ac3` / `.eac3` / `.opus` / `.flac` / …) |
+| Lossless audio, **multiple streams** | `.mka` (Matroska — holds any number of streams/codecs) |
+| Lossless video | `.mkv` (all video + audio + subtitle tracks) |
+| Re-encoded audio | `.mp3` |
+| Re-encoded video | `.mp4` (H.264 / AAC) |
+
+(The web app always cuts losslessly; the CLI exposes a `--no-lossless` opt-in
+re-encode for frame-exact boundaries or a specific format like mp3.)
+
+---
+
+# quipclipper-cli
+
+The same search-and-clip engine as a **command-line tool**, for scripting and
+quick one-off cuts. Point it at a video plus a subtitle file (or let it find a
+sidecar `.srt` / extract an embedded track), type the dialogue, and get a clip.
+
+## CLI features
 
 - **Local, offline** — works on your own video + subtitle files, no API keys.
 - **Lossless by default** — audio/video are stream-copied (`-c copy`) with no
@@ -280,258 +532,6 @@ quipclipper clip "i'll be back" -v movie.mkv -t video                 # subtitle
 quipclipper clip "i'll be back" -v movie.mkv -t video --no-embed-subs # video subs only
 ```
 
-## Lossless cutting
-
-Inspired by [LosslessCut](https://github.com/mifi/lossless-cut), clips are cut
-**losslessly by default**: ffmpeg stream-copies (`-c copy`) the original encoded
-packets straight into a new container — there is **no re-encoding at all**. The
-source format is preserved exactly: a lossy AC3/AAC/EAC3 track stays that same
-lossy bitstream, byte-for-byte, and the cut is near-instant.
-
-What "preserve everything" means here:
-
-- **No transcoding** — the encoded audio/video bytes are copied, not re-rendered.
-- **All audio tracks are kept** — quipclipper maps *every* audio stream (e.g. a 5.1
-  EAC3 main track plus a stereo commentary), with their language/title metadata.
-- **Multichannel layouts are intact** — 5.1 / 7.1 channel layouts are part of the
-  copied bitstream, so they come through untouched.
-- **Video mode keeps all video, audio and subtitle tracks** in one `.mkv`.
-
-The one inherent tradeoff — true of every codec — is that a copy can only begin
-at a **keyframe**. quipclipper seeks to the nearest keyframe at or before your start
-time, so a lossless clip may start a little earlier than requested (the **end is
-exact**). For dialogue clips that just adds a small lead-in, which is usually
-welcome.
-
-Containers are chosen to hold the source streams without transcoding:
-
-| Mode | Output container |
-|---|---|
-| Lossless audio, single stream | codec-matched (`.m4a` / `.ac3` / `.eac3` / `.opus` / `.flac` / …) |
-| Lossless audio, **multiple streams** | `.mka` (Matroska — holds any number of streams/codecs) |
-| Lossless video | `.mkv` (all video + audio + subtitle tracks) |
-| `--no-lossless` audio (re-encode) | `.mp3` |
-| `--no-lossless` video (re-encode) | `.mp4` (H.264 / AAC) |
-
-Use `--no-lossless` only when you deliberately want a re-encode (frame-exact
-boundaries or a specific format like mp3). GIF output is inherently a re-encode
-and ignores the flag. (For MKV sources the default backend is mkvmerge — see
-"MKV sources" above.)
-
-## Web App
-
-quipclipper-web is a self-hosted web interface that wraps the same search and
-clipping engine. Deploy it with Docker and browse your media library, search
-dialogue, cut clips, and manage bookmarks — all from a browser.
-
-### Features
-
-- **Library browser** — browse multiple media folders (movies, shows, etc.) with
-  a search bar to filter by name and a clickable breadcrumb for jumping up levels.
-- **Dialogue search** — open a video and fuzzy-search its subtitles (sidecar or
-  embedded) just like the CLI.
-- **Folder dialogue search** — search subtitles across every video in one or more
-  folders at once (including the folders surfaced by a library search). Useful for
-  finding a line when you don't know which episode it's in. A subtitle cache plus
-  a pre-index button make repeat searches near-instant.
-- **Scrolling script view** — the full subtitle script scrolls with playback;
-  click a line to seek, hover (or tap, on touch) for Start/End buttons to select
-  a clip range by dialogue lines (timestamps are derived from the selected cues).
-  A **Before/After buffer** in the Marks header expands the selection live.
-- **Stream selector** — one menu under the seek bar picks the subtitle track,
-  the audio stream, and (for multichannel audio) a channel subset — affecting
-  live playback. The selection drives the clip output too: the chosen audio
-  stream and channel subset, and the selected subtitle becomes the clip's
-  default track.
-- **Lossless clipping** — same engine as the CLI: mkvmerge with automatic ffmpeg
-  fallback, async job queue, save to a clips library. Audio export offers three
-  lossless modes: **Passthrough** (stream-copy the original codec, all tracks),
-  **WAV/FLAC** (full-mix re-encode keeping every channel — a 5.1 source becomes
-  a 5.1 WAV/FLAC in one file), and **Split channels** (one file per channel
-  group: stereo pairs + centre/LFE).
-- **Bookmarks** — save selected dialogue ranges as named bookmarks per file
-  (with their buffer + stream selection), browse them all from a top-level
-  Bookmarks view, adjust each one's buffer inline, or Clear all.
-- **Clips as first-class items** — open a finished clip in the full item view:
-  search its dialogue, bookmark it, even cut a clip from a clip. Opening a clip
-  pre-selects the whole file for one-click re-export.
-- **Batch export** — select multiple clips or bookmarks in their library views
-  and export them all at once (audio-only, passthrough/FLAC/WAV, split
-  channels) without opening each one.
-- **Automatic transcode for in-browser playback** — when the browser can't play
-  a file's audio codec (AC3, DTS, FLAC, …) the player remuxes on the fly,
-  copying the video and transcoding audio to Opus, with a custom seek bar and
-  keyframe-aligned subtitles. When the *video* codec also can't be decoded —
-  HEVC on Firefox, or MPEG-4 ASP/XviD AVIs, MPEG-2, VC1 — the video is
-  **re-encoded to H.264**, hardware-accelerated via Intel Quick Sync (VAAPI)
-  when an iGPU is available (else software), with an on-screen indicator that
-  loading/seeking may be slower. Desktop and Android (Chromium) use this path;
-  **iOS** plays through an on-the-fly **HLS** stream instead (Safari can't demux
-  Matroska/Opus), with native controls and inline playback.
-- **Custom clip naming** — clips are filed into a per-source subfolder, named
-  from a configurable template (default `{source}/{timestamp}_{cue}_{title}`,
-  remembered per browser). Tokens cover the timestamp, matched dialogue,
-  cleaned title, source filename, year, season/episode, duration and date, and
-  `/` makes subfolders. With the default, `{source}` is the source file's stem
-  (the subfolder) and `{title}` is the cleaned parent-folder/series name, so a
-  dialogue-search clip lands at e.g.
-  `The.Sandlot.1993.1080p/00-27-58_Youre_killing_me_Smalls_The_Sandlot_1993.mkv`.
-- **Jellyfin enrichment** — optionally pull poster art and metadata from a
-  Jellyfin server on your network.
-
-### Quick start (Docker Compose)
-
-The repo ships a ready-to-edit [`docker-compose.example.yml`](docker-compose.example.yml)
-(fully commented, with optional hardware transcode and the password gate). Copy
-it, set your media paths, and `docker compose up -d`.
-
-CI publishes prebuilt images to GitHub Container Registry on every push to
-`main`, so the simplest deploy just **pulls** them — no local build. A minimal
-version:
-
-```yaml
-# docker-compose.yml (minimal example, prebuilt images)
-services:
-  app:
-    image: ghcr.io/weckere/quipclipper-app:latest
-    environment:
-      QC_MEDIA_ROOTS: /media/movies:/media/shows
-      QC_CLIPS_DIR: /clips
-      QC_STATE_DIR: /state
-    volumes:
-      - /path/to/movies:/media/movies:ro
-      - /path/to/shows:/media/shows:ro
-      - /path/to/clips:/clips
-      - quip-state:/state
-    expose:
-      - "8000"
-
-  web:
-    image: ghcr.io/weckere/quipclipper-web:latest
-    depends_on:
-      - app
-    ports:
-      - "8896:80"
-    volumes:
-      - /path/to/clips:/clips:ro
-
-volumes:
-  quip-state:
-```
-
-Then `docker compose pull && docker compose up -d` (update with `pull` again).
-
-**Optional — hardware video transcode (Intel Quick Sync):** to re-encode
-undecodable video (HEVC for Firefox, XviD/MPEG-4 AVIs, …) on an Intel iGPU
-instead of the CPU, pass the render device into the `app` service:
-
-```yaml
-  app:
-    devices:
-      - /dev/dri:/dev/dri
-    group_add:
-      - "<render-group-gid>"   # `getent group render` on the host
-```
-
-The image ships the Intel `iHD` VAAPI driver; without the device it falls back
-to software encoding automatically.
-
-**Optional — password gate:** set `QC_PASSWORD` on the **web** (nginx) service to
-gate the whole site behind HTTP basic auth (username defaults to `quip`, override
-with `QC_USERNAME`); leave it unset for an open LAN instance:
-
-```yaml
-  web:
-    environment:
-      QC_PASSWORD: "your-secret"   # or ${QC_PASSWORD}
-      QC_USERNAME: "quip"          # optional
-```
-
-<details><summary>Build from source instead (no published images)</summary>
-
-Swap each service's `image:` for a `build:` block pointing at the repo:
-
-```yaml
-  app:
-    build:
-      context: "https://github.com/weckere/quipclipper.git#main"
-      dockerfile: web/Dockerfile
-  web:
-    build:
-      context: "https://github.com/weckere/quipclipper.git#main"
-      dockerfile: web/nginx/Dockerfile
-```
-
-</details>
-
-Then:
-
-```bash
-docker compose up -d
-# browse at http://localhost:8896
-```
-
-### Configuration
-
-All settings are environment variables on the `app` service:
-
-| Variable | Default | Description |
-|---|---|---|
-| `QC_MEDIA_ROOTS` | *(required)* | Colon-separated list of media directories (in-container paths) |
-| `QC_CLIPS_DIR` | `/clips` | Where finished clips are saved |
-| `QC_CLIPS_URL_PREFIX` | *(empty)* | URL prefix where a front proxy (nginx) serves the clips dir directly; empty = download via the backend API |
-| `QC_STATE_DIR` | `/state` | Bookmarks, subtitle cache, and other persistent state |
-| `QC_MAX_CONCURRENT_JOBS` | `2` | Clip-job thread-pool size |
-| `QC_PASSWORD` | *(none)* | When set, nginx gates the whole site with HTTP basic auth (username `QC_USERNAME`). Must be set on the **web** (nginx) service. Unset = open. |
-| `QC_USERNAME` | `quip` | Basic-auth username (only used when `QC_PASSWORD` is set). |
-| `QC_SUBTITLE_LANGS` | `en` | Ordered subtitle-language preference for auto-selection (comma-separated, e.g. `eng,spa`). The UI's **Auto-lang** box overrides it per browser. |
-| `QC_JELLYFIN_URL` | *(none)* | Jellyfin server URL for metadata enrichment |
-| `QC_JELLYFIN_API_KEY` | *(none)* | Jellyfin API key (required if URL is set) |
-
-### Architecture
-
-The web app is two containers:
-
-- **app** — Python (FastAPI + Uvicorn) serving the API and the static frontend.
-  Runs the quipclipper engine for search and clipping via a thread-pool job queue.
-- **web** — Nginx reverse proxy handling static assets, large file downloads
-  (clips), and forwarding API requests to the app.
-
-Media directories are mounted read-only. All file access is realpath-checked
-against the configured media roots — path traversal and symlink escapes are
-rejected.
-
-### NixOS (declarative)
-
-On NixOS, deploy the web app declaratively with the flake's module instead of
-Docker — it runs the backend as a hardened systemd service and configures the
-host nginx (a VM test in CI exercises the whole flow):
-
-```nix
-{
-  inputs.quipclipper.url = "github:weckere/quipclipper";
-
-  # in configuration.nix:
-  imports = [ inputs.quipclipper.nixosModules.default ];
-
-  services.quipclipper-web = {
-    enable     = true;
-    mediaRoots = [ "/srv/media/movies" "/srv/media/tv" ];
-    clipsDir   = "/srv/clips";
-    listenPort = 8000;        # backend port; nginx fronts it on :80
-    openFirewall = true;
-    # optional: gate the site behind HTTP basic auth (provide an htpasswd file)
-    # passwordFile = "/run/secrets/quip.htpasswd";
-    # optional Jellyfin enrichment:
-    # jellyfin = { url = "http://localhost:8096"; apiKeyFile = "/run/secrets/jellyfin"; };
-  };
-}
-```
-
-The option names mirror the Docker env vars. (Unlike Docker, which builds its
-htpasswd from a plaintext `QC_PASSWORD`, the module takes a ready-made
-`passwordFile`.)
-
 ## How it works
 
 | Module | Responsibility |
@@ -542,7 +542,7 @@ htpasswd from a plaintext `QC_PASSWORD`, the module takes a ready-made
 | `clip.py` | Turn a match into a padded time range and cut it with ffmpeg (lossless `-c copy`, re-encode, or surround channel split). |
 | `mkv.py` | MKVToolNix (`mkvmerge`) backend for lossless cuts of Matroska sources. |
 | `cli.py` | `typer` CLI: `search`, `clip`, `tracks`. |
-| `web/` | Self-hosted web app (FastAPI + nginx + vanilla JS). See [Web App](#web-app). |
+| `web/` | Self-hosted web app (FastAPI + nginx + vanilla JS) — the engine behind the [Features](#features) above. |
 
 ## Development
 
