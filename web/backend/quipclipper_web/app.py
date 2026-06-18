@@ -745,8 +745,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     _hls_procs: dict[str, asyncio.subprocess.Process] = {}
     _HLS_FILE_RE = re.compile(r"^(init\.mp4|seg\d+\.m4s)$")
 
-    def _hls_token(p: Path) -> str:
-        return hashlib.sha256(str(p).encode()).hexdigest()[:16]
+    def _hls_token(p: Path, venc: int = 0) -> str:
+        return hashlib.sha256(f"{p}:{venc}".encode()).hexdigest()[:16]
 
     def _prune_hls(max_age: float = 2 * 3600) -> None:
         if not _hls_root.is_dir():
@@ -758,20 +758,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     shutil.rmtree(d, ignore_errors=True)
 
     @app.get("/api/media/hls")
-    async def hls_playlist(path: str = Query(...)) -> Response:
+    async def hls_playlist(path: str = Query(...), venc: int = Query(0)) -> Response:
         """Start (or reuse) an on-the-fly HLS transcode; return its playlist.
 
         Segment/init URIs are rewritten to absolute API paths so the playlist's
         query-string URL doesn't break relative resolution. The player reloads
-        this URL to pick up new segments; ffmpeg (video copy + AAC) races ahead
-        of real time and appends EXT-X-ENDLIST when done, enabling full seeking.
+        this URL to pick up new segments; ffmpeg races ahead of real time and
+        appends EXT-X-ENDLIST when done, enabling full seeking. Video is
+        stream-copied (iOS decodes H.264/HEVC); ``venc=1`` re-encodes it to H.264
+        for codecs iOS can't decode (XviD/MPEG-4 ASP, MPEG-2, VC1, …) — the iOS
+        side of B20/B22, hardware via Quick Sync when available.
         """
         p = _resolve_any(path)
         if not p.is_file():
             raise HTTPException(status_code=404, detail=f"Not found: {path}")
-        token = _hls_token(p)
+        token = _hls_token(p, venc)
         d = _hls_root / token
         playlist = d / "index.m3u8"
+        hw = bool(venc) and _vaapi_h264_available()
 
         proc = _hls_procs.get(token)
         running = proc is not None and proc.returncode is None
@@ -779,9 +783,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             _prune_hls()
             shutil.rmtree(d, ignore_errors=True)
             d.mkdir(parents=True, exist_ok=True)
-            cmd = [
-                "ffmpeg", "-nostdin", "-i", str(p),
-                "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ac", "2",
+            cmd = ["ffmpeg", "-nostdin"]
+            if hw:
+                cmd += ["-vaapi_device", _VAAPI_DEVICE]
+            cmd += ["-i", str(p)]
+            if venc:
+                cmd += (["-vf", "format=nv12,hwupload", "-c:v", "h264_vaapi", "-qp", "24"]
+                        if hw else ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23"])
+            else:
+                cmd += ["-c:v", "copy"]
+            cmd += [
+                "-c:a", "aac", "-b:a", "192k", "-ac", "2",
                 "-f", "hls", "-hls_time", "6", "-hls_list_size", "0",
                 "-hls_playlist_type", "event", "-hls_flags", "independent_segments",
                 "-hls_segment_type", "fmp4", "-hls_fmp4_init_filename", "init.mp4",
