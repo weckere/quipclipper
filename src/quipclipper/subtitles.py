@@ -243,23 +243,51 @@ def is_text_subtitle(t) -> bool:
     return (getattr(t, "codec", "") or "").lower() not in IMAGE_SUBTITLE_CODECS
 
 
-def _track_score(t) -> int:
-    """Score a subtitle track for dialogue quality.
+# Default subtitle-language preference for auto-selection (B14). "en" matches
+# eng/en/english. Configurable per call (web: QC_SUBTITLE_LANGS + per-request).
+DEFAULT_SUB_LANGS = ("en",)
+
+
+def normalize_langs(langs) -> tuple[str, ...]:
+    """Normalize a language-preference iterable (or comma string) to lowercase
+    prefixes; empty/None falls back to the English default."""
+    if langs is None:
+        return DEFAULT_SUB_LANGS
+    if isinstance(langs, str):
+        langs = langs.split(",")
+    out = tuple(s.strip().lower() for s in langs if s and s.strip())
+    return out or DEFAULT_SUB_LANGS
+
+
+def _lang_rank(lang: str | None, langs: tuple[str, ...]) -> int | None:
+    """Index of the best-matching preference for a track's language, or None.
+    Untagged ("", und) counts as the top preference (single-language releases)."""
+    lang = (lang or "").lower()
+    if not lang or lang == "und":
+        return 0
+    for i, pref in enumerate(langs):
+        if lang.startswith(pref) or pref.startswith(lang):
+            return i
+    return None
+
+
+def _track_score(t, langs: tuple[str, ...] = DEFAULT_SUB_LANGS) -> int:
+    """Score a subtitle track for dialogue quality, given a language preference.
 
     Text full dialogue > text SDH > text forced > any image track.  Image
     (PGS/VOBSUB) subtitles can't be turned into searchable/displayable text, so
     they rank below every text track and are only chosen when nothing else
-    exists.  Among text tracks: English (or untagged) outranks other languages;
-    forced tracks carry only foreign-language portions (minimal dialogue) so they
-    rank below SDH; untagged languages count as English so single-language
-    releases without metadata still auto-select.
+    exists.  Among text tracks: a preferred-language track outranks other
+    languages (earlier in ``langs`` ranks higher; untagged counts as the top
+    preference); within a language, forced (foreign-portion-only, minimal
+    dialogue) ranks below SDH ranks below full dialogue.
     """
     if not is_text_subtitle(t):
         return -1000
     score = 0
-    lang = (t.language or "").lower()
-    if not lang or lang.startswith("en"):
-        score += 100
+    rank = _lang_rank(getattr(t, "language", None), langs)
+    if rank is not None:
+        score += (len(langs) - rank) * 100
     if getattr(t, "forced", False) or _FORCED_RE.search(t.title or ""):
         score -= 50
     elif getattr(t, "hearing_impaired", False) or _SDH_RE.search(t.title or ""):
@@ -267,17 +295,19 @@ def _track_score(t) -> int:
     return score
 
 
-def best_track(tracks):
+def best_track(tracks, langs=None):
     """Pick the best dialogue track from SubtitleTrack or StreamInfo objects.
 
     This is the single source of truth for auto-selection — the web frontend
     picker, the search/index cache, and clip subtitle embedding all follow it,
-    so cached extractions are shared across those paths.  Ties keep the first
-    track (container order).  Returns None for an empty list.
+    so cached extractions are shared across those paths.  ``langs`` is an ordered
+    language preference (default English).  Ties keep the first track (container
+    order).  Returns None for an empty list.
     """
     if not tracks:
         return None
-    return max(tracks, key=_track_score)
+    langs = normalize_langs(langs)
+    return max(tracks, key=lambda t: _track_score(t, langs))
 
 
 @dataclass(frozen=True)
@@ -302,6 +332,7 @@ def resolve_subtitles(
     subs: str | Path | None,
     video: str | Path | None,
     track: int | None = None,
+    langs=None,
 ) -> ResolvedSubtitles:
     """Resolve cues from the best available source, reporting the file used.
 
@@ -324,7 +355,7 @@ def resolve_subtitles(
             f"No sidecar subtitle file and no embedded subtitle tracks found for {video}."
         )
     if track is None:
-        track = best_track(tracks).index
+        track = best_track(tracks, langs).index
     return ResolvedSubtitles(extract_embedded(video, track), None, track)
 
 

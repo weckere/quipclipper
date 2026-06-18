@@ -134,6 +134,11 @@ select {
 }
 .ss-field select { margin-top: 0; max-width: 22rem; font-size: 0.82rem; }
 .ss-field select[hidden] { display: none; }
+.ss-langs-field input {
+  width: 5.5rem; font-size: 0.82rem; padding: 0.25rem 0.4rem;
+  background: var(--bg); color: var(--fg);
+  border: 1px solid var(--badge); border-radius: 5px;
+}
 .ss-none { font-size: 0.82rem; font-style: italic; }
 .ss-spacer { flex: 1; }
 

@@ -394,6 +394,14 @@ function renderBreadcrumb(path) {
 const IS_IOS = /iP(hone|ad|od)/.test(navigator.userAgent) ||
   (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 
+// Preferred subtitle language(s) override (B14), remembered per browser. Empty
+// = use the server default (QC_SUBTITLE_LANGS). Passed to /api/items so the
+// auto-selected track honours it.
+const SUB_LANGS_KEY = "qc_sub_langs";
+function subtitleLangs() {
+  return (localStorage.getItem(SUB_LANGS_KEY) || "").trim();
+}
+
 // Video codecs that play fine via stream-copy in our transcode/raw paths.
 // H.264 always works; HEVC is browser-dependent (Firefox can't decode it).
 const PLAYABLE_VIDEO = new Set(["h264", "avc1", "vp8", "vp9", "av1"]);
@@ -524,7 +532,8 @@ async function openItem(path, name, opts) {
 
   let info;
   try {
-    info = await getJSON("/api/items" + qp(path));
+    info = await getJSON("/api/items" + qp(path) +
+      (subtitleLangs() ? `&langs=${encodeURIComponent(subtitleLangs())}` : ""));
   } catch (err) {
     $("preview-note").innerHTML = `<span class="error">${escapeHtml(err.message)}</span>`;
     return;
@@ -1542,6 +1551,20 @@ function clipTemplate() {
   });
 })();
 
+// Preferred subtitle language(s) override (B14): remember edits and re-open the
+// current item so the new preference re-drives auto-selection.
+(() => {
+  const el = $("ss-langs");
+  if (!el) return;
+  el.value = subtitleLangs();
+  el.addEventListener("change", () => {
+    const v = el.value.trim();
+    if (v) localStorage.setItem(SUB_LANGS_KEY, v);
+    else localStorage.removeItem(SUB_LANGS_KEY);
+    if (currentItem) openItem(currentItem.path, currentItem.name, {});
+  });
+})();
+
 // Clip option interactions
 
 /** Enable/disable the Passthrough option on a format select.
@@ -1906,6 +1929,10 @@ async function loadStatus() {
   // Load config (jellyfin_enabled, etc.)
   try {
     appConfig = await getJSON("/api/config");
+    // Show the server default subtitle-language preference as the placeholder.
+    if (appConfig.subtitle_langs && $("ss-langs")) {
+      $("ss-langs").placeholder = appConfig.subtitle_langs.join(",");
+    }
   } catch {}
   // Load media roots so the breadcrumb can offer clickable path segments.
   try {

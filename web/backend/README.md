@@ -42,6 +42,7 @@ Environment variables (mirrored 1:1 by the NixOS module options):
 | `QC_MAX_CONCURRENT_JOBS` | `2` | ffmpeg job cap |
 | `QC_PASSWORD` | (unset) | when set on the **nginx** service, gates the whole site with HTTP basic auth (also reported via `/api/config`) |
 | `QC_USERNAME` | `quip` | basic-auth username (used only when `QC_PASSWORD` is set) |
+| `QC_SUBTITLE_LANGS` | `en` | ordered subtitle-language auto-select preference (comma-separated, e.g. `eng,spa`); UI Auto-lang box overrides per browser |
 | `QC_JELLYFIN_URL` | (unset) | optional Jellyfin metadata enrichment |
 | `QC_JELLYFIN_API_KEY` | (unset) | Jellyfin API key (required if the URL is set) |
 

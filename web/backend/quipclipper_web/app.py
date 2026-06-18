@@ -263,7 +263,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
     jobs = JobRegistry(max_workers=settings.max_concurrent_jobs)
     bookmarks = BookmarkStore(settings.state_dir)
-    sub_cache = SubtitleCache(settings.state_dir)
+    sub_cache = SubtitleCache(settings.state_dir, default_langs=settings.subtitle_langs)
     jf: JellyfinClient | None = None
     if settings.jellyfin_url and settings.jellyfin_api_key:
         jf = JellyfinClient(settings.jellyfin_url, settings.jellyfin_api_key)
@@ -301,6 +301,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "jellyfin_enabled": settings.jellyfin_url is not None,
             "max_concurrent_jobs": settings.max_concurrent_jobs,
             "hw_encode": _vaapi_h264_available(),  # iGPU H.264 (B23) for video re-encode
+            "subtitle_langs": settings.subtitle_langs,  # default auto-select prefs (B14)
         }
 
     # --- library browsing ----------------------------------------------------
@@ -360,14 +361,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # --- file inspection -----------------------------------------------------
 
     @app.get("/api/items")
-    def item(path: str = Query(...)) -> dict:
+    def item(path: str = Query(...), langs: str | None = Query(None)) -> dict:
         p = _resolve_any(path)
         if not p.exists():
             raise HTTPException(status_code=404, detail=f"Not found: {path}")
         if not p.is_file():
             raise HTTPException(status_code=400, detail=f"Not a file: {path}")
+        # Per-request subtitle-language preference overrides the server default
+        # for which track auto-selects (B14); blank uses the server default.
+        pref = [s.strip() for s in langs.split(",") if s.strip()] if langs else None
         try:
-            return media.item_info(p)
+            return media.item_info(p, langs=pref or settings.subtitle_langs)
         except RuntimeError as exc:  # ffprobe failure
             raise HTTPException(status_code=500, detail=str(exc))
 

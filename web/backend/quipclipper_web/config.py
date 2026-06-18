@@ -34,6 +34,7 @@ class Settings:
     jellyfin_url: str | None
     jellyfin_api_key: str | None
     auth_required: bool
+    subtitle_langs: list[str]
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> "Settings":
@@ -54,4 +55,9 @@ class Settings:
             # when QC_PASSWORD is set — see web/nginx/40-quip-auth.sh). The
             # backend only reports whether a password was configured.
             auth_required=bool(e.get("QC_PASSWORD")),
+            # Ordered subtitle-language preference for auto-selection (B14),
+            # comma-separated (e.g. "eng,spa"); empty falls back to English.
+            subtitle_langs=[
+                s.strip() for s in e.get("QC_SUBTITLE_LANGS", "").split(",") if s.strip()
+            ] or ["en"],
         )

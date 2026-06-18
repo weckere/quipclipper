@@ -52,6 +52,13 @@ in
       description = "Maximum number of concurrent ffmpeg/mkvmerge clip jobs.";
     };
 
+    subtitleLangs = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ "en" ];
+      example = [ "eng" "spa" ];
+      description = "Ordered subtitle-language preference for auto-selection.";
+    };
+
     virtualHost = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
       default = null;
@@ -125,6 +132,7 @@ in
         QC_BIND = cfg.listenAddress;
         QC_PORT = toString cfg.listenPort;
         QC_MAX_CONCURRENT_JOBS = toString cfg.maxConcurrentJobs;
+        QC_SUBTITLE_LANGS = lib.concatStringsSep "," cfg.subtitleLangs;
       } // lib.optionalAttrs (cfg.jellyfin.url != null) {
         QC_JELLYFIN_URL = cfg.jellyfin.url;
       } // lib.optionalAttrs (cfg.passwordFile != null) {

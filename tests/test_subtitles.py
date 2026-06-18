@@ -149,3 +149,37 @@ def test_best_track_falls_back_to_image_when_only_option():
     # No text track exists; still returns the best-scored (English) image track
     # rather than None, so callers get a defined choice.
     assert best_track(tracks).index == 0
+
+
+# --- B14: configurable language preference -----------------------------------
+
+def test_best_track_default_prefers_english():
+    # Default (no langs) preserves the historical English preference.
+    tracks = [_trk(0, "spa"), _trk(1, "eng"), _trk(2, "ger")]
+    assert best_track(tracks).index == 1
+
+
+def test_best_track_honors_preferred_language():
+    tracks = [_trk(0, "eng"), _trk(1, "spa"), _trk(2, "ger")]
+    assert best_track(tracks, ["spa"]).index == 1
+    assert best_track(tracks, "ger").index == 2  # comma-string form
+    assert best_track(tracks, ["eng"]).index == 0
+
+
+def test_best_track_ordered_language_fallback():
+    # Prefer Spanish, then English. Spanish present -> Spanish; absent -> English.
+    with_spa = [_trk(0, "eng"), _trk(1, "spa")]
+    assert best_track(with_spa, ["spa", "eng"]).index == 1
+    no_spa = [_trk(0, "eng"), _trk(1, "ger")]
+    assert best_track(no_spa, ["spa", "eng"]).index == 0
+
+
+def test_best_track_full_dialogue_beats_forced_within_preferred_language():
+    tracks = [_trk(0, "spa", forced=True), _trk(1, "spa")]
+    assert best_track(tracks, ["spa"]).index == 1
+
+
+def test_best_track_two_letter_and_three_letter_codes_match():
+    # "en" preference matches an "eng"-tagged track and vice-versa.
+    assert best_track([_trk(0, "ger"), _trk(1, "eng")], ["en"]).index == 1
+    assert best_track([_trk(0, "ger"), _trk(1, "en")], ["eng"]).index == 1

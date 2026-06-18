@@ -94,15 +94,17 @@ def stream_dict(s: StreamInfo) -> dict:
     return d
 
 
-def item_info(path: Path) -> dict:
-    """Probe a video file: all streams, its subtitle tracks, and sidecar status."""
+def item_info(path: Path, langs=None) -> dict:
+    """Probe a video file: all streams, its subtitle tracks, and sidecar status.
+
+    ``langs`` is the subtitle-language preference for auto-selection (B14)."""
     streams = list_streams(path)
     sub_streams = [s for s in streams if s.kind == "subtitle"]
     subtitle_tracks = [stream_dict(s) for s in sub_streams]
     # The auto-selected subtitle track, by the engine's single source of truth.
     # The frontend preselects this so its request matches the cache key that
     # pre-indexing (which auto-selects) warmed — no duplicate extraction.
-    chosen = best_track(sub_streams)
+    chosen = best_track(sub_streams, langs)
     return {
         "name": path.name,
         "path": str(path),

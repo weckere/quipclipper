@@ -31,9 +31,13 @@ from quipclipper.subtitles import find_sidecar, resolve_subtitles
 
 
 class SubtitleCache:
-    def __init__(self, cache_dir: Path) -> None:
+    def __init__(self, cache_dir: Path, default_langs=None) -> None:
         self._dir = cache_dir / "sub_cache"
         self._dir.mkdir(parents=True, exist_ok=True)
+        # Server-wide subtitle-language preference (B14) used when auto-selecting
+        # (track is None). Kept fixed so the "auto" cache key stays consistent
+        # across search / pre-indexing regardless of any per-request override.
+        self._default_langs = default_langs
         # Per-key locks dedupe concurrent cold extractions of the same
         # (video, track) — e.g. the VTT track and the script panel both
         # request the same subtitles when an item is opened.
@@ -137,7 +141,9 @@ class SubtitleCache:
                 if cues is not None:
                     return cues
 
-                resolved = resolve_subtitles(subs=None, video=video, track=track)
+                resolved = resolve_subtitles(
+                    subs=None, video=video, track=track, langs=self._default_langs,
+                )
                 cues = resolved.cues
                 self._write(cp, video, cues)
 

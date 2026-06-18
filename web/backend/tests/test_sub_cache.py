@@ -30,7 +30,7 @@ def _stub_resolver(monkeypatch, *, chosen_track=2, counter=None, delay=0.0):
     Mimics auto-selection: when called with track=None, reports `chosen_track`
     as the resolved track. The cue text encodes the track that was requested.
     """
-    def fake(subs=None, video=None, track=None):
+    def fake(subs=None, video=None, track=None, langs=None):
         if counter is not None:
             counter["n"] += 1
         if delay:

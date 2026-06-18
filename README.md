@@ -484,6 +484,7 @@ All settings are environment variables on the `app` service:
 | `QC_MAX_CONCURRENT_JOBS` | `2` | Clip-job thread-pool size |
 | `QC_PASSWORD` | *(none)* | When set, nginx gates the whole site with HTTP basic auth (username `QC_USERNAME`). Must be set on the **web** (nginx) service. Unset = open. |
 | `QC_USERNAME` | `quip` | Basic-auth username (only used when `QC_PASSWORD` is set). |
+| `QC_SUBTITLE_LANGS` | `en` | Ordered subtitle-language preference for auto-selection (comma-separated, e.g. `eng,spa`). The UI's **Auto-lang** box overrides it per browser. |
 | `QC_JELLYFIN_URL` | *(none)* | Jellyfin server URL for metadata enrichment |
 | `QC_JELLYFIN_API_KEY` | *(none)* | Jellyfin API key (required if URL is set) |
 
