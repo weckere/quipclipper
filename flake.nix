@@ -66,6 +66,38 @@
               python.pkgs.uvicorn
             ];
           };
+
+          # VM test for the NixOS module: enable the service, then assert nginx
+          # serves the app, the API responds, and the basic-auth gate works.
+          # Linux-only (nixosTest runs a QEMU VM); run in CI on a Linux runner.
+          checks = pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
+            nixos-module = pkgs.testers.runNixOSTest {
+              name = "quipclipper-web-module";
+              nodes.machine = { ... }: {
+                imports = [ self.nixosModules.default ];
+                # A media root the service is allowed to read, and an htpasswd
+                # (user "quip", password "test123") for the basic-auth gate.
+                systemd.tmpfiles.rules = [ "d /srv/media 0755 root root - -" ];
+                environment.etc."quipclipper.htpasswd".text =
+                  "quip:$apr1$NF6aL6Je$uO.ixyjrDUHxSp2DgD2Rj0\n";
+                services.quipclipper-web = {
+                  enable = true;
+                  mediaRoots = [ "/srv/media" ];
+                  passwordFile = "/etc/quipclipper.htpasswd";
+                };
+              };
+              testScript = ''
+                machine.wait_for_unit("quipclipper-web.service")
+                machine.wait_for_unit("nginx.service")
+                machine.wait_for_open_port(80)
+                # Basic-auth gate: no credentials is rejected, correct ones pass.
+                machine.fail("curl -fsS http://localhost/")
+                machine.succeed("curl -fsS -u quip:test123 http://localhost/ | grep -q quipclipper")
+                machine.succeed("curl -fsS -u quip:test123 http://localhost/api/health | grep -q ok")
+                machine.succeed("curl -fsS -u quip:test123 http://localhost/api/library/roots | grep -q /srv/media")
+              '';
+            };
+          };
         });
     in
     perSystem // {

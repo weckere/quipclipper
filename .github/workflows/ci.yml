@@ -47,6 +47,17 @@ jobs:
         run: pytest -q
         working-directory: web/backend
 
+  # NixOS module VM test (nixosTest): boots a VM with the module enabled and
+  # asserts nginx serves the app, the API responds, and the basic-auth gate
+  # works. Runs on Linux (the VM needs it); independent of the publish job.
+  nixos:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+      - name: NixOS module VM test
+        run: nix build --print-build-logs .#checks.x86_64-linux.nixos-module
+
   # Build the two web images and push them to GHCR on every push to main, so
   # deployments become a fast Pull -> Up instead of building from source.
   publish:

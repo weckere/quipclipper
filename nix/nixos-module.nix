@@ -127,9 +127,10 @@ in
       } // lib.optionalAttrs (cfg.jellyfin.url != null) {
         QC_JELLYFIN_URL = cfg.jellyfin.url;
       } // lib.optionalAttrs (cfg.passwordFile != null) {
-        # Backend only reports auth_required; the Docker path enforces the gate
-        # at nginx (web/nginx/40-quip-auth.sh). The NixOS nginx vhost still needs
-        # basicAuth wired from passwordFile — TODO with the module finalization.
+        # The gate is enforced by nginx via `basicAuthFile = passwordFile` on the
+        # vhost below; this env var only makes the backend report auth_required so
+        # the UI can reflect it. (Docker builds its htpasswd from a plaintext
+        # QC_PASSWORD; the Nix path takes a ready-made htpasswd `passwordFile`.)
         QC_PASSWORD = "set";
       };
 
