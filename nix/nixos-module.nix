@@ -127,8 +127,9 @@ in
       } // lib.optionalAttrs (cfg.jellyfin.url != null) {
         QC_JELLYFIN_URL = cfg.jellyfin.url;
       } // lib.optionalAttrs (cfg.passwordFile != null) {
-        # Reserved, not enforced (no auth gate yet — planned for phase 6);
-        # this just lets the UI reflect that a password was configured.
+        # Backend only reports auth_required; the Docker path enforces the gate
+        # at nginx (web/nginx/40-quip-auth.sh). The NixOS nginx vhost still needs
+        # basicAuth wired from passwordFile — TODO with the module finalization.
         QC_PASSWORD = "set";
       };
 
