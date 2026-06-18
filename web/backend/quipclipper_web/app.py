@@ -6,7 +6,7 @@ Routes:
 - Phase 2: dialogue search
 - Phase 3: clip jobs (POST /api/clip, GET /api/jobs)
 - Phase 4: bookmarks (GET/POST/DELETE /api/bookmarks)
-- Phase 5: clips library (GET /api/clips), Jellyfin enrichment (GET /api/jellyfin/meta)
+- Phase 5: clips library (GET /api/clips)
 """
 
 from __future__ import annotations
@@ -52,7 +52,6 @@ from quipclipper.subtitles import find_sidecar, load_subtitles, VIDEO_EXTS
 from quipclipper_web import __version__, library, media
 from quipclipper_web.bookmarks import BookmarkStore
 from quipclipper_web.config import Settings
-from quipclipper_web.jellyfin import JellyfinClient
 from quipclipper_web.jobs import JobRegistry
 from quipclipper_web.sub_cache import SubtitleCache
 
@@ -264,15 +263,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     jobs = JobRegistry(max_workers=settings.max_concurrent_jobs)
     bookmarks = BookmarkStore(settings.state_dir)
     sub_cache = SubtitleCache(settings.state_dir, default_langs=settings.subtitle_langs)
-    jf: JellyfinClient | None = None
-    if settings.jellyfin_url and settings.jellyfin_api_key:
-        jf = JellyfinClient(settings.jellyfin_url, settings.jellyfin_api_key)
 
     @contextlib.asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         yield
-        if jf is not None:
-            jf.close()
         jobs.shutdown()
 
     app = FastAPI(title="quipclipper-web", version=__version__, lifespan=lifespan)
@@ -298,7 +292,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {
             "media_roots": [str(p) for p in settings.media_roots],
             "auth_required": settings.auth_required,
-            "jellyfin_enabled": settings.jellyfin_url is not None,
             "max_concurrent_jobs": settings.max_concurrent_jobs,
             "hw_encode": _vaapi_h264_available(),  # iGPU H.264 (B23) for video re-encode
             "subtitle_langs": settings.subtitle_langs,  # default auto-select prefs (B14)
@@ -1150,47 +1143,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Clip not found.")
         mime = _BROWSER_MIME.get(target.suffix.lower(), "application/octet-stream")
         return FileResponse(target, media_type=mime)
-
-    # --- Jellyfin enrichment ---------------------------------------------------
-
-    @app.get("/api/jellyfin/meta")
-    def jellyfin_meta(path: str | None = None, name: str | None = None) -> dict:
-        """Get Jellyfin metadata for a file path or search by name.
-
-        Returns ``{"meta": null}`` when Jellyfin is not configured or no match.
-        """
-        if jf is None:
-            return {"meta": None, "enabled": False}
-        if path:
-            meta = jf.search_by_path(path)
-            if meta:
-                return {
-                    "meta": {
-                        "id": meta.item_id,
-                        "name": meta.name,
-                        "year": meta.year,
-                        "overview": meta.overview,
-                        "type": meta.type,
-                        "poster": meta.poster_url(jf.base_url),
-                    },
-                    "enabled": True,
-                }
-        elif name:
-            results = jf.search_by_name(name, limit=1)
-            if results:
-                meta = results[0]
-                return {
-                    "meta": {
-                        "id": meta.item_id,
-                        "name": meta.name,
-                        "year": meta.year,
-                        "overview": meta.overview,
-                        "type": meta.type,
-                        "poster": meta.poster_url(jf.base_url),
-                    },
-                    "enabled": True,
-                }
-        return {"meta": None, "enabled": True}
 
     # Dev mode: serve the frontend when running outside nginx.
     _frontend = Path(__file__).resolve().parent.parent.parent / "frontend"

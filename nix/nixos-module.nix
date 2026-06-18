@@ -84,20 +84,6 @@ in
       '';
     };
 
-    jellyfin = {
-      url = lib.mkOption {
-        type = lib.types.nullOr lib.types.str;
-        default = null;
-        example = "http://localhost:8096";
-        description = "Optional Jellyfin base URL for metadata enrichment.";
-      };
-      apiKeyFile = lib.mkOption {
-        type = lib.types.nullOr lib.types.path;
-        default = null;
-        description = "Path to a file containing the Jellyfin API key (kept out of the store).";
-      };
-    };
-
     user = lib.mkOption {
       type = lib.types.str;
       default = "quipclipper-web";
@@ -133,8 +119,6 @@ in
         QC_PORT = toString cfg.listenPort;
         QC_MAX_CONCURRENT_JOBS = toString cfg.maxConcurrentJobs;
         QC_SUBTITLE_LANGS = lib.concatStringsSep "," cfg.subtitleLangs;
-      } // lib.optionalAttrs (cfg.jellyfin.url != null) {
-        QC_JELLYFIN_URL = cfg.jellyfin.url;
       } // lib.optionalAttrs (cfg.passwordFile != null) {
         # The gate is enforced by nginx via `basicAuthFile = passwordFile` on the
         # vhost below; this env var only makes the backend report auth_required so

@@ -16,7 +16,6 @@ services:
       QC_CLIPS_URL_PREFIX: /clips     # nginx serves the clips volume directly
       QC_STATE_DIR: /state
       # QC_PASSWORD: change-me           # presence flips the UI to "auth required"
-      # QC_JELLYFIN_URL: http://jellyfin:8096
     volumes:
       # Mount your real library here (read-only). Point QC_MEDIA_ROOTS at it.
       # - /srv/media:/media:ro

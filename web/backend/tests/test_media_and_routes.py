@@ -809,18 +809,6 @@ def test_clips_download_forbids_traversal(tmp_path: Path) -> None:
     assert resp.status_code in (403, 404)
 
 
-# --- Jellyfin metadata -------------------------------------------------------
-
-
-def test_jellyfin_meta_disabled(tmp_path: Path) -> None:
-    client = _client(tmp_path)
-    resp = client.get("/api/jellyfin/meta", params={"name": "test"})
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["meta"] is None
-    assert data["enabled"] is False
-
-
 def test_bookmark_auto_label(tmp_path: Path) -> None:
     video = tmp_path / "movie.mkv"
     video.write_bytes(b"")

@@ -21,7 +21,6 @@ python3Packages.buildPythonApplication {
     quipclipper
     python3Packages.fastapi
     python3Packages.uvicorn
-    python3Packages.httpx  # Jellyfin API client (and FastAPI TestClient in tests)
   ];
 
   # Tests use fastapi's TestClient (httpx); run them in the dev shell rather

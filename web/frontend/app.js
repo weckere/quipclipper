@@ -1932,7 +1932,7 @@ async function loadStatus() {
   } catch (err) {
     $("status").textContent = `backend unreachable: ${err.message}`;
   }
-  // Load config (jellyfin_enabled, etc.)
+  // Load config (subtitle_langs, hw_encode, etc.)
   try {
     appConfig = await getJSON("/api/config");
     // Show the server default subtitle-language preference as the placeholder.

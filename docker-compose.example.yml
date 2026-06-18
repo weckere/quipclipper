@@ -22,9 +22,6 @@ services:
       # Preferred subtitle language(s) to auto-select, in order (default "en").
       # The UI's Auto-lang box overrides this per browser.
       # QC_SUBTITLE_LANGS: eng,spa
-      # Optional Jellyfin metadata enrichment (poster art / titles):
-      # QC_JELLYFIN_URL: http://jellyfin:8096
-      # QC_JELLYFIN_API_KEY: your-jellyfin-api-key
     volumes:
       # Your media, mounted READ-ONLY. Left = host path, right = the in-container
       # path referenced by QC_MEDIA_ROOTS above.

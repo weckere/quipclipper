@@ -31,8 +31,6 @@ class Settings:
     listen_address: str
     listen_port: int
     max_concurrent_jobs: int
-    jellyfin_url: str | None
-    jellyfin_api_key: str | None
     auth_required: bool
     subtitle_langs: list[str]
 
@@ -49,8 +47,6 @@ class Settings:
             listen_address=e.get("QC_BIND", "127.0.0.1"),
             listen_port=int(e.get("QC_PORT", "8000")),
             max_concurrent_jobs=int(e.get("QC_MAX_CONCURRENT_JOBS", "2")),
-            jellyfin_url=e.get("QC_JELLYFIN_URL") or None,
-            jellyfin_api_key=e.get("QC_JELLYFIN_API_KEY") or None,
             # The gate itself is enforced at the nginx layer (HTTP basic auth
             # when QC_PASSWORD is set — see web/nginx/40-quip-auth.sh). The
             # backend only reports whether a password was configured.
