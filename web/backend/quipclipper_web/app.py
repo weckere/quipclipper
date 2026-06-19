@@ -229,6 +229,9 @@ class ClipRequest(BaseModel):
     query: str | None = None
     match_index: int = 0
     track: int | None = None
+    # Matched dialogue for the {cue} naming token when clipping by start/end
+    # (the frontend sends the selected cue's text; search-based clips derive it).
+    cue_text: str | None = None
     # Clip options
     kind: str = Field("video", pattern="^(audio|video|gif)$")
     lossless: bool = True
@@ -842,8 +845,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Determine the clip range: explicit start (with optional end) or
         # search-based. Omitting end with start set means "to the end of the
         # file" — used by batch export to re-process a whole clip.
-        cue_text = ""  # matched dialogue, for the {cue} naming token (search only)
+        cue_text = ""  # matched dialogue, for the {cue} naming token
         if req.start is not None:
+            # The frontend passes the selected cue's text so {cue} still works
+            # for cue-range clips (dialogue-search hits and manual Start/End).
+            cue_text = req.cue_text or ""
             end = req.end
             if end is None:
                 end = media.probe_duration(video)

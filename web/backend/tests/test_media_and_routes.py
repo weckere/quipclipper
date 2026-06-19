@@ -458,6 +458,29 @@ def test_clip_range_filename_drops_absent_cue_text(tmp_path: Path) -> None:
     assert out.name == "00-01-05_media.mka"
 
 
+def test_clip_range_with_cue_text_names_the_file(tmp_path: Path) -> None:
+    """A start/end clip can carry the selected cue's dialogue (cue_text) so the
+    {cue} token is filled — the web UI sends it for dialogue-search hits and
+    manual Start/End selections, matching the query-based path's naming."""
+    client, media, clips = _clips_client(tmp_path)
+    video = media / "movie.mkv"
+    video.write_bytes(b"")
+    fake_out = clips / "movie" / "out.mka"
+    fake_out.parent.mkdir(parents=True)
+    fake_out.write_bytes(b"x")
+
+    with patch("quipclipper_web.app.cut_clip", return_value=fake_out) as mock_cut:
+        resp = client.post("/api/clip", json={
+            "path": str(video), "start": 65, "end": 70, "before": 0, "after": 0,
+            "cue_text": "Hasta la vista", "kind": "audio",
+            "lossless": True, "backend": "ffmpeg",
+        })
+        assert resp.status_code == 200
+        assert _wait_done(client, resp.json()["job_id"])["status"] == "done"
+        out = Path(mock_cut.call_args.kwargs["out"])
+    assert out.name == "00-01-05_Hasta_la_vista_media.mka"
+
+
 def test_clip_custom_template_controls_path(tmp_path: Path) -> None:
     """A custom template drives both the subfolder(s) and filename."""
     client, media, clips = _clips_client(tmp_path)

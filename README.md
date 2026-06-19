@@ -22,11 +22,14 @@ engine for scripting and quick one-off cuts.
 - **Library browser** — browse multiple media folders (movies, shows, etc.) with
   a search bar to filter by name and a clickable breadcrumb for jumping up levels.
 - **Dialogue search** — open a video and fuzzy-search its subtitles (sidecar or
-  embedded), with surrounding context and ranked, typo-tolerant matches.
+  embedded), with surrounding context and ranked, typo-tolerant matches. Clicking
+  a result selects the matching dialogue line in **Marks** (highlighted in the
+  script), ready to clip or fine-tune.
 - **Folder dialogue search** — search subtitles across every video in one or more
   folders at once (including the folders surfaced by a library search). Useful for
-  finding a line when you don't know which episode it's in. A subtitle cache plus
-  a pre-index button make repeat searches near-instant.
+  finding a line when you don't know which episode it's in. Clicking a hit opens
+  that file and selects the matched line in Marks. A subtitle cache plus a
+  pre-index button make repeat searches near-instant.
 - **Scrolling script view** — the full subtitle script scrolls with playback;
   click a line to seek, hover (or tap, on touch) for Start/End buttons to select
   a clip range by dialogue lines (timestamps are derived from the selected cues).

@@ -202,7 +202,11 @@ async function dialogueSearch() {
       <span class="hit-text">"${escapeHtml(hit.text)}"</span>
       <span class="hit-time">${hit.start_ts} – ${hit.end_ts}  <span class="hit-score">${hit.score}%</span></span>
     `;
-    li.onclick = () => openItem(hit.path, hit.file, { searchQuery: query, seekTo: hit.start });
+    li.onclick = () => openItem(hit.path, hit.file, {
+      searchQuery: query,
+      seekTo: hit.start,
+      markRange: { start: hit.start, end: hit.end },
+    });
     list.appendChild(li);
   }
 }
@@ -496,8 +500,10 @@ function cleanItemName(path, fileName) {
 }
 
 async function openItem(path, name, opts) {
-  const { searchQuery, seekTo: seekTarget, selectWholeClip } = opts || {};
+  const { searchQuery, seekTo: seekTarget, selectWholeClip, markRange } = opts || {};
   showItem();
+  // A dialogue-search match to auto-select in Marks once the script loads.
+  pendingCueSelect = markRange || null;
   // Consume any pending bookmark clip immediately so an early return (e.g.
   // probe failure) can't leak it into the next item opened.
   const bookmarkClip = pendingBookmarkClip;
@@ -516,8 +522,6 @@ async function openItem(path, name, opts) {
   $("search-empty").hidden = true;
   showClipTarget(false);
   $("job-panel").hidden = true;
-  selectedMatch = null;
-  lastSearchQuery = null;
   activeJobId = null;
   clipRangeStart = null;
   clipRangeEnd = null;
@@ -779,7 +783,6 @@ async function openItem(path, name, opts) {
   // When opening a clip from the clips library, pre-select the whole file
   // so the clip options are immediately ready for re-export.
   if (selectWholeClip && info.duration) {
-    selectedMatch = null;
     clipRangeStart = 0;
     clipRangeEnd = info.duration;
     showClipTarget(true);
@@ -959,8 +962,6 @@ async function doSearch() {
     return;
   }
 
-  lastSearchQuery = query;
-
   for (const m of data.matches) {
     const li = document.createElement("li");
     li.className = "search-result";
@@ -972,7 +973,10 @@ async function doSearch() {
       `</span>`;
     li.onclick = () => {
       seekTo(m.start);
-      selectMatchForClip(m);
+      // Select the matching cue(s) in Marks (highlighted yellow) — identical to
+      // clicking a library dialogue-search hit, so both search paths behave the
+      // same way.
+      selectCueRange(m.start, m.end);
     };
     results.appendChild(li);
   }
@@ -1058,8 +1062,7 @@ function updateClipUI() {
   if (!hasClipRange()) {
     el.innerHTML = "";
     $("mark-save").disabled = true;
-    // Hide the clip target only if it wasn't opened by a search result
-    if (!selectedMatch) showClipTarget(false);
+    showClipTarget(false);
   } else {
     // Display the buffered range (cue range ± before/after) — what actually
     // plays and gets clipped. The raw cue range still drives clipRangeStart/End
@@ -1075,7 +1078,6 @@ function updateClipUI() {
     el.querySelector(".mark-clear-inline").onclick = clearClip;
     $("mark-save").disabled = false;
     // Auto-show clip panel and populate range (raw cue range; server pads).
-    selectedMatch = null;
     clipRangeStart = s;
     clipRangeEnd = e;
     showClipTarget(true);
@@ -1154,6 +1156,9 @@ let scriptScrollTimer = null;
 let scriptActiveIdx = -1;  // index of the currently highlighted cue
 let scriptProgScroll = false; // true when we're doing a programmatic scroll
 let scriptLoadId = 0;      // generation token to ignore stale script loads
+// A dialogue-search match to auto-select in Marks once the script has loaded
+// (set in openItem from the library/folder search, consumed in loadScript).
+let pendingCueSelect = null;
 
 /** Load cues as JSON and populate the script panel. */
 async function loadScript(path, track) {
@@ -1212,6 +1217,49 @@ async function loadScript(path, track) {
 
   // Pause auto-scroll when the user manually scrolls, resume after 5 s idle.
   list.addEventListener("scroll", onScriptManualScroll, { passive: true });
+
+  // Auto-select the matching cue range when this item was opened from a
+  // dialogue search (consumed once — track switches afterward don't re-select).
+  if (pendingCueSelect) {
+    const { start, end } = pendingCueSelect;
+    pendingCueSelect = null;
+    selectCueRange(start, end);
+  }
+}
+
+/** Index of the cue whose `edge` ("start"|"end") time is nearest to `t`. */
+function nearestCueIndex(t, edge) {
+  let best = -1, bestDelta = Infinity;
+  for (let i = 0; i < scriptCues.length; i++) {
+    const delta = Math.abs((edge === "end" ? scriptCues[i].end : scriptCues[i].start) - t);
+    if (delta < bestDelta) { bestDelta = delta; best = i; }
+  }
+  return best;
+}
+
+/** Select the cue range covering [start, end] in Marks and scroll it in view. */
+function selectCueRange(start, end) {
+  if (!scriptCues.length) return;
+  const first = nearestCueIndex(start, "start");
+  let last = nearestCueIndex(end, "end");
+  if (first < 0) return;
+  if (last < first) last = first;
+  clipFirst = first;
+  clipLast = last;
+  updateClipUI();  // sets the range, clears any match, highlights cues yellow
+  // Center the selection in the script panel.
+  const list = $("script-list");
+  const row = list.children[first];
+  if (row) {
+    scriptProgScroll = true;
+    const listRect = list.getBoundingClientRect();
+    const rowRect = row.getBoundingClientRect();
+    list.scrollTo({
+      top: list.scrollTop + (rowRect.top - listRect.top) - listRect.height / 2,
+      behavior: "smooth",
+    });
+    setTimeout(() => { scriptProgScroll = false; }, 600);
+  }
 }
 
 /** Handle manual scroll — pause auto-scroll, resume after idle timeout. */
@@ -1368,7 +1416,6 @@ function wireBmBufferControls(li, bm, onSaved) {
 }
 
 function useBookmarkForClip(bm) {
-  selectedMatch = null;
   clipRangeStart = bm.start;
   clipRangeEnd = bm.end;
   // Restore the bookmark's saved buffer into the inputs (B16).
@@ -1406,24 +1453,13 @@ async function deleteBookmark(id) {
 
 // --- clipping ---------------------------------------------------------------
 
-let lastSearchQuery = null;
-let selectedMatch = null;
 let activeJobId = null;
 let jobPollTimer = null;
 let clipRangeStart = null;
 let clipRangeEnd = null;
 
-function selectMatchForClip(m) {
-  selectedMatch = m;
-  clipRangeStart = null;
-  clipRangeEnd = null;
-  showClipTarget(true);
-  $("clip-range-display").textContent =
-    `"${m.text.length > 80 ? m.text.slice(0, 77) + "…" : m.text}" — ${m.start_ts} – ${m.end_ts}`;
-}
-
 // Enable the Make-clip button + reveal the name/template row when there's a
-// clip target (cue selection, search match, or loaded bookmark); hide otherwise.
+// clip target (a cue selection or a loaded bookmark); hide otherwise.
 function showClipTarget(on) {
   $("clip-btn").disabled = !on;
   $("clip-name-row").hidden = !on;
@@ -1438,8 +1474,8 @@ const chanCategory = (g) => CHAN_CATEGORY[g] || g;
 
 async function makeClip() {
   if (!currentItem) return;
-  // Need either a search match or explicit range
-  if (!selectedMatch && (clipRangeStart === null || clipRangeEnd === null)) return;
+  // Need a selected clip range (cue selection or loaded bookmark).
+  if (clipRangeStart === null || clipRangeEnd === null) return;
   $("clip-btn").disabled = true;
   $("job-panel").hidden = false;
   $("job-status").innerHTML = '<span class="job-running">Submitting…</span>';
@@ -1475,14 +1511,10 @@ async function makeClip() {
     template: clipTemplate(),
   };
 
-  if (selectedMatch) {
-    body.query = lastSearchQuery;
-    body.match_index = selectedMatch.index;
-    body.track = getSelectedTrack() !== null ? parseInt(getSelectedTrack()) : null;
-  } else {
-    body.start = clipRangeStart;
-    body.end = clipRangeEnd;
-  }
+  body.start = clipRangeStart;
+  body.end = clipRangeEnd;
+  // The first selected cue's dialogue drives the {cue} naming token.
+  if (clipFirst >= 0 && scriptCues[clipFirst]) body.cue_text = scriptCues[clipFirst].text;
 
   try {
     const data = await postJSON("/api/clip", body);
