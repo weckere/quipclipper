@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pysubs2
+from pysubs2.exceptions import Pysubs2Error
 
 from quipclipper.models import Cue
 
@@ -33,7 +34,15 @@ def load_subtitles(path: str | Path) -> list[Cue]:
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"Subtitle file not found: {path}")
-    subs = pysubs2.load(str(path))
+    try:
+        subs = pysubs2.load(str(path))
+    except (Pysubs2Error, UnicodeDecodeError) as exc:
+        # An empty or non-text subtitle (e.g. an image/PGS track ffmpeg wrote out
+        # as an empty SRT, or a malformed/garbage file) can't be format-detected
+        # or decoded. Normalize to ValueError — the single exception type callers
+        # already handle (folder search skips the file; /api/search → 409) — so
+        # one unparseable file doesn't surface as a 500.
+        raise ValueError(f"Could not parse subtitle file {path.name}: {exc}") from exc
     cues: list[Cue] = []
     for i, line in enumerate(subs):
         text = _clean(line.text)

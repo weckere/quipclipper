@@ -955,6 +955,35 @@ def test_folder_dialogue_search_no_subs(tmp_path: Path) -> None:
     assert resp.json()["files_scanned"] == 1
 
 
+def test_folder_dialogue_search_skips_unparseable_subs(tmp_path: Path) -> None:
+    """One file whose subtitles can't be parsed must not fail the whole search —
+    it's skipped and matches from the other files still come back (HTTP 200).
+
+    Regression: an unparseable sidecar/embedded track raised pysubs2's
+    FormatAutodetectionError, which escaped _search_one's except tuple and 500'd
+    the entire /api/search/folder request.
+    """
+    good = tmp_path / "good.mkv"
+    good.write_bytes(b"")
+    (tmp_path / "good.srt").write_text(SRT)
+
+    # A sidecar that exists but is empty/garbage → pysubs2 can't autodetect it.
+    bad = tmp_path / "bad.mkv"
+    bad.write_bytes(b"")
+    (tmp_path / "bad.srt").write_text("\x00\x01 not a subtitle file at all")
+
+    client = _client(tmp_path)
+    resp = client.get(
+        "/api/search/folder",
+        params={"path": str(tmp_path), "query": "back"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["files_scanned"] == 2          # both scanned
+    assert data["count"] >= 1                   # the good file still matched
+    assert all(m["file"] == "good.mkv" for m in data["matches"])
+
+
 def test_folder_dialogue_search_forbids_outside(tmp_path: Path) -> None:
     client = _client(tmp_path)
     resp = client.get(

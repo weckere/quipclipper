@@ -42,6 +42,21 @@ def test_missing_file_raises():
         load_subtitles(FIXTURE.parent / "does-not-exist.srt")
 
 
+def test_unparseable_file_raises_valueerror(tmp_path):
+    """A file pysubs2 can't autodetect (empty or garbage) is normalized to a
+    ValueError, not the raw pysubs2 exception — so callers that already handle
+    ValueError (folder search skips it; /api/search → 409) don't see a 500."""
+    bad = tmp_path / "garbage.srt"
+    bad.write_text("\x00\x01 not a subtitle file at all")
+    with pytest.raises(ValueError):
+        load_subtitles(bad)
+
+    empty = tmp_path / "empty.srt"
+    empty.write_text("")
+    with pytest.raises(ValueError):
+        load_subtitles(empty)
+
+
 def test_find_sidecar(tmp_path):
     video = tmp_path / "movie.mkv"
     video.write_bytes(b"")
