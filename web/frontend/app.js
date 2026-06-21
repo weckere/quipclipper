@@ -522,6 +522,7 @@ async function openItem(path, name, opts) {
   $("search-empty").hidden = true;
   showClipTarget(false);
   $("job-panel").hidden = true;
+  setClipIndicator("hidden");
   activeJobId = null;
   clipRangeStart = null;
   clipRangeEnd = null;
@@ -1479,11 +1480,29 @@ const CHAN_CATEGORY = {
 };
 const chanCategory = (g) => CHAN_CATEGORY[g] || g;
 
+// Compact clip status next to the ★/✂ buttons: spinner while cutting, then a
+// download button (or ✕ on failure). The detailed bottom panel still shows too.
+function setClipIndicator(state, opts = {}) {
+  const el = $("mark-clip-indicator");
+  if (!el) return;
+  if (state === "hidden") { el.hidden = true; el.innerHTML = ""; return; }
+  el.hidden = false;
+  if (state === "processing") {
+    el.innerHTML = '<span class="clip-spinner" title="Cutting clip…"></span>';
+  } else if (state === "done") {
+    el.innerHTML = `<a class="clip-dl-mini" href="${opts.href}" download ` +
+      `title="Download ${escapeHtml(opts.name || "clip")}" aria-label="Download clip">⤓</a>`;
+  } else if (state === "failed") {
+    el.innerHTML = `<span class="clip-fail-mini" title="${escapeHtml(opts.error || "Clip failed")}">✕</span>`;
+  }
+}
+
 async function makeClip() {
   if (!currentItem) return;
   // Need a selected clip range (cue selection or loaded bookmark).
   if (clipRangeStart === null || clipRangeEnd === null) return;
   $("clip-btn").disabled = true;
+  setClipIndicator("processing");
   $("job-panel").hidden = false;
   $("job-status").innerHTML = '<span class="job-running">Submitting…</span>';
 
@@ -1537,6 +1556,7 @@ async function makeClip() {
     pollJob();
   } catch (err) {
     $("job-status").innerHTML = `<span class="job-failed">Failed: ${escapeHtml(err.message)}</span>`;
+    setClipIndicator("failed", { error: err.message });
     $("clip-btn").disabled = false;
   }
 }
@@ -1563,10 +1583,19 @@ function pollJob() {
           }
         }
         $("job-status").innerHTML = html;
+        // Inline indicator → download button for the first (usually only) file.
+        const first = job.files && job.files[0];
+        if (first) {
+          setClipIndicator("done", {
+            href: `/api/jobs/${activeJobId}/download/${encodeURIComponent(first.name)}`,
+            name: first.name,
+          });
+        } else { setClipIndicator("hidden"); }
         $("clip-btn").disabled = false;
       } else {
         $("job-status").innerHTML =
           `<span class="job-failed">Failed: ${escapeHtml(job.error || "unknown error")}</span>`;
+        setClipIndicator("failed", { error: job.error });
         $("clip-btn").disabled = false;
       }
     })
