@@ -525,6 +525,7 @@ async function openItem(path, name, opts) {
   activeJobId = null;
   clipRangeStart = null;
   clipRangeEnd = null;
+  loadedBookmarkCue = null;
   clipFirst = -1;
   clipLast = -1;
   updatePlaybackUI();  // clear any stale range note / reset the play icon
@@ -1134,6 +1135,8 @@ async function saveBookmark() {
       sub_track: t != null ? parseInt(t) : null,
       audio_track: getSelectedAudio(),
       channel_subset: getSelectedChan(),
+      // Keep the matched dialogue so exporting the bookmark fills the {cue} token.
+      cue: (clipFirst >= 0 && scriptCues[clipFirst]) ? scriptCues[clipFirst].text : "",
     });
     loadBookmarks();
   } catch (err) {
@@ -1418,6 +1421,9 @@ function wireBmBufferControls(li, bm, onSaved) {
 function useBookmarkForClip(bm) {
   clipRangeStart = bm.start;
   clipRangeEnd = bm.end;
+  // No cue is selected in the script for a bookmark-loaded range, so remember the
+  // bookmark's dialogue for the {cue} naming token (makeClip falls back to it).
+  loadedBookmarkCue = bm.cue || null;
   // Restore the bookmark's saved buffer into the inputs (B16).
   $("clip-before").value = bm.before ?? 0;
   $("clip-after").value = bm.after ?? 0;
@@ -1457,6 +1463,7 @@ let activeJobId = null;
 let jobPollTimer = null;
 let clipRangeStart = null;
 let clipRangeEnd = null;
+let loadedBookmarkCue = null;  // {cue} fallback when a bookmark range is loaded
 
 // Enable the Make-clip button + reveal the name/template row when there's a
 // clip target (a cue selection or a loaded bookmark); hide otherwise.
@@ -1517,7 +1524,10 @@ async function makeClip() {
   body.start = clipRangeStart;
   body.end = clipRangeEnd;
   // The first selected cue's dialogue drives the {cue} naming token.
+  // The {cue} naming token: the selected cue's dialogue, or — when a bookmark
+  // range is loaded (no cue selected in the script) — the bookmark's saved cue.
   if (clipFirst >= 0 && scriptCues[clipFirst]) body.cue_text = scriptCues[clipFirst].text;
+  else if (loadedBookmarkCue) body.cue_text = loadedBookmarkCue;
 
   try {
     const data = await postJSON("/api/clip", body);
@@ -1764,6 +1774,7 @@ async function browseBookmarks() {
       cb.dataset.end = bm.end;
       cb.dataset.before = bm.before || 0;
       cb.dataset.after = bm.after || 0;
+      cb.dataset.cue = bm.cue || "";
       cb.onclick = (e) => { e.stopPropagation(); updateBatchState("bm"); };
       wireBmBufferControls(li, bm, () => browseBookmarks());
       // Clicking the bookmark name opens the video with this bookmark preloaded
@@ -1938,6 +1949,8 @@ $("bm-batch-export").onclick = () => {
     end: parseFloat(cb.dataset.end),
     before: parseFloat(cb.dataset.before) || 0,
     after: parseFloat(cb.dataset.after) || 0,
+    // The bookmark's saved dialogue drives the {cue} naming token.
+    cue_text: cb.dataset.cue || undefined,
     ...opts,
   }));
 };

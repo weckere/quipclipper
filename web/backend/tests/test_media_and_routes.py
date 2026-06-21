@@ -703,6 +703,22 @@ def test_bookmark_crud(tmp_path: Path) -> None:
     assert resp.json()["bookmarks"] == []
 
 
+def test_bookmark_stores_cue_for_export_naming(tmp_path: Path) -> None:
+    """A bookmark keeps its matched dialogue so exporting it later fills the
+    {cue} naming token (it has no cue selected in the script at export time)."""
+    video = tmp_path / "movie.mkv"
+    video.write_bytes(b"")
+    client = _client(tmp_path)
+    resp = client.post("/api/bookmarks", json={
+        "path": str(video), "label": "L", "start": 10.0, "end": 13.0,
+        "cue": "Hasta la vista",
+    })
+    assert resp.status_code == 200
+    assert resp.json()["cue"] == "Hasta la vista"
+    got = client.get("/api/bookmarks", params={"path": str(video)}).json()["bookmarks"]
+    assert got[0]["cue"] == "Hasta la vista"
+
+
 def test_bookmark_forbids_outside(tmp_path: Path) -> None:
     root = tmp_path / "media"
     root.mkdir()

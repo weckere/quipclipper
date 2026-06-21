@@ -213,6 +213,7 @@ class BookmarkCreate(BaseModel):
     sub_track: int | None = None
     audio_track: int | None = None
     channel_subset: str | None = None
+    cue: str = ""  # matched dialogue, for the {cue} token when exporting the bookmark
 
 
 class BookmarkUpdate(BaseModel):
@@ -1066,7 +1067,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             req.path, req.label, req.start, req.end,
             before=req.before, after=req.after,
             sub_track=req.sub_track, audio_track=req.audio_track,
-            channel_subset=req.channel_subset,
+            channel_subset=req.channel_subset, cue=req.cue,
         )
         return bm.to_dict()
 

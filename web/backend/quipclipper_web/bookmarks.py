@@ -39,6 +39,9 @@ class Bookmark:
     sub_track: int | None = None
     audio_track: int | None = None
     channel_subset: str | None = None
+    # The matched dialogue line, kept so exports from a bookmark fill the {cue}
+    # naming token (older bookmarks lack it and export with an empty {cue}).
+    cue: str = ""
     created: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     def to_dict(self) -> dict:
@@ -91,7 +94,7 @@ class BookmarkStore:
         self, path: str, label: str, start: float, end: float,
         before: float = 0.0, after: float = 0.0,
         sub_track: int | None = None, audio_track: int | None = None,
-        channel_subset: str | None = None,
+        channel_subset: str | None = None, cue: str = "",
     ) -> Bookmark:
         """Create a new bookmark and persist it."""
         bm = Bookmark(
@@ -105,6 +108,7 @@ class BookmarkStore:
             sub_track=sub_track,
             audio_track=audio_track,
             channel_subset=channel_subset,
+            cue=cue,
         )
         with self._lock:
             data = self._read()
