@@ -207,19 +207,28 @@ host nginx (a VM test in CI exercises the whole flow):
 
   services.quipclipper-web = {
     enable     = true;
-    mediaRoots = [ "/srv/media/movies" "/srv/media/tv" ];
+    mediaRoots = [ "/srv/media/movies" "/srv/media/tv" ];   # required
     clipsDir   = "/srv/clips";
     listenPort = 8000;        # backend port; nginx fronts it on :80
     openFirewall = true;
     # optional: gate the site behind HTTP basic auth (provide an htpasswd file)
     # passwordFile = "/run/secrets/quip.htpasswd";
+    # optional: Intel Quick Sync hardware H.264 encoding (else software libx264).
+    # Adds the service user to the render group, exposes the render node, and
+    # enables the Intel media driver:
+    # hardwareAcceleration.enable = true;
   };
 }
 ```
 
 The option names mirror the Docker env vars. (Unlike Docker, which builds its
 htpasswd from a plaintext `QC_PASSWORD`, the module takes a ready-made
-`passwordFile`.)
+`passwordFile`.) nginx serves finished clips straight from `clipsDir`, and the
+module adds the nginx user to the service group so it can read them. The module
+builds the app from quipclipper's own pinned nixpkgs, so you don't need an
+`inputs.nixpkgs.follows`. For a public hostname with TLS, set `virtualHost` and
+add `enableACME`/`forceSSL` to that nginx vhost yourself; the defaults target
+LAN-by-IP over `:80`.
 
 ## Lossless cutting
 

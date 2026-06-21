@@ -44,11 +44,13 @@ Environment variables (mirrored 1:1 by the NixOS module options):
 | `QC_USERNAME` | `quip` | basic-auth username (used only when `QC_PASSWORD` is set) |
 | `QC_SUBTITLE_LANGS` | `en` | ordered subtitle-language auto-select preference (comma-separated, e.g. `eng,spa`); UI Auto-lang box overrides per browser |
 
-**Hardware video transcode:** not env-configured — the backend auto-detects an
-Intel iGPU at `/dev/dri/renderD128` (probed once, reported as `hw_encode` in
-`/api/config`) and uses `h264_vaapi` for the browser-preview video re-encode,
-falling back to software `libx264`. Pass the device into the container to enable
-it (see the root README's Docker quick start).
+**Hardware video transcode:** the backend auto-detects an Intel iGPU at
+`/dev/dri/renderD128` (probed once, reported as `hw_encode` in `/api/config`) and
+uses `h264_vaapi` for the browser-preview video re-encode, falling back to
+software `libx264`. Pass the device into the container to enable it (see the root
+README's Docker quick start). Override the node with `QC_VAAPI_DEVICE` (e.g. a
+second GPU's `/dev/dri/renderD129`); set `LIBVA_DRIVER_NAME` (`iHD` for Gen8+
+Intel) if libva doesn't auto-select the driver.
 
 ## Test
 

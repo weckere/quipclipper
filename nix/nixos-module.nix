@@ -84,6 +84,30 @@ in
       '';
     };
 
+    hardwareAcceleration = {
+      enable = lib.mkEnableOption ''
+        Intel Quick Sync (VAAPI) hardware H.264 encoding for the browser-preview
+        video re-encode. Adds the service user to the render group, exposes the
+        render node, and enables the Intel media driver. Without it the re-encode
+        falls back to software (libx264)'';
+
+      device = lib.mkOption {
+        type = lib.types.str;
+        default = "/dev/dri/renderD128";
+        description = "VAAPI render node to encode on (a second GPU may be renderD129).";
+      };
+
+      driverName = lib.mkOption {
+        type = lib.types.str;
+        default = "iHD";
+        example = "i965";
+        description = ''
+          libva driver name. iHD covers Intel Gen8+ (Broadwell and newer); older
+          iGPUs need i965 (and `intel-vaapi-driver` in hardware.graphics).
+        '';
+      };
+    };
+
     user = lib.mkOption {
       type = lib.types.str;
       default = "quipclipper-web";
@@ -98,11 +122,35 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    assertions = [
+      {
+        assertion = cfg.mediaRoots != [ ];
+        message = ''
+          services.quipclipper-web.mediaRoots must list at least one media
+          directory — otherwise the app starts with an empty, unusable library.
+        '';
+      }
+    ];
+
     users.users.${cfg.user} = {
       isSystemUser = true;
       group = cfg.group;
+      # The render group lets the service open the VAAPI node for HW encoding.
+      extraGroups = lib.optional cfg.hardwareAcceleration.enable "render";
     };
     users.groups.${cfg.group} = { };
+
+    # nginx serves the clips dir directly (QC_CLIPS_URL_PREFIX = /clips). The dir
+    # is 0750 and owned by the service group, so nginx must be in that group to
+    # traverse it and read the finished clips — otherwise downloads 403.
+    users.users.${config.services.nginx.user}.extraGroups = [ cfg.group ];
+
+    # Intel media driver + GPU access for hardware H.264 encoding (opt-in).
+    hardware.graphics = lib.mkIf cfg.hardwareAcceleration.enable {
+      enable = lib.mkDefault true;
+      extraPackages = lib.mkIf (cfg.hardwareAcceleration.driverName == "iHD")
+        [ pkgs.intel-media-driver ];
+    };
 
     systemd.services.quipclipper-web = {
       description = "quipclipper web backend";
@@ -119,6 +167,9 @@ in
         QC_PORT = toString cfg.listenPort;
         QC_MAX_CONCURRENT_JOBS = toString cfg.maxConcurrentJobs;
         QC_SUBTITLE_LANGS = lib.concatStringsSep "," cfg.subtitleLangs;
+      } // lib.optionalAttrs cfg.hardwareAcceleration.enable {
+        QC_VAAPI_DEVICE = cfg.hardwareAcceleration.device;
+        LIBVA_DRIVER_NAME = cfg.hardwareAcceleration.driverName;
       } // lib.optionalAttrs (cfg.passwordFile != null) {
         # The gate is enforced by nginx via `basicAuthFile = passwordFile` on the
         # vhost below; this env var only makes the backend report auth_required so

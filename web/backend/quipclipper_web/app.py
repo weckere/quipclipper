@@ -16,6 +16,7 @@ import contextlib
 import functools
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -147,7 +148,10 @@ def _render_clip_template(template: str, ctx: dict[str, str]) -> str:
     return "/".join(segments)
 
 
-_VAAPI_DEVICE = "/dev/dri/renderD128"
+# The VAAPI render node used for hardware H.264 encoding. Override with
+# QC_VAAPI_DEVICE for a non-default node (e.g. a second GPU's renderD129, or the
+# device the NixOS module / docker-compose passes in).
+_VAAPI_DEVICE = os.environ.get("QC_VAAPI_DEVICE") or "/dev/dri/renderD128"
 
 
 @functools.lru_cache(maxsize=1)
