@@ -1489,11 +1489,14 @@ async function makeClip() {
   const audioOnly = $("clip-audio-only").checked || chanSubset;
   const kind = audioOnly ? "audio" : "video";
   const aud = getSelectedAudio();
+  // "Exact (re-encode)" forces a re-encode so the clip is frame-tight (a lossless
+  // copy can only start on a keyframe, so it runs long on long-GOP sources).
+  const exact = $("clip-exact").checked;
 
   const body = {
     path: currentItem.path,
     kind,
-    lossless: fmt === "lossless",
+    lossless: !exact && fmt === "lossless",
     before: parseFloat($("clip-before").value) || 0,
     after: parseFloat($("clip-after").value) || 0,
     backend: "auto",

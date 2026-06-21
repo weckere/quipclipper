@@ -227,11 +227,18 @@ def cut_with_mkvmerge(
 
         tracks = identify(work_source)
 
-        # Snap the start to the last video keyframe at or before the
-        # requested start.  mkvmerge --split parts: may otherwise snap to
-        # the *next* keyframe, which can land after the dialogue we want.
-        kf_start = _keyframe_at_or_before(work_source, rng.start)
-        cut_rng = ClipRange(start=kf_start, end=rng.end) if kf_start < rng.start else rng
+        # Snap the start to the last video keyframe at or before the requested
+        # start — but only for VIDEO. mkvmerge --split parts: can only begin a
+        # kept range at a video keyframe and may otherwise snap to the *next*
+        # one, landing after the dialogue. Audio has no such constraint (every
+        # frame is independently seekable), so an audio clip is cut at the exact
+        # requested time — snapping it back to a video keyframe would just bloat
+        # it with a lead-in (a 3 s line off a long-GOP source became ~11 s).
+        if kind == "video":
+            kf_start = _keyframe_at_or_before(work_source, rng.start)
+            cut_rng = ClipRange(start=kf_start, end=rng.end) if kf_start < rng.start else rng
+        else:
+            cut_rng = rng
 
         all_audio = audio_indices is None
         audio_ids = audio_track_ids(tracks, audio_indices)

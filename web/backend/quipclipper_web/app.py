@@ -910,6 +910,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             use_mkvmerge = True
         else:  # auto
             use_mkvmerge = mkv_capable and mkvmerge_available()
+            # For lossless VIDEO, prefer ffmpeg: mkvmerge can only end a kept
+            # range on a keyframe, so on a long-GOP source it extends the clip
+            # well past the cut point (a 3 s line became 22 s). ffmpeg's stream
+            # copy ends exactly (the start still snaps to the prior keyframe —
+            # unavoidable for a copy). Audio passthrough stays on mkvmerge: it
+            # keeps every track and now cuts at the exact time (no keyframe snap).
+            if use_mkvmerge and req.kind == "video":
+                use_mkvmerge = False
 
         do_remux = use_mkvmerge and req.remux_first and not is_matroska(video)
 

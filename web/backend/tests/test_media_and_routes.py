@@ -481,6 +481,49 @@ def test_clip_range_with_cue_text_names_the_file(tmp_path: Path) -> None:
     assert out.name == "00-01-05_Hasta_la_vista_media.mka"
 
 
+def test_video_lossless_uses_ffmpeg_for_exact_end(tmp_path: Path) -> None:
+    """A lossless video clip must cut with ffmpeg (exact end), not mkvmerge —
+    mkvmerge can only end a kept range on a keyframe, bloating short clips on
+    long-GOP sources (a 3s line became 22s). Audio passthrough stays mkvmerge."""
+    client, media, clips = _clips_client(tmp_path)
+    video = media / "movie.mkv"
+    video.write_bytes(b"")
+    out = clips / "movie" / "out.mkv"
+    out.parent.mkdir(parents=True)
+    out.write_bytes(b"x")
+    with patch("quipclipper_web.app.mkvmerge_available", return_value=True), \
+         patch("quipclipper_web.app.cut_with_mkvmerge") as mkv, \
+         patch("quipclipper_web.app.cut_clip", return_value=out) as ff:
+        resp = client.post("/api/clip", json={
+            "path": str(video), "start": 65, "end": 70, "before": 0, "after": 0,
+            "kind": "video", "lossless": True, "backend": "auto",
+        })
+        assert resp.status_code == 200
+        assert _wait_done(client, resp.json()["job_id"])["status"] == "done"
+    ff.assert_called_once()       # ffmpeg path
+    mkv.assert_not_called()       # not mkvmerge
+
+
+def test_audio_lossless_still_uses_mkvmerge(tmp_path: Path) -> None:
+    client, media, clips = _clips_client(tmp_path)
+    video = media / "movie.mkv"
+    video.write_bytes(b"")
+    out = clips / "movie" / "out.mka"
+    out.parent.mkdir(parents=True)
+    out.write_bytes(b"x")
+    with patch("quipclipper_web.app.mkvmerge_available", return_value=True), \
+         patch("quipclipper_web.app.cut_with_mkvmerge", return_value=out) as mkv, \
+         patch("quipclipper_web.app.cut_clip") as ff:
+        resp = client.post("/api/clip", json={
+            "path": str(video), "start": 65, "end": 70, "before": 0, "after": 0,
+            "kind": "audio", "lossless": True, "backend": "auto",
+        })
+        assert resp.status_code == 200
+        assert _wait_done(client, resp.json()["job_id"])["status"] == "done"
+    mkv.assert_called_once()
+    ff.assert_not_called()
+
+
 def test_clip_custom_template_controls_path(tmp_path: Path) -> None:
     """A custom template drives both the subfolder(s) and filename."""
     client, media, clips = _clips_client(tmp_path)

@@ -311,11 +311,20 @@ What "preserve everything" means here:
   copied bitstream, so they come through untouched.
 - **Video mode keeps all video, audio and subtitle tracks** in one `.mkv`.
 
-The one inherent tradeoff — true of every codec — is that a copy can only begin
-at a **keyframe**. quipclipper seeks to the nearest keyframe at or before your start
-time, so a lossless clip may start a little earlier than requested (the **end is
-exact**). For dialogue clips that just adds a small lead-in, which is usually
-welcome.
+The one inherent tradeoff — true of every codec — is that a video copy can only
+begin at a **keyframe**. quipclipper seeks to the nearest keyframe at or before your
+start time, so a lossless **video** clip starts a little earlier than requested
+(the end is exact). For dialogue clips that's usually a welcome lead-in, but on
+sources with a long GOP (sparse keyframes — some BluRay encodes are 8–10s apart)
+it can be several seconds. Two things keep this in check:
+
+- **Audio clips are frame-exact** — audio has no keyframes, so an audio-only clip
+  is cut at precisely the selected span (no lead-in).
+- **Want an exactly-trimmed video clip?** Tick **Exact (re-encode)** in the web
+  app (or `--no-lossless` on the CLI): the clip is re-encoded to H.264 so it
+  matches the dialogue span to the frame, at the cost of a quick re-encode (no
+  longer a byte-for-byte copy). Without it, a lossless video clip keeps the
+  keyframe lead-in.
 
 Containers are chosen to hold the source streams without transcoding:
 

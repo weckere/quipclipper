@@ -1,9 +1,11 @@
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from quipclipper.clip import ClipRange
 from quipclipper.mkv import (
     audio_track_ids,
     build_mkvmerge_args,
+    cut_with_mkvmerge,
     estimate_remux_bytes,
     human_size,
     is_matroska,
@@ -103,6 +105,44 @@ def test_build_args_default_subtitle_flag():
 
 def test_build_args_no_default_flag_without_selection():
     assert "--default-track-flag" not in _video_args(sub_ids=[3, 4])
+
+
+def _run_cut(kind, tmp_path):
+    """Run cut_with_mkvmerge with mkvmerge/identify/keyframe-probe stubbed,
+    returning (mkvmerge argv, keyframe-probe mock)."""
+    src = tmp_path / "in.mkv"
+    src.write_bytes(b"x")
+    out = tmp_path / ("o.mka" if kind == "audio" else "o.mkv")
+    captured = {}
+
+    def fake_run(args, **kw):
+        captured["args"] = args
+        out.write_bytes(b"x")  # pretend mkvmerge produced the file
+        return MagicMock(returncode=0, stdout="", stderr="")
+
+    with patch("quipclipper.mkv.mkvmerge_available", return_value=True), \
+         patch("quipclipper.mkv.identify", return_value=[]), \
+         patch("quipclipper.mkv._keyframe_at_or_before", return_value=10.0) as kf, \
+         patch("quipclipper.mkv.subprocess.run", side_effect=fake_run):
+        cut_with_mkvmerge(src, ClipRange(20.0, 23.0), kind=kind, out=out)
+    split = next(a for a in captured["args"] if a.startswith("parts:"))
+    return split, kf
+
+
+def test_audio_cut_is_not_snapped_to_a_video_keyframe(tmp_path):
+    """An audio clip is cut at the exact requested time — it must NOT snap its
+    start back to a video keyframe (which bloated short clips on long-GOP files)."""
+    split, kf = _run_cut("audio", tmp_path)
+    assert split == "parts:00:00:20.000-00:00:23.000"  # exact start (20s)
+    kf.assert_not_called()
+
+
+def test_video_cut_snaps_start_back_to_keyframe(tmp_path):
+    """A video clip still snaps its start back to the prior keyframe (a stream
+    copy can only begin there)."""
+    split, kf = _run_cut("video", tmp_path)
+    assert split == "parts:00:00:10.000-00:00:23.000"  # snapped to keyframe (10s)
+    kf.assert_called_once()
 
 
 def test_human_size():
