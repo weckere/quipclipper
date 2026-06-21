@@ -99,13 +99,20 @@
                 machine.wait_for_open_port(80)
                 # Basic-auth gate: no credentials is rejected, correct ones pass.
                 machine.fail("curl -fsS http://localhost/")
-                machine.succeed("curl -fsS -u quip:test123 http://localhost/ | grep -q quipclipper")
-                machine.succeed("curl -fsS -u quip:test123 http://localhost/api/health | grep -q ok")
-                machine.succeed("curl -fsS -u quip:test123 http://localhost/api/library/roots | grep -q /srv/media")
+                # Fetch to a file before grepping: `curl | grep -q` races —
+                # grep -q closes the pipe on first match, curl then exits 23
+                # (write error) and pipefail fails the (otherwise-fine) command.
+                machine.succeed("curl -fsS -u quip:test123 http://localhost/ -o /tmp/index.html")
+                machine.succeed("grep -q quipclipper /tmp/index.html")
+                machine.succeed("curl -fsS -u quip:test123 http://localhost/api/health -o /tmp/health.json")
+                machine.succeed("grep -q ok /tmp/health.json")
+                machine.succeed("curl -fsS -u quip:test123 http://localhost/api/library/roots -o /tmp/roots.json")
+                machine.succeed("grep -q /srv/media /tmp/roots.json")
                 # Finished clips are served by nginx straight from the 0750 clips
                 # dir — only works because nginx is in the service group. Without
-                # that, this download 403s.
-                machine.succeed("curl -fsS -u quip:test123 http://localhost/clips/probe/clip.txt | grep -q hello-clip")
+                # that, this download 403s (curl -f exits non-zero).
+                machine.succeed("curl -fsS -u quip:test123 http://localhost/clips/probe/clip.txt -o /tmp/clip.txt")
+                machine.succeed("grep -q hello-clip /tmp/clip.txt")
               '';
             };
           };
