@@ -13,6 +13,8 @@ browser.
 A **command-line tool** ([`quipclipper-cli`](#quipclipper-cli)) wraps the same
 engine for scripting and quick one-off cuts.
 
+![quipclipper web app — searching dialogue and selecting a line to clip](docs/screenshot.png)
+
 > **Documentation:** [`docs/MANUAL.md`](docs/MANUAL.md) is the complete user
 > manual; [`docs/DESIGN_NOTES.md`](docs/DESIGN_NOTES.md) explains the design
 > decisions and their rationale.
