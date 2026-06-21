@@ -196,39 +196,58 @@ rejected.
 
 On NixOS, deploy the web app declaratively with the flake's module instead of
 Docker — it runs the backend as a hardened systemd service and configures the
-host nginx (a VM test in CI exercises the whole flow):
+host nginx (a VM test in CI exercises the whole flow).
+
+Add the flake as an input and pull the module into your host. A minimal
+`flake.nix`:
 
 ```nix
 {
-  inputs.quipclipper.url = "github:weckere/quipclipper";
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    quipclipper.url = "github:weckere/quipclipper";
+  };
 
-  # in configuration.nix:
-  imports = [ inputs.quipclipper.nixosModules.default ];
-
-  services.quipclipper-web = {
-    enable     = true;
-    mediaRoots = [ "/srv/media/movies" "/srv/media/tv" ];   # required
-    clipsDir   = "/srv/clips";
-    listenPort = 8000;        # backend port; nginx fronts it on :80
-    openFirewall = true;
-    # optional: gate the site behind HTTP basic auth (provide an htpasswd file)
-    # passwordFile = "/run/secrets/quip.htpasswd";
-    # optional: Intel Quick Sync hardware H.264 encoding (else software libx264).
-    # Adds the service user to the render group, exposes the render node, and
-    # enables the Intel media driver:
-    # hardwareAcceleration.enable = true;
+  outputs = { nixpkgs, quipclipper, ... }: {
+    nixosConfigurations.myhost = nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
+      modules = [
+        quipclipper.nixosModules.default
+        ./configuration.nix
+      ];
+    };
   };
 }
 ```
 
-The option names mirror the Docker env vars. (Unlike Docker, which builds its
-htpasswd from a plaintext `QC_PASSWORD`, the module takes a ready-made
-`passwordFile`.) nginx serves finished clips straight from `clipsDir`, and the
-module adds the nginx user to the service group so it can read them. The module
-builds the app from quipclipper's own pinned nixpkgs, so you don't need an
-`inputs.nixpkgs.follows`. For a public hostname with TLS, set `virtualHost` and
-add `enableACME`/`forceSSL` to that nginx vhost yourself; the defaults target
-LAN-by-IP over `:80`.
+Then enable the service in `configuration.nix` (or any imported module). The
+minimal config is just `enable` + `mediaRoots`:
+
+```nix
+{
+  services.quipclipper-web = {
+    enable = true;
+    mediaRoots = [ "/srv/media/movies" "/srv/media/tv" ];  # required
+    openFirewall = true;   # then browse at http://<host>/ on the LAN
+  };
+}
+```
+
+That's a complete deployment: nginx fronts the app on `:80`, finished clips are
+written to `/var/lib/quipclipper-web/clips` and served from there.
+
+Optional settings (all off/defaulted unless set):
+
+| Option | Purpose |
+|---|---|
+| `passwordFile` | Gate the whole site behind HTTP basic auth — path to a ready-made nginx htpasswd file (kept out of the store). Unlike Docker's plaintext `QC_PASSWORD`, the module takes the htpasswd directly. |
+| `hardwareAcceleration.enable` | Intel Quick Sync H.264 encoding (else software `libx264`). Adds the service user to the `render` group, exposes the render node, and enables the Intel media driver. |
+| `virtualHost` | nginx server name for a public hostname; pair with `enableACME`/`forceSSL` on that vhost for TLS. Default (null) is a catch-all vhost for LAN-by-IP over `:80`. |
+| `clipsDir` | Where finished clips live (default `/var/lib/quipclipper-web/clips`). |
+| `subtitleLangs`, `listenPort`, `maxConcurrentJobs` | Mirror the Docker env vars `QC_SUBTITLE_LANGS` / `QC_PORT` / `QC_MAX_CONCURRENT_JOBS`. |
+
+The module builds the app from quipclipper's own pinned nixpkgs, so you don't
+need an `inputs.nixpkgs.follows`.
 
 ## Lossless cutting
 
