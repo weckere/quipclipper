@@ -253,15 +253,33 @@ code {
 }
 .download-link:hover { opacity: 0.85; }
 
-.marks-panel { margin-top: 0.5rem; padding-top: 0.4rem; padding-bottom: 0.4rem; }
-/* The Save button is vertically centered against the title+hint block, so it
-   sits midway between the top of the panel and the cue box below it. */
-/* The header wraps: the title+hint block keeps a sensible min width, and the
-   action controls drop to their own line(s) on narrow screens (mobile) instead
-   of squeezing the hint into a one-word-per-line column. */
-.marks-header { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.8rem; }
-/* Before/After buffer (B16) + clip controls (B17) in the Marks header. */
-.marks-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.7rem; }
+.marks-panel { margin-top: 0.5rem; padding-top: 0.85rem; padding-bottom: 0.5rem; }
+/* Top row: title + selected range on the left, icon actions on the right. */
+.marks-header { display: flex; align-items: center; gap: 0.6rem; }
+.marks-titlerow { flex: 1; display: flex; align-items: center; gap: 0.6rem; min-width: 0; }
+.marks-titlerow h3 { margin: 0; flex-shrink: 0; }
+.marks-actions { display: flex; align-items: center; gap: 0.4rem; flex-shrink: 0; }
+/* Small icon buttons: ★ save (as bookmark), ✂ make clip. Hover text via title. */
+.mark-icon-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 2.1rem; height: 2.1rem; padding: 0; line-height: 1;
+  border-radius: 6px; cursor: pointer; font-size: 1.05rem;
+  background: var(--badge); color: var(--fg); border: 1px solid var(--badge);
+}
+.mark-icon-btn:hover:not(:disabled) { background: var(--hover); border-color: var(--accent); }
+.mark-icon-btn:disabled { opacity: 0.4; cursor: default; }
+.mark-icon-btn .star { color: #ffd24a; }
+.mark-icon-btn:disabled .star { color: var(--muted); }
+/* Make clip is the primary action — accent it green. */
+.make-clip-btn { background: var(--ok); border-color: var(--ok); color: var(--bg); }
+.make-clip-btn:hover:not(:disabled) { opacity: 0.85; background: var(--ok); border-color: var(--ok); }
+.make-clip-btn:disabled { background: var(--badge); border-color: var(--badge); }
+/* Clip options under the cues: buffer + audio-only + format, then the name row. */
+.clip-options {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.9rem;
+  margin-top: 0.6rem;
+}
+.clip-options .clip-name-row { flex: 1 1 100%; }
 .marks-buffer, .bm-buffer { display: flex; align-items: center; gap: 0.4rem; }
 .marks-buffer label, .bm-buffer label {
   display: inline-flex; align-items: center; gap: 0.2rem;
@@ -275,19 +293,9 @@ code {
 }
 .bm-clear-all-btn { background: transparent; border-color: var(--badge); }
 .bm-clear-all-btn:hover { border-color: #c0504d; color: #e88; }
-.marks-header-info {
-  flex: 1 1 14rem; min-width: 0; display: flex; flex-direction: column; gap: 0.3rem;
-}
-.marks-titlerow { display: flex; align-items: center; gap: 0.5rem; }
-.marks-titlerow h3 { margin: 0; flex-shrink: 0; }
-.mark-btn {
-  background: var(--badge); color: var(--fg); border: 1px solid var(--badge);
-  border-radius: 6px; padding: 0.35rem 0.75rem; cursor: pointer; font-size: 0.85rem;
-}
-.mark-btn:hover { background: var(--hover); border-color: var(--accent); }
 .mark-range-display {
   font-size: 0.85rem; color: var(--muted); flex: 1;
-  font-variant-numeric: tabular-nums; text-align: center;
+  font-variant-numeric: tabular-nums; text-align: left;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .mark-range-display .range-times { color: rgba(255, 220, 100, 0.8); }
@@ -297,10 +305,6 @@ code {
   opacity: 0.6; transition: opacity 0.1s;
 }
 .mark-clear-inline:hover { opacity: 1; color: var(--error); }
-.mark-save-btn { font-size: 0.85rem; flex-shrink: 0; }
-.mark-save-btn .star { color: #ffd24a; }
-.mark-save-btn:disabled { opacity: 0.5; cursor: default; }
-.mark-save-btn:disabled .star { color: var(--muted); }
 
 .bookmarks-list { list-style: none; margin: 0; padding: 0; }
 .bookmark-item {

@@ -135,47 +135,50 @@
         <p id="preview-note" class="muted"></p>
 
         <div class="panel marks-panel">
+          <!-- Top: title + selected range, plus the icon actions (★ save, ✂ clip). -->
           <div class="marks-header">
-            <div class="marks-header-info">
-              <div class="marks-titlerow">
-                <h3>Marks</h3>
-                <span id="mark-range-display" class="mark-range-display"></span>
-              </div>
-              <div id="marks-hint" class="script-hint" hidden>Click a line to seek. Hover to set <strong>Start</strong> / <strong>End</strong> of the clip range.</div>
+            <div class="marks-titlerow">
+              <h3>Marks</h3>
+              <span id="mark-range-display" class="mark-range-display"></span>
             </div>
             <div class="marks-actions">
-              <div class="marks-buffer" title="Padding added around the selection — applied to preview, bookmark and clip">
-                <label>Before <input id="clip-before" type="number" value="0" min="0" max="60" step="0.5" /></label>
-                <label>After <input id="clip-after" type="number" value="0" min="0" max="60" step="0.5" /></label>
-              </div>
-              <label class="checkbox-label"><input id="clip-audio-only" type="checkbox" /> Audio only</label>
-              <label class="clip-format-label">Format
-                <select id="clip-format">
-                  <option value="lossless" selected>Passthrough</option>
-                  <option value="flac">FLAC</option>
-                  <option value="wav">WAV</option>
-                </select>
-              </label>
-              <button id="mark-save" class="mark-btn mark-save-btn" disabled title="Save as bookmark"><span class="star">★</span> Save</button>
-              <button id="clip-btn" class="clip-btn" disabled title="Cut the selected clip">Make clip</button>
+              <button id="mark-save" class="mark-icon-btn" disabled title="Save as bookmark" aria-label="Save as bookmark"><span class="star">★</span></button>
+              <button id="clip-btn" class="mark-icon-btn make-clip-btn" disabled title="Make clip" aria-label="Make clip"><span class="scissors">✂</span></button>
             </div>
           </div>
-          <div id="clip-name-row" class="clip-name-row" hidden>
-            <div class="clip-range" id="clip-range-display"></div>
-            <label class="clip-template-label">Name template
-              <input id="clip-template" type="text" autocomplete="off" spellcheck="false"
-                     placeholder="{source}/{timestamp}_{cue}_{title}" />
-            </label>
-            <p class="clip-template-help muted">
-              <code>/</code> makes subfolders. Tokens:
-              <code>{source}</code> <code>{timestamp}</code> <code>{end}</code>
-              <code>{duration}</code> <code>{cue}</code> <code>{title}</code>
-              <code>{year}</code> <code>{season}</code> <code>{episode}</code>
-              <code>{date}</code>. Empty tokens are dropped.
-            </p>
-          </div>
+          <div id="marks-hint" class="script-hint" hidden>Click a line to seek. Hover to set <strong>Start</strong> / <strong>End</strong> of the clip range.</div>
+          <!-- The dialogue cues. -->
           <div id="script-wrap" class="script-wrap" hidden>
             <div id="script-list" class="script-list"></div>
+          </div>
+          <!-- Clip options, under the cues. -->
+          <div class="clip-options">
+            <div class="marks-buffer" title="Padding added around the selection — applied to preview, bookmark and clip">
+              <label>Before <input id="clip-before" type="number" value="0" min="0" max="60" step="0.5" /></label>
+              <label>After <input id="clip-after" type="number" value="0" min="0" max="60" step="0.5" /></label>
+            </div>
+            <label class="checkbox-label"><input id="clip-audio-only" type="checkbox" /> Audio only</label>
+            <label class="clip-format-label">Format
+              <select id="clip-format">
+                <option value="lossless" selected>Passthrough</option>
+                <option value="flac">FLAC</option>
+                <option value="wav">WAV</option>
+              </select>
+            </label>
+            <div id="clip-name-row" class="clip-name-row" hidden>
+              <div class="clip-range" id="clip-range-display"></div>
+              <label class="clip-template-label">Name template
+                <input id="clip-template" type="text" autocomplete="off" spellcheck="false"
+                       placeholder="{source}/{timestamp}_{cue}_{title}" />
+              </label>
+              <p class="clip-template-help muted">
+                <code>/</code> makes subfolders. Tokens:
+                <code>{source}</code> <code>{timestamp}</code> <code>{end}</code>
+                <code>{duration}</code> <code>{cue}</code> <code>{title}</code>
+                <code>{year}</code> <code>{season}</code> <code>{episode}</code>
+                <code>{date}</code>. Empty tokens are dropped.
+              </p>
+            </div>
           </div>
         </div>
 
