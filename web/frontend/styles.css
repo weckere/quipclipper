@@ -240,11 +240,22 @@ code {
 .clip-btn:hover { opacity: 0.85; }
 .clip-btn:disabled { opacity: 0.5; cursor: default; }
 
-#job-status {
+/* Per-page Clips list: one row per clip made, newest first. */
+.clips-made-list {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column; gap: 0.45rem;
+}
+.clip-made-row {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.6rem;
   font-size: 0.9rem;
 }
+.clip-made-row + .clip-made-row { border-top: 1px solid var(--badge); padding-top: 0.45rem; }
+.clip-made-title { color: var(--fg); }
+.clip-made-status { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.6rem; }
+/* Compact download link inside a clip row (vs the big button elsewhere). */
+.clip-made-row .download-link { margin-top: 0; padding: 0.2rem 0.6rem; font-size: 0.8rem; }
 .job-running { color: var(--accent); }
-.job-done { color: var(--ok); }
+.job-done { color: var(--ok); font-weight: 600; }
 .job-failed { color: var(--error); }
 .download-link {
   display: inline-block; margin-top: 0.5rem;

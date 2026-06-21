@@ -521,7 +521,9 @@ async function openItem(path, name, opts) {
   $("search-results").innerHTML = "";
   $("search-empty").hidden = true;
   showClipTarget(false);
-  $("job-panel").hidden = true;
+  // Reset the per-page Clips list (in-flight polls stop when their row is gone).
+  $("clips-made-panel").hidden = true;
+  $("clips-made-list").innerHTML = "";
   setClipIndicator("hidden");
   activeJobId = null;
   clipRangeStart = null;
@@ -537,7 +539,6 @@ async function openItem(path, name, opts) {
   $("script-wrap").hidden = true;
   $("marks-hint").hidden = true;
   $("script-list").innerHTML = "";
-  if (jobPollTimer) { clearTimeout(jobPollTimer); jobPollTimer = null; }
 
   let info;
   try {
@@ -1461,7 +1462,6 @@ async function deleteBookmark(id) {
 // --- clipping ---------------------------------------------------------------
 
 let activeJobId = null;
-let jobPollTimer = null;
 let clipRangeStart = null;
 let clipRangeEnd = null;
 let loadedBookmarkCue = null;  // {cue} fallback when a bookmark range is loaded
@@ -1501,10 +1501,7 @@ async function makeClip() {
   if (!currentItem) return;
   // Need a selected clip range (cue selection or loaded bookmark).
   if (clipRangeStart === null || clipRangeEnd === null) return;
-  $("clip-btn").disabled = true;
   setClipIndicator("processing");
-  $("job-panel").hidden = false;
-  $("job-status").innerHTML = '<span class="job-running">Submitting…</span>';
 
   const fmt = $("clip-format").value;
   // The stream selector drives the output (B17): a channel subset extracts one
@@ -1549,59 +1546,70 @@ async function makeClip() {
   if (clipFirst >= 0 && scriptCues[clipFirst]) body.cue_text = scriptCues[clipFirst].text;
   else if (loadedBookmarkCue) body.cue_text = loadedBookmarkCue;
 
+  // A label for the Clips list: the matched dialogue, else the time range.
+  const label = body.cue_text
+    ? `"${body.cue_text.length > 70 ? body.cue_text.slice(0, 67) + "…" : body.cue_text}"`
+    : `${formatTime(clipRangeStart)} – ${formatTime(clipRangeEnd)}`;
   try {
     const data = await postJSON("/api/clip", body);
-    activeJobId = data.job_id;
-    $("job-status").innerHTML = '<span class="job-running">Queued…</span>';
-    pollJob();
+    activeJobId = data.job_id;  // the inline indicator tracks the latest clip
+    pollClipJob(data.job_id, addClipRow(data.job_id, label));
   } catch (err) {
-    $("job-status").innerHTML = `<span class="job-failed">Failed: ${escapeHtml(err.message)}</span>`;
+    const row = addClipRow(null, label);
+    row.querySelector(".clip-made-status").innerHTML =
+      `<span class="job-failed">Failed: ${escapeHtml(err.message)}</span>`;
     setClipIndicator("failed", { error: err.message });
-    $("clip-btn").disabled = false;
   }
 }
 
-function pollJob() {
-  if (!activeJobId) return;
-  if (jobPollTimer) clearTimeout(jobPollTimer);
+// Append a row to the per-page Clips list (newest first) and return it.
+function addClipRow(jobId, label) {
+  $("clips-made-panel").hidden = false;
+  const li = document.createElement("li");
+  li.className = "clip-made-row";
+  if (jobId) li.dataset.jobId = jobId;
+  li.innerHTML =
+    `<span class="clip-made-title">${escapeHtml(label)}</span>` +
+    `<span class="clip-made-status"><span class="job-running">Queued…</span></span>`;
+  const list = $("clips-made-list");
+  list.insertBefore(li, list.firstChild);
+  return li;
+}
 
-  getJSON(`/api/jobs/${activeJobId}`)
+// Poll one clip job and update its row. Stops if the row is cleared (new item).
+// Updates the inline ★/✂ indicator only for the most recent clip (activeJobId).
+function pollClipJob(jobId, row) {
+  if (!row.isConnected) return;
+  getJSON(`/api/jobs/${jobId}`)
     .then((job) => {
+      if (!row.isConnected) return;
+      const statusEl = row.querySelector(".clip-made-status");
+      const isLatest = jobId === activeJobId;
       if (job.status === "queued" || job.status === "running") {
-        const elapsed = job.started ? `${Math.round(Date.now() / 1000 - job.started)}s` : "";
-        $("job-status").innerHTML =
-          `<span class="job-running">Processing${elapsed ? " (" + elapsed + ")" : ""}…</span>`;
-        jobPollTimer = setTimeout(pollJob, 1000);
+        const elapsed = job.started ? ` (${Math.round(Date.now() / 1000 - job.started)}s)` : "";
+        statusEl.innerHTML = `<span class="job-running">Processing${elapsed}…</span>`;
+        setTimeout(() => pollClipJob(jobId, row), 1000);
       } else if (job.status === "done") {
-        let html = `<span class="job-done">Done${job.elapsed ? " (" + job.elapsed + "s)" : ""}!</span>`;
-        if (job.files) {
-          for (const f of job.files) {
-            const size = f.size > 1048576
-              ? (f.size / 1048576).toFixed(1) + " MB"
-              : (f.size / 1024).toFixed(0) + " KB";
-            html += `<br><a class="download-link" href="/api/jobs/${activeJobId}/download/${encodeURIComponent(f.name)}" download>Download ${escapeHtml(f.name)} (${size})</a>`;
-          }
+        let html = `<span class="job-done">✓</span>`;
+        for (const f of job.files || []) {
+          const size = f.size > 1048576
+            ? (f.size / 1048576).toFixed(1) + " MB"
+            : (f.size / 1024).toFixed(0) + " KB";
+          html += ` <a class="download-link" href="/api/jobs/${jobId}/download/${encodeURIComponent(f.name)}" download>${escapeHtml(f.name)} (${size})</a>`;
         }
-        $("job-status").innerHTML = html;
-        // Inline indicator → download button for the first (usually only) file.
+        statusEl.innerHTML = html;
         const first = job.files && job.files[0];
-        if (first) {
-          setClipIndicator("done", {
-            href: `/api/jobs/${activeJobId}/download/${encodeURIComponent(first.name)}`,
-            name: first.name,
-          });
-        } else { setClipIndicator("hidden"); }
-        $("clip-btn").disabled = false;
+        if (isLatest) {
+          if (first) setClipIndicator("done", {
+            href: `/api/jobs/${jobId}/download/${encodeURIComponent(first.name)}`, name: first.name });
+          else setClipIndicator("hidden");
+        }
       } else {
-        $("job-status").innerHTML =
-          `<span class="job-failed">Failed: ${escapeHtml(job.error || "unknown error")}</span>`;
-        setClipIndicator("failed", { error: job.error });
-        $("clip-btn").disabled = false;
+        statusEl.innerHTML = `<span class="job-failed">Failed: ${escapeHtml(job.error || "unknown error")}</span>`;
+        if (isLatest) setClipIndicator("failed", { error: job.error });
       }
     })
-    .catch(() => {
-      jobPollTimer = setTimeout(pollJob, 2000);
-    });
+    .catch(() => { if (row.isConnected) setTimeout(() => pollClipJob(jobId, row), 2000); });
 }
 
 $("clip-btn").onclick = makeClip;
