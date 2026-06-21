@@ -323,11 +323,11 @@ it can be several seconds. Two things keep this in check:
 
 - **Audio clips are frame-exact** — audio has no keyframes, so an audio-only clip
   is cut at precisely the selected span (no lead-in).
-- **Want an exactly-trimmed video clip?** Tick **Exact (re-encode)** in the web
-  app (or `--no-lossless` on the CLI): the clip is re-encoded to H.264 so it
-  matches the dialogue span to the frame, at the cost of a quick re-encode (no
-  longer a byte-for-byte copy). Without it, a lossless video clip keeps the
-  keyframe lead-in.
+- **Video clips are frame-exact by default** — the web app ships with **Exact
+  (re-encode)** on, so a video clip is re-encoded to H.264 to match the dialogue
+  span to the frame. Untick it (or use plain lossless on the CLI) for a
+  byte-for-byte stream copy instead — that keeps the keyframe lead-in, but is
+  instant and preserves the original encode.
 
 Containers are chosen to hold the source streams without transcoding:
 

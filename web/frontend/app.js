@@ -1496,14 +1496,15 @@ async function makeClip() {
   const audioOnly = $("clip-audio-only").checked || chanSubset;
   const kind = audioOnly ? "audio" : "video";
   const aud = getSelectedAudio();
-  // "Exact (re-encode)" forces a re-encode so the clip is frame-tight (a lossless
-  // copy can only start on a keyframe, so it runs long on long-GOP sources).
-  const exact = $("clip-exact").checked;
+  // "Exact (re-encode)" (default on) re-encodes video so the clip is frame-tight:
+  // a lossless copy can only start on a keyframe, so it runs long on long-GOP
+  // sources. Audio passthrough is already frame-exact, so this only affects video.
+  const reencodeVideo = $("clip-exact").checked && kind === "video";
 
   const body = {
     path: currentItem.path,
     kind,
-    lossless: !exact && fmt === "lossless",
+    lossless: !reencodeVideo && fmt === "lossless",
     before: parseFloat($("clip-before").value) || 0,
     after: parseFloat($("clip-after").value) || 0,
     backend: "auto",
@@ -1857,9 +1858,14 @@ function batchOptions(prefix) {
   const audioOnly = $(`${prefix}-batch-audio`).checked;
   const split = $(`${prefix}-batch-split`).checked;
   const fmt = $(`${prefix}-batch-format`).value;
+  const kind = audioOnly || split ? "audio" : "video";
+  // Exact (re-encode) — video only; audio passthrough is already frame-exact.
+  // The control is optional (only the bookmarks bar has it).
+  const exactEl = $(`${prefix}-batch-exact`);
+  const reencodeVideo = exactEl != null && exactEl.checked && kind === "video";
   return {
-    kind: audioOnly || split ? "audio" : "video",
-    lossless: fmt === "lossless",
+    kind,
+    lossless: !reencodeVideo && fmt === "lossless",
     backend: "auto",
     embed_subs: !(audioOnly || split),
     split_channels: split,

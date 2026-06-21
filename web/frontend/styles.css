@@ -291,7 +291,9 @@ code {
   border: 1px solid var(--badge); border-radius: 5px;
   font-variant-numeric: tabular-nums;
 }
-.bm-clear-all-btn { background: transparent; border-color: var(--badge); }
+/* Outline button: override .clip-btn's dark-on-light text (was invisible on the
+   transparent dark panel) with a visible muted colour; red on hover. */
+.bm-clear-all-btn { background: transparent; border-color: var(--badge); color: var(--fg); }
 .bm-clear-all-btn:hover { border-color: #c0504d; color: #e88; }
 .mark-range-display {
   font-size: 0.85rem; color: var(--muted); flex: 1;

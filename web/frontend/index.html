@@ -78,6 +78,7 @@
           <label class="checkbox-label"><input id="bm-select-all" type="checkbox" /> Select all</label>
           <label class="checkbox-label"><input id="bm-batch-audio" type="checkbox" checked /> Audio only</label>
           <label class="checkbox-label"><input id="bm-batch-split" type="checkbox" /> Split channels</label>
+          <label class="checkbox-label" title="Re-encode video to H.264 so each clip is frame-exact (only applies when exporting video, i.e. with Audio only off). Audio is always cut frame-exact."><input id="bm-batch-exact" type="checkbox" checked /> Exact (re-encode)</label>
           <label>Format
             <select id="bm-batch-format">
               <option value="lossless" selected>Passthrough</option>
@@ -158,7 +159,7 @@
               <label>After <input id="clip-after" type="number" value="0" min="0" max="60" step="0.5" /></label>
             </div>
             <label class="checkbox-label"><input id="clip-audio-only" type="checkbox" /> Audio only</label>
-            <label class="checkbox-label" title="Re-encode to H.264 for a frame-exact clip. A lossless (passthrough) video clip can only start on a keyframe, so on long-GOP sources it begins several seconds before the line."><input id="clip-exact" type="checkbox" /> Exact (re-encode)</label>
+            <label class="checkbox-label" title="Re-encode video to H.264 so the clip is frame-exact. Uncheck for a lossless (stream-copy) video clip — but that can only start on a keyframe, so on long-GOP sources it begins several seconds before the line. Audio is always cut frame-exact."><input id="clip-exact" type="checkbox" checked /> Exact (re-encode)</label>
             <label class="clip-format-label">Format
               <select id="clip-format">
                 <option value="lossless" selected>Passthrough</option>
