@@ -1,4 +1,5 @@
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -119,6 +120,22 @@ def test_ffmpeg_args_reencode_video_uses_libx264():
     assert "copy" not in args
 
 
+def test_ffmpeg_args_reencode_video_vaapi_uses_quick_sync():
+    """A hardware re-encode emits the VAAPI encoder + device + hwupload filter,
+    not libx264."""
+    args = _ffmpeg_args(
+        source=Path("in.mkv"), rng=ClipRange(0.0, 4.0), kind="video",
+        out=Path("out.mp4"), lossless=False, fps=15, width=480,
+        video_encoder="h264_vaapi", vaapi_device="/dev/dri/renderD128",
+    )
+    assert "h264_vaapi" in args
+    assert "libx264" not in args
+    assert "-vaapi_device" in args and "/dev/dri/renderD128" in args
+    assert "format=nv12,hwupload" in args
+    # the device must be initialised before the input
+    assert args.index("-vaapi_device") < args.index("-i")
+
+
 def test_ffmpeg_args_gif_is_always_reencoded():
     args = _ffmpeg_args(
         source=Path("in.mkv"), rng=ClipRange(0.0, 4.0), kind="gif",
@@ -197,6 +214,32 @@ def test_cut_clip_rejects_unknown_audio_codec(tmp_path):
     src.write_bytes(b"")
     with pytest.raises(ValueError):
         cut_clip(src, ClipRange(0.0, 2.0), kind="audio", audio_codec="mp3")
+
+
+def test_cut_clip_falls_back_to_software_when_hw_encode_fails(tmp_path):
+    """If the hardware (VAAPI) re-encode fails, cut_clip retries on libx264."""
+    src = tmp_path / "in.mkv"
+    src.write_bytes(b"x")
+    out = tmp_path / "out.mp4"
+    calls = []
+
+    def fake_run(args, **kw):
+        calls.append(args)
+        rc = 1 if "h264_vaapi" in args else 0   # HW fails, software succeeds
+        if rc == 0:
+            out.write_bytes(b"x")
+        return MagicMock(returncode=rc, stdout="", stderr="hw boom")
+
+    with patch("quipclipper.clip.shutil.which", return_value="/ffmpeg"), \
+         patch("quipclipper.clip.subprocess.run", side_effect=fake_run):
+        result = cut_clip(
+            src, ClipRange(0.0, 4.0), kind="video", lossless=False, out=out,
+            video_encoder="h264_vaapi", vaapi_device="/dev/dri/renderD128",
+        )
+    assert result == out
+    assert len(calls) == 2
+    assert "h264_vaapi" in calls[0]   # tried the iGPU first
+    assert "libx264" in calls[1]      # then fell back to the CPU
 
 
 def test_group_channels_5_1():

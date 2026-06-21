@@ -293,6 +293,8 @@ def _ffmpeg_args(
     audio_codec: str | None = None,
     default_sub_index: int | None = None,
     sub_count: int = 0,
+    video_encoder: str = "libx264",
+    vaapi_device: str | None = None,
 ) -> list[str]:
     head = ["ffmpeg", "-y", "-v", "error"]
     inputs = ["-ss", f"{rng.start:.3f}", "-i", str(source)]
@@ -344,6 +346,13 @@ def _ffmpeg_args(
         maps = _audio_map_args(audio_indices, optional=False) if audio_indices else ["-vn"]
         return head + inputs + dur + maps + [str(out)]
     maps = ["-map", "0:v:0?"] + _audio_map_args(audio_indices, optional=True)
+    if video_encoder == "h264_vaapi":
+        # Intel Quick Sync via VAAPI: initialise the render node, upload frames to
+        # the GPU, and encode there. cut_clip retries on libx264 if this fails.
+        dev = ["-vaapi_device", vaapi_device] if vaapi_device else []
+        return (head + dev + inputs + dur + maps
+                + ["-vf", "format=nv12,hwupload", "-c:v", "h264_vaapi", "-qp", "24",
+                   "-c:a", "aac", "-movflags", "+faststart", str(out)])
     return head + inputs + dur + maps + ["-c:v", "libx264", "-c:a", "aac", "-movflags", "+faststart", str(out)]
 
 
@@ -360,6 +369,8 @@ def cut_clip(
     embed_cues: list[Cue] | None = None,
     audio_codec: str | None = None,
     default_sub_track: int | None = None,
+    video_encoder: str = "libx264",
+    vaapi_device: str | None = None,
 ) -> Path:
     """Cut `source` between `rng.start` and `rng.end` into the chosen `kind`.
 
@@ -421,14 +432,20 @@ def cut_clip(
         if embed_subs is not None:
             sub_count += 1
 
-    try:
-        args = _ffmpeg_args(
+    def build(enc: str, dev: str | None) -> list[str]:
+        return _ffmpeg_args(
             source=source, rng=rng, kind=kind, out=out, lossless=lossless, fps=fps,
             width=width, audio_indices=audio_indices, embed_subs=embed_subs,
             audio_codec=audio_codec,
             default_sub_index=default_sub_track, sub_count=sub_count,
+            video_encoder=enc, vaapi_device=dev,
         )
-        proc = subprocess.run(args, capture_output=True, text=True)
+    try:
+        proc = subprocess.run(build(video_encoder, vaapi_device), capture_output=True, text=True)
+        # A hardware encoder can fail at runtime (driver/permission/unsupported
+        # input); fall back to a software (libx264) re-encode so the clip still cuts.
+        if proc.returncode != 0 and video_encoder != "libx264":
+            proc = subprocess.run(build("libx264", None), capture_output=True, text=True)
         if proc.returncode != 0:
             raise RuntimeError(f"ffmpeg failed:\n{proc.stderr.strip()}")
     finally:

@@ -988,6 +988,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _audio_codec = req.audio_format if fullmix else None
         _default_sub_track = req.default_sub_track
         _out_path = out_path
+        # Hardware-encode a re-encoded video clip on the iGPU (Quick Sync via
+        # VAAPI) when available — the same path the browser preview uses. Lossless
+        # cuts are stream copies (no encode); only re-encodes (Exact / --no-lossless,
+        # gif) hit the encoder. cut_clip falls back to libx264 if it fails.
+        _hw_encode = (not req.lossless) and req.kind == "video" and _vaapi_h264_available()
 
         def do_cut() -> list[Path]:
             if _split_channels:
@@ -1018,6 +1023,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 _video, _rng, kind=_kind, lossless=_lossless, out=_out_path,
                 audio_indices=_audio_indices, embed_cues=_embed_cues,
                 audio_codec=_audio_codec, default_sub_track=_default_sub_track,
+                video_encoder="h264_vaapi" if _hw_encode else "libx264",
+                vaapi_device=_VAAPI_DEVICE if _hw_encode else None,
             )]
 
         job = jobs.submit(do_cut, label=label)

@@ -46,11 +46,13 @@ Environment variables (mirrored 1:1 by the NixOS module options):
 
 **Hardware video transcode:** the backend auto-detects an Intel iGPU at
 `/dev/dri/renderD128` (probed once, reported as `hw_encode` in `/api/config`) and
-uses `h264_vaapi` for the browser-preview video re-encode, falling back to
-software `libx264`. Pass the device into the container to enable it (see the root
-README's Docker quick start). Override the node with `QC_VAAPI_DEVICE` (e.g. a
-second GPU's `/dev/dri/renderD129`); set `LIBVA_DRIVER_NAME` (`iHD` for Gen8+
-Intel) if libva doesn't auto-select the driver.
+uses `h264_vaapi` (Quick Sync via VAAPI) — for both the **browser-preview** video
+re-encode and the **clip output** re-encode (Exact / `--no-lossless`) — falling
+back to software `libx264` if the GPU encode fails. (Lossless cuts are stream
+copies, so they never hit the encoder.) Pass the device into the container to
+enable it (see the root README's Docker quick start). Override the node with
+`QC_VAAPI_DEVICE` (e.g. a second GPU's `/dev/dri/renderD129`); set
+`LIBVA_DRIVER_NAME` (`iHD` for Gen8+ Intel) if libva doesn't auto-select.
 
 ## Test
 

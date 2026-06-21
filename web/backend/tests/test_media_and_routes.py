@@ -504,6 +504,46 @@ def test_video_lossless_uses_ffmpeg_for_exact_end(tmp_path: Path) -> None:
     mkv.assert_not_called()       # not mkvmerge
 
 
+def test_video_reencode_uses_hardware_encoder_when_available(tmp_path: Path) -> None:
+    """A re-encoded video clip (lossless=False) hardware-encodes on the iGPU when
+    VAAPI is available — the bug was it always emitted libx264."""
+    client, media, clips = _clips_client(tmp_path)
+    video = media / "movie.mkv"
+    video.write_bytes(b"")
+    out = clips / "movie" / "out.mp4"
+    out.parent.mkdir(parents=True)
+    out.write_bytes(b"x")
+    with patch("quipclipper_web.app._vaapi_h264_available", return_value=True), \
+         patch("quipclipper_web.app.cut_clip", return_value=out) as cc:
+        resp = client.post("/api/clip", json={
+            "path": str(video), "start": 5, "end": 8, "before": 0, "after": 0,
+            "kind": "video", "lossless": False, "backend": "auto",
+        })
+        assert resp.status_code == 200
+        assert _wait_done(client, resp.json()["job_id"])["status"] == "done"
+    kw = cc.call_args.kwargs
+    assert kw["video_encoder"] == "h264_vaapi"
+    assert kw["vaapi_device"]  # the configured render node
+
+
+def test_video_reencode_uses_software_without_hardware(tmp_path: Path) -> None:
+    client, media, clips = _clips_client(tmp_path)
+    video = media / "movie.mkv"
+    video.write_bytes(b"")
+    out = clips / "movie" / "out.mp4"
+    out.parent.mkdir(parents=True)
+    out.write_bytes(b"x")
+    with patch("quipclipper_web.app._vaapi_h264_available", return_value=False), \
+         patch("quipclipper_web.app.cut_clip", return_value=out) as cc:
+        resp = client.post("/api/clip", json={
+            "path": str(video), "start": 5, "end": 8, "before": 0, "after": 0,
+            "kind": "video", "lossless": False, "backend": "auto",
+        })
+        assert resp.status_code == 200
+        assert _wait_done(client, resp.json()["job_id"])["status"] == "done"
+    assert cc.call_args.kwargs["video_encoder"] == "libx264"
+
+
 def test_audio_lossless_still_uses_mkvmerge(tmp_path: Path) -> None:
     client, media, clips = _clips_client(tmp_path)
     video = media / "movie.mkv"
