@@ -242,13 +242,18 @@ code {
   background: var(--bg); border: 1px solid var(--badge);
 }
 .chan-groups-label { color: var(--muted); }
-.batch-bar select, .batch-bar input[type="number"] {
+.batch-bar select, .batch-bar input[type="number"], .batch-bar .clip-template-input {
   background: var(--bg); color: var(--fg); border: 1px solid var(--badge);
   border-radius: 6px; padding: 0.25rem 0.45rem;
 }
 .batch-bar select { width: auto; min-width: 8rem; }
 .batch-bar select option:disabled { color: var(--badge); }
 .batch-bar input[type="number"] { width: 4.5rem; }
+.batch-template-label { display: flex; align-items: center; gap: 0.35rem; color: var(--muted); }
+.batch-bar .clip-template-input {
+  width: 17rem; max-width: 100%; font-size: 0.82rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
 .batch-export-btn { padding: 0.35rem 0.9rem; font-size: 0.85rem; }
 .entry-select { flex-shrink: 0; cursor: pointer; }
 .clip-btn {

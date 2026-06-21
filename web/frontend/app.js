@@ -1694,26 +1694,31 @@ $("clip-btn").onclick = makeClip;
 const DEFAULT_CLIP_TEMPLATE = "{source}/{timestamp}_{cue}_{title}";
 const CLIP_TEMPLATE_KEY = "qc_clip_template";
 
-/** The effective name template: the field's value, falling back to the
+/** The effective name template for a given input field: its value, else the
  *  remembered one, then the default. Used by both single and batch clips. */
-function clipTemplate() {
-  const el = $("clip-template");
+function clipTemplateFrom(el) {
   const fromField = el ? el.value.trim() : "";
   if (fromField) return fromField;
   const saved = (localStorage.getItem(CLIP_TEMPLATE_KEY) || "").trim();
   return saved || DEFAULT_CLIP_TEMPLATE;
 }
+function clipTemplate() { return clipTemplateFrom($("clip-template")); }
 
-// Prefill from the last-used template (or the default) and remember edits.
+// All template fields (the in-item one + each batch bar's) share one remembered
+// value: prefill them from it, and on edit save + mirror to the others so the
+// template stays consistent wherever you set it.
 (() => {
-  const el = $("clip-template");
-  if (!el) return;
-  el.value = (localStorage.getItem(CLIP_TEMPLATE_KEY) || "").trim() || DEFAULT_CLIP_TEMPLATE;
-  el.addEventListener("input", () => {
-    const v = el.value.trim();
-    if (v) localStorage.setItem(CLIP_TEMPLATE_KEY, v);
-    else localStorage.removeItem(CLIP_TEMPLATE_KEY);
-  });
+  const fields = () => [...document.querySelectorAll(".clip-template-input")];
+  const init = (localStorage.getItem(CLIP_TEMPLATE_KEY) || "").trim() || DEFAULT_CLIP_TEMPLATE;
+  for (const el of fields()) {
+    el.value = init;
+    el.addEventListener("input", () => {
+      const v = el.value.trim();
+      if (v) localStorage.setItem(CLIP_TEMPLATE_KEY, v);
+      else localStorage.removeItem(CLIP_TEMPLATE_KEY);
+      for (const other of fields()) if (other !== el) other.value = el.value;
+    });
+  }
 })();
 
 // Preferred subtitle language(s) override (B14): remember edits and re-open the
@@ -2020,7 +2025,8 @@ function batchOptions(prefix) {
     split_format: fmt === "lossless" ? "wav" : fmt,
     // Full-mix lossless WAV/FLAC (keeps 5.1) when audio + not splitting.
     audio_format: (!split && (fmt === "wav" || fmt === "flac")) ? fmt : undefined,
-    template: clipTemplate(),
+    // This bar's name template (e.g. a leading folder to collect the batch).
+    template: clipTemplateFrom($(`${prefix}-batch-template`)),
   };
 }
 

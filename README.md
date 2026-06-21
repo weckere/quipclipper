@@ -56,7 +56,9 @@ engine for scripting and quick one-off cuts.
 - **Batch export** — select multiple clips, bookmarks, or dialogue-search hits
   and export them all at once (audio-only, passthrough/FLAC/WAV, split channels)
   without opening each one. When splitting channels you can pick which groups to
-  export — e.g. just the **Center** channel of a 5.1 track.
+  export — e.g. just the **Center** channel of a 5.1 track — and the batch bar
+  has its own **name template**, so a leading folder collects the whole batch in
+  one place.
 - **Automatic transcode for in-browser playback** — when the browser can't play
   a file's audio codec (AC3, DTS, FLAC, …) the player remuxes on the fly,
   copying the video and transcoding audio to Opus, with a custom seek bar and
