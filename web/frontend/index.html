@@ -43,6 +43,7 @@
           <label class="checkbox-label"><input id="search-select-all" type="checkbox" /> Select all</label>
           <label class="checkbox-label"><input id="search-batch-audio" type="checkbox" /> Audio only</label>
           <label class="checkbox-label"><input id="search-batch-split" type="checkbox" /> Split channels</label>
+          <span id="search-chan-groups" class="chan-groups" hidden></span>
           <label class="checkbox-label" title="Re-encode video to H.264 so each clip is frame-exact (video only)."><input id="search-batch-exact" type="checkbox" checked /> Exact (re-encode)</label>
           <label>Format
             <select id="search-batch-format">
@@ -71,6 +72,7 @@
           <label class="checkbox-label"><input id="clips-select-all" type="checkbox" /> Select all</label>
           <label class="checkbox-label"><input id="clips-batch-audio" type="checkbox" checked /> Audio only</label>
           <label class="checkbox-label"><input id="clips-batch-split" type="checkbox" /> Split channels</label>
+          <span id="clips-chan-groups" class="chan-groups" hidden></span>
           <label>Format
             <select id="clips-batch-format">
               <option value="lossless" selected>Passthrough</option>
@@ -95,6 +97,7 @@
           <label class="checkbox-label"><input id="bm-select-all" type="checkbox" /> Select all</label>
           <label class="checkbox-label"><input id="bm-batch-audio" type="checkbox" checked /> Audio only</label>
           <label class="checkbox-label"><input id="bm-batch-split" type="checkbox" /> Split channels</label>
+          <span id="bm-chan-groups" class="chan-groups" hidden></span>
           <label class="checkbox-label" title="Re-encode video to H.264 so each clip is frame-exact (only applies when exporting video, i.e. with Audio only off). Audio is always cut frame-exact."><input id="bm-batch-exact" type="checkbox" checked /> Exact (re-encode)</label>
           <label>Format
             <select id="bm-batch-format">

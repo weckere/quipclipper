@@ -53,9 +53,10 @@ engine for scripting and quick one-off cuts.
 - **Clips as first-class items** — open a finished clip in the full item view:
   search its dialogue, bookmark it, even cut a clip from a clip. Opening a clip
   pre-selects the whole file for one-click re-export.
-- **Batch export** — select multiple clips or bookmarks in their library views
-  and export them all at once (audio-only, passthrough/FLAC/WAV, split
-  channels) without opening each one.
+- **Batch export** — select multiple clips, bookmarks, or dialogue-search hits
+  and export them all at once (audio-only, passthrough/FLAC/WAV, split channels)
+  without opening each one. When splitting channels you can pick which groups to
+  export — e.g. just the **Center** channel of a 5.1 track.
 - **Automatic transcode for in-browser playback** — when the browser can't play
   a file's audio codec (AC3, DTS, FLAC, …) the player remuxes on the fly,
   copying the video and transcoding audio to Opus, with a custom seek bar and

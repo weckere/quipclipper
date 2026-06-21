@@ -234,6 +234,14 @@ code {
   font-size: 0.85rem;
 }
 .batch-bar label { display: flex; align-items: center; gap: 0.35rem; color: var(--muted); }
+/* Channel-group picker (which channels to export when splitting). */
+.chan-groups[hidden] { display: none; }
+.chan-groups {
+  display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 0.6rem;
+  padding: 0.2rem 0.55rem; border-radius: 6px;
+  background: var(--bg); border: 1px solid var(--badge);
+}
+.chan-groups-label { color: var(--muted); }
 .batch-bar select, .batch-bar input[type="number"] {
   background: var(--bg); color: var(--fg); border: 1px solid var(--badge);
   border-radius: 6px; padding: 0.25rem 0.45rem;

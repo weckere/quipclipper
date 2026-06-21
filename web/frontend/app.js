@@ -1950,19 +1950,36 @@ function updateBatchState(prefix) {
   if (bm) { bm.disabled = n === 0; bm.textContent = n ? `Bookmark selected (${n})` : "Bookmark selected"; }
 }
 
+// Channel groups a split can export (categories the backend understands), in
+// display order. A 5.1/7.1 source maps onto these; missing ones are skipped.
+const CHAN_GROUPS = [
+  ["front", "Front"], ["center", "Center"], ["surround", "Surround"], ["lfe", "LFE"],
+];
+
 function wireBatchBar(prefix) {
   // Select all
   $(`${prefix}-select-all`).onchange = (e) => {
     batchBoxes(prefix).forEach((cb) => { cb.checked = e.target.checked; });
     updateBatchState(prefix);
   };
+  // Channel-group picker (which channels to export when splitting). Populated
+  // here so each bar shares one definition; all checked = every group (default).
+  const chanWrap = $(`${prefix}-chan-groups`);
+  if (chanWrap) {
+    chanWrap.innerHTML = `<span class="chan-groups-label">Channels:</span>` +
+      CHAN_GROUPS.map(([cat, label]) =>
+        `<label class="checkbox-label"><input type="checkbox" id="${prefix}-chan-${cat}" checked /> ${label}</label>`
+      ).join("");
+  }
   // Split channels is a sub-option of Audio only (same as the clip panel):
-  // enabled only when Audio only is checked, forced off otherwise.
+  // enabled only when Audio only is checked, forced off otherwise. The channel
+  // picker shows only while splitting.
   const applyGuard = () => {
     const audioOnly = $(`${prefix}-batch-audio`).checked;
     const split = $(`${prefix}-batch-split`);
     split.disabled = !audioOnly;
     if (!audioOnly) split.checked = false;
+    if (chanWrap) chanWrap.hidden = !split.checked;
     setPassthroughAllowed($(`${prefix}-batch-format`), !split.checked);
   };
   $(`${prefix}-batch-audio`).onchange = applyGuard;
@@ -1983,12 +2000,23 @@ function batchOptions(prefix) {
   // The control is optional (only the bookmarks bar has it).
   const exactEl = $(`${prefix}-batch-exact`);
   const reencodeVideo = exactEl != null && exactEl.checked && kind === "video";
+  // Which channel groups to export when splitting (e.g. just Center). All boxes
+  // checked = every group (same as omitting it); none checked falls back to all.
+  let splitGroups;
+  if (split) {
+    const cats = CHAN_GROUPS.map(([c]) => c).filter((c) => {
+      const el = $(`${prefix}-chan-${c}`);
+      return el && el.checked;
+    });
+    if (cats.length && cats.length < CHAN_GROUPS.length) splitGroups = cats;
+  }
   return {
     kind,
     lossless: !reencodeVideo && fmt === "lossless",
     backend: "auto",
     embed_subs: !(audioOnly || split),
     split_channels: split,
+    split_groups: splitGroups,
     split_format: fmt === "lossless" ? "wav" : fmt,
     // Full-mix lossless WAV/FLAC (keeps 5.1) when audio + not splitting.
     audio_format: (!split && (fmt === "wav" || fmt === "flac")) ? fmt : undefined,
