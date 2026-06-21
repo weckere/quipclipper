@@ -236,6 +236,10 @@ def find_sidecar(video_path: str | Path) -> Path | None:
 
 _SDH_RE = re.compile(r"sdh|hearing|impaired|\bcc\b", re.IGNORECASE)
 _FORCED_RE = re.compile(r"forced", re.IGNORECASE)
+# Commentary subtitles transcribe a commentary track, not the film's dialogue, so
+# they must never be the default (e.g. Apollo 13 ships a "Commentary" eng SRT
+# alongside the main eng SRT).
+_COMMENTARY_RE = re.compile(r"comment", re.IGNORECASE)
 
 # Bitmap subtitle codecs — these are images, not text, so they can't be
 # extracted to SRT/VTT, searched, or shown in the browser player. The engine
@@ -289,18 +293,24 @@ def _track_score(t, langs: tuple[str, ...] = DEFAULT_SUB_LANGS) -> int:
     exists.  Among text tracks: a preferred-language track outranks other
     languages (earlier in ``langs`` ranks higher; untagged counts as the top
     preference); within a language, forced (foreign-portion-only, minimal
-    dialogue) ranks below SDH ranks below full dialogue.
+    dialogue) ranks below SDH ranks below full dialogue, and a commentary track
+    (a transcript of the commentary, not the film) ranks below them all.
     """
     if not is_text_subtitle(t):
         return -1000
     score = 0
+    title = t.title or ""
     rank = _lang_rank(getattr(t, "language", None), langs)
     if rank is not None:
         score += (len(langs) - rank) * 100
-    if getattr(t, "forced", False) or _FORCED_RE.search(t.title or ""):
+    if getattr(t, "forced", False) or _FORCED_RE.search(title):
         score -= 50
-    elif getattr(t, "hearing_impaired", False) or _SDH_RE.search(t.title or ""):
+    elif getattr(t, "hearing_impaired", False) or _SDH_RE.search(title):
         score -= 10
+    # A commentary track isn't the film's dialogue — rank it below every normal
+    # text track of the same language, so a plain dialogue track always wins.
+    if _COMMENTARY_RE.search(title):
+        score -= 60
     return score
 
 

@@ -125,6 +125,31 @@ def test_best_track_detects_forced_and_sdh_by_title_without_dispositions():
     assert best_track(tracks).index == 2
 
 
+def test_best_track_skips_commentary_for_the_main_track():
+    # The Apollo 13 case: a "Commentary" eng SRT precedes the main eng SRT.
+    # The plain dialogue track must win even though it comes later.
+    tracks = [
+        _trk(0, "eng", title="Commentary"),
+        _trk(1, "eng", title="English"),
+    ]
+    assert best_track(tracks).index == 1
+
+
+def test_best_track_commentary_loses_even_to_sdh_and_forced():
+    tracks = [
+        _trk(0, "eng", title="Director's Commentary"),
+        _trk(1, "eng", title="Forced"),
+        _trk(2, "eng", title="SDH", hearing_impaired=True),
+    ]
+    assert best_track(tracks).index == 2  # SDH > forced > commentary
+
+
+def test_best_track_falls_back_to_commentary_when_only_option():
+    # If commentary is the only English text track, still pick it over nothing.
+    tracks = [_trk(0, "eng", title="Commentary")]
+    assert best_track(tracks).index == 0
+
+
 def test_best_track_treats_untagged_language_as_english():
     # Single-language release with no language metadata should still
     # auto-select rather than being skipped as non-English.
