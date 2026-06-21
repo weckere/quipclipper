@@ -290,9 +290,12 @@ services.quipclipper-web = {
 ```
 
 In both cases nginx is added to `clipsGroup`, so the web UI keeps serving the same
-clips. With `manageClipsDir = false`, ensure the directory exists and is
-group-writable (setgid) before the service starts — the unit waits for its mount
-via `RequiresMountsFor`, but it won't create or fix permissions on it.
+clips, and the service writes with a group-writable umask (`0002`) so clips land
+**group-readable and group-writable** — members of `clipsGroup` (samba, Jellyfin,
+your user) can both read *and* delete/manage them. With `manageClipsDir = false`,
+ensure the directory exists and is group-writable (setgid `2775`) before the
+service starts — the unit waits for its mount via `RequiresMountsFor`, but it
+won't create or fix permissions on it.
 
 ## Lossless cutting
 

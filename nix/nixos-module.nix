@@ -246,6 +246,13 @@ in
         PrivateTmp = true;
         ReadOnlyPaths = map toString cfg.mediaRoots;
         ReadWritePaths = [ (toString cfg.clipsDir) stateDir ];
+
+        # When the clips dir is shared (clipsGroup set), write group-writable so
+        # the shared group can delete/manage clips, not just read them. With the
+        # setgid clips dir (clipsMode 2775) this yields per-source subdirs 2775
+        # and clip files 0664, group-owned by clipsGroup. Default (private) keeps
+        # systemd's 0022 → 0755/0644 (group-readable for nginx, not writable).
+        UMask = lib.mkIf (cfg.clipsGroup != null) "0002";
       };
     };
 

@@ -82,10 +82,14 @@
                 # quipclipper; and a probe clip planted as a real one would be.
                 users.groups.media = { };
                 users.users.reader = { isSystemUser = true; group = "media"; };
+                # Probe clip planted as the service now writes them under a shared
+                # clipsGroup: per-source subdir 2775 (setgid) and file 0664, both
+                # group-owned by "media" — i.e. group-writable so the share can
+                # delete/manage clips, not just read them.
                 systemd.tmpfiles.rules = [
                   "d /srv/media 0755 root root - -"
                   "d /var/lib/quipclipper-web/clips/probe 2775 quipclipper-web media - -"
-                  "f /var/lib/quipclipper-web/clips/probe/clip.txt 0644 quipclipper-web media - hello-clip"
+                  "f /var/lib/quipclipper-web/clips/probe/clip.txt 0664 quipclipper-web media - hello-clip"
                 ];
                 environment.etc."quipclipper.htpasswd".text =
                   "quip:$apr1$NF6aL6Je$uO.ixyjrDUHxSp2DgD2Rj0\n";
@@ -123,6 +127,11 @@
                 # read finished clips — the whole point of clipsGroup/clipsMode.
                 machine.succeed("stat -c '%a %G' /var/lib/quipclipper-web/clips | grep -xq '2775 media'")
                 machine.succeed("runuser -u reader -- cat /var/lib/quipclipper-web/clips/probe/clip.txt | grep -q hello-clip")
+                # Shared clips must be group-WRITABLE: the service writes with
+                # UMask 0002, and a "media" account can delete a finished clip.
+                machine.succeed("systemctl show quipclipper-web.service -p UMask | grep -q '=0002$'")
+                machine.succeed("runuser -u reader -- rm /var/lib/quipclipper-web/clips/probe/clip.txt")
+                machine.fail("test -e /var/lib/quipclipper-web/clips/probe/clip.txt")
               '';
             };
           };
