@@ -71,6 +71,7 @@ async function browse(path) {
   dialogueSearchScope = null;
   const list = $("entries");
   list.innerHTML = "";
+  $("search-batch").hidden = true;
   $("browser-empty").hidden = true;
   $("library-search").value = "";
   $("dialogue-search").value = "";
@@ -167,6 +168,7 @@ async function dialogueSearch() {
 
   const list = $("entries");
   list.innerHTML = "";
+  $("search-batch").hidden = true;
   $("browser-empty").hidden = true;
   const status = $("dialogue-search-status");
   status.textContent = "Searching subtitles…";
@@ -189,25 +191,99 @@ async function dialogueSearch() {
   status.textContent = `${data.count} match${data.count !== 1 ? "es" : ""} across ${data.files_scanned} file${data.files_scanned !== 1 ? "s" : ""}`;
 
   if (!data.matches.length) {
+    $("search-batch").hidden = true;
     $("browser-empty").textContent = "No dialogue matches found.";
     $("browser-empty").hidden = false;
     return;
   }
 
+  // Reveal the batch bar (clip/bookmark selected hits) and reset its state.
+  $("search-batch").hidden = false;
+  $("search-select-all").checked = false;
+  $("search-batch-status").textContent = "";
+
   for (const hit of data.matches) {
     const li = document.createElement("li");
     li.className = "dialogue-hit";
-    li.innerHTML = `
-      <span class="hit-file">${escapeHtml(hit.file)}</span>
-      <span class="hit-text">"${escapeHtml(hit.text)}"</span>
-      <span class="hit-time">${hit.start_ts} – ${hit.end_ts}  <span class="hit-score">${hit.score}%</span></span>
-    `;
-    li.onclick = () => openItem(hit.path, hit.file, {
+    li.innerHTML =
+      `<label class="hit-check"><input type="checkbox" class="search-select" /></label>` +
+      `<div class="hit-main">` +
+        `<span class="hit-file">${escapeHtml(hit.file)}</span>` +
+        `<span class="hit-text">"${escapeHtml(hit.text)}"</span>` +
+        `<span class="hit-time">${hit.start_ts} – ${hit.end_ts}  <span class="hit-score">${hit.score}%</span></span>` +
+      `</div>` +
+      `<div class="hit-actions">` +
+        `<button class="mark-icon-btn hit-bookmark" title="Save as bookmark"><span class="star">★</span></button>` +
+        `<button class="mark-icon-btn make-clip-btn hit-clip" title="Clip this line"><span class="scissors">✂</span></button>` +
+        `<span class="hit-status"></span>` +
+      `</div>`;
+    // Checkbox drives the batch bar (and carries the data the batch bodies need).
+    const cb = li.querySelector(".search-select");
+    cb.dataset.path = hit.path;
+    cb.dataset.start = hit.start;
+    cb.dataset.end = hit.end;
+    cb.dataset.cue = hit.text;
+    cb.dataset.file = hit.file;
+    cb.onclick = (e) => e.stopPropagation();
+    cb.onchange = () => updateBatchState("search");
+    li.querySelector(".hit-check").onclick = (e) => e.stopPropagation();
+    const statusEl = li.querySelector(".hit-status");
+    li.querySelector(".hit-bookmark").onclick = (e) => { e.stopPropagation(); bookmarkSearchHit(hit, statusEl); };
+    li.querySelector(".hit-clip").onclick = (e) => { e.stopPropagation(); clipSearchHit(hit, statusEl); };
+    // Clicking the row still opens the file with the cue selected.
+    li.querySelector(".hit-main").onclick = () => openItem(hit.path, hit.file, {
       searchQuery: query,
       seekTo: hit.start,
       markRange: { start: hit.start, end: hit.end },
     });
     list.appendChild(li);
+  }
+}
+
+// Clip a single search hit in place; the row's status shows spinner → ⤓ download.
+async function clipSearchHit(hit, statusEl) {
+  statusEl.innerHTML = '<span class="clip-spinner" title="Cutting clip…"></span>';
+  const body = {
+    path: hit.path, start: hit.start, end: hit.end, before: 0, after: 0,
+    cue_text: hit.text, ...batchOptions("search"),
+  };
+  try {
+    const r = await postJSON("/api/clip", body);
+    pollHitClip(r.job_id, statusEl);
+  } catch (err) {
+    statusEl.innerHTML = `<span class="job-failed" title="${escapeHtml(err.message)}">✗</span>`;
+  }
+}
+
+function pollHitClip(jobId, statusEl) {
+  if (!statusEl.isConnected) return;
+  getJSON(`/api/jobs/${jobId}`)
+    .then((job) => {
+      if (!statusEl.isConnected) return;
+      if (job.status === "queued" || job.status === "running") {
+        setTimeout(() => pollHitClip(jobId, statusEl), 1000);
+      } else if (job.status === "done") {
+        const f = job.files && job.files[0];
+        statusEl.innerHTML = f
+          ? `<a class="clip-dl-mini" href="/api/jobs/${jobId}/download/${encodeURIComponent(f.name)}" download title="Download ${escapeHtml(f.name)}" aria-label="Download clip">⤓</a>`
+          : '<span class="job-done">✓</span>';
+      } else {
+        statusEl.innerHTML = `<span class="job-failed" title="${escapeHtml(job.error || "failed")}">✗</span>`;
+      }
+    })
+    .catch(() => { if (statusEl.isConnected) setTimeout(() => pollHitClip(jobId, statusEl), 2000); });
+}
+
+// Save a single search hit as a bookmark (keeping its dialogue for {cue} + label).
+async function bookmarkSearchHit(hit, statusEl) {
+  statusEl.innerHTML = '<span class="muted">…</span>';
+  try {
+    await postJSON("/api/bookmarks", {
+      path: hit.path, label: hit.text, start: hit.start, end: hit.end, cue: hit.text,
+    });
+    statusEl.innerHTML = '<span class="job-done" title="Saved to bookmarks">★ saved</span>';
+  } catch (err) {
+    statusEl.innerHTML = `<span class="job-failed" title="${escapeHtml(err.message)}">✗</span>`;
   }
 }
 
@@ -1854,6 +1930,8 @@ $("all-bm-back-lib").onclick = () => browse(null);
 const BATCH = {
   clips: { listId: "clips-entries", boxClass: "clip-select" },
   bm: { listId: "all-bookmarks-list", boxClass: "bm-select" },
+  // Dialogue-search hits in #entries — clip or bookmark straight from results.
+  search: { listId: "entries", boxClass: "search-select", verb: "Clip" },
 };
 
 function batchBoxes(prefix, checkedOnly) {
@@ -1863,9 +1941,13 @@ function batchBoxes(prefix, checkedOnly) {
 
 function updateBatchState(prefix) {
   const n = batchBoxes(prefix, true).length;
+  const verb = BATCH[prefix].verb || "Export";
   const btn = $(`${prefix}-batch-export`);
   btn.disabled = n === 0;
-  btn.textContent = n ? `Export selected (${n})` : "Export selected";
+  btn.textContent = n ? `${verb} selected (${n})` : `${verb} selected`;
+  // Optional second action (the search bar also offers "Bookmark selected").
+  const bm = $(`${prefix}-batch-bookmark`);
+  if (bm) { bm.disabled = n === 0; bm.textContent = n ? `Bookmark selected (${n})` : "Bookmark selected"; }
 }
 
 function wireBatchBar(prefix) {
@@ -1889,6 +1971,7 @@ function wireBatchBar(prefix) {
 }
 wireBatchBar("clips");
 wireBatchBar("bm");
+wireBatchBar("search");
 
 /** Read the shared export options from a batch bar. */
 function batchOptions(prefix) {
@@ -2006,6 +2089,40 @@ $("bm-clear-all").onclick = async () => {
   } catch (err) {
     alert("Failed to clear bookmarks: " + err.message);
   }
+};
+
+// Clip / bookmark the selected dialogue-search hits straight from the results.
+$("search-batch-export").onclick = () => {
+  const opts = batchOptions("search");
+  runBatchExport("search", (cb) => ({
+    path: cb.dataset.path,
+    start: parseFloat(cb.dataset.start),
+    end: parseFloat(cb.dataset.end),
+    before: 0, after: 0,
+    cue_text: cb.dataset.cue || undefined,
+    ...opts,
+  }));
+};
+
+$("search-batch-bookmark").onclick = async () => {
+  const boxes = batchBoxes("search", true);
+  if (!boxes.length) return;
+  const btn = $("search-batch-bookmark");
+  const status = $("search-batch-status");
+  btn.disabled = true;
+  status.textContent = "Saving bookmarks…";
+  let ok = 0, fail = 0;
+  for (const cb of boxes) {
+    try {
+      await postJSON("/api/bookmarks", {
+        path: cb.dataset.path, label: cb.dataset.cue, cue: cb.dataset.cue,
+        start: parseFloat(cb.dataset.start), end: parseFloat(cb.dataset.end),
+      });
+      ok++;
+    } catch { fail++; }
+  }
+  status.textContent = fail ? `${ok} bookmarked, ${fail} failed` : `${ok} bookmarked ✓`;
+  btn.disabled = false;
 };
 
 // --- boot -------------------------------------------------------------------

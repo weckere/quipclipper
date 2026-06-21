@@ -56,18 +56,29 @@ h1 { margin: 0; font-size: 1.45rem; letter-spacing: -0.02em; cursor: pointer; di
 .dialogue-search-row button:disabled { opacity: 0.5; cursor: default; }
 
 .dialogue-hit {
-  display: flex; flex-direction: column; gap: 0.15rem;
-  padding: 0.6rem 0.8rem; border-radius: 8px; cursor: pointer;
+  display: flex; flex-direction: row; align-items: center; gap: 0.6rem;
+  padding: 0.6rem 0.8rem; border-radius: 8px;
 }
 .dialogue-hit:hover { background: var(--hover); }
+.dialogue-hit .hit-check { flex-shrink: 0; display: inline-flex; cursor: pointer; }
+.dialogue-hit .hit-main {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.15rem; cursor: pointer;
+}
 .dialogue-hit .hit-file { font-size: 0.8rem; color: var(--accent); }
 .dialogue-hit .hit-text { font-size: 0.95rem; }
 .dialogue-hit .hit-time { font-size: 0.8rem; color: var(--muted); }
 .dialogue-hit .hit-score {
   font-size: 0.75rem; color: var(--muted);
   background: var(--badge); padding: 0.1rem 0.4rem; border-radius: 4px;
-  align-self: flex-start;
 }
+.dialogue-hit .hit-actions { flex-shrink: 0; display: flex; align-items: center; gap: 0.4rem; }
+.dialogue-hit .hit-status {
+  display: inline-flex; align-items: center; min-width: 1.6rem; font-size: 0.8rem;
+}
+/* "Bookmark selected" — distinct from the green "Clip selected" (the extra
+   .batch-bar selector outranks .clip-btn's green background). */
+.batch-bar .batch-bookmark-btn { background: var(--badge); color: var(--fg); border: 1px solid var(--badge); }
+.batch-bar .batch-bookmark-btn:hover:not(:disabled) { border-color: var(--accent); }
 
 .entries { list-style: none; margin: 0; padding: 0; }
 .entry {

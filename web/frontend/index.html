@@ -38,6 +38,23 @@
             <span id="reindex-folder-status" class="muted reindex-status" hidden></span>
           </div>
         </div>
+        <!-- Batch actions for dialogue-search hits (clip/bookmark from results). -->
+        <div id="search-batch" class="batch-bar" hidden>
+          <label class="checkbox-label"><input id="search-select-all" type="checkbox" /> Select all</label>
+          <label class="checkbox-label"><input id="search-batch-audio" type="checkbox" /> Audio only</label>
+          <label class="checkbox-label"><input id="search-batch-split" type="checkbox" /> Split channels</label>
+          <label class="checkbox-label" title="Re-encode video to H.264 so each clip is frame-exact (video only)."><input id="search-batch-exact" type="checkbox" checked /> Exact (re-encode)</label>
+          <label>Format
+            <select id="search-batch-format">
+              <option value="lossless" selected>Passthrough</option>
+              <option value="flac">FLAC</option>
+              <option value="wav">WAV</option>
+            </select>
+          </label>
+          <button id="search-batch-export" class="clip-btn batch-export-btn" disabled>Clip selected</button>
+          <button id="search-batch-bookmark" class="clip-btn batch-bookmark-btn" disabled>Bookmark selected</button>
+          <span id="search-batch-status" class="muted"></span>
+        </div>
         <ul id="entries" class="entries"></ul>
         <p id="browser-empty" class="muted" hidden>Nothing here.</p>
       </section>
