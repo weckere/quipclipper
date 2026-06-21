@@ -1971,9 +1971,11 @@ function wireBatchBar(prefix) {
   // here so each bar shares one definition; all checked = every group (default).
   const chanWrap = $(`${prefix}-chan-groups`);
   if (chanWrap) {
+    // Default to Center only — the common case (e.g. isolating dialogue from a
+    // 5.1 mix). Tick the others to also export Front / Surround / LFE.
     chanWrap.innerHTML = `<span class="chan-groups-label">Channels:</span>` +
       CHAN_GROUPS.map(([cat, label]) =>
-        `<label class="checkbox-label"><input type="checkbox" id="${prefix}-chan-${cat}" checked /> ${label}</label>`
+        `<label class="checkbox-label"><input type="checkbox" id="${prefix}-chan-${cat}"${cat === "center" ? " checked" : ""} /> ${label}</label>`
       ).join("");
   }
   // Split channels is a sub-option of Audio only (same as the clip panel):
