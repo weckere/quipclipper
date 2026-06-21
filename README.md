@@ -245,11 +245,54 @@ Optional settings (all off/defaulted unless set):
 | `passwordFile` | Gate the whole site behind HTTP basic auth — path to a ready-made nginx htpasswd file (kept out of the store). Unlike Docker's plaintext `QC_PASSWORD`, the module takes the htpasswd directly. |
 | `hardwareAcceleration.enable` | Intel Quick Sync H.264 encoding (else software `libx264`). Adds the service user to the `render` group, exposes the render node, and enables the Intel media driver. |
 | `virtualHost` | nginx server name for a public hostname; pair with `enableACME`/`forceSSL` on that vhost for TLS. Default (null) is a catch-all vhost for LAN-by-IP over `:80`. |
-| `clipsDir` | Where finished clips live (default `/var/lib/quipclipper-web/clips`). |
+| `clipsDir` | Where finished clips live (default `/var/lib/quipclipper-web/clips`, private to the service). |
+| `clipsGroup` / `clipsMode` | Share `clipsDir` with other users/services (SMB export, Jellyfin library). See below. |
+| `manageClipsDir` | `false` = `clipsDir` is owned/created elsewhere (e.g. an existing SMB mount); the module won't chown/chmod it. See below. |
 | `subtitleLangs`, `listenPort`, `maxConcurrentJobs` | Mirror the Docker env vars `QC_SUBTITLE_LANGS` / `QC_PORT` / `QC_MAX_CONCURRENT_JOBS`. |
 
 The module builds the app from quipclipper's own pinned nixpkgs, so you don't
 need an `inputs.nixpkgs.follows`.
+
+### Sharing the clips directory
+
+By default `clipsDir` is private (`0750`, owned by the service) and served only
+through quipclipper's own web UI. To make finished clips land in a folder other
+users and services can read — an SMB export, a directory Jellyfin indexes — there
+are two supported flows:
+
+**Let the module own a shared directory.** Give it a shared group and a setgid,
+group-readable mode; new clips inherit the group and are group-readable:
+
+```nix
+services.quipclipper-web = {
+  enable = true;
+  mediaRoots = [ "/srv/media/movies" ];
+  clipsDir   = "/srv/clips";
+  clipsGroup = "users";   # the group your SMB/Jellyfin runs as (must exist)
+  clipsMode  = "2775";    # setgid + group-writable
+};
+```
+
+**Point it at a directory provisioned elsewhere** (e.g. a pre-existing SMB share
+that is already `root:users` setgid `2775`). Set `manageClipsDir = false` so the
+module leaves the directory's owner and mode alone — it only adds the service
+user (and nginx) to `clipsGroup` so they can write and serve through the share's
+group-writable/setgid bits:
+
+```nix
+services.quipclipper-web = {
+  enable = true;
+  mediaRoots = [ "/srv/media/movies" ];
+  clipsDir   = "/mnt/share/clips";   # mounted + owned externally
+  clipsGroup = "users";
+  manageClipsDir = false;
+};
+```
+
+In both cases nginx is added to `clipsGroup`, so the web UI keeps serving the same
+clips. With `manageClipsDir = false`, ensure the directory exists and is
+group-writable (setgid) before the service starts — the unit waits for its mount
+via `RequiresMountsFor`, but it won't create or fix permissions on it.
 
 ## Lossless cutting
 

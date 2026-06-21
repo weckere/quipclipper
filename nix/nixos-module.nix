@@ -16,6 +16,8 @@ let
   frontendPkg = self.packages.${pkgs.stdenv.hostPlatform.system}.quipclipper-web-frontend;
   vhostName = if cfg.virtualHost != null then cfg.virtualHost else "quipclipper-web";
   stateDir = "/var/lib/quipclipper-web/state";
+  # Group owning the clips dir: an explicit shared group, else the service's own.
+  clipsGroupName = if cfg.clipsGroup != null then cfg.clipsGroup else cfg.group;
 in
 {
   options.services.quipclipper-web = {
@@ -32,6 +34,49 @@ in
       type = lib.types.path;
       default = "/var/lib/quipclipper-web/clips";
       description = "Directory where finished clips are written and served from.";
+    };
+
+    clipsGroup = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      example = "users";
+      description = ''
+        Group that owns the clips directory. Both the service user and nginx are
+        added to it, so they can write and serve clips. Set this — together with a
+        group-readable `clipsMode` like `"2775"` — to share `clipsDir` with other
+        users and services (an SMB export, a Jellyfin library, …) rather than
+        keeping clips private to quipclipper. The group must already exist (e.g.
+        `users`, or one defined by your Samba config). `null` uses the service's
+        own group, keeping clips private.
+      '';
+    };
+
+    clipsMode = lib.mkOption {
+      type = lib.types.str;
+      default = "0750";
+      example = "2775";
+      description = ''
+        Permission mode for `clipsDir` when the module manages it
+        (`manageClipsDir`). The default `0750` keeps clips private to the service
+        and nginx. Use a setgid, group-writable mode like `"2775"` so finished
+        clips inherit `clipsGroup` and are group-readable — letting `clipsDir`
+        double as a shared folder.
+      '';
+    };
+
+    manageClipsDir = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = ''
+        Whether the module creates `clipsDir` and sets its owner/group/mode via
+        systemd-tmpfiles. Leave `true` for a module-owned directory. Set `false`
+        when `clipsDir` is provisioned and owned elsewhere — e.g. a pre-existing
+        SMB share or mergerfs pool with its own permissions (say `root:users`
+        setgid `2775`) — so the module won't chown/chmod it. The module still adds
+        the service user and nginx to `clipsGroup` and grants the unit write
+        access; you must ensure the directory already exists and is group-writable
+        (setgid) for the service to write into it.
+      '';
     };
 
     listenAddress = lib.mkOption {
@@ -135,15 +180,20 @@ in
     users.users.${cfg.user} = {
       isSystemUser = true;
       group = cfg.group;
-      # The render group lets the service open the VAAPI node for HW encoding.
-      extraGroups = lib.optional cfg.hardwareAcceleration.enable "render";
+      extraGroups =
+        # The render group lets the service open the VAAPI node for HW encoding.
+        (lib.optional cfg.hardwareAcceleration.enable "render")
+        # When clips are shared via a separate group, join it so the service can
+        # write into a group-writable (setgid) shared/SMB directory it doesn't own.
+        ++ lib.optional (clipsGroupName != cfg.group) clipsGroupName;
     };
     users.groups.${cfg.group} = { };
 
-    # nginx serves the clips dir directly (QC_CLIPS_URL_PREFIX = /clips). The dir
-    # is 0750 and owned by the service group, so nginx must be in that group to
-    # traverse it and read the finished clips — otherwise downloads 403.
-    users.users.${config.services.nginx.user}.extraGroups = [ cfg.group ];
+    # nginx serves the clips dir directly (QC_CLIPS_URL_PREFIX = /clips). It must
+    # be in the group that owns the clips so it can traverse the dir and read the
+    # finished clips — otherwise downloads 403. (For a shared clipsDir this is the
+    # shared clipsGroup; by default it's the service's own group.)
+    users.users.${config.services.nginx.user}.extraGroups = [ clipsGroupName ];
 
     # Intel media driver + GPU access for hardware H.264 encoding (opt-in).
     hardware.graphics = lib.mkIf cfg.hardwareAcceleration.enable {
@@ -156,6 +206,9 @@ in
       description = "quipclipper web backend";
       wantedBy = [ "multi-user.target" ];
       after = [ "network.target" ];
+      # Wait for the filesystem holding clipsDir — important when it's an external
+      # mount (SMB/mergerfs) the admin manages (manageClipsDir = false).
+      unitConfig.RequiresMountsFor = [ (toString cfg.clipsDir) ];
 
       environment = {
         QC_MEDIA_ROOTS = lib.concatStringsSep ":" (map toString cfg.mediaRoots);
@@ -197,11 +250,13 @@ in
     };
 
     # Create the writable dirs before the service starts (its hardened mount
-    # namespace bind-mounts them, so they must exist), owned by the service user.
+    # namespace bind-mounts them, so they must exist). The state dir is always
+    # module-owned; the clips dir is owned at clipsMode/clipsGroup unless the
+    # admin manages it externally (manageClipsDir = false, e.g. an SMB share).
     systemd.tmpfiles.rules = [
       "d ${stateDir} 0750 ${cfg.user} ${cfg.group} - -"
-      "d ${toString cfg.clipsDir} 0750 ${cfg.user} ${cfg.group} - -"
-    ];
+    ] ++ lib.optional cfg.manageClipsDir
+      "d ${toString cfg.clipsDir} ${cfg.clipsMode} ${cfg.user} ${clipsGroupName} - -";
 
     services.nginx = {
       enable = true;

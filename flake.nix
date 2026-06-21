@@ -75,14 +75,17 @@
               name = "quipclipper-web-module";
               nodes.machine = { ... }: {
                 imports = [ self.nixosModules.default ];
-                # A media root the service is allowed to read, an htpasswd (user
-                # "quip", password "test123") for the basic-auth gate, and a probe
-                # clip planted in the 0750 clips dir (owned by the service user)
-                # so we can prove nginx serves /clips/ despite the tight perms.
+                # A media root the service may read; an htpasswd (user "quip",
+                # password "test123") for the basic-auth gate; a shared "media"
+                # group with a stand-in service account ("reader", as samba or
+                # Jellyfin would run) to prove finished clips are readable outside
+                # quipclipper; and a probe clip planted as a real one would be.
+                users.groups.media = { };
+                users.users.reader = { isSystemUser = true; group = "media"; };
                 systemd.tmpfiles.rules = [
                   "d /srv/media 0755 root root - -"
-                  "d /var/lib/quipclipper-web/clips/probe 0755 quipclipper-web quipclipper-web - -"
-                  "f /var/lib/quipclipper-web/clips/probe/clip.txt 0644 quipclipper-web quipclipper-web - hello-clip"
+                  "d /var/lib/quipclipper-web/clips/probe 2775 quipclipper-web media - -"
+                  "f /var/lib/quipclipper-web/clips/probe/clip.txt 0644 quipclipper-web media - hello-clip"
                 ];
                 environment.etc."quipclipper.htpasswd".text =
                   "quip:$apr1$NF6aL6Je$uO.ixyjrDUHxSp2DgD2Rj0\n";
@@ -90,6 +93,9 @@
                   enable = true;
                   mediaRoots = [ "/srv/media" ];
                   passwordFile = "/etc/quipclipper.htpasswd";
+                  # Share the clips dir with the "media" group (SMB/Jellyfin flow).
+                  clipsGroup = "media";
+                  clipsMode = "2775";
                 };
               };
               testScript = ''
@@ -108,11 +114,15 @@
                 machine.succeed("grep -q ok /tmp/health.json")
                 machine.succeed("curl -fsS -u quip:test123 http://localhost/api/library/roots -o /tmp/roots.json")
                 machine.succeed("grep -q /srv/media /tmp/roots.json")
-                # Finished clips are served by nginx straight from the 0750 clips
-                # dir — only works because nginx is in the service group. Without
-                # that, this download 403s (curl -f exits non-zero).
+                # nginx serves finished clips straight from clipsDir (it's in the
+                # clips group); without that this download 403s.
                 machine.succeed("curl -fsS -u quip:test123 http://localhost/clips/probe/clip.txt -o /tmp/clip.txt")
                 machine.succeed("grep -q hello-clip /tmp/clip.txt")
+                # Shared clips: the module owns clipsDir setgid to the shared group,
+                # so a separate service account (samba/Jellyfin) in that group can
+                # read finished clips — the whole point of clipsGroup/clipsMode.
+                machine.succeed("stat -c '%a %G' /var/lib/quipclipper-web/clips | grep -xq '2775 media'")
+                machine.succeed("runuser -u reader -- cat /var/lib/quipclipper-web/clips/probe/clip.txt | grep -q hello-clip")
               '';
             };
           };
