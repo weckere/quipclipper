@@ -14,6 +14,7 @@ from quipclipper.clip import (
     group_channels,
     output_extension,
     render_clip_srt,
+    vaapi_h264_available,
 )
 from quipclipper.models import Cue, Match
 
@@ -214,6 +215,20 @@ def test_cut_clip_rejects_unknown_audio_codec(tmp_path):
     src.write_bytes(b"")
     with pytest.raises(ValueError):
         cut_clip(src, ClipRange(0.0, 2.0), kind="audio", audio_codec="mp3")
+
+
+def test_vaapi_h264_available_false_when_no_render_node():
+    assert vaapi_h264_available("/dev/dri/does-not-exist-xyz") is False
+
+
+def test_vaapi_h264_available_true_when_probe_succeeds(tmp_path):
+    dev = tmp_path / "renderD128"
+    dev.write_bytes(b"")  # a path that exists, so the probe runs
+    with patch("quipclipper.clip.shutil.which", return_value="/ffmpeg"), \
+         patch("quipclipper.clip.subprocess.run",
+               return_value=MagicMock(returncode=0)) as run:
+        assert vaapi_h264_available(str(dev)) is True
+    assert "h264_vaapi" in run.call_args.args[0]
 
 
 def test_cut_clip_falls_back_to_software_when_hw_encode_fails(tmp_path):

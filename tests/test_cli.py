@@ -149,6 +149,36 @@ def test_clip_video_lossless_flag_forces_copy(tmp_path, monkeypatch):
     assert "cut_clip" not in cap
 
 
+def test_clip_video_reencode_uses_hardware_when_available(tmp_path, monkeypatch):
+    """A video re-encode auto-detects the iGPU and uses h264_vaapi when present."""
+    v = tmp_path / "movie.mkv"; v.write_bytes(b"")
+    cap = _stub_clip_backends(monkeypatch, tmp_path)
+    monkeypatch.setattr(cli, "vaapi_h264_available", lambda *a, **k: True)
+    res = runner.invoke(cli.app, ["clip", "x", "-v", str(v), "-t", "video", "--yes"])
+    assert res.exit_code == 0, res.output
+    assert cap["cut_clip"]["video_encoder"] == "h264_vaapi"
+    assert cap["cut_clip"]["vaapi_device"]
+
+
+def test_clip_video_reencode_software_when_no_igpu(tmp_path, monkeypatch):
+    v = tmp_path / "movie.mkv"; v.write_bytes(b"")
+    cap = _stub_clip_backends(monkeypatch, tmp_path)
+    monkeypatch.setattr(cli, "vaapi_h264_available", lambda *a, **k: False)
+    res = runner.invoke(cli.app, ["clip", "x", "-v", str(v), "-t", "video", "--yes"])
+    assert res.exit_code == 0, res.output
+    assert cap["cut_clip"]["video_encoder"] == "libx264"
+    assert cap["cut_clip"]["vaapi_device"] is None
+
+
+def test_clip_no_hwaccel_forces_software(tmp_path, monkeypatch):
+    v = tmp_path / "movie.mkv"; v.write_bytes(b"")
+    cap = _stub_clip_backends(monkeypatch, tmp_path)
+    monkeypatch.setattr(cli, "vaapi_h264_available", lambda *a, **k: True)  # iGPU present…
+    res = runner.invoke(cli.app, ["clip", "x", "-v", str(v), "-t", "video", "--no-hwaccel", "--yes"])
+    assert res.exit_code == 0, res.output
+    assert cap["cut_clip"]["video_encoder"] == "libx264"  # …but forced to software
+
+
 def test_clip_audio_format_passes_codec_to_cut_clip(tmp_path, monkeypatch):
     v = tmp_path / "movie.mkv"
     v.write_bytes(b"")

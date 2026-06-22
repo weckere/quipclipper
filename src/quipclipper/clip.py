@@ -18,6 +18,7 @@ LFE), as lossless WAV/FLAC or re-encoded back to the source codec.
 
 from __future__ import annotations
 
+import functools
 import json
 import shutil
 import subprocess
@@ -26,6 +27,30 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from quipclipper.models import Cue, Match, format_timestamp
+
+# The render node used for VAAPI / Intel Quick Sync hardware H.264 encoding.
+DEFAULT_VAAPI_DEVICE = "/dev/dri/renderD128"
+
+
+@functools.lru_cache(maxsize=None)
+def vaapi_h264_available(device: str = DEFAULT_VAAPI_DEVICE) -> bool:
+    """True if the host can hardware-encode H.264 via VAAPI (Intel Quick Sync) on
+    *device*. Probed once per device with a tiny test encode; callers fall back to
+    software ``libx264`` when this is False (no render node, no driver, or an
+    ffmpeg built without vaapi). Pass ``video_encoder="h264_vaapi"`` +
+    ``vaapi_device`` to :func:`cut_clip` when it returns True."""
+    if not device or not Path(device).exists() or shutil.which("ffmpeg") is None:
+        return False
+    try:
+        proc = subprocess.run(
+            ["ffmpeg", "-loglevel", "error", "-vaapi_device", device,
+             "-f", "lavfi", "-i", "testsrc=size=64x64:rate=1:duration=1",
+             "-vf", "format=nv12,hwupload", "-c:v", "h264_vaapi", "-f", "null", "-"],
+            capture_output=True, timeout=20,
+        )
+        return proc.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
 
 # Source audio codec -> a container extension that can hold it via stream copy.
 LOSSLESS_AUDIO_EXT = {

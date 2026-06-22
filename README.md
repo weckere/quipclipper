@@ -460,8 +460,13 @@ quipclipper clip "come with me" -v movie.mkv -i 1 -o out.m4a --yes
 ```
 
 By default the clip covers the matched line's own start/end plus `--before` /
-`--after` padding (0.5s each). The output is auto-named next to the source unless
-you pass `--out`.
+`--after` padding. The output is auto-named next to the source unless you pass
+`--out`.
+
+A video re-encode **auto-detects an Intel iGPU** and encodes on it (Quick Sync
+via VAAPI, `h264_vaapi`) when available, falling back to software `libx264`. Force
+software with `--no-hwaccel`, or point at a specific render node with
+`--vaapi-device /dev/dri/renderD129`.
 
 ### Picking among multiple matches
 

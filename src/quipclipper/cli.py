@@ -16,7 +16,13 @@ from typing import Optional
 
 import typer
 
-from quipclipper.clip import compute_range, cut_clip, split_audio_channels
+from quipclipper.clip import (
+    DEFAULT_VAAPI_DEVICE,
+    compute_range,
+    cut_clip,
+    split_audio_channels,
+    vaapi_h264_available,
+)
 from quipclipper.mkv import (
     cut_with_mkvmerge,
     estimate_remux_bytes,
@@ -181,6 +187,16 @@ def clip(
         "--chapters/--no-chapters",
         help="Keep chapters in mkvmerge output (default). --no-chapters drops them.",
     ),
+    hwaccel: Optional[bool] = typer.Option(
+        None,
+        "--hwaccel/--no-hwaccel",
+        help="Hardware-encode a re-encoded video clip on an Intel iGPU (Quick Sync "
+             "via VAAPI). Default: auto-detect; --no-hwaccel forces software libx264. "
+             "Only affects video re-encodes (not lossless copies, audio, or gif).",
+    ),
+    vaapi_device: str = typer.Option(
+        DEFAULT_VAAPI_DEVICE, "--vaapi-device", help="VAAPI render node for --hwaccel.",
+    ),
     remux_first: bool = typer.Option(
         False,
         "--remux-first/--no-remux-first",
@@ -265,6 +281,14 @@ def clip(
     # for non-Matroska sources — an MKV is already a clean container, so cutting it
     # directly with mkvmerge is just as accurate without the redundant full copy.
     do_remux = use_mkvmerge and remux_first and not is_matroska(video)
+
+    # Hardware-encode the H.264 re-encode on an Intel iGPU (Quick Sync via VAAPI)
+    # when available; only a re-encoded *video* clip hits the encoder (lossless
+    # copies, audio and gif don't). --hwaccel forces it, --no-hwaccel forces
+    # software; default auto-detects. cut_clip retries on libx264 if it fails.
+    hw_reencode = (not lossless) and kind == "video" and (
+        hwaccel if hwaccel is not None else vaapi_h264_available(vaapi_device)
+    )
 
     resolved = _resolve(subs, video, track)
     candidates = search(
@@ -354,6 +378,12 @@ def clip(
             "from the decode; not a stream copy.",
             fg="bright_black",
         )
+    if hw_reencode:
+        typer.secho(
+            f"  note: hardware-encoding H.264 on the iGPU (h264_vaapi, {vaapi_device}); "
+            "falls back to libx264 if it fails.",
+            fg="bright_black",
+        )
     if not yes:
         typer.confirm("Proceed?", default=True, abort=True)
 
@@ -381,6 +411,8 @@ def clip(
             video, rng, kind=kind, lossless=lossless, out=out_path,
             audio_indices=audio_indices, embed_cues=cues_to_embed,
             audio_codec=(audio_format if fullmix else None),
+            video_encoder="h264_vaapi" if hw_reencode else "libx264",
+            vaapi_device=vaapi_device if hw_reencode else None,
         )]
 
     single = len(chosen) == 1

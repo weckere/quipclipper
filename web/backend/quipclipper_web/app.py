@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import functools
 import hashlib
 import json
 import os
@@ -41,6 +40,7 @@ from quipclipper.clip import (
     probe_audio_streams,
     probe_channel_layout,
     split_audio_channels,
+    vaapi_h264_available,
 )
 from quipclipper.models import Match, format_timestamp
 from quipclipper.mkv import (
@@ -154,23 +154,11 @@ def _render_clip_template(template: str, ctx: dict[str, str]) -> str:
 _VAAPI_DEVICE = os.environ.get("QC_VAAPI_DEVICE") or "/dev/dri/renderD128"
 
 
-@functools.lru_cache(maxsize=1)
 def _vaapi_h264_available() -> bool:
-    """True if the host iGPU can hardware-encode H.264 via VAAPI / Quick Sync
-    (B23). Probed once with a tiny test encode; the transcode falls back to
-    software (libx264) when this is False (no /dev/dri passed in, no driver)."""
-    if not Path(_VAAPI_DEVICE).exists() or shutil.which("ffmpeg") is None:
-        return False
-    try:
-        proc = subprocess.run(
-            ["ffmpeg", "-loglevel", "error", "-vaapi_device", _VAAPI_DEVICE,
-             "-f", "lavfi", "-i", "testsrc=size=64x64:rate=1:duration=1",
-             "-vf", "format=nv12,hwupload", "-c:v", "h264_vaapi", "-f", "null", "-"],
-            capture_output=True, timeout=20,
-        )
-        return proc.returncode == 0
-    except (OSError, subprocess.TimeoutExpired):
-        return False
+    """True if the host iGPU can hardware-encode H.264 via VAAPI / Quick Sync.
+    Probed once (in the engine) with a tiny test encode; both the browser-preview
+    transcode and the clip re-encode fall back to software (libx264) when False."""
+    return vaapi_h264_available(_VAAPI_DEVICE)
 
 
 def _live_pan_filter(p: Path, audio_index: int, chan: str) -> str | None:
