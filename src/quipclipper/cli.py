@@ -138,10 +138,12 @@ def clip(
     subs: Optional[Path] = typer.Option(None, "--subs", "-s", help="Subtitle file (else sidecar/embedded)."),
     track: Optional[int] = typer.Option(None, "--track", help="Subtitle track to use, by s:N index (from `tracks`)."),
     kind: str = typer.Option("video", "--type", "-t", help="audio | video | gif."),
-    lossless: bool = typer.Option(
-        True,
+    lossless: Optional[bool] = typer.Option(
+        None,
         "--lossless/--no-lossless",
-        help="Stream-copy with no re-encode (default). --no-lossless re-encodes for exact boundaries.",
+        help="Default matches the web app: video re-encodes for a frame-exact clip; "
+             "audio is stream-copied (already exact). --lossless forces a stream copy "
+             "(keyframe-aligned start); --no-lossless forces a re-encode.",
     ),
     audio_track: Optional[str] = typer.Option(
         None,
@@ -208,6 +210,12 @@ def clip(
     if kind not in ("audio", "video", "gif"):
         typer.secho("--type must be audio, video, or gif.", fg="red", err=True)
         raise typer.Exit(code=2)
+    # Default cut mode mirrors the web app: re-encode video for a frame-exact clip
+    # (a lossless copy can only start on a keyframe → runs long on long-GOP
+    # sources), but keep audio a lossless stream copy (it's already exact). gif is
+    # always re-encoded regardless. Explicit --lossless/--no-lossless overrides.
+    if lossless is None:
+        lossless = kind != "video"
     if split_channels and kind != "audio":
         typer.secho("--split-channels only applies to --type audio.", fg="red", err=True)
         raise typer.Exit(code=2)

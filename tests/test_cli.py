@@ -99,6 +99,56 @@ def test_clip_audio_format_rejects_with_split(tmp_path):
     assert "can't be combined with --split-channels" in res.output
 
 
+def _stub_clip_backends(monkeypatch, tmp_path):
+    """Stub resolve/search + both cut backends; return a dict of captured kwargs."""
+    cue = Cue(index=0, start=10.0, end=12.0, text="x")
+    monkeypatch.setattr(cli, "_resolve", lambda *a, **k: ResolvedSubtitles([cue], None))
+    monkeypatch.setattr(cli, "search", lambda *a, **k: [Match(100.0, (cue,), "x")])
+    monkeypatch.setattr(cli, "mkvmerge_available", lambda: True)
+    cap = {}
+
+    def fake_cut(video, rng, **kw):
+        cap["cut_clip"] = kw
+        return kw.get("out") or tmp_path / "clip.mp4"
+
+    def fake_mkv(video, rng, **kw):
+        cap["mkvmerge"] = kw
+        return kw.get("out") or tmp_path / "clip.mkv"
+
+    monkeypatch.setattr(cli, "cut_clip", fake_cut)
+    monkeypatch.setattr(cli, "cut_with_mkvmerge", fake_mkv)
+    return cap
+
+
+def test_clip_video_defaults_to_reencode(tmp_path, monkeypatch):
+    """Aligned with the web app: a video clip re-encodes (frame-exact) by default."""
+    v = tmp_path / "movie.mkv"; v.write_bytes(b"")
+    cap = _stub_clip_backends(monkeypatch, tmp_path)
+    res = runner.invoke(cli.app, ["clip", "x", "-v", str(v), "-t", "video", "--yes"])
+    assert res.exit_code == 0, res.output
+    assert cap.get("cut_clip", {}).get("lossless") is False  # re-encode via ffmpeg
+    assert "mkvmerge" not in cap
+
+
+def test_clip_audio_defaults_to_lossless(tmp_path, monkeypatch):
+    """Audio stays a lossless copy by default (the web app never re-encodes audio)."""
+    v = tmp_path / "movie.mkv"; v.write_bytes(b"")
+    cap = _stub_clip_backends(monkeypatch, tmp_path)
+    res = runner.invoke(cli.app, ["clip", "x", "-v", str(v), "-t", "audio", "--yes"])
+    assert res.exit_code == 0, res.output
+    assert "mkvmerge" in cap  # lossless audio → mkvmerge copy, not a re-encode
+    assert "cut_clip" not in cap
+
+
+def test_clip_video_lossless_flag_forces_copy(tmp_path, monkeypatch):
+    v = tmp_path / "movie.mkv"; v.write_bytes(b"")
+    cap = _stub_clip_backends(monkeypatch, tmp_path)
+    res = runner.invoke(cli.app, ["clip", "x", "-v", str(v), "-t", "video", "--lossless", "--yes"])
+    assert res.exit_code == 0, res.output
+    assert "mkvmerge" in cap  # explicit --lossless → stream copy
+    assert "cut_clip" not in cap
+
+
 def test_clip_audio_format_passes_codec_to_cut_clip(tmp_path, monkeypatch):
     v = tmp_path / "movie.mkv"
     v.write_bytes(b"")

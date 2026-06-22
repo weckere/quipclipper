@@ -78,10 +78,11 @@ engine for scripting and quick one-off cuts.
   dialogue-search clip lands at e.g.
   `The.Sandlot.1993.1080p/00-27-58_Youre_killing_me_Smalls_The_Sandlot_1993.mkv`.
 
-The clipping itself is **lossless by default** — audio/video are stream-copied
-(`-c copy`) with no re-encoding, so the original format is preserved exactly
-(lossy stays lossy), including all audio tracks and 5.1/7.1 channel layouts. See
-[Lossless cutting](#lossless-cutting) for the details.
+By default a **video** clip is re-encoded to a frame-exact H.264 file (a lossless
+copy can only start on a keyframe, so it runs long on long-GOP sources), while
+**audio** clips are lossless stream copies (`-c copy`, no re-encoding — lossy
+stays lossy, every track and 5.1/7.1 layout preserved). Untick **Exact** for a
+lossless video copy. See [Lossless cutting](#lossless-cutting) for the details.
 
 ## Quick start (Docker Compose)
 
@@ -302,11 +303,12 @@ won't create or fix permissions on it.
 
 ## Lossless cutting
 
-Inspired by [LosslessCut](https://github.com/mifi/lossless-cut), clips are cut
-**losslessly by default**: ffmpeg stream-copies (`-c copy`) the original encoded
-packets straight into a new container — there is **no re-encoding at all**. The
-source format is preserved exactly: a lossy AC3/AAC/EAC3 track stays that same
-lossy bitstream, byte-for-byte, and the cut is near-instant.
+Inspired by [LosslessCut](https://github.com/mifi/lossless-cut), quipclipper can
+cut **losslessly** — ffmpeg stream-copies (`-c copy`) the original encoded packets
+straight into a new container, with **no re-encoding at all**. The source format
+is preserved exactly: a lossy AC3/AAC/EAC3 track stays that same lossy bitstream,
+byte-for-byte, and the cut is near-instant. This is the default for **audio**;
+for **video** it's one flag away (see the end of this section).
 
 What "preserve everything" means here:
 
@@ -342,8 +344,11 @@ Containers are chosen to hold the source streams without transcoding:
 | Re-encoded audio | `.mp3` |
 | Re-encoded video | `.mp4` (H.264 / AAC) |
 
-(The web app always cuts losslessly; the CLI exposes a `--no-lossless` opt-in
-re-encode for frame-exact boundaries or a specific format like mp3.)
+By default, both the web app and the CLI **re-encode video** for a frame-exact
+clip (a lossless copy can only start on a keyframe, so it runs long on long-GOP
+sources) but keep **audio** a lossless stream copy. Force a lossless video copy
+with `--lossless` on the CLI (or by unticking **Exact** in the web app); force a
+re-encode with `--no-lossless`.
 
 ---
 
@@ -356,9 +361,11 @@ sidecar `.srt` / extract an embedded track), type the dialogue, and get a clip.
 ## CLI features
 
 - **Local, offline** — works on your own video + subtitle files, no API keys.
-- **Lossless by default** — audio/video are stream-copied (`-c copy`) with no
-  re-encoding, so the original format is preserved exactly (lossy stays lossy),
-  including all audio tracks and 5.1/7.1 channel layouts. Near-instant cuts.
+- **Lossless cutting** — audio is stream-copied (`-c copy`) with no re-encoding,
+  preserving the original format exactly (lossy stays lossy) including all audio
+  tracks and 5.1/7.1 channel layouts. `--lossless` extends that to video too — a
+  near-instant copy, keyframe-aligned (video defaults to a frame-exact re-encode,
+  matching the web app; see below).
 - **MKVToolNix backend** — quipclipper cuts lossless audio/video with `mkvmerge` when
   it's installed (all tracks/chapters, native subtitle handling). Sources are
   cut directly by default; `--remux-first` muxes non-MKV sources into a
@@ -433,16 +440,19 @@ quipclipper search "hasta la vista" --video movie.mkv
 ### Cut a clip
 
 ```bash
-# audio (default, lossless stream copy -> codec-matched container e.g. .m4a)
+# audio: lossless stream copy by default -> codec-matched container (e.g. .m4a)
 quipclipper clip "i'll be back" --video movie.mkv --type audio
 
-# video segment, with extra padding: start 5s before the line, end 3s after
+# video: re-encodes to a frame-exact .mp4 by default (matches the web app)
 quipclipper clip "get to the chopper" --video movie.mkv --type video --before 5 --after 3
+
+# video, lossless: a near-instant stream copy (keyframe-aligned start) -> .mkv
+quipclipper clip "get to the chopper" --video movie.mkv --type video --lossless
 
 # gif (always re-encoded)
 quipclipper clip "hasta la vista" --video movie.mkv --type gif
 
-# force a re-encode for frame-exact boundaries / a specific format (e.g. mp3)
+# force a re-encode of an audio clip (e.g. to mp3) with --no-lossless
 quipclipper clip "i'll be back" --video movie.mkv --type audio --no-lossless
 
 # pick a different ranked match, name the output, skip the confirm prompt
@@ -557,16 +567,18 @@ need the original format rather than lossless WAV/FLAC.
 
 ## MKV sources & the mkvmerge backend
 
-quipclipper cuts lossless audio/video with **[MKVToolNix](https://mkvtoolnix.download/)'s
+quipclipper cuts **lossless** audio/video with **[MKVToolNix](https://mkvtoolnix.download/)'s
 `mkvmerge`** whenever it's installed. mkvmerge splits losslessly and superbly: it
 keeps every track, chapter and attachment, never re-encodes, produces tighter
 cuts, and trims and time-shifts subtitles natively (including a sidecar file).
+(Audio is lossless by default; add `--lossless` for a lossless video cut, since
+video otherwise re-encodes via ffmpeg.)
 
 ```bash
-quipclipper clip "i'll be back" -v movie.mkv -t video                    # default: direct mkvmerge cut
-quipclipper clip "i'll be back" -v movie.mp4 -t video                    # non-MKV: direct mkvmerge cut (--remux-first for max accuracy)
-quipclipper clip "i'll be back" -v movie.mp4 -t video --backend ffmpeg   # force ffmpeg
-quipclipper clip "i'll be back" -v movie.mkv -t video --no-chapters      # drop chapters
+quipclipper clip "i'll be back" -v movie.mkv -t video --lossless                  # lossless video: direct mkvmerge cut
+quipclipper clip "i'll be back" -v movie.mp4 -t video --lossless                  # non-MKV: direct mkvmerge cut (--remux-first for max accuracy)
+quipclipper clip "i'll be back" -v movie.mp4 -t video --lossless --backend ffmpeg # force ffmpeg
+quipclipper clip "i'll be back" -v movie.mkv -t video --lossless --no-chapters    # drop chapters
 ```
 
 `--backend` is `auto` (default), `ffmpeg`, or `mkvmerge`:
@@ -607,14 +619,16 @@ mkvmerge requires MKVToolNix on your `PATH` (`mkvmerge`).
 
 ### Subtitles in video clips
 
-Video clips keep all embedded subtitle tracks (they ride along in the `.mkv`
-stream copy). When you search with an external subtitle file (`--subs` or a
-sidecar), quipclipper also muxes those lines into the clip, trimmed and time-shifted
-to line up with the cut. Disable with `--no-embed-subs`:
+A **lossless** video clip keeps all embedded subtitle tracks (they ride along in
+the `.mkv` stream copy). When you search with an external subtitle file (`--subs`
+or a sidecar), quipclipper also muxes those lines into the clip, trimmed and
+time-shifted to line up with the cut. Disable with `--no-embed-subs`. (Subtitle
+embedding is a lossless feature — pass `--lossless`, since a re-encoded clip
+doesn't carry subtitles.)
 
 ```bash
-quipclipper clip "i'll be back" -v movie.mkv -t video                 # subtitles included
-quipclipper clip "i'll be back" -v movie.mkv -t video --no-embed-subs # video subs only
+quipclipper clip "i'll be back" -v movie.mkv -t video --lossless                 # subtitles included
+quipclipper clip "i'll be back" -v movie.mkv -t video --lossless --no-embed-subs # video subs only
 ```
 
 ## How it works
