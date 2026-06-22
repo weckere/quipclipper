@@ -172,6 +172,11 @@ def clip(
         "--split-format",
         help="Format for --split-channels: wav | flac (lossless, no re-encode) | original (re-encode to source codec).",
     ),
+    split_groups: Optional[str] = typer.Option(
+        None,
+        "--split-groups",
+        help="Which channel groups to export with --split-channels: comma-separated subset of front,center,surround,lfe (default: all). E.g. --split-groups center exports only the centre channel.",
+    ),
     include_lfe: bool = typer.Option(
         True,
         "--include-lfe/--no-lfe",
@@ -238,6 +243,20 @@ def clip(
     if split_format not in ("wav", "flac", "original"):
         typer.secho("--split-format must be wav, flac, or original.", fg="red", err=True)
         raise typer.Exit(code=2)
+    split_categories: Optional[list[str]] = None
+    if split_groups is not None:
+        if not split_channels:
+            typer.secho("--split-groups only applies with --split-channels.", fg="red", err=True)
+            raise typer.Exit(code=2)
+        valid = {"front", "center", "surround", "lfe"}
+        split_categories = [g.strip().lower() for g in split_groups.split(",") if g.strip()]
+        bad = [g for g in split_categories if g not in valid]
+        if bad or not split_categories:
+            typer.secho(
+                f"--split-groups must be a comma-separated subset of {', '.join(sorted(valid))}.",
+                fg="red", err=True,
+            )
+            raise typer.Exit(code=2)
     if audio_format is not None:
         if audio_format not in ("wav", "flac"):
             typer.secho("--audio-format must be wav or flac.", fg="red", err=True)
@@ -392,7 +411,8 @@ def clip(
             return split_audio_channels(
                 video, rng,
                 audio_index=(audio_indices[0] if audio_indices else 0),
-                fmt=split_format, include_lfe=include_lfe, out=out_path,
+                fmt=split_format, include_lfe=include_lfe,
+                categories=split_categories, out=out_path,
             )
         if use_mkvmerge:
             # mkvmerge muxes/trims a sidecar subtitle natively, so pass the file.

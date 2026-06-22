@@ -185,9 +185,10 @@ quipclipper clip QUERY --video FILE [OPTIONS]
 
 | Option | Default | Description |
 |---|---|---|
-| `--audio-track`, `-A` | all | Audio stream(s) to keep, by `a:N` index, comma-separated (e.g. `0,2`). |
+| `--audio-track`, `-A` | all | Audio stream(s) to keep, by `a:N` index, comma-separated (e.g. `0,2`). With `--split-channels` (or `--audio-format`), the **first** index selects the single stream to split/encode (default `a:0`). |
 | `--audio-format` | — | `wav` / `flac`: full-mix lossless re-encode of one audio stream keeping **all** channels (5.1 → 5.1 WAV). Audio only; not with `--split-channels`. |
 | `--split-channels` | off | Split a surround track into per-group files (audio only). |
+| `--split-groups` | all | With `--split-channels`, which channel groups to export: comma-separated subset of `front,center,surround,lfe` (e.g. `center` for just the centre channel). |
 | `--split-format` | `wav` | `wav` / `flac` (lossless, no re-encode) or `original` (re-encode to source codec). |
 | `--include-lfe / --no-lfe` | include | Whether to emit the LFE channel as its own file when splitting. |
 
@@ -338,7 +339,15 @@ two, kept distinct as `side` and `back`:
 quipclipper clip "get to the chopper" -v movie.mkv --split-channels                  # WAV (pcm_s24le)
 quipclipper clip "get to the chopper" -v movie.mkv --split-channels --split-format flac
 quipclipper clip "get to the chopper" -v movie.mkv --split-channels --no-lfe         # drop LFE
+quipclipper clip "get to the chopper" -v movie.mkv --split-channels --split-groups center  # only the centre channel
+quipclipper clip "get to the chopper" -v movie.mkv --split-channels -A 1             # split the a:1 stream
 ```
+
+By default every group is written. **`--split-groups`** narrows that to a subset
+— a comma-separated list of `front`, `center`, `surround`, `lfe` (e.g. just
+`center` to isolate dialogue from a 5.1 mix). When the file has several audio
+streams, **`--audio-track N`** picks which one to split (the first index given;
+default `a:0`) — run `quipclipper tracks <file>` to see the `a:N` indices.
 
 **Channel splitting writes lossless WAV or FLAC and never does a lossy
 re-encode.** Pulling channels apart does require *decoding* the surround mix —

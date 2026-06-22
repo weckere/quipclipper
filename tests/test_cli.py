@@ -99,6 +99,40 @@ def test_clip_audio_format_rejects_with_split(tmp_path):
     assert "can't be combined with --split-channels" in res.output
 
 
+def test_clip_split_groups_passes_categories(tmp_path, monkeypatch):
+    v = tmp_path / "movie.mkv"; v.write_bytes(b"")
+    cue = Cue(index=0, start=10.0, end=12.0, text="x")
+    monkeypatch.setattr(cli, "_resolve", lambda *a, **k: ResolvedSubtitles([cue], None))
+    monkeypatch.setattr(cli, "search", lambda *a, **k: [Match(100.0, (cue,), "x")])
+    cap = {}
+    monkeypatch.setattr(cli, "split_audio_channels",
+                        lambda video, rng, **kw: (cap.update(kw), [tmp_path / "c.wav"])[1])
+    res = runner.invoke(cli.app, [
+        "clip", "x", "-v", str(v), "-t", "audio",
+        "--split-channels", "--split-groups", "center", "--yes",
+    ])
+    assert res.exit_code == 0, res.output
+    assert cap["categories"] == ["center"]
+
+
+def test_clip_split_groups_rejects_bad_value(tmp_path):
+    v = tmp_path / "movie.mkv"; v.write_bytes(b"")
+    res = runner.invoke(cli.app, [
+        "clip", "x", "-v", str(v), "-t", "audio", "--split-channels", "--split-groups", "bogus",
+    ])
+    assert res.exit_code == 2
+    assert "split-groups" in res.output
+
+
+def test_clip_split_groups_requires_split_channels(tmp_path):
+    v = tmp_path / "movie.mkv"; v.write_bytes(b"")
+    res = runner.invoke(cli.app, [
+        "clip", "x", "-v", str(v), "-t", "audio", "--split-groups", "center",
+    ])
+    assert res.exit_code == 2
+    assert "only applies with --split-channels" in res.output
+
+
 def _stub_clip_backends(monkeypatch, tmp_path):
     """Stub resolve/search + both cut backends; return a dict of captured kwargs."""
     cue = Cue(index=0, start=10.0, end=12.0, text="x")

@@ -387,7 +387,9 @@ sidecar `.srt` / extract an embedded track), type the dialogue, and get a clip.
   stream keeping **all** channels in a single file (a 5.1 source → a 5.1 WAV),
   distinct from passthrough (original codec) and `--split-channels`.
 - **Surround channel split** — `--split-channels` exports a 5.1/7.1 track as
-  stereo pairs + centre/LFE files, in lossless WAV/FLAC or the source codec.
+  stereo pairs + centre/LFE files, in lossless WAV/FLAC or the source codec;
+  `--split-groups` limits it to a subset (e.g. just the centre), and
+  `--audio-track` picks which stream to split.
 - **Subtitles in clips** — embedded subtitle streams are preserved, and external
   search subtitles are muxed in, aligned to the cut (`--no-embed-subs` to skip).
 - **Configurable padding** — clip the line's own span plus `--before` / `--after`
@@ -557,7 +559,17 @@ quipclipper clip "get to the chopper" -v movie.mkv --split-channels --split-form
 
 # drop the LFE channel
 quipclipper clip "get to the chopper" -v movie.mkv --split-channels --no-lfe
+
+# only some groups: just the centre channel (subset of front,center,surround,lfe)
+quipclipper clip "get to the chopper" -v movie.mkv --split-channels --split-groups center
+
+# pick which audio stream to split when there are several (default a:0)
+quipclipper clip "get to the chopper" -v movie.mkv --split-channels --audio-track 1
 ```
+
+`--split-groups` (comma-separated `front,center,surround,lfe`) limits which groups
+are written; `--audio-track N` selects the single stream to split (its first index
+is used) — same controls the web app's batch channel picker exposes.
 
 **Channel splitting writes lossless WAV or FLAC and never does a lossy
 re-encode.** Pulling channels apart does require *decoding* the surround mix —
