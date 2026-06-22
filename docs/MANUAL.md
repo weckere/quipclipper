@@ -78,11 +78,14 @@ quipclipper falls back to ffmpeg automatically.
 # 1. Find a line
 quipclipper search "i'll be back" --subs movie.srt
 
-# 2. Cut an audio clip of it
+# 2. Cut an audio clip of it (lossless stream copy)
 quipclipper clip "i'll be back" --video movie.mkv --type audio
 
-# 3. Cut a video clip with extra padding
+# 3. Cut a video clip with extra padding (frame-exact re-encode by default)
 quipclipper clip "get to the chopper" --video movie.mkv --type video --before 5 --after 3
+
+# 3b. ...or a near-instant lossless video copy (keyframe-aligned start)
+quipclipper clip "get to the chopper" --video movie.mkv --type video --lossless
 ```
 
 ---
@@ -155,16 +158,18 @@ quipclipper clip QUERY --video FILE [OPTIONS]
 | `QUERY` | — | Dialogue text to locate and clip. |
 | `--video`, `-v` | *required* | Video file to cut from. |
 | `--subs`, `-s` | — | Subtitle file; otherwise a sidecar or embedded track is used. |
-| `--track` | — | Subtitle track by `s:N` index (from `tracks`); auto-selected when several exist (English full dialogue > SDH > forced). |
+| `--track` | — | Subtitle track by `s:N` index (from `tracks`); auto-selected when several exist (English full dialogue > SDH > forced; commentary tracks are deprioritised so a plain dialogue track wins). |
 
 **What to produce**
 
 | Option | Default | Description |
 |---|---|---|
-| `--type`, `-t` | `audio` | `audio`, `video`, or `gif`. |
-| `--lossless / --no-lossless` | lossless | Stream-copy (no re-encode) vs. re-encode for frame-exact boundaries / a specific format. |
-| `--before`, `-b` | 0.5 | Seconds of padding before the line. |
-| `--after`, `-a` | 0.5 | Seconds of padding after the line. |
+| `--type`, `-t` | `video` | `audio`, `video`, or `gif`. |
+| `--lossless / --no-lossless` | per `--type` | Default matches the web app: **video re-encodes** for a frame-exact clip; **audio** is a lossless stream copy (already exact). `--lossless` forces a stream copy (keyframe-aligned start), `--no-lossless` forces a re-encode. |
+| `--hwaccel / --no-hwaccel` | auto | Hardware-encode a **video re-encode** on an Intel iGPU (Quick Sync / VAAPI, `h264_vaapi`). Auto-detects by default; `--no-hwaccel` forces software `libx264`. Only affects video re-encodes (not lossless copies, audio, or gif). |
+| `--vaapi-device` | `/dev/dri/renderD128` | VAAPI render node for `--hwaccel`. |
+| `--before`, `-b` | 2.0 | Seconds of padding before the line. |
+| `--after`, `-a` | 2.0 | Seconds of padding after the line. |
 | `--out`, `-o` | auto | Output path (auto-named if omitted; not allowed with multiple picked matches). |
 
 **Backend & accuracy** (see [Backends](#backends-ffmpeg-and-mkvmerge))
@@ -227,12 +232,20 @@ quipclipper tracks movie.mkv
 
 ### Lossless cutting
 
-By default quipclipper cuts **losslessly**: it copies the original encoded packets
-into a new container with **no re-encoding at all**. A lossy AC3/AAC/EAC3 track
-stays that exact lossy bitstream, byte-for-byte, and the cut is near-instant. The
+quipclipper can cut **losslessly**: it copies the original encoded packets into a
+new container with **no re-encoding at all**. A lossy AC3/AAC/EAC3 track stays
+that exact lossy bitstream, byte-for-byte, and the cut is near-instant. The
 inspiration and model is [LosslessCut](https://github.com/mifi/lossless-cut).
 
-What "lossless" preserves:
+This is the **default for audio**. For **video** the default is a frame-exact
+re-encode instead (matching the web app), because a lossless copy can only begin
+at a **keyframe** — ffmpeg seeks to the nearest keyframe at or before your start,
+so the clip begins a little earlier than requested (the **end is exact**). On a
+long-GOP source (sparse keyframes, e.g. some BluRay encodes 8–10 s apart) that
+lead-in can be several seconds, hence the re-encode default. Pass `--lossless` for
+a near-instant byte-for-byte video copy (accepting the keyframe lead-in).
+
+What `--lossless` preserves:
 
 - **No transcoding** — encoded audio/video bytes are copied, not re-rendered.
 - **All audio tracks** — every audio stream (e.g. a 5.1 main track plus a stereo
@@ -241,14 +254,10 @@ What "lossless" preserves:
   bitstream and come through untouched.
 - **Subtitle and (for mkvmerge) chapter/attachment tracks**.
 
-The one inherent tradeoff — true of every codec — is that a copy can only begin at
-a **keyframe**. quipclipper seeks to the nearest keyframe at or before your start, so
-a lossless clip may begin a little earlier than requested; the **end is exact**.
-For dialogue clips this is just a small lead-in. mkvmerge produces tighter cuts
-than ffmpeg here. Use `--no-lossless` (a re-encode) only when you need frame-exact
-boundaries or a specific format such as MP3.
-
-GIF output is inherently a re-encode and ignores `--lossless`.
+A `--no-lossless` (re-encode) video clip is encoded to H.264 — on an Intel iGPU
+(Quick Sync / VAAPI) when one is detected, else software libx264; see `--hwaccel`.
+mkvmerge produces tighter lossless cuts than ffmpeg. GIF output is inherently a
+re-encode and ignores `--lossless`.
 
 ### Backends: ffmpeg and mkvmerge
 
@@ -396,7 +405,10 @@ quipclipper auto-selects the best dialogue track. Tracks are scored so that
 dialogue); a track with no language tag counts as English so single-language
 releases without metadata still resolve. SDH and forced are detected from the
 container's `hearing_impaired`/`forced` dispositions, with a title-text fallback
-(`SDH`, `forced`, …). Ties keep container order.
+(`SDH`, `forced`, …). A **commentary** track (title contains "comment") is ranked
+below every normal text track, so a plain dialogue track always wins over a
+commentary transcript — it's only chosen when it's the only option. Ties keep
+container order.
 
 **Image subtitles (PGS/VOBSUB) are not usable.** Blu-ray `.sup` (PGS) and DVD
 VOBSUB tracks are bitmaps, not text — they can't be extracted to SRT, searched,
