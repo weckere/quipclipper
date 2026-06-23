@@ -5,6 +5,7 @@ from typer.testing import CliRunner
 import quipclipper.cli as cli
 from quipclipper.models import Cue, Match
 from quipclipper.subtitles import ResolvedSubtitles
+from test_epub import _build_epub  # shared synthetic media-overlay EPUB
 
 runner = CliRunner()
 
@@ -211,6 +212,53 @@ def test_clip_no_hwaccel_forces_software(tmp_path, monkeypatch):
     res = runner.invoke(cli.app, ["clip", "x", "-v", str(v), "-t", "video", "--no-hwaccel", "--yes"])
     assert res.exit_code == 0, res.output
     assert cap["cut_clip"]["video_encoder"] == "libx264"  # …but forced to software
+
+
+# --- EPUB3 media-overlay audiobooks -----------------------------------------
+
+def test_search_epub_audiobook(tmp_path):
+    epub = _build_epub(tmp_path / "book.epub")
+    res = runner.invoke(cli.app, ["search", "resistance is futile", "-v", str(epub)])
+    assert res.exit_code == 0, res.output
+    assert "EPUB audiobook" in res.output
+    assert "Resistance is futile" in res.output
+
+
+def test_clip_epub_cuts_matched_line_from_embedded_audio(tmp_path, monkeypatch):
+    epub = _build_epub(tmp_path / "book.epub")
+    cap = {}
+
+    def fake_cut(source, rng, **kw):
+        cap.update(source=source, rng=rng, kw=kw)
+        return kw.get("out") or tmp_path / "out.mka"
+
+    monkeypatch.setattr(cli, "cut_clip", fake_cut)
+    res = runner.invoke(cli.app, ["clip", "become one with the borg", "-v", str(epub), "--yes"])
+    assert res.exit_code == 0, res.output
+    assert "EPUB audiobook" in res.output
+    assert cap["kw"]["kind"] == "audio" and cap["kw"]["lossless"] is True
+    # The cue is 0.0–3.5s; default before/after = 2.0s, clamped at 0.
+    assert cap["rng"].start == 0.0
+    assert cap["rng"].end == pytest.approx(5.5)
+    # Cut from the extracted embedded audio member, not the .epub itself.
+    assert cap["source"].name == "part1.mp4"
+
+
+def test_clip_epub_rejects_split_channels(tmp_path):
+    epub = _build_epub(tmp_path / "book.epub")
+    res = runner.invoke(cli.app, ["clip", "borg", "-v", str(epub), "--split-channels"])
+    assert res.exit_code == 2
+    assert "doesn't apply to an EPUB" in res.output
+
+
+def test_clip_epub_no_lossless_re_encodes(tmp_path, monkeypatch):
+    epub = _build_epub(tmp_path / "book.epub")
+    cap = {}
+    monkeypatch.setattr(cli, "cut_clip",
+                        lambda source, rng, **kw: (cap.update(kw), kw.get("out"))[1])
+    res = runner.invoke(cli.app, ["clip", "borg", "-v", str(epub), "--no-lossless", "--yes"])
+    assert res.exit_code == 0, res.output
+    assert cap["lossless"] is False
 
 
 def test_clip_audio_only_source_coerces_video_to_audio(tmp_path, monkeypatch):

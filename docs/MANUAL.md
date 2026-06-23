@@ -31,6 +31,7 @@ for *why* the code is built the way it is, see [`DESIGN_NOTES.md`](DESIGN_NOTES.
   - [Subtitles in clips](#subtitles-in-clips)
   - [Searching and the picker](#searching-and-the-picker)
   - [Output names and containers](#output-names-and-containers)
+  - [EPUB3 audiobooks (experimental)](#epub3-audiobooks-experimental)
 - [Architecture](#architecture)
 - [Development](#development)
 - [Troubleshooting](#troubleshooting)
@@ -167,7 +168,7 @@ quipclipper clip QUERY --video FILE [OPTIONS]
 | Option | Default | Description |
 |---|---|---|
 | `QUERY` | — | Dialogue text to locate and clip. |
-| `--video`, `-v` | *required* | Source to cut from. A video file, or an audio-only file (podcast/audiobook) — for audio sources `--type video` is treated as `audio` (there's no video stream). |
+| `--video`, `-v` | *required* | Source to cut from. A video file; an audio-only file (podcast/audiobook) — `--type video` is treated as `audio`; or an **EPUB3 media-overlay audiobook** (`.epub`, see [below](#epub3-audiobooks-experimental)) — always an audio clip from the embedded narration. |
 | `--subs`, `-s` | — | Subtitle file; otherwise a sidecar or embedded track is used. |
 | `--track` | — | Subtitle track by `s:N` index (from `tracks`); auto-selected when several exist (English full dialogue > SDH > forced; commentary tracks are deprioritised so a plain dialogue track wins). |
 
@@ -457,6 +458,34 @@ without transcoding:
 | `--no-lossless` video | `.mp4` (H.264 / AAC) |
 | `--split-channels` | `.wav` / `.flac` / source-codec extension, one per channel group |
 | gif | `.gif` |
+
+### EPUB3 audiobooks (experimental)
+
+> **Experimental, and CLI-only.** The web app has no EPUB support yet.
+
+A synced **EPUB3 Media Overlay** book bundles the text *and* the narration audio
+in one `.epub`, with a SMIL map tying each sentence to an audio time span. The
+biggest producer is [Storyteller](https://gitlab.com/storyteller-platform/storyteller),
+which aligns an ebook to its audiobook; its output is named `<Title> (readaloud).epub`
+(newer) or `aligned/<Title>.epub` (older). quipclipper detects these by their
+manifest (a media-overlay declaration), regardless of filename.
+
+Point `search`/`clip` at the `.epub` and quipclipper reads its overlay cues
+directly — no sidecar, no extraction step for you:
+
+```
+quipclipper search "you will become one with the borg" --video "Book (readaloud).epub"
+quipclipper clip   "you will become one with the borg" --video "Book (readaloud).epub"
+```
+
+- The result is **always an audio clip** cut straight from the embedded narration
+  (the matched line's own audio file is pulled from the zip and trimmed).
+- Granularity is **sentence-level** (tighter than typical subtitles).
+- Defaults to a lossless stream copy (`.mka`); `--no-lossless` re-encodes to MP3,
+  and `--audio-format wav|flac` writes a lossless WAV/FLAC. Video/`--split-channels`
+  options don't apply (narration is mono/stereo, no video).
+- All the search options (`--index`/`--pick`/`--min-score`/`--before`/`--after`/…)
+  work as usual.
 
 ---
 

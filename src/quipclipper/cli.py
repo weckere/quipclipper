@@ -7,10 +7,13 @@ Examples:
     quipclipper clip "i'll be back" --video movie.mkv --audio-track 0
     quipclipper clip "i'll be back" --video movie.mkv --type audio --audio-format wav
     quipclipper clip "i'll be back" --video movie.mkv --split-channels --split-format wav
+    quipclipper clip "you will become one" --video "Book (readaloud).epub"  # EPUB3 audiobook
 """
 
 from __future__ import annotations
 
+import re
+import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -18,10 +21,18 @@ import typer
 
 from quipclipper.clip import (
     DEFAULT_VAAPI_DEVICE,
+    ClipRange,
+    _timestamp_slug,
     compute_range,
     cut_clip,
     split_audio_channels,
     vaapi_h264_available,
+)
+from quipclipper.epub import (
+    extract_audio_member,
+    is_media_overlay_epub,
+    read_epub,
+    to_cues,
 )
 from quipclipper.mkv import (
     cut_with_mkvmerge,
@@ -129,13 +140,106 @@ def search_cmd(
     max_span: int = typer.Option(3, "--max-span", help="Max consecutive captions a match may join."),
 ):
     """Search subtitles and print ranked matches with timestamps."""
-    cues = _resolve(subs, video, track).cues
+    # An EPUB3 media-overlay audiobook carries its own cues (text + narration
+    # timing); search those directly, like the web app does.
+    if video is not None and video.suffix.lower() == ".epub" and is_media_overlay_epub(video):
+        book = read_epub(video)
+        typer.echo(
+            f"EPUB audiobook: {book.title or video.stem} "
+            f"({len(book.chapters)} chapters, {len(book.cues)} cues)"
+        )
+        cues = to_cues(book.cues)
+    else:
+        cues = _resolve(subs, video, track).cues
     matches = search(query, cues, limit=limit, min_score=min_score, max_span=max_span)
     if not matches:
         typer.secho("No matches.", fg="yellow")
         raise typer.Exit(code=1)
     for rank, m in enumerate(matches):
         _echo_match(rank, m)
+
+
+def _epub_clip_name(epub: Path, start: float, text: str, ext: str) -> Path:
+    """Auto-name an EPUB clip ``<book>_<timestamp>_<cue>.<ext>``, next to the epub."""
+    slug = re.sub(r"\s+", "_", re.sub(r"[^\w\s'-]", "", text)[:60].strip())
+    stem = f"{epub.stem}_{_timestamp_slug(start)}" + (f"_{slug}" if slug else "")
+    return epub.with_name(f"{stem}.{ext}")
+
+
+def _clip_epub(
+    video: Path, query: str, *,
+    before: float, after: float, index: int, pick: bool, limit: int,
+    min_score: float, max_span: int, out: Optional[Path],
+    lossless: bool, audio_format: Optional[str], yes: bool,
+) -> None:
+    """Search an EPUB3 media-overlay audiobook and cut the matched line(s) straight
+    out of the embedded narration audio."""
+    try:
+        book = read_epub(video)
+    except ValueError as exc:
+        typer.secho(str(exc), fg="red", err=True)
+        raise typer.Exit(code=2)
+    typer.echo(
+        f"EPUB audiobook: {book.title or video.stem}"
+        + (f" — {book.author}" if book.author else "")
+        + f" ({len(book.chapters)} chapters, {len(book.cues)} cues)"
+    )
+    candidates = search(
+        query, to_cues(book.cues),
+        limit=(limit if pick else max(index + 1, 5)),
+        min_score=min_score, max_span=max_span,
+    )
+    if not candidates:
+        typer.secho("No matches.", fg="yellow")
+        raise typer.Exit(code=1)
+    if pick:
+        typer.echo(f"{len(candidates)} match(es):")
+        for i, m in enumerate(candidates):
+            _echo_match(i, m)
+        chosen = _select_matches(candidates)
+    else:
+        if index >= len(candidates):
+            typer.secho(
+                f"Only {len(candidates)} match(es); index {index} out of range.",
+                fg="red", err=True,
+            )
+            raise typer.Exit(code=2)
+        chosen = [candidates[index]]
+    if out is not None and len(chosen) > 1:
+        typer.secho("--out can't be used when clipping multiple matches.", fg="red", err=True)
+        raise typer.Exit(code=2)
+
+    ext = audio_format or ("mka" if lossless else "mp3")
+    mode = (
+        f"full-mix lossless {audio_format}" if audio_format
+        else "lossless copy" if lossless else "re-encode (mp3)"
+    )
+    typer.echo(f"Will clip {len(chosen)} match(es) (audio, {mode}):")
+    for i, m in enumerate(chosen):
+        _echo_match(i, m)
+    if not yes:
+        typer.confirm("Proceed?", default=True, abort=True)
+
+    single = len(chosen) == 1
+    written: list[Path] = []
+    for m in chosen:
+        first = book.cues[m.cues[0].index]
+        last = book.cues[m.cues[-1].index]
+        if last.audio != first.audio:
+            typer.secho(
+                "  note: this match spans two audio files; clipping from the first.",
+                fg="bright_black",
+            )
+        rng = ClipRange(start=max(0.0, m.start - before), end=m.end + after)
+        out_path = out if single else _epub_clip_name(video, m.start, m.text, ext)
+        with tempfile.TemporaryDirectory() as td:
+            tmp_audio = extract_audio_member(video, first.audio, Path(td) / Path(first.audio).name)
+            written.append(cut_clip(
+                tmp_audio, rng, kind="audio", lossless=lossless,
+                audio_codec=audio_format, out=out_path,
+            ))
+    for w in written:
+        typer.secho(f"  wrote {w}", fg="green")
 
 
 @app.command()
@@ -232,6 +336,27 @@ def clip(
     if kind not in ("audio", "video", "gif"):
         typer.secho("--type must be audio, video, or gif.", fg="red", err=True)
         raise typer.Exit(code=2)
+    # An EPUB3 media-overlay book (e.g. Storyteller) is a self-contained
+    # text+narration archive: cut a matched line straight out of its embedded
+    # audio. Always an audio clip — there's no video and no surround to split.
+    if video.suffix.lower() == ".epub" and is_media_overlay_epub(video):
+        if split_channels:
+            typer.secho("--split-channels doesn't apply to an EPUB audiobook.", fg="red", err=True)
+            raise typer.Exit(code=2)
+        if kind == "gif":
+            typer.secho("Can't cut a gif from an EPUB audiobook.", fg="red", err=True)
+            raise typer.Exit(code=2)
+        if audio_format is not None and audio_format not in ("wav", "flac"):
+            typer.secho("--audio-format must be wav or flac.", fg="red", err=True)
+            raise typer.Exit(code=2)
+        _clip_epub(
+            video, query,
+            before=before, after=after, index=index, pick=pick, limit=limit,
+            min_score=min_score, max_span=max_span, out=out,
+            lossless=(True if lossless is None else lossless),
+            audio_format=audio_format, yes=yes,
+        )
+        return
     # An audio-only source (podcast/audiobook) has no video stream; quietly cut an
     # audio clip instead of asking ffmpeg to map a video that isn't there.
     if kind == "video" and video.suffix.lower() in AUDIO_EXTS:
