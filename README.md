@@ -10,6 +10,13 @@ at your media folders, browse to a video (or search dialogue across a whole
 folder), type the line you remember, and cut a lossless clip — all in the
 browser.
 
+> [!NOTE]
+> **Audio-only support (podcasts, audiobooks) is experimental.** The video
+> workflow is the stable, primary path; the audio-only features below — listing,
+> playback, transcript/JSON parsing, speaker attribution, and clipping for
+> podcasts and audiobooks — are newer and still being shaken out, so expect rough
+> edges.
+
 It works on **audio-only sources too** — podcasts and audiobooks — as long as a
 sidecar transcript sits next to the audio file. Transcripts can be `.srt`, `.vtt`,
 `.ass`/`.ssa`, `.sub`, or **`.json`** (Podcast Namespace and Whisper-style

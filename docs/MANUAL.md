@@ -107,6 +107,10 @@ subtitles ──parse──► cues ──fuzzy search──► ranked matches �
    Speaker attribution is read from WebVTT `<v Name>` voice tags, a transcript
    `speaker` field, or a recurring `Name:` prefix (one-off `Word:` in dialogue is
    not mistaken for a speaker).
+
+   > **Note:** audio-only support (podcasts, audiobooks — audio files with a
+   > sidecar transcript) is **experimental**. The video workflow is the stable
+   > path; the audio-only path is newer and still being shaken out.
 2. **Search** the cues for your dialogue text with fuzzy, ranked matching.
    Overlapping span-variants of the same line are collapsed so results don't
    duplicate one another.
