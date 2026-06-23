@@ -11,8 +11,10 @@ folder), type the line you remember, and cut a lossless clip — all in the
 browser.
 
 It works on **audio-only sources too** — podcasts and audiobooks — as long as a
-sidecar transcript (`.srt`, `.vtt`, …) sits next to the audio file. Such sources
-list with a 🎵 icon, play in a compact audio bar, and always cut audio clips.
+sidecar transcript sits next to the audio file. Transcripts can be `.srt`, `.vtt`,
+`.ass`/`.ssa`, `.sub`, or **`.json`** (Podcast Namespace and Whisper-style
+transcripts). Audio sources list with a 🎵 icon, play in a compact audio bar, and
+always cut audio clips.
 
 A **command-line tool** ([`quipclipper-cli`](#quipclipper-cli)) wraps the same
 engine for scripting and quick one-off cuts.

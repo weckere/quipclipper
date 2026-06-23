@@ -73,6 +73,95 @@ def test_find_sidecar_prefixed(tmp_path):
     assert find_sidecar(video) == srt
 
 
+# --- JSON transcripts (podcasts/audiobooks) ----------------------------------
+
+def test_load_json_podcast_namespace(tmp_path):
+    """Podcast Namespace transcript: startTime/endTime (seconds) + body."""
+    j = tmp_path / "ep.json"
+    j.write_text(
+        '{"version":"1.0.0","segments":['
+        '{"speaker":"Host","startTime":1.0,"endTime":4.0,"body":"Welcome back."},'
+        '{"speaker":"Guest","startTime":5.0,"endTime":8.5,"body":"Resistance is futile."}'
+        ']}'
+    )
+    cues = load_subtitles(j)
+    assert [c.text for c in cues] == ["Welcome back.", "Resistance is futile."]
+    assert cues[0].start == pytest.approx(1.0) and cues[0].end == pytest.approx(4.0)
+    assert [c.index for c in cues] == [0, 1]
+
+
+def test_load_json_whisper_segments(tmp_path):
+    """Whisper output: start/end (seconds) + text, sorted by start."""
+    j = tmp_path / "ep.json"
+    j.write_text(
+        '{"segments":['
+        '{"start":5.0,"end":8.0,"text":"second"},'
+        '{"start":1.0,"end":4.0,"text":" first "}'
+        ']}'
+    )
+    cues = load_subtitles(j)
+    assert [c.text for c in cues] == ["first", "second"]  # sorted + trimmed
+    assert [c.index for c in cues] == [0, 1]
+
+
+def test_load_json_whispercpp_offsets_milliseconds(tmp_path):
+    """whisper.cpp: transcription[].offsets.from/to are milliseconds."""
+    j = tmp_path / "ep.json"
+    j.write_text(
+        '{"transcription":[{"offsets":{"from":1000,"to":4000},"text":"hi there"}]}'
+    )
+    cues = load_subtitles(j)
+    assert len(cues) == 1
+    assert cues[0].start == pytest.approx(1.0) and cues[0].end == pytest.approx(4.0)
+
+
+def test_load_json_timecode_strings_and_bare_list(tmp_path):
+    """A bare list of segments with HH:MM:SS.mmm string times."""
+    j = tmp_path / "ep.json"
+    j.write_text('[{"start":"00:00:01.500","end":"00:00:03.000","text":"hello"}]')
+    cues = load_subtitles(j)
+    assert cues[0].start == pytest.approx(1.5) and cues[0].end == pytest.approx(3.0)
+
+
+def test_load_json_unrecognized_raises_valueerror(tmp_path):
+    j = tmp_path / "meta.json"
+    j.write_text('{"title":"My Podcast","episodes":3}')  # not a transcript
+    with pytest.raises(ValueError):
+        load_subtitles(j)
+
+
+def test_load_json_empty_segments_raises_valueerror(tmp_path):
+    j = tmp_path / "ep.json"
+    j.write_text('{"segments":[]}')
+    with pytest.raises(ValueError):
+        load_subtitles(j)
+
+
+def test_find_sidecar_accepts_json(tmp_path):
+    audio = tmp_path / "episode.mp3"
+    audio.write_bytes(b"")
+    j = tmp_path / "episode.json"
+    j.write_text('{"segments":[]}')
+    assert find_sidecar(audio) == j
+
+
+def test_find_sidecar_skips_ytdlp_info_json(tmp_path):
+    """yt-dlp's *.info.json metadata shares the stem but isn't a transcript."""
+    audio = tmp_path / "episode.mp3"
+    audio.write_bytes(b"")
+    (tmp_path / "episode.info.json").write_text('{"title":"x"}')
+    assert find_sidecar(audio) is None
+
+
+def test_find_sidecar_prefers_srt_over_json(tmp_path):
+    audio = tmp_path / "episode.mp3"
+    audio.write_bytes(b"")
+    srt = tmp_path / "episode.srt"
+    srt.write_text("")
+    (tmp_path / "episode.json").write_text('{"segments":[]}')
+    assert find_sidecar(audio) == srt
+
+
 def test_resolve_subtitles_missing_video_raises_clean_error(tmp_path):
     # A non-existent --video should be a clean FileNotFoundError, not a traceback
     # from ffprobe failing downstream.

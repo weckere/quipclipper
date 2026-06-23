@@ -94,12 +94,16 @@ quipclipper clip "get to the chopper" --video movie.mkv --type video --lossless
 
 ```
 subtitles ──parse──► cues ──fuzzy search──► ranked matches ──pick──► time range ──cut──► clip
-   (.srt/.vtt/.ass)     (timed lines)          (non-overlapping)        (+padding)    (ffmpeg/mkvmerge)
+ (.srt/.vtt/.ass/.json) (timed lines)          (non-overlapping)        (+padding)    (ffmpeg/mkvmerge)
 ```
 
 1. **Parse** the subtitle source into `Cue`s (a timed line of dialogue). The
    source can be an explicit file, a sidecar file next to the video, or an
-   embedded subtitle track extracted from the container.
+   embedded subtitle track extracted from the container. Sidecars may be
+   `.srt`/`.vtt`/`.ass`/`.ssa`/`.sub` or a `.json` transcript — Podcast Namespace
+   (`segments[].startTime/endTime/body`), Whisper (`segments[].start/end/text`),
+   or whisper.cpp (`transcription[].offsets` in ms) — which makes podcasts and
+   audiobooks first-class sources. (yt-dlp's `*.info.json` metadata is ignored.)
 2. **Search** the cues for your dialogue text with fuzzy, ranked matching.
    Overlapping span-variants of the same line are collapsed so results don't
    duplicate one another.
@@ -128,7 +132,7 @@ quipclipper search QUERY [OPTIONS]
 | Option | Default | Description |
 |---|---|---|
 | `QUERY` | — | Dialogue text to search for. |
-| `--subs`, `-s` | — | Subtitle file (`.srt`/`.vtt`/`.ass`/`.sub`). |
+| `--subs`, `-s` | — | Subtitle/transcript file (`.srt`/`.vtt`/`.ass`/`.sub`/`.json`). |
 | `--video`, `-v` | — | Video file (used to find a sidecar or extract an embedded track). |
 | `--track` | — | Subtitle track by s:N index (from `tracks`); auto-selected when several exist (English full dialogue > SDH > forced). |
 | `--limit`, `-n` | 10 | Maximum number of matches to show. |

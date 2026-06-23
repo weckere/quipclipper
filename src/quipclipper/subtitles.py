@@ -15,8 +15,11 @@ from pysubs2.exceptions import Pysubs2Error
 
 from quipclipper.models import Cue
 
-# Subtitle extensions we look for next to a video file, in priority order.
-SUBTITLE_EXTS = (".srt", ".vtt", ".ass", ".ssa", ".sub")
+# Subtitle/transcript extensions we look for next to a media file, in priority
+# order. ``.json`` covers Podcast Namespace / Whisper-style transcripts (common
+# for podcasts and audiobooks) — see ``_load_json_cues``; it sits last so a real
+# subtitle format wins when both are present.
+SUBTITLE_EXTS = (".srt", ".vtt", ".ass", ".ssa", ".sub", ".json")
 VIDEO_EXTS = (".mkv", ".mp4", ".m4v", ".mov", ".avi", ".webm", ".ts")
 # Audio-only containers (podcasts, audiobooks). Clippable when a sidecar
 # transcript sits next to them — there's nothing to extract embedded subs from.
@@ -33,11 +36,107 @@ def _clean(text: str) -> str:
     return " ".join(text.split())
 
 
+def _coerce_seconds(v) -> float | None:
+    """A time value as seconds: a number (already seconds) or an
+    ``HH:MM:SS(.mmm)`` / ``MM:SS`` / ``SS`` string. None if unparseable."""
+    if isinstance(v, bool):  # bool is an int subclass — reject it explicitly
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    if isinstance(v, str):
+        v = v.strip().replace(",", ".")
+        if not v:
+            return None
+        try:
+            sec = 0.0
+            for part in v.split(":"):
+                sec = sec * 60 + float(part)
+            return sec
+        except ValueError:
+            return None
+    return None
+
+
+def _first_seconds(seg: dict, keys: tuple[str, ...]) -> float | None:
+    for k in keys:
+        if seg.get(k) is not None:
+            s = _coerce_seconds(seg[k])
+            if s is not None:
+                return s
+    return None
+
+
+def _json_segments(data):
+    """Find the segment list in a parsed JSON transcript. Accepts a bare list, or
+    an object keyed by ``segments`` (Podcast Namespace / Whisper), ``transcription``
+    (whisper.cpp), ``results``, or ``cues``."""
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        for key in ("segments", "transcription", "results", "cues"):
+            seg = data.get(key)
+            if isinstance(seg, list):
+                return seg
+    return None
+
+
+def _load_json_cues(path: Path) -> list[Cue]:
+    """Parse a JSON transcript into Cue objects.
+
+    Tolerant of the common podcast/transcription shapes:
+    - **Podcast Namespace** (``application/json``): ``segments[].startTime/endTime``
+      (seconds) + ``body``.
+    - **Whisper**: ``segments[].start/end`` (seconds) + ``text``.
+    - **whisper.cpp**: ``transcription[].offsets.from/to`` (milliseconds) + ``text``.
+    Times may also be ``HH:MM:SS.mmm`` strings. Raises ValueError (the type callers
+    already handle) when the file isn't a recognizable transcript."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
+        raise ValueError(f"Could not parse JSON transcript {path.name}: {exc}") from exc
+    segments = _json_segments(data)
+    if segments is None:
+        raise ValueError(
+            f"Unrecognized JSON transcript {path.name}: expected a list of segments, "
+            f"or an object with a 'segments' array (Podcast Namespace / Whisper style)."
+        )
+    cues: list[Cue] = []
+    for seg in segments:
+        if not isinstance(seg, dict):
+            continue
+        text = _clean(str(seg.get("body") or seg.get("text") or seg.get("transcript") or ""))
+        if not text:
+            continue
+        start = _first_seconds(seg, ("startTime", "start", "begin"))
+        end = _first_seconds(seg, ("endTime", "end", "stop"))
+        # whisper.cpp puts millisecond offsets under "offsets": {"from", "to"}.
+        off = seg.get("offsets")
+        if start is None and isinstance(off, dict):
+            fr, to = off.get("from"), off.get("to")
+            if isinstance(fr, (int, float)) and not isinstance(fr, bool):
+                start = float(fr) / 1000.0
+            if isinstance(to, (int, float)) and not isinstance(to, bool):
+                end = float(to) / 1000.0
+        if start is None:
+            continue
+        if end is None or end < start:
+            end = start
+        cues.append(Cue(index=len(cues), start=start, end=end, text=text))
+    if not cues:
+        raise ValueError(f"No usable cues in JSON transcript {path.name}.")
+    cues.sort(key=lambda c: c.start)
+    return [Cue(index=i, start=c.start, end=c.end, text=c.text) for i, c in enumerate(cues)]
+
+
 def load_subtitles(path: str | Path) -> list[Cue]:
-    """Parse a subtitle file into a list of Cue objects (text cleaned of markup)."""
+    """Parse a subtitle/transcript file into a list of Cue objects (text cleaned
+    of markup). ``.json`` is parsed as a transcript (see ``_load_json_cues``);
+    everything else goes through pysubs2 (srt/vtt/ass/ssa/sub)."""
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"Subtitle file not found: {path}")
+    if path.suffix.lower() == ".json":
+        return _load_json_cues(path)
     try:
         subs = pysubs2.load(str(path))
     except (Pysubs2Error, UnicodeDecodeError) as exc:
@@ -229,11 +328,12 @@ def find_sidecar(video_path: str | Path) -> Path | None:
         candidate = video_path.with_suffix(ext)
         if candidate.exists():
             return candidate
-    # Also accept stem-prefixed names like "movie.en.srt".
+    # Also accept stem-prefixed names like "movie.en.srt". Skip yt-dlp's
+    # "*.info.json" metadata, which shares the stem but isn't a transcript.
     matches = sorted(
         p
         for p in video_path.parent.glob(f"{video_path.stem}*")
-        if p.suffix.lower() in SUBTITLE_EXTS
+        if p.suffix.lower() in SUBTITLE_EXTS and not p.name.lower().endswith(".info.json")
     )
     return matches[0] if matches else None
 
