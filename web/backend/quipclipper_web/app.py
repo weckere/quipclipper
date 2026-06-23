@@ -25,7 +25,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -365,11 +365,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if seg is not None:
             ep = _resolve(epub_ref)
             try:
-                return epub_items.segment_item_info(ep, seg, settings.state_dir)
+                return epub_items.segment_item_info(ep, seg)
             except (IndexError, ValueError) as exc:
                 raise HTTPException(status_code=404, detail=str(exc))
-            except RuntimeError as exc:
-                raise HTTPException(status_code=500, detail=str(exc))
         p = _resolve_any(path)
         if not p.exists():
             raise HTTPException(status_code=404, detail=f"Not found: {path}")
@@ -654,21 +652,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # --- media streaming -------------------------------------------------------
 
     @app.get("/api/media")
-    def stream(path: str = Query(...)) -> FileResponse:
+    def stream(request: Request, path: str = Query(...)):
         """Serve a source file with HTTP range support (best-effort preview).
 
         Starlette's FileResponse handles Range requests (206), so the browser can
         seek. Whether it actually decodes depends on the codec/container.
         """
-        # EPUB segment: serve the extracted chapter audio from the cache.
+        # EPUB segment: stream the chapter audio straight from the zip (Range-aware,
+        # no copy on disk).
         epub_ref, seg = epub_items.parse_ref(path)
         if seg is not None:
             ep = _resolve(epub_ref)
             try:
-                audio = epub_items.segment_audio_path(ep, seg, settings.state_dir)
-            except (IndexError, ValueError) as exc:
+                return epub_items.segment_audio_response(ep, seg, request.headers.get("range"))
+            except (IndexError, ValueError, FileNotFoundError) as exc:
                 raise HTTPException(status_code=404, detail=str(exc))
-            return FileResponse(audio, media_type="audio/mp4")
         p = _resolve_any(path)
         if not p.is_file():
             raise HTTPException(status_code=404, detail=f"Not found: {path}")
@@ -890,10 +888,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # file), while `video` is the actual media handed to ffmpeg.
         epub_ref, seg = epub_items.parse_ref(req.path)
         name_source: Path | None = None
+        epub_temp: Path | None = None
         if seg is not None:
             ep = _resolve(epub_ref)
             try:
-                video = epub_items.segment_audio_path(ep, seg, settings.state_dir)
+                # ffmpeg/mkvmerge need a seekable file; extract a temp now and
+                # delete it as soon as the cut finishes (nothing persists).
+                video = epub_temp = epub_items.extract_segment_temp(ep, seg)
                 name_source = epub_items.segment_clip_name_source(ep, seg)
             except (IndexError, ValueError) as exc:
                 raise HTTPException(status_code=404, detail=str(exc))
@@ -1052,6 +1053,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _audio_codec = req.audio_format if fullmix else None
         _default_sub_track = req.default_sub_track
         _out_path = out_path
+        _epub_temp = epub_temp  # transient extracted EPUB audio, deleted post-cut
         # Hardware-encode a re-encoded video clip on the iGPU (Quick Sync via
         # VAAPI) when available — the same path the browser preview uses. Lossless
         # cuts are stream copies (no encode); only re-encodes (Exact / --no-lossless,
@@ -1059,37 +1061,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _hw_encode = (not req.lossless) and req.kind == "video" and _vaapi_h264_available()
 
         def do_cut() -> list[Path]:
-            if _split_channels:
-                return split_audio_channels(
-                    _video, _rng,
-                    audio_index=(_audio_indices[0] if _audio_indices else 0),
-                    fmt=_split_format, include_lfe=_include_lfe,
-                    categories=_split_groups, out=_out_path,
-                )
-            if _use_mkvmerge:
-                try:
-                    return [cut_with_mkvmerge(
-                        _video, _rng, kind=_kind, out=_out_path,
-                        audio_indices=_audio_indices, keep_subs=True,
-                        keep_chapters=_chapters, embed_subs=_embed_subs_path,
-                        remux_first=_do_remux, default_sub_track=_default_sub_track,
-                    )]
-                except RuntimeError:
-                    # mkvmerge can't split some track types (e.g. FLAC).
-                    # Fall back to ffmpeg for a lossless copy-codec cut.
-                    _out_path.unlink(missing_ok=True)
-                    return [cut_clip(
-                        _video, _rng, kind=_kind, lossless=_lossless, out=_out_path,
-                        audio_indices=_audio_indices, embed_cues=_embed_cues,
-                        default_sub_track=_default_sub_track,
-                    )]
-            return [cut_clip(
-                _video, _rng, kind=_kind, lossless=_lossless, out=_out_path,
-                audio_indices=_audio_indices, embed_cues=_embed_cues,
-                audio_codec=_audio_codec, default_sub_track=_default_sub_track,
-                video_encoder="h264_vaapi" if _hw_encode else "libx264",
-                vaapi_device=_VAAPI_DEVICE if _hw_encode else None,
-            )]
+            try:
+                if _split_channels:
+                    return split_audio_channels(
+                        _video, _rng,
+                        audio_index=(_audio_indices[0] if _audio_indices else 0),
+                        fmt=_split_format, include_lfe=_include_lfe,
+                        categories=_split_groups, out=_out_path,
+                    )
+                if _use_mkvmerge:
+                    try:
+                        return [cut_with_mkvmerge(
+                            _video, _rng, kind=_kind, out=_out_path,
+                            audio_indices=_audio_indices, keep_subs=True,
+                            keep_chapters=_chapters, embed_subs=_embed_subs_path,
+                            remux_first=_do_remux, default_sub_track=_default_sub_track,
+                        )]
+                    except RuntimeError:
+                        # mkvmerge can't split some track types (e.g. FLAC).
+                        # Fall back to ffmpeg for a lossless copy-codec cut.
+                        _out_path.unlink(missing_ok=True)
+                        return [cut_clip(
+                            _video, _rng, kind=_kind, lossless=_lossless, out=_out_path,
+                            audio_indices=_audio_indices, embed_cues=_embed_cues,
+                            default_sub_track=_default_sub_track,
+                        )]
+                return [cut_clip(
+                    _video, _rng, kind=_kind, lossless=_lossless, out=_out_path,
+                    audio_indices=_audio_indices, embed_cues=_embed_cues,
+                    audio_codec=_audio_codec, default_sub_track=_default_sub_track,
+                    video_encoder="h264_vaapi" if _hw_encode else "libx264",
+                    vaapi_device=_VAAPI_DEVICE if _hw_encode else None,
+                )]
+            finally:
+                if _epub_temp is not None:
+                    _epub_temp.unlink(missing_ok=True)
 
         job = jobs.submit(do_cut, label=label)
         return {"job_id": job.id, "status": job.status.value}

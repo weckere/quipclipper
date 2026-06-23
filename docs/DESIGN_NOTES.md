@@ -577,11 +577,17 @@ narration + a SMIL map (each `<par>` ties a sentence to an audio clip) in one zi
   `cut_clip` path. No whole-book unpack.
 - *Engine + CLI first, then web.* The reader and CLI `search`/`clip` landed
   first (isolated, testable without the web plumbing). The **web** integration
-  then presents a book as a *folder of audio segments* (grouped by audio member,
-  `<epub>#seg=N`): the embedded member is extracted to a cache on open and the
-  whole audio-only player/script/clip path is reused, so a chapter behaves like
-  any other audio item. The clip naming template is fed a synthetic source so
-  clips land under `<Book>/…_<Chapter>`.
+  presents a book as a *folder of audio segments* (grouped by audio member,
+  `<epub>#seg=N`) and reuses the whole audio-only player/script/clip path, so a
+  chapter behaves like any other audio item. The clip naming template is fed a
+  synthetic source so clips land under `<Book>/…_<Chapter>`.
+- *No persistent copy of the audio.* The embedded audio is never cached to disk.
+  Playback **streams the zip member directly** with HTTP Range support
+  (`ZipExtFile` is seekable; chunked, ~constant memory); `item_info` is
+  **synthesized** from the manifest + cue timings (no ffprobe, no file), so
+  opening a chapter writes nothing. Only *clipping* needs a real seekable file —
+  ffmpeg/mkvmerge can't read a zip member — so the member is extracted to a
+  **temp that's deleted the moment the cut finishes**. Nothing accumulates.
 
 ---
 

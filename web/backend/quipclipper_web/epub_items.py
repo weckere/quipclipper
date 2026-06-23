@@ -11,9 +11,14 @@ its cues, clip from it.
 from __future__ import annotations
 
 import functools
-import hashlib
+import os
+import tempfile
+import zipfile
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
+
+from starlette.responses import StreamingResponse
 
 from quipclipper.epub import (
     EpubBook,
@@ -22,9 +27,21 @@ from quipclipper.epub import (
     is_media_overlay_epub,
     read_epub,
 )
-from quipclipper_web import media
 
 _REF = "#seg="
+
+# Codec/MIME for an embedded audio member, by extension — Storyteller emits AAC in
+# MP4. Used to synthesize item_info (no ffprobe) and pick the playback MIME type.
+_AUDIO_CODEC = {
+    ".mp4": "aac", ".m4a": "aac", ".m4b": "aac", ".aac": "aac",
+    ".mp3": "mp3", ".ogg": "vorbis", ".oga": "vorbis", ".opus": "opus", ".flac": "flac",
+}
+_AUDIO_MIME = {"aac": "audio/mp4", "mp3": "audio/mpeg", "vorbis": "audio/ogg",
+               "opus": "audio/ogg", "flac": "audio/flac"}
+
+
+def _member_codec(member: str) -> str:
+    return _AUDIO_CODEC.get(Path(member).suffix.lower(), "aac")
 
 
 def parse_ref(path: str) -> tuple[str, int | None]:
@@ -114,43 +131,110 @@ def segment_entries(epub: Path) -> list[dict]:
     return out
 
 
-def _audio_cache_dir(state_dir: Path) -> Path:
-    d = state_dir / "epub_audio"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
-
-
-def cached_audio(epub: Path, member: str, state_dir: Path) -> Path:
-    """Extract one embedded audio member to a cache file (keyed by epub mtime +
-    member), returning the path. Idempotent; plain unzip, no transcode."""
-    try:
-        mtime = epub.stat().st_mtime
-    except OSError:
-        mtime = 0.0
-    key = hashlib.sha256(f"{epub}:{mtime}:{member}".encode()).hexdigest()[:32]
-    out = _audio_cache_dir(state_dir) / f"{key}{Path(member).suffix or '.bin'}"
-    if not out.exists() or out.stat().st_size == 0:
-        extract_audio_member(epub, member, out)
-    return out
-
-
-def segment_audio_path(epub: Path, index: int, state_dir: Path) -> Path:
-    return cached_audio(epub, _segment(book_for(epub), index).audio, state_dir)
-
-
-def segment_item_info(epub: Path, index: int, state_dir: Path) -> dict:
-    """`item_info`-shaped dict for a segment: real streams/duration probed from the
-    extracted audio, with the book's name/ref substituted in."""
+def segment_item_info(epub: Path, index: int) -> dict:
+    """`item_info`-shaped dict for a segment, *synthesized* — no extraction, no
+    ffprobe (so opening a chapter writes nothing). The narration is a single audio
+    stream; duration comes from the cue timings, codec from the member extension."""
     book = book_for(epub)
     seg = _segment(book, index)
-    audio = cached_audio(epub, seg.audio, state_dir)
-    info = media.item_info(audio)
-    info["name"] = seg.title or f"Part {seg.index + 1}"
-    info["path"] = make_ref(epub, index)
-    info["has_sidecar"] = True
-    info["best_track"] = None
-    info["book_title"] = book.title or epub.stem
-    return info
+    codec = _member_codec(seg.audio)
+    duration = max((c.end for c in seg.cues), default=0.0)
+    stream = {
+        "kind": "audio", "index": 0, "selector": "a:0", "codec": codec,
+        "language": None, "title": None, "channels": None, "channel_layout": None,
+        "forced": False, "hearing_impaired": False, "attached_pic": False,
+        "groups": [], "label": f"a:0  {codec}",
+    }
+    return {
+        "name": seg.title or f"Part {seg.index + 1}",
+        "path": make_ref(epub, index),
+        "size": None,
+        "duration": duration,
+        "streams": [stream],
+        "subtitle_tracks": [],
+        "best_track": None,
+        "has_sidecar": True,
+        "book_title": book.title or epub.stem,
+    }
+
+
+def _parse_range(header: str | None, size: int) -> tuple[int, int] | None:
+    """Parse a single-range ``Range: bytes=start-end`` header to inclusive
+    (start, end), clamped to the resource size; None if absent/unsatisfiable."""
+    if not header or not header.startswith("bytes=") or size <= 0:
+        return None
+    spec = header[len("bytes="):].split(",", 1)[0].strip()
+    lo, _, hi = spec.partition("-")
+    try:
+        if lo == "":  # suffix range: last N bytes
+            start, end = max(0, size - int(hi)), size - 1
+        else:
+            start, end = int(lo), (int(hi) if hi else size - 1)
+    except ValueError:
+        return None
+    end = min(end, size - 1)
+    if start > end or start >= size:
+        return None
+    return start, end
+
+
+def _stream_member(z: zipfile.ZipFile, f, length: int, chunk: int = 65536) -> Iterator[bytes]:
+    """Yield ``length`` bytes from an open zip member, closing both afterwards."""
+    remaining = length
+    try:
+        while remaining > 0:
+            data = f.read(min(chunk, remaining))
+            if not data:
+                break
+            remaining -= len(data)
+            yield data
+    finally:
+        f.close()
+        z.close()
+
+
+def segment_audio_response(epub: Path, index: int, range_header: str | None) -> StreamingResponse:
+    """Serve a segment's narration **directly from the EPUB zip** with HTTP Range
+    support — streamed in chunks, no copy on disk and ~constant memory. Seeking
+    works because ``ZipExtFile`` is seekable."""
+    seg = _segment(book_for(epub), index)
+    z = zipfile.ZipFile(epub)
+    try:
+        size = z.getinfo(seg.audio).file_size
+    except KeyError as exc:
+        z.close()
+        raise FileNotFoundError(f"audio member {seg.audio!r} missing from {epub.name}") from exc
+    mime = _AUDIO_MIME.get(_member_codec(seg.audio), "audio/mp4")
+    rng = _parse_range(range_header, size)
+    if rng is None:
+        return StreamingResponse(
+            _stream_member(z, z.open(seg.audio), size),
+            media_type=mime,
+            headers={"Accept-Ranges": "bytes", "Content-Length": str(size)},
+        )
+    start, end = rng
+    f = z.open(seg.audio)
+    if start:
+        f.seek(start)
+    return StreamingResponse(
+        _stream_member(z, f, end - start + 1),
+        status_code=206,
+        media_type=mime,
+        headers={
+            "Accept-Ranges": "bytes",
+            "Content-Length": str(end - start + 1),
+            "Content-Range": f"bytes {start}-{end}/{size}",
+        },
+    )
+
+
+def extract_segment_temp(epub: Path, index: int) -> Path:
+    """Extract a segment's audio member to a temp file for clipping (ffmpeg needs a
+    seekable file). The caller deletes it once the cut finishes — nothing persists."""
+    member = _segment(book_for(epub), index).audio
+    fd, tmp = tempfile.mkstemp(prefix="qc-epub-", suffix=Path(member).suffix or ".bin")
+    os.close(fd)
+    return extract_audio_member(epub, member, tmp)
 
 
 def segment_cues(epub: Path, index: int) -> list:

@@ -1282,22 +1282,37 @@ def test_segment_subtitles_and_search(tmp_path: Path) -> None:
     assert hits["count"] >= 1
 
 
-def test_segment_media_serves_extracted_audio(tmp_path: Path) -> None:
+def test_segment_media_streams_from_zip(tmp_path: Path) -> None:
     epub = _build_mo_epub(tmp_path / "book.epub")
     r = _client(tmp_path).get("/api/media", params={"path": str(epub) + "#seg=0"})
     assert r.status_code == 200 and r.content == _EPUB_AUDIO
+    assert r.headers["accept-ranges"] == "bytes"
+    # No copy was written to the state dir (streamed straight from the zip).
+    assert not (tmp_path / "state" / "epub_audio").exists()
 
 
-def test_segment_item_info_route(tmp_path: Path) -> None:
+def test_segment_media_supports_range(tmp_path: Path) -> None:
+    epub = _build_mo_epub(tmp_path / "book.epub")
+    r = _client(tmp_path).get(
+        "/api/media", params={"path": str(epub) + "#seg=0"}, headers={"Range": "bytes=10-19"},
+    )
+    assert r.status_code == 206
+    assert r.content == _EPUB_AUDIO[10:20]
+    assert r.headers["content-range"] == f"bytes 10-19/{len(_EPUB_AUDIO)}"
+
+
+def test_segment_item_info_is_synthesized(tmp_path: Path) -> None:
     epub = _build_mo_epub(tmp_path / "book.epub")
     ref = str(epub) + "#seg=0"
-    fake = {"name": "x", "path": "x", "streams": [], "duration": 5.0,
-            "subtitle_tracks": [], "best_track": 0, "has_sidecar": False, "size": 1}
-    with patch("quipclipper_web.epub_items.media.item_info", return_value=dict(fake)):
-        info = _client(tmp_path).get("/api/items", params={"path": ref}).json()
+    # No ffprobe / extraction — item_info is built from the manifest + cue timings.
+    info = _client(tmp_path).get("/api/items", params={"path": ref}).json()
     assert info["name"] == "The Assimilation"
     assert info["book_title"] == "The Test Book"
     assert info["path"].endswith("#seg=0")
+    assert [s["kind"] for s in info["streams"]] == ["audio"]
+    assert info["streams"][0]["codec"] == "aac"
+    assert info["duration"] == 5.0  # last cue end
+    assert not (tmp_path / "state" / "epub_audio").exists()
 
 
 def test_clip_from_segment_names_by_book(tmp_path: Path) -> None:
@@ -1333,7 +1348,8 @@ def test_clip_from_segment_names_by_book(tmp_path: Path) -> None:
             time.sleep(0.1)
     assert job["status"] == "done", job
     mock_ffmpeg.assert_not_called()  # forced audio -> lossless mkvmerge copy
-    # Cut from the extracted chapter audio, and named by book (folder) + chapter.
-    assert "epub_audio" in str(captured["source"])
+    # Cut from a transient extracted temp (deleted after), named by book + chapter.
+    assert "qc-epub-" in captured["source"].name
+    assert not captured["source"].exists()                  # temp cleaned up post-cut
     assert "The Test Book" in str(captured["out"].parent)   # {source} = book title
     assert "The_Assimilation" in captured["out"].name        # {title} = chapter
