@@ -33,6 +33,7 @@ from quipclipper.mkv import (
 from quipclipper.models import Match
 from quipclipper.search import search
 from quipclipper.subtitles import (
+    AUDIO_EXTS,
     ResolvedSubtitles,
     list_embedded_tracks,
     list_streams,
@@ -231,6 +232,11 @@ def clip(
     if kind not in ("audio", "video", "gif"):
         typer.secho("--type must be audio, video, or gif.", fg="red", err=True)
         raise typer.Exit(code=2)
+    # An audio-only source (podcast/audiobook) has no video stream; quietly cut an
+    # audio clip instead of asking ffmpeg to map a video that isn't there.
+    if kind == "video" and video.suffix.lower() in AUDIO_EXTS:
+        kind = "audio"
+        typer.secho(f"{video.name} is audio-only — cutting an audio clip.", fg="yellow")
     # Default cut mode mirrors the web app: re-encode video for a frame-exact clip
     # (a lossless copy can only start on a keyframe → runs long on long-GOP
     # sources), but keep audio a lossless stream copy (it's already exact). gif is

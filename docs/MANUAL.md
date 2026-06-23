@@ -156,7 +156,7 @@ quipclipper clip QUERY --video FILE [OPTIONS]
 | Option | Default | Description |
 |---|---|---|
 | `QUERY` | — | Dialogue text to locate and clip. |
-| `--video`, `-v` | *required* | Video file to cut from. |
+| `--video`, `-v` | *required* | Source to cut from. A video file, or an audio-only file (podcast/audiobook) — for audio sources `--type video` is treated as `audio` (there's no video stream). |
 | `--subs`, `-s` | — | Subtitle file; otherwise a sidecar or embedded track is used. |
 | `--track` | — | Subtitle track by `s:N` index (from `tracks`); auto-selected when several exist (English full dialogue > SDH > forced; commentary tracks are deprioritised so a plain dialogue track wins). |
 

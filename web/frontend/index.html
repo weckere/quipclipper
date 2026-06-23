@@ -183,8 +183,8 @@
               <label>Before <input id="clip-before" type="number" value="0" min="0" max="60" step="0.5" /></label>
               <label>After <input id="clip-after" type="number" value="0" min="0" max="60" step="0.5" /></label>
             </div>
-            <label class="checkbox-label"><input id="clip-audio-only" type="checkbox" /> Audio only</label>
-            <label class="checkbox-label" title="Re-encode video to H.264 so the clip is frame-exact. Uncheck for a lossless (stream-copy) video clip — but that can only start on a keyframe, so on long-GOP sources it begins several seconds before the line. Audio is always cut frame-exact."><input id="clip-exact" type="checkbox" checked /> Exact (re-encode)</label>
+            <label class="checkbox-label video-only-opt"><input id="clip-audio-only" type="checkbox" /> Audio only</label>
+            <label class="checkbox-label video-only-opt" title="Re-encode video to H.264 so the clip is frame-exact. Uncheck for a lossless (stream-copy) video clip — but that can only start on a keyframe, so on long-GOP sources it begins several seconds before the line. Audio is always cut frame-exact."><input id="clip-exact" type="checkbox" checked /> Exact (re-encode)</label>
             <label class="clip-format-label">Format
               <select id="clip-format">
                 <option value="lossless" selected>Passthrough</option>

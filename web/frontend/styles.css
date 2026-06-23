@@ -106,6 +106,12 @@ video {
   width: 100%; aspect-ratio: 16 / 9; object-fit: contain; background: #000;
   border-radius: 10px; margin: 0.5rem 0;
 }
+/* Audio-only source (podcast/audiobook): no picture, so collapse the player to
+   just its native control bar instead of a tall black box. */
+video.audio-only {
+  aspect-ratio: auto; height: 54px; object-fit: fill;
+  background: linear-gradient(180deg, #2a2a33, #16161c);
+}
 
 /* Clean title (folder name) on top, filename in smaller text beneath it. */
 #item-name { margin-bottom: 0.1rem; }

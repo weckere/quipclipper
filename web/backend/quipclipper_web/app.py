@@ -49,27 +49,31 @@ from quipclipper.mkv import (
     mkvmerge_available,
 )
 from quipclipper.search import search as engine_search
-from quipclipper.subtitles import find_sidecar, load_subtitles, VIDEO_EXTS
+from quipclipper.subtitles import AUDIO_EXTS, VIDEO_EXTS, find_sidecar, load_subtitles
 from quipclipper_web import __version__, library, media
 from quipclipper_web.bookmarks import BookmarkStore
 from quipclipper_web.config import Settings
 from quipclipper_web.jobs import JobRegistry
 from quipclipper_web.sub_cache import SubtitleCache
 
-def _is_video_file(p: Path) -> bool:
-    """A real, indexable video file.
+def _is_media_file(p: Path) -> bool:
+    """A real, indexable media file: a video, or an audio-only file (podcast/
+    audiobook) that has a sidecar transcript.
 
     Excludes hidden/dotfiles — notably macOS AppleDouble ``._*`` sidecars, which
-    share a video's name and extension on non-Mac filesystems (NAS/SMB) but are
-    tiny resource-fork metadata blobs that ffprobe rejects. The library browser
-    already skips dotfiles; the recursive folder scans must too, or these junk
-    files inflate the index count and can never be indexed.
+    share a media file's name and extension on non-Mac filesystems (NAS/SMB) but
+    are tiny resource-fork metadata blobs that ffprobe rejects. The library
+    browser already skips dotfiles; the recursive folder scans must too, or these
+    junk files inflate the index count and can never be indexed.
     """
-    return (
-        p.is_file()
-        and not p.name.startswith(".")
-        and p.suffix.lower() in VIDEO_EXTS
-    )
+    if not p.is_file() or p.name.startswith("."):
+        return False
+    ext = p.suffix.lower()
+    if ext in VIDEO_EXTS:
+        return True
+    # Audio is only indexable with a transcript (nothing to extract embedded subs
+    # from); the cheap sidecar glob keeps un-transcribed audio out of the scan.
+    return ext in AUDIO_EXTS and find_sidecar(p) is not None
 
 
 # Output extensions a finished clip can have (for listing the clips library).
@@ -476,7 +480,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         videos: list[Path] = []
         for folder in folders:
             for c in folder.rglob("*"):
-                if _is_video_file(c):
+                if _is_media_file(c):
                     rp = c.resolve()
                     if rp not in seen:
                         seen.add(rp)
@@ -539,7 +543,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail=f"Not a directory: {self_path}")
         videos: list[Path] = []
         for c in folder.rglob("*"):
-            if _is_video_file(c):
+            if _is_media_file(c):
                 videos.append(c)
                 if cap is not None and len(videos) > cap:
                     return videos, True
@@ -834,6 +838,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         video = _resolve_any(req.path)
         if not video.is_file():
             raise HTTPException(status_code=404, detail=f"Not found: {req.path}")
+
+        # An audio-only source (podcast/audiobook) can't produce a video clip;
+        # coerce a stray video request to audio so batch export and the CLI don't
+        # ask ffmpeg to map a non-existent video stream.
+        if req.kind == "video" and video.suffix.lower() in AUDIO_EXTS:
+            req.kind = "audio"
+            req.embed_subs = False
 
         # Determine the clip range: explicit start (with optional end) or
         # search-based. Omitting end with start set means "to the end of the

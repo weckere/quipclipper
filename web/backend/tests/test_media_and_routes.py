@@ -252,6 +252,40 @@ def test_clip_enqueues_job(tmp_path: Path) -> None:
     assert len(job["files"]) >= 1
 
 
+def test_clip_audio_source_coerces_video_request_to_audio(tmp_path: Path) -> None:
+    """A video clip request against an audio-only source (.mp3 + transcript) is
+    coerced to an audio clip — the lossless audio path (mkvmerge), never the
+    video re-encode (cut_clip)."""
+    audio = tmp_path / "episode.mp3"
+    audio.write_bytes(b"")
+    (tmp_path / "episode.srt").write_text(SRT, encoding="utf-8")
+
+    fake_out = tmp_path / "clip.mka"
+    fake_out.write_bytes(b"fake clip data")
+
+    client = _client(tmp_path)
+    with (
+        patch("quipclipper_web.app.mkvmerge_available", return_value=True),
+        patch("quipclipper_web.app.cut_with_mkvmerge", return_value=fake_out) as mock_mkv,
+        patch("quipclipper_web.app.cut_clip") as mock_ffmpeg,
+    ):
+        resp = client.post(
+            "/api/clip",
+            json={"path": str(audio), "query": "be back", "match_index": 0,
+                  "kind": "video", "lossless": True, "backend": "auto"},
+        )
+        assert resp.status_code == 200
+        job_id = resp.json()["job_id"]
+        for _ in range(20):
+            job = client.get(f"/api/jobs/{job_id}").json()
+            if job["status"] in ("done", "failed"):
+                break
+            time.sleep(0.1)
+    assert job["status"] == "done", job
+    mock_mkv.assert_called_once()      # routed through the lossless audio copy
+    mock_ffmpeg.assert_not_called()    # never the video re-encode
+
+
 def test_clip_mkvmerge_fallback_to_ffmpeg(tmp_path: Path) -> None:
     """When mkvmerge fails (e.g. unsplittable FLAC track), fall back to ffmpeg."""
     video = tmp_path / "movie.mkv"

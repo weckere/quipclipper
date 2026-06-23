@@ -107,7 +107,7 @@ function renderEntries(entries) {
   for (const e of entries) {
     const li = document.createElement("li");
     li.className = "entry " + (e.is_dir ? "dir" : "video");
-    const icon = e.is_dir ? "📁" : "🎬";
+    const icon = e.is_dir ? "📁" : (e.is_audio ? "🎵" : "🎬");
     const tag = !e.is_dir && e.has_sidecar ? ' <span class="badge">sub</span>' : "";
     li.innerHTML = `<span class="icon">${icon}</span><span class="label">${escapeHtml(e.name)}</span>${tag}`;
     li.onclick = () => (e.is_dir ? browse(e.path) : openItem(e.path, e.name));
@@ -637,6 +637,15 @@ async function openItem(path, name, opts) {
   const BROWSER_AUDIO = new Set(["aac", "mp3", "opus", "vorbis"]);
   const primaryAudio = info.streams.find((s) => s.kind === "audio");
   const primaryVideo = info.streams.find((s) => s.kind === "video");
+  // Audio-only sources (podcasts, audiobooks) have no video stream: collapse the
+  // player to a control bar, force audio clips, and skip the iOS HLS path (iOS
+  // plays mp3/aac/wav natively from the raw endpoint).
+  const isAudioOnly = !primaryVideo;
+  currentItem.audioOnly = isAudioOnly;
+  player.classList.toggle("audio-only", isAudioOnly);
+  // "Audio only" / "Exact (re-encode)" are video-source concepts — hide them when
+  // the source is already audio (the clip is always an audio passthrough/format).
+  document.querySelectorAll(".video-only-opt").forEach((el) => { el.hidden = isAudioOnly; });
   // iOS decodes H.264 + HEVC natively (over HLS); other video codecs
   // (XviD/MPEG-4 ASP, MPEG-2, VC1, …) must be re-encoded — the iOS side of B22.
   const iosVideoReencode = IS_IOS && primaryVideo && !IOS_PLAYABLE_VIDEO.has((primaryVideo.codec || "").toLowerCase());
@@ -830,7 +839,7 @@ async function openItem(path, name, opts) {
     seekBar.hidden = true;
     seekHint.hidden = true;
     transcodeOffset = 0;
-    player.src = IS_IOS ? hlsUrl : mediaUrl;
+    player.src = (IS_IOS && !isAudioOnly) ? hlsUrl : mediaUrl;
   }
 
   player.onerror = () => {
@@ -1585,7 +1594,8 @@ async function makeClip() {
   const chan = getSelectedChan();
   const chanSubset = chan && chan !== "whole";
   const splitCh = chanSubset;
-  const audioOnly = $("clip-audio-only").checked || chanSubset;
+  // An audio-only source can only yield an audio clip (there's no video stream).
+  const audioOnly = currentItem.audioOnly || $("clip-audio-only").checked || chanSubset;
   const kind = audioOnly ? "audio" : "video";
   const aud = getSelectedAudio();
   // "Exact (re-encode)" (default on) re-encodes video so the clip is frame-tight:

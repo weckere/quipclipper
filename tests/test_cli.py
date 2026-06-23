@@ -213,6 +213,18 @@ def test_clip_no_hwaccel_forces_software(tmp_path, monkeypatch):
     assert cap["cut_clip"]["video_encoder"] == "libx264"  # …but forced to software
 
 
+def test_clip_audio_only_source_coerces_video_to_audio(tmp_path, monkeypatch):
+    """A `-t video` request against an audio-only source (podcast/audiobook) cuts
+    an audio clip instead of asking ffmpeg to map a non-existent video stream."""
+    v = tmp_path / "episode.mp3"; v.write_bytes(b"")
+    cap = _stub_clip_backends(monkeypatch, tmp_path)
+    res = runner.invoke(cli.app, ["clip", "x", "-v", str(v), "-t", "video", "--yes"])
+    assert res.exit_code == 0, res.output
+    assert "audio-only" in res.output
+    # Audio default → lossless mkvmerge copy, never the video re-encode path.
+    assert "mkvmerge" in cap and "cut_clip" not in cap
+
+
 def test_clip_audio_format_passes_codec_to_cut_clip(tmp_path, monkeypatch):
     v = tmp_path / "movie.mkv"
     v.write_bytes(b"")

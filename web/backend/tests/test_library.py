@@ -66,6 +66,22 @@ def test_browse_dirs_then_videos_only(tmp_path: Path) -> None:
     assert by_name["film.mkv"].has_sidecar  # film.srt sits next to it
 
 
+def test_browse_lists_audio_only_with_a_transcript(tmp_path: Path) -> None:
+    """Audio sources (podcasts/audiobooks) show up only when a sidecar transcript
+    sits next to them — there's nothing to search or clip without one."""
+    pod = tmp_path / "Podcast"
+    pod.mkdir()
+    (pod / "ep1.mp3").write_bytes(b"")
+    (pod / "ep1.srt").write_text("1\n00:00:01,000 --> 00:00:02,000\nhi\n")
+    (pod / "ep2.m4a").write_bytes(b"")  # no transcript → excluded
+    (pod / "cover.jpg").write_bytes(b"")
+
+    by_name = {e.name: e for e in browse(str(pod), [tmp_path])}
+    assert set(by_name) == {"ep1.mp3"}  # ep2 (no .srt) and cover.jpg skipped
+    entry = by_name["ep1.mp3"]
+    assert entry.is_audio and not entry.is_video and entry.has_sidecar
+
+
 def test_browse_rejects_outside_path(tmp_path: Path) -> None:
     root = tmp_path / "media"
     root.mkdir()

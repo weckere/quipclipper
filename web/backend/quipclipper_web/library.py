@@ -13,7 +13,7 @@ import os
 from dataclasses import dataclass, asdict
 from pathlib import Path
 
-from quipclipper.subtitles import VIDEO_EXTS, find_sidecar
+from quipclipper.subtitles import AUDIO_EXTS, VIDEO_EXTS, find_sidecar
 
 
 class PathNotAllowed(Exception):
@@ -44,11 +44,27 @@ class Entry:
     path: str
     is_dir: bool
     is_video: bool
-    has_sidecar: bool  # a sidecar subtitle sits next to this video
+    has_sidecar: bool  # a sidecar subtitle/transcript sits next to this file
+    is_audio: bool = False  # audio-only source (podcast/audiobook)
 
 
 def _is_video(p: Path) -> bool:
     return p.suffix.lower() in VIDEO_EXTS
+
+
+def _is_audio(p: Path) -> bool:
+    return p.suffix.lower() in AUDIO_EXTS
+
+
+def _media_entry(child: Path) -> Entry | None:
+    """An Entry for a clippable media file, else None. Video files always qualify
+    (they may carry embedded subtitles); audio-only files (podcasts, audiobooks)
+    qualify only when a sidecar transcript sits next to them."""
+    if _is_video(child):
+        return Entry(child.name, str(child), False, True, find_sidecar(child) is not None)
+    if _is_audio(child) and find_sidecar(child) is not None:
+        return Entry(child.name, str(child), False, False, True, is_audio=True)
+    return None
 
 
 def browse(path: str | None, roots: list[Path]) -> list[Entry]:
@@ -76,10 +92,10 @@ def browse(path: str | None, roots: list[Path]) -> list[Entry]:
             continue
         if child.is_dir():
             dirs.append(Entry(child.name, str(child), True, False, False))
-        elif _is_video(child):
-            files.append(
-                Entry(child.name, str(child), False, True, find_sidecar(child) is not None)
-            )
+        else:
+            e = _media_entry(child)
+            if e is not None:
+                files.append(e)
     dirs.sort(key=lambda e: e.name.lower())
     files.sort(key=lambda e: e.name.lower())
     return dirs + files
@@ -108,10 +124,10 @@ def search(query: str, roots: list[Path], max_results: int = 50) -> list[Entry]:
             pos = name_lower.index(q)
             if child.is_dir():
                 hits.append((pos, Entry(child.name, str(child), True, False, False)))
-            elif _is_video(child):
-                hits.append(
-                    (pos, Entry(child.name, str(child), False, True, find_sidecar(child) is not None))
-                )
+            else:
+                e = _media_entry(child)
+                if e is not None:
+                    hits.append((pos, e))
 
     hits.sort(key=lambda t: (t[0], t[1].name.lower()))
     return [e for _, e in hits[:max_results]]
@@ -135,10 +151,10 @@ def search_within(query: str, path: str | Path, roots: list[Path], max_results: 
         pos = name_lower.index(q)
         if child.is_dir():
             hits.append((pos, Entry(child.name, str(child), True, False, False)))
-        elif _is_video(child):
-            hits.append(
-                (pos, Entry(child.name, str(child), False, True, find_sidecar(child) is not None))
-            )
+        else:
+            e = _media_entry(child)
+            if e is not None:
+                hits.append((pos, e))
 
     hits.sort(key=lambda t: (t[0], t[1].name.lower()))
     return [e for _, e in hits[:max_results]]

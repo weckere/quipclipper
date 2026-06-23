@@ -18,6 +18,10 @@ from quipclipper.models import Cue
 # Subtitle extensions we look for next to a video file, in priority order.
 SUBTITLE_EXTS = (".srt", ".vtt", ".ass", ".ssa", ".sub")
 VIDEO_EXTS = (".mkv", ".mp4", ".m4v", ".mov", ".avi", ".webm", ".ts")
+# Audio-only containers (podcasts, audiobooks). Clippable when a sidecar
+# transcript sits next to them — there's nothing to extract embedded subs from.
+AUDIO_EXTS = (".mp3", ".m4a", ".m4b", ".aac", ".flac", ".opus", ".ogg", ".oga",
+              ".wav", ".aiff", ".aif", ".wma")
 
 # Strip SubRip/ASS inline markup like <i>, {\an8}, etc.
 _TAG_RE = re.compile(r"<[^>]+>|\{[^}]*\}")

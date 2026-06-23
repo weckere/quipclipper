@@ -10,6 +10,10 @@ at your media folders, browse to a video (or search dialogue across a whole
 folder), type the line you remember, and cut a lossless clip — all in the
 browser.
 
+It works on **audio-only sources too** — podcasts and audiobooks — as long as a
+sidecar transcript (`.srt`, `.vtt`, …) sits next to the audio file. Such sources
+list with a 🎵 icon, play in a compact audio bar, and always cut audio clips.
+
 A **command-line tool** ([`quipclipper-cli`](#quipclipper-cli)) wraps the same
 engine for scripting and quick one-off cuts.
 
@@ -23,6 +27,8 @@ engine for scripting and quick one-off cuts.
 
 - **Library browser** — browse multiple media folders (movies, shows, etc.) with
   a search bar to filter by name and a clickable breadcrumb for jumping up levels.
+  Video files always appear; audio-only files (podcasts, audiobooks) appear when a
+  sidecar transcript sits beside them.
 - **Dialogue search** — open a video and fuzzy-search its subtitles (sidecar or
   embedded), with surrounding context and ranked, typo-tolerant matches. Clicking
   a result selects the matching dialogue line in **Marks** (highlighted in the
