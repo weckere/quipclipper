@@ -30,7 +30,8 @@ follow from taking those two facts seriously.
 14. [CLI and UX conventions](#14-cli-and-ux-conventions)
 15. [Nix flake](#15-nix-flake)
 16. [Testing strategy](#16-testing-strategy)
-17. [References](#references)
+17. [Experimental: audio-only sources and EPUB3 media overlays](#17-experimental-audio-only-sources-and-epub3-media-overlays)
+18. [References](#references)
 
 ---
 
@@ -515,6 +516,68 @@ construction and ranking*, not the act of running a subprocess. So:
 
 This keeps the test suite fast and media-free while still having confidence the
 real pipeline works.
+
+---
+
+## 17. Experimental: audio-only sources and EPUB3 media overlays
+
+These are newer, still-being-shaken-out source classes (flagged experimental in
+the README/manual). The common thread: quipclipper's core is *cues → search →
+cut a time range*, and anything that can be reduced to "(audio file, timed text)"
+fits with little new machinery.
+
+**Audio-only sources (podcasts, audiobooks).** A plain audio file (mp3/m4a/m4b/
+flac/opus/…) with a **sidecar transcript** is a first-class source.
+
+- *Detection is by extension, transcript-gated.* `AUDIO_EXTS` lists the
+  containers; an audio file is only listed/indexed when `find_sidecar` finds a
+  transcript next to it (there's nothing to extract embedded subs from). Video
+  files still appear unconditionally.
+- *Clips are forced to audio.* The web backend coerces a stray `kind="video"`
+  request to audio by extension, and the CLI does the same — so batch export and
+  scripts can't ask ffmpeg to map a non-existent video stream.
+- *Cover art is not video.* Podcast mp3s embed cover art as an `attached_pic`
+  mjpeg "video" stream; `list_streams` flags it so the frontend's primary-video
+  check ignores it and the file is still treated as audio-only. (Found only by
+  testing a real episode — a synthetic file wouldn't have surfaced it.)
+
+**JSON transcripts.** `load_subtitles` routes `.json` to a tolerant parser
+covering the shapes that exist in the wild — Podcast Namespace
+(`segments[].startTime/endTime/body`), Whisper (`segments[].start/end/text`),
+whisper.cpp (`transcription[].offsets` in ms) — rather than one rigid schema.
+`.json` is lowest priority in `find_sidecar`, and yt-dlp's `*.info.json` metadata
+is explicitly skipped so it isn't mistaken for a transcript.
+
+**Speaker attribution.** `Cue.speaker` is populated from a WebVTT `<v Name>`
+voice tag, a transcript `speaker` field, or a recurring `Name:` prefix.
+
+- *Voice tags are recovered from the raw file* — pysubs2 silently strips `<v>`,
+  so a raw scan maps each cue start to its speaker. (Validated against real
+  Linux Unplugged VTT.)
+- *The `Name:` prefix is recurrence-guarded* — only trusted when a name recurs
+  (≥2 cues) or is ALL-CAPS, so a one-off "Wait:" in ordinary movie dialogue isn't
+  mistaken for a speaker. (Validated: zero false positives on real SRTs.)
+
+**EPUB3 media overlays (Storyteller audiobooks).** A synced EPUB3 bundles text +
+narration + a SMIL map (each `<par>` ties a sentence to an audio clip) in one zip.
+
+- *Detect by manifest, not name.* `is_media_overlay_epub` checks the OPF for a
+  media-overlay declaration, because the file is named inconsistently
+  (`<Title> (readaloud).epub` vs older `aligned/<Title>.epub`).
+- *Model per-cue, not per-chapter.* Consecutive chapters often share one audio
+  file as sub-ranges, and a chapter can span two files — so every cue carries its
+  own `(audio member, start, end)`. This makes the *clip* path trivial (extract
+  that one member, trim) and reduces the per-chapter-vs-whole-book question to a
+  browse/UX choice rather than a data-model constraint. Whole-book concatenation
+  was rejected: multi-GB temp audio, offset bookkeeping, and drift risk, for a
+  whole-book search that the existing *folder* search already covers across
+  chapters.
+- *Extract on demand.* The engine cuts from real paths, so a matched line's audio
+  member is copied out of the zip to a temp file, then handed to the normal
+  `cut_clip` path. No whole-book unpack.
+- *Engine + CLI first; web deferred.* The reader and CLI `search`/`clip` are
+  isolated and testable without the heavy web plumbing; the web browse/player
+  integration is the planned next step.
 
 ---
 
