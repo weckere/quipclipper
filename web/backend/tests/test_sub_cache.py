@@ -113,3 +113,17 @@ def test_inflight_lock_pruned_after_resolve(cache, monkeypatch):
     cache.resolve(VIDEO, track=0)
     cache.resolve(VIDEO, track=1)
     assert cache._inflight == {}
+
+
+def test_cache_roundtrips_speaker(cache):
+    """Speaker attribution must survive the JSON disk cache — the first
+    (in-memory) resolve had it; cached reloads must not silently drop it."""
+    cues = [
+        Cue(index=0, start=1.0, end=2.0, text="Hello", speaker="Chris"),
+        Cue(index=1, start=2.0, end=3.0, text="Yo"),  # speaker None
+    ]
+    cp = cache._cache_path(VIDEO, track=0)
+    cache._write(cp, VIDEO, cues)
+    back = cache._read(cp)
+    assert [c.speaker for c in back] == ["Chris", None]
+    assert [c.text for c in back] == ["Hello", "Yo"]

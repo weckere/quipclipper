@@ -526,6 +526,13 @@ footer { padding: 2rem 1.25rem; font-size: 0.8rem; }
   flex-shrink: 0;
 }
 .script-text { flex: 1; }
+/* Speaker attribution (WebVTT <v Name> / transcript speaker field). */
+.script-speaker {
+  color: var(--accent); font-weight: 600; margin-right: 0.4em;
+}
+.hit-speaker {
+  color: var(--accent); font-weight: 600; margin-right: 0.35em;
+}
 .script-loading { padding: 0.6rem 0.7rem; font-size: 0.85rem; }
 /* Floating In/Out buttons on hover */
 .script-actions {

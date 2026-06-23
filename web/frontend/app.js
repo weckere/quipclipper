@@ -209,7 +209,7 @@ async function dialogueSearch() {
       `<label class="hit-check"><input type="checkbox" class="search-select" /></label>` +
       `<div class="hit-main">` +
         `<span class="hit-file">${escapeHtml(hit.file)}</span>` +
-        `<span class="hit-text">"${escapeHtml(hit.text)}"</span>` +
+        `<span class="hit-text">${hit.speaker ? `<span class="hit-speaker">${escapeHtml(hit.speaker)}</span>` : ""}"${escapeHtml(hit.text)}"</span>` +
         `<span class="hit-time">${hit.start_ts} – ${hit.end_ts}  <span class="hit-score">${hit.score}%</span></span>` +
       `</div>` +
       `<div class="hit-actions">` +
@@ -636,7 +636,9 @@ async function openItem(path, name, opts) {
   // iOS never uses the desktop transcode path — it goes through HLS below.
   const BROWSER_AUDIO = new Set(["aac", "mp3", "opus", "vorbis"]);
   const primaryAudio = info.streams.find((s) => s.kind === "audio");
-  const primaryVideo = info.streams.find((s) => s.kind === "video");
+  // Ignore attached_pic "video" streams — that's embedded cover art (common in
+  // podcast mp3/m4a), a still image, not real video to play, re-encode, or clip.
+  const primaryVideo = info.streams.find((s) => s.kind === "video" && !s.attached_pic);
   // Audio-only sources (podcasts, audiobooks) have no video stream: collapse the
   // player to a control bar, force audio clips, and skip the iOS HLS path (iOS
   // plays mp3/aac/wav natively from the raw endpoint).
@@ -1291,9 +1293,11 @@ async function loadScript(path, track) {
     const row = document.createElement("div");
     row.className = "script-line";
     row.dataset.idx = i;
+    const speaker = cue.speaker
+      ? `<span class="script-speaker">${escapeHtml(cue.speaker)}</span>` : "";
     row.innerHTML =
       `<span class="script-ts">${formatTime(cue.start)}</span>` +
-      `<span class="script-text">${escapeHtml(cue.text)}</span>` +
+      `<span class="script-text">${speaker}${escapeHtml(cue.text)}</span>` +
       `<span class="script-actions">` +
         `<button class="script-mark-btn script-start-btn" title="Set clip start">Start</button>` +
         `<button class="script-mark-btn script-end-btn" title="Set clip end">End</button>` +

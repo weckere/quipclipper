@@ -14,7 +14,9 @@ It works on **audio-only sources too** — podcasts and audiobooks — as long a
 sidecar transcript sits next to the audio file. Transcripts can be `.srt`, `.vtt`,
 `.ass`/`.ssa`, `.sub`, or **`.json`** (Podcast Namespace and Whisper-style
 transcripts). Audio sources list with a 🎵 icon, play in a compact audio bar, and
-always cut audio clips.
+always cut audio clips. **Speaker attribution** is picked up from WebVTT `<v Name>`
+voice tags, a transcript `speaker` field, or a recurring `Name:` prefix, and shown
+in the script, the search results, and the player captions.
 
 A **command-line tool** ([`quipclipper-cli`](#quipclipper-cli)) wraps the same
 engine for scripting and quick one-off cuts.

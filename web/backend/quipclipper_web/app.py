@@ -391,7 +391,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if fmt == "json":
             return Response(
                 content=json.dumps(
-                    [{"start": c.start, "end": c.end, "text": c.text} for c in cues],
+                    [{"start": c.start, "end": c.end, "text": c.text, "speaker": c.speaker}
+                     for c in cues],
                 ),
                 media_type="application/json",
             )
@@ -436,6 +437,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "index": i,
                     "score": round(m.score, 1),
                     "text": m.text,
+                    "speaker": m.cues[0].speaker if m.cues else None,
                     "start": m.start,
                     "end": m.end,
                     "start_ts": format_timestamp(m.start),
@@ -502,6 +504,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "path": str(video),
                     "score": round(m.score, 1),
                     "text": m.text,
+                    "speaker": m.cues[0].speaker if m.cues else None,
                     "start": m.start,
                     "end": m.end,
                     "start_ts": format_timestamp(m.start),

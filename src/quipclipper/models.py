@@ -18,12 +18,18 @@ def format_timestamp(seconds: float) -> str:
 
 @dataclass(frozen=True)
 class Cue:
-    """A single subtitle entry with a time span (in seconds) and its text."""
+    """A single subtitle entry with a time span (in seconds) and its text.
+
+    ``speaker`` is the attributed speaker when the source carries one — a WebVTT
+    ``<v Name>`` voice tag, a Podcast Namespace transcript ``speaker`` field, or a
+    recurring ``Name:`` prefix — else None.
+    """
 
     index: int
     start: float  # seconds
     end: float  # seconds
     text: str
+    speaker: str | None = None
 
     @property
     def duration(self) -> float:

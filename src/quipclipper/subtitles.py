@@ -13,7 +13,9 @@ from pathlib import Path
 import pysubs2
 from pysubs2.exceptions import Pysubs2Error
 
-from quipclipper.models import Cue
+from collections import Counter
+
+from quipclipper.models import Cue, format_timestamp
 
 # Subtitle/transcript extensions we look for next to a media file, in priority
 # order. ``.json`` covers Podcast Namespace / Whisper-style transcripts (common
@@ -34,6 +36,71 @@ def _clean(text: str) -> str:
     text = text.replace(r"\N", " ").replace(r"\n", " ").replace("\n", " ")
     text = _TAG_RE.sub("", text)
     return " ".join(text.split())
+
+
+# --- speaker attribution -----------------------------------------------------
+# WebVTT voice tag: <v Chris> / <v.loud Chris Fisher>. pysubs2 strips these when
+# it loads a VTT, so we recover the speaker from the raw file.
+_VOICE_RE = re.compile(r"<v(?:\.[^\s>]+)?\s+([^>]+?)\s*>", re.IGNORECASE)
+_CUE_TIMING_RE = re.compile(r"^\s*(\d{1,2}:\d{2}(?::\d{2})?[.,]\d{1,3})\s*-->")
+# A leading "Name:" / "First Last:" / "NARRATOR:" speaker prefix (1–3 words).
+_SPEAKER_PREFIX_RE = re.compile(r"^([A-Za-z][\w.'\-]*(?: [A-Za-z][\w.'\-]*){0,2}):\s+(?=\S)")
+
+
+def _norm_ts(s: str) -> str:
+    """Normalize a cue timestamp string to the canonical HH:MM:SS.mmm key."""
+    sec = _coerce_seconds(s)
+    return format_timestamp(sec) if sec is not None else s
+
+
+def _vtt_voice_speakers(path: Path) -> dict[str, str]:
+    """Map each VTT cue's start time (HH:MM:SS.mmm) to its ``<v Name>`` speaker.
+
+    pysubs2 discards voice tags, so we scan the raw file: the first text line
+    after a ``-->`` timing line carries the voice tag, if any."""
+    speakers: dict[str, str] = {}
+    try:
+        text = path.read_text(encoding="utf-8-sig", errors="replace")
+    except OSError:
+        return speakers
+    start: str | None = None
+    for line in text.splitlines():
+        m = _CUE_TIMING_RE.match(line)
+        if m:
+            start = _norm_ts(m.group(1))
+        elif start is not None and line.strip():
+            vm = _VOICE_RE.match(line.strip())
+            if vm:
+                speakers[start] = vm.group(1).strip()
+            start = None  # only the first text line of a cue carries the tag
+    return speakers
+
+
+def _apply_speaker_prefixes(cues: list[Cue]) -> list[Cue]:
+    """Move a recurring ``Name:`` prefix off cue text into ``Cue.speaker``.
+
+    Only names that recur (≥2 cues) or are ALL-CAPS are trusted, so a one-off
+    sentence like "Wait: I can explain." in ordinary dialogue isn't mistaken for
+    a speaker label. Cues that already have a speaker are left untouched."""
+    counts: Counter[str] = Counter()
+    parsed: list[tuple[Cue, str | None, str]] = []
+    for c in cues:
+        name, rest = None, c.text
+        if not c.speaker:
+            m = _SPEAKER_PREFIX_RE.match(c.text)
+            if m:
+                name = m.group(1).strip()
+                rest = c.text[m.end():].strip()
+                counts[name] += 1
+        parsed.append((c, name, rest))
+    trusted = {n for n, k in counts.items() if k >= 2 or n.isupper()}
+    out: list[Cue] = []
+    for c, name, rest in parsed:
+        if name and rest and name in trusted:
+            out.append(Cue(c.index, c.start, c.end, rest, speaker=name))
+        else:
+            out.append(c)
+    return out
 
 
 def _coerce_seconds(v) -> float | None:
@@ -121,11 +188,15 @@ def _load_json_cues(path: Path) -> list[Cue]:
             continue
         if end is None or end < start:
             end = start
-        cues.append(Cue(index=len(cues), start=start, end=end, text=text))
+        spk = seg.get("speaker")
+        spk = str(spk).strip() if spk not in (None, "") else None
+        cues.append(Cue(index=len(cues), start=start, end=end, text=text, speaker=spk))
     if not cues:
         raise ValueError(f"No usable cues in JSON transcript {path.name}.")
+    # Pick up a "Name:" prefix when there's no explicit speaker field.
+    cues = _apply_speaker_prefixes(cues)
     cues.sort(key=lambda c: c.start)
-    return [Cue(index=i, start=c.start, end=c.end, text=c.text) for i, c in enumerate(cues)]
+    return [Cue(i, c.start, c.end, c.text, c.speaker) for i, c in enumerate(cues)]
 
 
 def load_subtitles(path: str | Path) -> list[Cue]:
@@ -146,22 +217,28 @@ def load_subtitles(path: str | Path) -> list[Cue]:
         # already handle (folder search skips the file; /api/search → 409) — so
         # one unparseable file doesn't surface as a 500.
         raise ValueError(f"Could not parse subtitle file {path.name}: {exc}") from exc
+    # WebVTT voice tags (<v Name>) are stripped by pysubs2 — recover them from
+    # the raw file, keyed by cue start time.
+    voice = _vtt_voice_speakers(path) if path.suffix.lower() == ".vtt" else {}
     cues: list[Cue] = []
     for i, line in enumerate(subs):
         text = _clean(line.text)
         if not text:
             continue
+        start = line.start / 1000.0  # pysubs2 stores milliseconds
         cues.append(
             Cue(
                 index=i,
-                start=line.start / 1000.0,  # pysubs2 stores milliseconds
+                start=start,
                 end=line.end / 1000.0,
                 text=text,
+                speaker=voice.get(format_timestamp(start)),
             )
         )
+    cues = _apply_speaker_prefixes(cues)
     cues.sort(key=lambda c: c.start)
     # Re-number after sorting so indexes are stable, contiguous positions.
-    return [Cue(index=i, start=c.start, end=c.end, text=c.text) for i, c in enumerate(cues)]
+    return [Cue(i, c.start, c.end, c.text, c.speaker) for i, c in enumerate(cues)]
 
 
 @dataclass(frozen=True)
@@ -233,6 +310,7 @@ class StreamInfo:
     channel_layout: str | None
     forced: bool = False
     hearing_impaired: bool = False
+    attached_pic: bool = False  # a still cover-art image (mp3/m4a), not real video
 
     @property
     def selector(self) -> str:
@@ -261,7 +339,7 @@ def list_streams(video_path: str | Path) -> list[StreamInfo]:
         "-show_entries",
         "stream=codec_type,codec_name,channels,channel_layout"
         ":stream_tags=language,title"
-        ":stream_disposition=forced,hearing_impaired",
+        ":stream_disposition=forced,hearing_impaired,attached_pic",
         "-of", "json", str(video_path),
     ]
     out = subprocess.run(cmd, capture_output=True, text=True)
@@ -291,6 +369,7 @@ def list_streams(video_path: str | Path) -> list[StreamInfo]:
                 channel_layout=s.get("channel_layout"),
                 forced=bool(disp.get("forced")),
                 hearing_impaired=bool(disp.get("hearing_impaired")),
+                attached_pic=bool(disp.get("attached_pic")),
             )
         )
     return infos

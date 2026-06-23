@@ -104,6 +104,9 @@ subtitles ──parse──► cues ──fuzzy search──► ranked matches �
    (`segments[].startTime/endTime/body`), Whisper (`segments[].start/end/text`),
    or whisper.cpp (`transcription[].offsets` in ms) — which makes podcasts and
    audiobooks first-class sources. (yt-dlp's `*.info.json` metadata is ignored.)
+   Speaker attribution is read from WebVTT `<v Name>` voice tags, a transcript
+   `speaker` field, or a recurring `Name:` prefix (one-off `Word:` in dialogue is
+   not mistaken for a speaker).
 2. **Search** the cues for your dialogue text with fuzzy, ranked matching.
    Overlapping span-variants of the same line are collapsed so results don't
    duplicate one another.

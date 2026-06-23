@@ -1,0 +1,8 @@
+{
+  "version": "1.0.0",
+  "segments": [
+    { "speaker": "Adam",  "startTime": 0.5,  "endTime": 3.2,  "body": "Podcasting 2.0 for the win." },
+    { "speaker": "Dave",  "startTime": 3.4,  "endTime": 6.0,  "body": "It's all about the namespace." },
+    { "speaker": "Adam",  "startTime": 6.2,  "endTime": 9.9,  "body": "Transcripts make every word searchable." }
+  ]
+}

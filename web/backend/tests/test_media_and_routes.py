@@ -57,6 +57,15 @@ def test_stream_dict_groups_only_from_recognized_layout():
     assert stream_dict(_audio(6, "weird(layout)"))["groups"] == []
 
 
+def test_stream_dict_surfaces_attached_pic():
+    """Cover-art video (mp3/m4a) is flagged so the frontend doesn't mistake it for
+    real video (treats the file as audio-only, no video clip/re-encode)."""
+    art = StreamInfo(kind="video", type_index=0, codec="mjpeg", language=None,
+                     title=None, channels=None, channel_layout=None, attached_pic=True)
+    assert stream_dict(art)["attached_pic"] is True
+    assert stream_dict(_audio(2, "stereo"))["attached_pic"] is False
+
+
 # --- B9: clip name template -------------------------------------------------
 
 def _ctx(stem: str, start=27 * 60 + 58.0, end=28 * 60 + 8.0, cue=""):
@@ -125,6 +134,14 @@ def test_cues_to_vtt() -> None:
     assert vtt.startswith("WEBVTT")
     assert "00:00:01.000 --> 00:00:03.000" in vtt
     assert "I'll be back." in vtt
+
+
+def test_cues_to_vtt_emits_speaker_voice_tag() -> None:
+    cues = [Cue(0, 1.0, 3.0, "Hello, friends.", speaker="Chris"),
+            Cue(1, 4.0, 5.5, "No speaker here.")]
+    vtt = cues_to_vtt(cues)
+    assert "<v Chris>Hello, friends." in vtt   # speaker → WebVTT voice tag
+    assert "\nNo speaker here." in vtt          # untagged line unchanged
 
 
 def _client(root: Path) -> TestClient:

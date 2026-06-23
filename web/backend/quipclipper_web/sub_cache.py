@@ -96,7 +96,8 @@ class SubtitleCache:
             data = json.loads(cp.read_text())
             cues_raw = data["cues"] if isinstance(data, dict) else data
             return [
-                Cue(index=c["index"], start=c["start"], end=c["end"], text=c["text"])
+                Cue(index=c["index"], start=c["start"], end=c["end"], text=c["text"],
+                    speaker=c.get("speaker"))
                 for c in cues_raw
             ]
         except (json.JSONDecodeError, KeyError, TypeError):
@@ -109,7 +110,8 @@ class SubtitleCache:
             {
                 "video": str(video),
                 "cues": [
-                    {"index": c.index, "start": c.start, "end": c.end, "text": c.text}
+                    {"index": c.index, "start": c.start, "end": c.end, "text": c.text,
+                     "speaker": c.speaker}
                     for c in cues
                 ],
             },

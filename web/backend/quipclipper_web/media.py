@@ -81,6 +81,7 @@ def stream_dict(s: StreamInfo) -> dict:
         "channel_layout": s.channel_layout,
         "forced": s.forced,
         "hearing_impaired": s.hearing_impaired,
+        "attached_pic": s.attached_pic,
         "label": s.label(),
     }
     # For multichannel audio, the selectable channel groups (front/center/lfe/
@@ -131,6 +132,8 @@ def cues_to_vtt(cues: list[Cue], offset: float = 0) -> str:
             continue
         start = max(0, c.start - offset)
         lines.append(f"{format_timestamp(start)} --> {format_timestamp(end)}")
-        lines.append(c.text)
+        # Re-emit the speaker as a WebVTT voice tag so the player caption shows it.
+        speaker = getattr(c, "speaker", None)
+        lines.append(f"<v {speaker}>{c.text}" if speaker else c.text)
         lines.append("")
     return "\n".join(lines)

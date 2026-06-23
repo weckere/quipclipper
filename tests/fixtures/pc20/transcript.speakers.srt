@@ -1,0 +1,15 @@
+1
+00:00:01,000 --> 00:00:03,000
+HOST: Welcome to the recurring-speaker test.
+
+2
+00:00:03,200 --> 00:00:05,000
+GUEST: Wait: I can explain the namespace.
+
+3
+00:00:05,200 --> 00:00:07,000
+HOST: A speaker label only counts when it recurs.
+
+4
+00:00:07,200 --> 00:00:09,000
+GUEST: Right, otherwise dialogue colons would misfire.
