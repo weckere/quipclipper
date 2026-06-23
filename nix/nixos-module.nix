@@ -1,9 +1,11 @@
 # Declarative NixOS module: services.quipclipper-web.
 #
-# Runs the backend as a hardened systemd service and configures the host nginx
-# to serve the frontend, proxy /api, and serve /clips — optionally behind
-# basic-auth. Option names mirror the Docker env vars 1:1 (see
-# docs/WEBAPP_PLAN.md §6) so both deployments behave identically.
+# Runs the backend as a hardened systemd service and (by default) configures the
+# host nginx to serve the frontend, proxy /api, and serve /clips — optionally
+# behind basic-auth. Set `nginx.enable = false` to run only the backend and bring
+# your own front. The nginx vhost's port/bind/default_server are configurable
+# (`nginx.{port,listen,defaultServer}`) so quipclipper can share a host. Option
+# names mirror the Docker env vars 1:1 (see docs/WEBAPP_PLAN.md §6).
 #
 # Imported via `inputs.quipclipper.nixosModules.default`, which passes `self`
 # so the module can resolve the packages built by the flake.
@@ -18,6 +20,13 @@ let
   stateDir = "/var/lib/quipclipper-web/state";
   # Group owning the clips dir: an explicit shared group, else the service's own.
   clipsGroupName = if cfg.clipsGroup != null then cfg.clipsGroup else cfg.group;
+  # nginx vhost listen entries: explicit `nginx.listen`, else derived from
+  # `nginx.port`. The vhost is a catch-all default_server only when asked and no
+  # server_name is set (a named vhost shouldn't grab every unmatched request).
+  nginxListen =
+    if cfg.nginx.listen != null then cfg.nginx.listen
+    else [ { addr = "0.0.0.0"; port = cfg.nginx.port; } ];
+  nginxFirewallPorts = map (l: l.port) nginxListen;
 in
 {
   options.services.quipclipper-web = {
@@ -110,14 +119,61 @@ in
       example = "clips.example.com";
       description = ''
         nginx server name. When null, a default catch-all vhost is used
-        (suitable for LAN-only access by IP).
+        (suitable for LAN-only access by IP). Only applies when `nginx.enable`.
       '';
+    };
+
+    nginx = {
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        description = ''
+          Front the backend with a host nginx vhost (serves the frontend, proxies
+          `/api`, serves `/clips`, applies the basic-auth gate). When `false`, only
+          the hardened backend runs on `listenAddress:listenPort` and you bring your
+          own front (nginx/caddy/Tailscale serve) proxying to it — the backend then
+          serves clips itself, so no `/clips` static mapping is needed. `openFirewall`
+          and the bundled vhost are skipped entirely.
+        '';
+      };
+
+      port = lib.mkOption {
+        type = lib.types.port;
+        default = 80;
+        description = "Port the bundled nginx vhost listens on (when `nginx.listen` is null).";
+      };
+
+      listen = lib.mkOption {
+        type = lib.types.nullOr (lib.types.listOf (lib.types.attrsOf lib.types.anything));
+        default = null;
+        example = [ { addr = "172.17.0.1"; port = 8080; } ];
+        description = ''
+          Explicit nginx `listen` entries, passed straight to
+          `services.nginx.virtualHosts.<name>.listen`. Overrides `nginx.port` —
+          use it to bind a specific address (e.g. a Tailscale/Docker bridge) and/or
+          port. `openFirewall` opens whatever ports these entries declare.
+        '';
+      };
+
+      defaultServer = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        description = ''
+          Make the bundled vhost nginx's `default_server` (catch-all). Set `false`
+          so quipclipper can coexist with another web service on the same host/port
+          without grabbing every unmatched request. (Forced off when a
+          `virtualHost` server name is set.)
+        '';
+      };
     };
 
     openFirewall = lib.mkOption {
       type = lib.types.bool;
       default = false;
-      description = "Open the nginx HTTP port (80) in the firewall.";
+      description = ''
+        Open the bundled nginx vhost's port(s) in the firewall. No-op when
+        `nginx.enable = false` (bring your own front and open its port yourself).
+      '';
     };
 
     passwordFile = lib.mkOption {
@@ -177,23 +233,25 @@ in
       }
     ];
 
-    users.users.${cfg.user} = {
-      isSystemUser = true;
-      group = cfg.group;
-      extraGroups =
-        # The render group lets the service open the VAAPI node for HW encoding.
-        (lib.optional cfg.hardwareAcceleration.enable "render")
-        # When clips are shared via a separate group, join it so the service can
-        # write into a group-writable (setgid) shared/SMB directory it doesn't own.
-        ++ lib.optional (clipsGroupName != cfg.group) clipsGroupName;
+    users.users = {
+      ${cfg.user} = {
+        isSystemUser = true;
+        group = cfg.group;
+        extraGroups =
+          # The render group lets the service open the VAAPI node for HW encoding.
+          (lib.optional cfg.hardwareAcceleration.enable "render")
+          # When clips are shared via a separate group, join it so the service can
+          # write into a group-writable (setgid) shared/SMB directory it doesn't own.
+          ++ lib.optional (clipsGroupName != cfg.group) clipsGroupName;
+      };
+    } // lib.optionalAttrs cfg.nginx.enable {
+      # nginx serves the clips dir directly (QC_CLIPS_URL_PREFIX = /clips), so it
+      # must be in the group that owns the clips to traverse + read them — else
+      # downloads 403. Only relevant when we run nginx (otherwise the backend
+      # serves clips, and there's no nginx user to add to the group).
+      ${config.services.nginx.user}.extraGroups = [ clipsGroupName ];
     };
     users.groups.${cfg.group} = { };
-
-    # nginx serves the clips dir directly (QC_CLIPS_URL_PREFIX = /clips). It must
-    # be in the group that owns the clips so it can traverse the dir and read the
-    # finished clips — otherwise downloads 403. (For a shared clipsDir this is the
-    # shared clipsGroup; by default it's the service's own group.)
-    users.users.${config.services.nginx.user}.extraGroups = [ clipsGroupName ];
 
     # Intel media driver + GPU access for hardware H.264 encoding (opt-in).
     hardware.graphics = lib.mkIf cfg.hardwareAcceleration.enable {
@@ -213,13 +271,15 @@ in
       environment = {
         QC_MEDIA_ROOTS = lib.concatStringsSep ":" (map toString cfg.mediaRoots);
         QC_CLIPS_DIR = toString cfg.clipsDir;
-        # nginx serves the clips dir directly at /clips/ (see virtualHost below)
-        QC_CLIPS_URL_PREFIX = "/clips";
         QC_STATE_DIR = stateDir;
         QC_BIND = cfg.listenAddress;
         QC_PORT = toString cfg.listenPort;
         QC_MAX_CONCURRENT_JOBS = toString cfg.maxConcurrentJobs;
         QC_SUBTITLE_LANGS = lib.concatStringsSep "," cfg.subtitleLangs;
+      } // lib.optionalAttrs cfg.nginx.enable {
+        # The bundled nginx serves the clips dir directly at /clips/ (see the vhost
+        # below). Without nginx, the backend serves clips itself under /api.
+        QC_CLIPS_URL_PREFIX = "/clips";
       } // lib.optionalAttrs cfg.hardwareAcceleration.enable {
         QC_VAAPI_DEVICE = cfg.hardwareAcceleration.device;
         LIBVA_DRIVER_NAME = cfg.hardwareAcceleration.driverName;
@@ -265,10 +325,13 @@ in
     ] ++ lib.optional cfg.manageClipsDir
       "d ${toString cfg.clipsDir} ${cfg.clipsMode} ${cfg.user} ${clipsGroupName} - -";
 
-    services.nginx = {
+    services.nginx = lib.mkIf cfg.nginx.enable {
       enable = true;
       virtualHosts.${vhostName} = {
-        default = cfg.virtualHost == null;
+        # Catch-all only when asked and unnamed — a named vhost shouldn't grab
+        # every unmatched request, and two services can't both be default_server.
+        default = cfg.nginx.defaultServer && cfg.virtualHost == null;
+        listen = nginxListen;
         root = "${frontendPkg}";
         locations."/" = {
           tryFiles = "$uri $uri/ /index.html";
@@ -292,8 +355,8 @@ in
       };
     };
 
-    networking.firewall = lib.mkIf cfg.openFirewall {
-      allowedTCPPorts = [ 80 ];
+    networking.firewall = lib.mkIf (cfg.openFirewall && cfg.nginx.enable) {
+      allowedTCPPorts = nginxFirewallPorts;
     };
   };
 }

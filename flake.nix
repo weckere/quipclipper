@@ -73,6 +73,19 @@
           checks = pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
             nixos-module = pkgs.testers.runNixOSTest {
               name = "quipclipper-web-module";
+              # A second host with the bundled nginx disabled (nginx.enable=false):
+              # only the hardened backend runs, on listenAddress:listenPort, for a
+              # BYO front — proving quipclipper can stay off :80.
+              nodes.backendonly = { ... }: {
+                imports = [ self.nixosModules.default ];
+                systemd.tmpfiles.rules = [ "d /srv/media 0755 root root - -" ];
+                services.quipclipper-web = {
+                  enable = true;
+                  mediaRoots = [ "/srv/media" ];
+                  listenAddress = "0.0.0.0";  # reachable on the test net for the assert
+                  nginx.enable = false;
+                };
+              };
               nodes.machine = { ... }: {
                 imports = [ self.nixosModules.default ];
                 # A media root the service may read; an htpasswd (user "quip",
@@ -132,6 +145,16 @@
                 machine.succeed("systemctl show quipclipper-web.service -p UMask | grep -q '=0002$'")
                 machine.succeed("runuser -u reader -- rm /var/lib/quipclipper-web/clips/probe/clip.txt")
                 machine.fail("test -e /var/lib/quipclipper-web/clips/probe/clip.txt")
+
+                # nginx.enable = false: backend runs alone, no nginx, nothing on :80.
+                backendonly.wait_for_unit("quipclipper-web.service")
+                backendonly.wait_for_open_port(8000)
+                backendonly.fail("systemctl is-active nginx.service")
+                backendonly.fail("curl -fsS http://localhost:80/")
+                backendonly.succeed("curl -fsS http://localhost:8000/api/health -o /tmp/h.json")
+                backendonly.succeed("grep -q ok /tmp/h.json")
+                backendonly.succeed("curl -fsS http://localhost:8000/api/library/roots -o /tmp/r.json")
+                backendonly.succeed("grep -q /srv/media /tmp/r.json")
               '';
             };
           };
