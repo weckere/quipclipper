@@ -17,11 +17,13 @@ browser.
 > podcasts and audiobooks — are newer and still being shaken out, so expect rough
 > edges.
 >
-> **EPUB3 audiobooks are more experimental still, and CLI-only for now.** The CLI
-> can search and clip a synced **EPUB3 Media Overlay** book — text + narration in
-> one file, e.g. [Storyteller](https://gitlab.com/storyteller-platform/storyteller)
-> output — cutting a matched line straight out of the embedded audio. No web-app
-> support yet. See [the manual](docs/MANUAL.md#epub3-audiobooks-experimental).
+> **EPUB3 audiobooks are more experimental still.** quipclipper can search and
+> clip a synced **EPUB3 Media Overlay** book — text + narration in one file, e.g.
+> [Storyteller](https://gitlab.com/storyteller-platform/storyteller) output —
+> cutting a matched line straight out of the embedded audio. In the **web app** a
+> book browses like a folder (📚) into chapters, each a normal audio item you can
+> play, search, and clip; the **CLI** does it by path. See
+> [the manual](docs/MANUAL.md#epub3-audiobooks-experimental).
 
 It works on **audio-only sources too** — podcasts and audiobooks — as long as a
 sidecar transcript sits next to the audio file. Transcripts can be `.srt`, `.vtt`,

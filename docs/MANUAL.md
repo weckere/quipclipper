@@ -461,7 +461,9 @@ without transcoding:
 
 ### EPUB3 audiobooks (experimental)
 
-> **Experimental, and CLI-only.** The web app has no EPUB support yet.
+> **Experimental.** Supported in both the CLI (below) and the web app, where a
+> book browses like a folder (📚) into chapters — each a normal audio item you can
+> play, search, and clip.
 
 A synced **EPUB3 Media Overlay** book bundles the text *and* the narration audio
 in one `.epub`, with a SMIL map tying each sentence to an audio time span. The

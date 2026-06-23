@@ -50,7 +50,7 @@ from quipclipper.mkv import (
 )
 from quipclipper.search import search as engine_search
 from quipclipper.subtitles import AUDIO_EXTS, VIDEO_EXTS, find_sidecar, load_subtitles
-from quipclipper_web import __version__, library, media
+from quipclipper_web import __version__, epub_items, library, media
 from quipclipper_web.bookmarks import BookmarkStore
 from quipclipper_web.config import Settings
 from quipclipper_web.jobs import JobRegistry
@@ -325,6 +325,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/library/browse")
     def browse(path: str | None = None) -> dict:
+        # A synced EPUB audiobook browses into its audio segments like a folder.
+        if path:
+            ep = _resolve(path)
+            if epub_items.is_epub_book(ep):
+                return {"path": path, "entries": epub_items.segment_entries(ep)}
         try:
             entries = library.browse(path, settings.media_roots)
         except library.PathNotAllowed as exc:
@@ -355,6 +360,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/items")
     def item(path: str = Query(...), langs: str | None = Query(None)) -> dict:
+        # An EPUB segment ref (<epub>#seg=N): probe the extracted chapter audio.
+        epub_ref, seg = epub_items.parse_ref(path)
+        if seg is not None:
+            ep = _resolve(epub_ref)
+            try:
+                return epub_items.segment_item_info(ep, seg, settings.state_dir)
+            except (IndexError, ValueError) as exc:
+                raise HTTPException(status_code=404, detail=str(exc))
+            except RuntimeError as exc:
+                raise HTTPException(status_code=500, detail=str(exc))
         p = _resolve_any(path)
         if not p.exists():
             raise HTTPException(status_code=404, detail=f"Not found: {path}")
@@ -375,6 +390,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         offset: float = Query(0, ge=0),
         fmt: str = Query("vtt"),
     ) -> Response:
+        # EPUB segment: cues come from the media overlay, not a sidecar/track.
+        epub_ref, seg = epub_items.parse_ref(path)
+        if seg is not None:
+            ep = _resolve(epub_ref)
+            try:
+                cues = epub_items.segment_cues(ep, seg)
+            except (IndexError, ValueError) as exc:
+                raise HTTPException(status_code=404, detail=str(exc))
+            if fmt == "json":
+                return Response(
+                    content=json.dumps(
+                        [{"start": c.start, "end": c.end, "text": c.text, "speaker": c.speaker}
+                         for c in cues]),
+                    media_type="application/json",
+                )
+            return Response(content=media.cues_to_vtt(cues, offset=offset), media_type="text/vtt")
         p = _resolve_any(path)
         try:
             # Use the cache: extraction from large files is slow (~9s for a
@@ -412,15 +443,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         min_score: float = Query(60.0, ge=0, le=100),
         max_span: int = Query(3, ge=1, le=10),
     ) -> dict:
-        p = _resolve_any(path)
-        try:
-            cues = sub_cache.resolve(p, track=track)
-        except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc))
-        except FileNotFoundError as exc:
-            raise HTTPException(status_code=404, detail=str(exc))
-        except RuntimeError as exc:
-            raise HTTPException(status_code=500, detail=str(exc))
+        epub_ref, seg = epub_items.parse_ref(path)
+        if seg is not None:
+            try:
+                cues = epub_items.segment_cues(_resolve(epub_ref), seg)
+            except (IndexError, ValueError) as exc:
+                raise HTTPException(status_code=404, detail=str(exc))
+        else:
+            p = _resolve_any(path)
+            try:
+                cues = sub_cache.resolve(p, track=track)
+            except ValueError as exc:
+                raise HTTPException(status_code=409, detail=str(exc))
+            except FileNotFoundError as exc:
+                raise HTTPException(status_code=404, detail=str(exc))
+            except RuntimeError as exc:
+                raise HTTPException(status_code=500, detail=str(exc))
 
         matches = engine_search(
             query,
@@ -622,6 +660,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         Starlette's FileResponse handles Range requests (206), so the browser can
         seek. Whether it actually decodes depends on the codec/container.
         """
+        # EPUB segment: serve the extracted chapter audio from the cache.
+        epub_ref, seg = epub_items.parse_ref(path)
+        if seg is not None:
+            ep = _resolve(epub_ref)
+            try:
+                audio = epub_items.segment_audio_path(ep, seg, settings.state_dir)
+            except (IndexError, ValueError) as exc:
+                raise HTTPException(status_code=404, detail=str(exc))
+            return FileResponse(audio, media_type="audio/mp4")
         p = _resolve_any(path)
         if not p.is_file():
             raise HTTPException(status_code=404, detail=f"Not found: {path}")
@@ -838,7 +885,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/clip")
     def create_clip(req: ClipRequest) -> dict:
-        video = _resolve_any(req.path)
+        # An EPUB segment clips from the extracted chapter audio (always audio);
+        # `name_source` drives the naming template (book/chapter, not the cache
+        # file), while `video` is the actual media handed to ffmpeg.
+        epub_ref, seg = epub_items.parse_ref(req.path)
+        name_source: Path | None = None
+        if seg is not None:
+            ep = _resolve(epub_ref)
+            try:
+                video = epub_items.segment_audio_path(ep, seg, settings.state_dir)
+                name_source = epub_items.segment_clip_name_source(ep, seg)
+            except (IndexError, ValueError) as exc:
+                raise HTTPException(status_code=404, detail=str(exc))
+            req.kind = "audio"
+            req.embed_subs = False
+        else:
+            video = _resolve_any(req.path)
         if not video.is_file():
             raise HTTPException(status_code=404, detail=f"Not found: {req.path}")
 
@@ -961,7 +1023,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # subfolders; absent tokens (e.g. {cue} on non-search clips) are dropped.
         # Split-channel clips get a per-channel suffix appended by the splitter,
         # so they pass the extensionless base.
-        ctx = _clip_template_context(video, rng, cue_text)
+        ctx = _clip_template_context(name_source or video, rng, cue_text)
         template = (req.template or "").strip() or DEFAULT_CLIP_TEMPLATE
         rel = _render_clip_template(template, ctx) or ctx["timestamp"] or "clip"
         clips_root = settings.clips_dir.resolve()

@@ -1197,3 +1197,143 @@ def test_recursive_scan_skips_appledouble_files(tmp_path: Path) -> None:
     status = client.get("/api/search/folder/index-status", params={"path": str(tmp_path)})
     assert status.status_code == 200
     assert status.json()["total"] == 1
+
+
+# --- EPUB3 media-overlay audiobooks (web) ------------------------------------
+
+import zipfile  # noqa: E402
+
+_EPUB_AUDIO = b"FAKE-AAC-PAYLOAD-" + b"\x00\x01\x02\x03" * 64
+
+_EPUB_FILES = {
+    "mimetype": "application/epub+zip",
+    "META-INF/container.xml": (
+        '<?xml version="1.0"?><container version="1.0"'
+        ' xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles>'
+        '<rootfile full-path="OEBPS/content.opf"'
+        ' media-type="application/oebps-package+xml"/></rootfiles></container>'
+    ),
+    "OEBPS/content.opf": (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id">'
+        '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+        '<dc:title>The Test Book</dc:title><dc:creator>Ada</dc:creator></metadata>'
+        '<manifest>'
+        '<item id="c1" href="c1.xhtml" media-type="application/xhtml+xml" media-overlay="m1"/>'
+        '<item id="m1" href="c1.smil" media-type="application/smil+xml"/>'
+        '<item id="a1" href="audio/a1.mp4" media-type="audio/mp4"/>'
+        '<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>'
+        '</manifest><spine><itemref idref="c1"/></spine></package>'
+    ),
+    "OEBPS/toc.ncx": (
+        '<?xml version="1.0"?><ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">'
+        '<navMap><navPoint id="n1"><navLabel><text>The Assimilation</text></navLabel>'
+        '<content src="c1.xhtml"/></navPoint></navMap></ncx>'
+    ),
+    "OEBPS/c1.xhtml": (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<html xmlns="http://www.w3.org/1999/xhtml"><body><h1 id="h">Chapter One</h1>'
+        '<p><span id="s0">You will become one with the Borg.</span>'
+        '<span id="s1">Resistance is futile.</span></p></body></html>'
+    ),
+    "OEBPS/c1.smil": (
+        '<?xml version="1.0"?><smil xmlns="http://www.w3.org/ns/SMIL"'
+        ' xmlns:epub="http://www.idpf.org/2007/ops" version="3.0"><body>'
+        '<seq id="s" epub:textref="c1.xhtml" epub:type="chapter">'
+        '<par id="p0"><text src="c1.xhtml#s0"/>'
+        '<audio src="audio/a1.mp4" clipBegin="0.000s" clipEnd="3.500s"/></par>'
+        '<par id="p1"><text src="c1.xhtml#s1"/>'
+        '<audio src="audio/a1.mp4" clipBegin="3.500s" clipEnd="5.000s"/></par>'
+        '</seq></body></smil>'
+    ),
+}
+
+
+def _build_mo_epub(path: Path) -> Path:
+    with zipfile.ZipFile(path, "w") as z:
+        for name, data in _EPUB_FILES.items():
+            z.writestr(name, data)
+        z.writestr("OEBPS/audio/a1.mp4", _EPUB_AUDIO)
+    return path
+
+
+def test_browse_lists_epub_as_book(tmp_path: Path) -> None:
+    _build_mo_epub(tmp_path / "book.epub")
+    entries = _client(tmp_path).get("/api/library/browse", params={"path": str(tmp_path)}).json()["entries"]
+    books = [e for e in entries if e.get("is_book")]
+    assert len(books) == 1 and books[0]["name"] == "book.epub"
+
+
+def test_browse_book_lists_audio_segments(tmp_path: Path) -> None:
+    epub = _build_mo_epub(tmp_path / "book.epub")
+    segs = _client(tmp_path).get("/api/library/browse", params={"path": str(epub)}).json()["entries"]
+    assert len(segs) == 1  # one audio member -> one segment (both chapters fold in)
+    assert segs[0]["is_audio"] and segs[0]["name"] == "The Assimilation"
+    assert segs[0]["path"].endswith("#seg=0")
+
+
+def test_segment_subtitles_and_search(tmp_path: Path) -> None:
+    epub = _build_mo_epub(tmp_path / "book.epub")
+    client = _client(tmp_path)
+    ref = str(epub) + "#seg=0"
+    cues = client.get("/api/items/subtitles", params={"path": ref, "fmt": "json"}).json()
+    assert [c["text"] for c in cues] == ["You will become one with the Borg.", "Resistance is futile."]
+    hits = client.get("/api/search", params={"path": ref, "query": "resistance is futile"}).json()
+    assert hits["count"] >= 1
+
+
+def test_segment_media_serves_extracted_audio(tmp_path: Path) -> None:
+    epub = _build_mo_epub(tmp_path / "book.epub")
+    r = _client(tmp_path).get("/api/media", params={"path": str(epub) + "#seg=0"})
+    assert r.status_code == 200 and r.content == _EPUB_AUDIO
+
+
+def test_segment_item_info_route(tmp_path: Path) -> None:
+    epub = _build_mo_epub(tmp_path / "book.epub")
+    ref = str(epub) + "#seg=0"
+    fake = {"name": "x", "path": "x", "streams": [], "duration": 5.0,
+            "subtitle_tracks": [], "best_track": 0, "has_sidecar": False, "size": 1}
+    with patch("quipclipper_web.epub_items.media.item_info", return_value=dict(fake)):
+        info = _client(tmp_path).get("/api/items", params={"path": ref}).json()
+    assert info["name"] == "The Assimilation"
+    assert info["book_title"] == "The Test Book"
+    assert info["path"].endswith("#seg=0")
+
+
+def test_clip_from_segment_names_by_book(tmp_path: Path) -> None:
+    epub = _build_mo_epub(tmp_path / "book.epub")
+    client = _client(tmp_path)
+    ref = str(epub) + "#seg=0"
+    captured = {}
+
+    def fake_mkv(source, rng, **kw):
+        captured["source"] = source
+        out = kw["out"]
+        out = out.with_suffix(".mka") if out.suffix == "" else out
+        captured["out"] = out
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(b"clip")
+        return out
+
+    with (
+        patch("quipclipper_web.app.mkvmerge_available", return_value=True),
+        patch("quipclipper_web.app.cut_with_mkvmerge", side_effect=fake_mkv),
+        patch("quipclipper_web.app.cut_clip") as mock_ffmpeg,
+    ):
+        resp = client.post("/api/clip", json={
+            "path": ref, "start": 0.0, "end": 3.5, "kind": "video", "lossless": True,
+            "backend": "auto", "cue_text": "You will become one with the Borg.",
+        })
+        assert resp.status_code == 200
+        job_id = resp.json()["job_id"]
+        for _ in range(20):
+            job = client.get(f"/api/jobs/{job_id}").json()
+            if job["status"] in ("done", "failed"):
+                break
+            time.sleep(0.1)
+    assert job["status"] == "done", job
+    mock_ffmpeg.assert_not_called()  # forced audio -> lossless mkvmerge copy
+    # Cut from the extracted chapter audio, and named by book (folder) + chapter.
+    assert "epub_audio" in str(captured["source"])
+    assert "The Test Book" in str(captured["out"].parent)   # {source} = book title
+    assert "The_Assimilation" in captured["out"].name        # {title} = chapter

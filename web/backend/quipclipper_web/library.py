@@ -13,6 +13,7 @@ import os
 from dataclasses import dataclass, asdict
 from pathlib import Path
 
+from quipclipper.epub import is_media_overlay_epub
 from quipclipper.subtitles import AUDIO_EXTS, VIDEO_EXTS, find_sidecar
 
 
@@ -46,6 +47,7 @@ class Entry:
     is_video: bool
     has_sidecar: bool  # a sidecar subtitle/transcript sits next to this file
     is_audio: bool = False  # audio-only source (podcast/audiobook)
+    is_book: bool = False  # EPUB3 media-overlay audiobook (browses into chapters)
 
 
 def _is_video(p: Path) -> bool:
@@ -64,6 +66,10 @@ def _media_entry(child: Path) -> Entry | None:
         return Entry(child.name, str(child), False, True, find_sidecar(child) is not None)
     if _is_audio(child) and find_sidecar(child) is not None:
         return Entry(child.name, str(child), False, False, True, is_audio=True)
+    # A synced EPUB3 audiobook (media overlays) browses into its chapters like a
+    # folder, so present it as a book entry.
+    if child.suffix.lower() == ".epub" and is_media_overlay_epub(child):
+        return Entry(child.name, str(child), False, False, True, is_audio=False, is_book=True)
     return None
 
 

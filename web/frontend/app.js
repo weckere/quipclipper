@@ -106,11 +106,13 @@ function renderEntries(entries) {
   }
   for (const e of entries) {
     const li = document.createElement("li");
-    li.className = "entry " + (e.is_dir ? "dir" : "video");
-    const icon = e.is_dir ? "📁" : (e.is_audio ? "🎵" : "🎬");
-    const tag = !e.is_dir && e.has_sidecar ? ' <span class="badge">sub</span>' : "";
+    // A book (EPUB audiobook) browses into its chapters like a folder.
+    const intoFolder = e.is_dir || e.is_book;
+    li.className = "entry " + (intoFolder ? "dir" : "video");
+    const icon = e.is_dir ? "📁" : e.is_book ? "📚" : e.is_audio ? "🎵" : "🎬";
+    const tag = (!intoFolder && e.has_sidecar) ? ' <span class="badge">sub</span>' : "";
     li.innerHTML = `<span class="icon">${icon}</span><span class="label">${escapeHtml(e.name)}</span>${tag}`;
-    li.onclick = () => (e.is_dir ? browse(e.path) : openItem(e.path, e.name));
+    li.onclick = () => (intoFolder ? browse(e.path) : openItem(e.path, e.name));
     list.appendChild(li);
   }
 }
@@ -645,6 +647,9 @@ async function openItem(path, name, opts) {
   const isAudioOnly = !primaryVideo;
   currentItem.audioOnly = isAudioOnly;
   player.classList.toggle("audio-only", isAudioOnly);
+  // An EPUB segment reports its book title; show it as the heading (the segment
+  // name stays as the filename subtitle) so a chapter reads like an episode.
+  if (info.book_title) $("item-name").textContent = info.book_title;
   // "Audio only" / "Exact (re-encode)" are video-source concepts — hide them when
   // the source is already audio (the clip is always an audio passthrough/format).
   document.querySelectorAll(".video-only-opt").forEach((el) => { el.hidden = isAudioOnly; });

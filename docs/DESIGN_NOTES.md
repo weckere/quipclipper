@@ -575,9 +575,13 @@ narration + a SMIL map (each `<par>` ties a sentence to an audio clip) in one zi
 - *Extract on demand.* The engine cuts from real paths, so a matched line's audio
   member is copied out of the zip to a temp file, then handed to the normal
   `cut_clip` path. No whole-book unpack.
-- *Engine + CLI first; web deferred.* The reader and CLI `search`/`clip` are
-  isolated and testable without the heavy web plumbing; the web browse/player
-  integration is the planned next step.
+- *Engine + CLI first, then web.* The reader and CLI `search`/`clip` landed
+  first (isolated, testable without the web plumbing). The **web** integration
+  then presents a book as a *folder of audio segments* (grouped by audio member,
+  `<epub>#seg=N`): the embedded member is extracted to a cache on open and the
+  whole audio-only player/script/clip path is reused, so a chapter behaves like
+  any other audio item. The clip naming template is fed a synthetic source so
+  clips land under `<Book>/…_<Chapter>`.
 
 ---
 
