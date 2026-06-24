@@ -214,6 +214,23 @@ def test_clip_no_hwaccel_forces_software(tmp_path, monkeypatch):
     assert cap["cut_clip"]["video_encoder"] == "libx264"  # …but forced to software
 
 
+def test_search_langs_threaded_to_resolve(tmp_path, monkeypatch):
+    """--langs reaches resolve_subtitles, which drives language-aware sidecar +
+    embedded-track auto-selection (find_sidecar / best_track)."""
+    v = tmp_path / "movie.mkv"; v.write_bytes(b"")
+    cap = {}
+    cue = Cue(index=0, start=1.0, end=2.0, text="hello there")
+
+    def fake_resolve(*, subs, video, track, langs):
+        cap["langs"] = langs
+        return ResolvedSubtitles([cue], None)
+
+    monkeypatch.setattr(cli, "resolve_subtitles", fake_resolve)
+    res = runner.invoke(cli.app, ["search", "hello", "-v", str(v), "--langs", "es,en"])
+    assert res.exit_code == 0, res.output
+    assert cap["langs"] == "es,en"
+
+
 # --- EPUB3 media-overlay audiobooks -----------------------------------------
 
 def test_search_epub_audiobook(tmp_path):

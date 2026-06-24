@@ -400,21 +400,64 @@ def extract_embedded(video_path: str | Path, stream_index: int) -> list[Cue]:
         tmp_path.unlink(missing_ok=True)
 
 
-def find_sidecar(video_path: str | Path) -> Path | None:
-    """Find a subtitle file sitting next to the video (same stem)."""
-    video_path = Path(video_path)
-    for ext in SUBTITLE_EXTS:
-        candidate = video_path.with_suffix(ext)
-        if candidate.exists():
-            return candidate
-    # Also accept stem-prefixed names like "movie.en.srt". Skip yt-dlp's
-    # "*.info.json" metadata, which shares the stem but isn't a transcript.
-    matches = sorted(
+def _sidecar_candidates(video_path: Path) -> list[Path]:
+    """All sidecar subtitle/transcript files for a video: ``<stem>.<…>.<ext>``.
+
+    The ``<stem>.*`` glob requires the dot separator, so a sibling ``movie2.srt``
+    isn't picked up for ``movie``. yt-dlp's ``*.info.json`` metadata is skipped."""
+    return [
         p
-        for p in video_path.parent.glob(f"{video_path.stem}*")
+        for p in video_path.parent.glob(f"{video_path.stem}.*")
         if p.suffix.lower() in SUBTITLE_EXTS and not p.name.lower().endswith(".info.json")
-    )
-    return matches[0] if matches else None
+    ]
+
+
+def _sidecar_tags(stem: str, sidecar: Path) -> tuple[str | None, bool, bool, str]:
+    """Parse language + flags from the dotted tokens between a video's stem and the
+    subtitle extension — e.g. ``movie.hi.en.srt`` → ("en", forced=False, hi=True).
+
+    Returns (language, forced, hearing_impaired, joined_tokens). ``forced``/``sdh``/
+    ``cc`` are flags; ``hi`` is hearing-impaired only alongside another language
+    token (``.hi.en``), else it's the Hindi code (``.hi``). The language is the
+    first 2–3 letter code, else the first non-flag token."""
+    mid = sidecar.stem
+    if mid.lower().startswith(stem.lower()):
+        mid = mid[len(stem):]
+    tokens = [t.lower() for t in mid.split(".") if t]
+    forced = "forced" in tokens
+    hi = any(t in {"sdh", "cc"} for t in tokens)
+    lang_tokens = [t for t in tokens if t not in {"forced", "sdh", "cc"}]
+    if "hi" in lang_tokens and len(lang_tokens) > 1:
+        hi = True
+        lang_tokens = [t for t in lang_tokens if t != "hi"]
+    codes = [t for t in lang_tokens if t.isalpha() and 2 <= len(t) <= 3]
+    lang = codes[0] if codes else (lang_tokens[0] if lang_tokens else None)
+    return lang, forced, hi, " ".join(tokens)
+
+
+def find_sidecar(video_path: str | Path, langs=None) -> Path | None:
+    """Find the best sidecar subtitle/transcript next to a video (same stem).
+
+    When several exist (e.g. ``movie.en.srt`` + ``movie.hi.en.srt`` +
+    ``movie.de.srt``), the language + HI/forced/commentary flags are parsed from
+    each filename and scored with the same :func:`best_track` logic used for
+    embedded tracks, so the configured ``langs`` preference wins and HI/forced/
+    commentary are deprioritised. Ties break by extension priority
+    (``SUBTITLE_EXTS`` order), then alphabetically."""
+    video_path = Path(video_path)
+    candidates = _sidecar_candidates(video_path)
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0]
+    langs_t = normalize_langs(langs)
+
+    def rank(p: Path) -> tuple[int, int, str]:
+        lang, forced, hi, title = _sidecar_tags(video_path.stem, p)
+        track = SubtitleTrack(0, "subrip", lang, title, forced, hi)
+        return (-_track_score(track, langs_t), SUBTITLE_EXTS.index(p.suffix.lower()), p.name.lower())
+
+    return min(candidates, key=rank)
 
 
 _SDH_RE = re.compile(r"sdh|hearing|impaired|\bcc\b", re.IGNORECASE)
@@ -547,7 +590,7 @@ def resolve_subtitles(
     if not Path(video).exists():
         raise FileNotFoundError(f"Video file not found: {video}")
 
-    sidecar = find_sidecar(video)
+    sidecar = find_sidecar(video, langs)
     if sidecar:
         return ResolvedSubtitles(load_subtitles(sidecar), sidecar)
 

@@ -67,16 +67,19 @@ def _echo_match(rank: int, m: Match) -> None:
     typer.echo(f"      {m.text}")
 
 
-def _resolve(subs: Optional[Path], video: Optional[Path], track: Optional[int]) -> ResolvedSubtitles:
+def _resolve(
+    subs: Optional[Path], video: Optional[Path], track: Optional[int], langs=None,
+) -> ResolvedSubtitles:
     """Resolve cues, mapping engine errors to clean CLI exits.
 
-    When several embedded subtitle tracks exist and no ``--track`` is given,
-    the engine auto-selects the best dialogue track (English full dialogue >
-    SDH > forced; see ``best_track``). We echo which track it landed on so the
-    choice is visible; pass ``--track`` to override.
+    When several embedded subtitle tracks *or* sidecar files exist and no
+    ``--track`` is given, the engine auto-selects the best dialogue source for
+    ``langs`` (preferred language > others; full dialogue > SDH > forced >
+    commentary; see ``best_track``/``find_sidecar``). We echo which embedded track
+    it landed on; pass ``--track`` to override or ``--langs`` to set the preference.
     """
     try:
-        resolved = resolve_subtitles(subs=subs, video=video, track=track)
+        resolved = resolve_subtitles(subs=subs, video=video, track=track, langs=langs)
     except (ValueError, FileNotFoundError, RuntimeError) as exc:
         typer.secho(str(exc), fg="red", err=True)
         raise typer.Exit(code=2)
@@ -135,6 +138,11 @@ def search_cmd(
     subs: Optional[Path] = typer.Option(None, "--subs", "-s", help="Subtitle file (.srt/.vtt/.ass)."),
     video: Optional[Path] = typer.Option(None, "--video", "-v", help="Video file (for sidecar/embedded subs)."),
     track: Optional[int] = typer.Option(None, "--track", help="Subtitle track to use, by s:N index (from `tracks`)."),
+    langs: Optional[str] = typer.Option(
+        None, "--langs",
+        help="Preferred subtitle language(s) for auto-selection, comma-separated (e.g. en,es). "
+             "Default: English.",
+    ),
     limit: int = typer.Option(10, "--limit", "-n", help="Max matches to show."),
     min_score: float = typer.Option(60.0, "--min-score", help="Drop matches below this score (0-100)."),
     max_span: int = typer.Option(3, "--max-span", help="Max consecutive captions a match may join."),
@@ -150,7 +158,7 @@ def search_cmd(
         )
         cues = to_cues(book.cues)
     else:
-        cues = _resolve(subs, video, track).cues
+        cues = _resolve(subs, video, track, langs).cues
     matches = search(query, cues, limit=limit, min_score=min_score, max_span=max_span)
     if not matches:
         typer.secho("No matches.", fg="yellow")
@@ -248,6 +256,12 @@ def clip(
     video: Path = typer.Option(..., "--video", "-v", help="Video file to cut from."),
     subs: Optional[Path] = typer.Option(None, "--subs", "-s", help="Subtitle file (else sidecar/embedded)."),
     track: Optional[int] = typer.Option(None, "--track", help="Subtitle track to use, by s:N index (from `tracks`)."),
+    langs: Optional[str] = typer.Option(
+        None, "--langs",
+        help="Preferred subtitle language(s) for auto-selecting among sidecars/embedded "
+             "tracks, comma-separated (e.g. en,es). Prefers the language and deprioritizes "
+             "HI/forced/commentary. Default: English.",
+    ),
     kind: str = typer.Option("video", "--type", "-t", help="audio | video | gif."),
     lossless: Optional[bool] = typer.Option(
         None,
@@ -440,7 +454,7 @@ def clip(
         hwaccel if hwaccel is not None else vaapi_h264_available(vaapi_device)
     )
 
-    resolved = _resolve(subs, video, track)
+    resolved = _resolve(subs, video, track, langs)
     candidates = search(
         query, resolved.cues,
         limit=(limit if pick else max(index + 1, 5)),

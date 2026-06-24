@@ -162,6 +162,72 @@ def test_find_sidecar_prefers_srt_over_json(tmp_path):
     assert find_sidecar(audio) == srt
 
 
+# --- language-aware sidecar selection ---------------------------------------
+
+def _sidecars(tmp_path, names):
+    """Plant a movie + the named sidecars; return the movie path."""
+    v = tmp_path / "movie.mkv"
+    v.write_bytes(b"")
+    for n in names:
+        (tmp_path / n).write_text("x")
+    return v
+
+
+def test_sidecar_prefers_language_over_alphabetical(tmp_path):
+    # Old behavior picked alphabetically -> "de" beat "en". Now langs win.
+    v = _sidecars(tmp_path, ["movie.de.srt", "movie.en.srt"])
+    assert find_sidecar(v, ["en"]).name == "movie.en.srt"
+    assert find_sidecar(v, ["de"]).name == "movie.de.srt"
+
+
+def test_sidecar_deprioritizes_hearing_impaired(tmp_path):
+    v = _sidecars(tmp_path, ["movie.en.srt", "movie.hi.en.srt"])
+    assert find_sidecar(v, ["en"]).name == "movie.en.srt"
+    # A plain untagged sidecar also beats an HI one.
+    plain = tmp_path / "p"; plain.mkdir()
+    (plain / "movie.mkv").write_bytes(b"")
+    (plain / "movie.srt").write_text("x")
+    (plain / "movie.hi.en.srt").write_text("x")
+    assert find_sidecar(plain / "movie.mkv", ["en"]).name == "movie.srt"
+
+
+def test_sidecar_preferred_language_beats_hi_penalty(tmp_path):
+    # English HI still beats a non-preferred language: 100-10 > 0.
+    v = _sidecars(tmp_path, ["movie.hi.en.srt", "movie.de.srt"])
+    assert find_sidecar(v, ["en"]).name == "movie.hi.en.srt"
+
+
+def test_sidecar_language_beats_extension_priority(tmp_path):
+    # .srt outranks .vtt only as a tie-break; the preferred language dominates.
+    v = _sidecars(tmp_path, ["movie.de.srt", "movie.en.vtt"])
+    assert find_sidecar(v, ["en"]).name == "movie.en.vtt"
+    # Same language → extension priority decides.
+    v2dir = tmp_path / "e"; v2dir.mkdir()
+    (v2dir / "movie.mkv").write_bytes(b"")
+    (v2dir / "movie.en.srt").write_text("x")
+    (v2dir / "movie.en.vtt").write_text("x")
+    assert find_sidecar(v2dir / "movie.mkv", ["en"]).name == "movie.en.srt"
+
+
+def test_sidecar_deprioritizes_commentary(tmp_path):
+    v = _sidecars(tmp_path, ["movie.commentary.en.srt", "movie.en.srt"])
+    assert find_sidecar(v, ["en"]).name == "movie.en.srt"
+
+
+def test_sidecar_hi_alone_is_hindi_language(tmp_path):
+    # ".hi" alone is the Hindi code, not a hearing-impaired flag.
+    v = _sidecars(tmp_path, ["movie.hi.srt", "movie.en.srt"])
+    assert find_sidecar(v, ["hi"]).name == "movie.hi.srt"
+
+
+def test_sidecar_glob_requires_dot_separator(tmp_path):
+    # A sibling file sharing only a name prefix isn't a sidecar for this movie.
+    v = tmp_path / "movie.mkv"
+    v.write_bytes(b"")
+    (tmp_path / "movie2.srt").write_text("x")  # belongs to a different "movie2"
+    assert find_sidecar(v) is None
+
+
 def test_resolve_subtitles_missing_video_raises_clean_error(tmp_path):
     # A non-existent --video should be a clean FileNotFoundError, not a traceback
     # from ffprobe failing downstream.

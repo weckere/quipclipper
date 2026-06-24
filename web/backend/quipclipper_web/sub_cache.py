@@ -45,8 +45,11 @@ class SubtitleCache:
         self._inflight_guard = threading.Lock()
 
     def _source_mtime(self, video: Path) -> float:
-        """Mtime of the subtitle source — sidecar if present, else the video."""
-        sidecar = find_sidecar(video)
+        """Mtime of the subtitle source — sidecar if present, else the video.
+
+        Pass the server language preference so the *same* sidecar `resolve` picks
+        (language-aware) is the one whose mtime keys the cache."""
+        sidecar = find_sidecar(video, self._default_langs)
         target = sidecar if sidecar else video
         try:
             return Path(target).stat().st_mtime

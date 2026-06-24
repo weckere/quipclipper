@@ -170,7 +170,8 @@ quipclipper clip QUERY --video FILE [OPTIONS]
 | `QUERY` | — | Dialogue text to locate and clip. |
 | `--video`, `-v` | *required* | Source to cut from. A video file; an audio-only file (podcast/audiobook) — `--type video` is treated as `audio`; or an **EPUB3 media-overlay audiobook** (`.epub`, see [below](#epub3-audiobooks-experimental)) — always an audio clip from the embedded narration. |
 | `--subs`, `-s` | — | Subtitle file; otherwise a sidecar or embedded track is used. |
-| `--track` | — | Subtitle track by `s:N` index (from `tracks`); auto-selected when several exist (English full dialogue > SDH > forced; commentary tracks are deprioritised so a plain dialogue track wins). |
+| `--track` | — | Subtitle track by `s:N` index (from `tracks`); auto-selected when several exist (preferred language > others; full dialogue > SDH > forced; commentary tracks are deprioritised so a plain dialogue track wins). |
+| `--langs` | `en` | Preferred subtitle language(s), comma-separated (e.g. `en,es`). Drives auto-selection among **multiple sidecars** (`movie.en.srt` vs `movie.de.srt` vs `movie.hi.en.srt`) and embedded tracks: the preferred language wins and HI/forced/commentary are deprioritised. |
 
 **What to produce**
 
@@ -429,7 +430,16 @@ container's `hearing_impaired`/`forced` dispositions, with a title-text fallback
 (`SDH`, `forced`, …). A **commentary** track (title contains "comment") is ranked
 below every normal text track, so a plain dialogue track always wins over a
 commentary transcript — it's only chosen when it's the only option. Ties keep
-container order.
+container order. The preferred language is English by default; set `--langs`
+(e.g. `--langs es,en`) to change it.
+
+**Multiple sidecar files** are selected the same way. When several sit next to a
+video — `movie.en.srt`, `movie.de.srt`, `movie.hi.en.srt`, `movie.commentary.en.srt`,
+`movie.en.vtt` — the language and HI/forced/commentary flags are parsed from each
+filename (`.en`, `.hi.en` = hearing-impaired English, `.forced`, `.sdh`/`.cc`) and
+scored with the same logic, so the preferred-language non-HI file wins. (`.hi`
+*alone* is treated as the Hindi language code, not a flag.) A single sidecar is
+always used as-is; ties break by extension priority (`.srt` > `.vtt` > … > `.json`).
 
 **Image subtitles (PGS/VOBSUB) are not usable.** Blu-ray `.sup` (PGS) and DVD
 VOBSUB tracks are bitmaps, not text — they can't be extracted to SRT, searched,
