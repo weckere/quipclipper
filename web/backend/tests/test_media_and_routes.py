@@ -1282,6 +1282,29 @@ def test_segment_subtitles_and_search(tmp_path: Path) -> None:
     assert hits["count"] >= 1
 
 
+def test_folder_search_finds_books_in_a_folder(tmp_path: Path) -> None:
+    """Folder dialogue search sweeps EPUB books too, with hits pointing at the
+    chapter (segment ref) so opening one lands on the line."""
+    _build_mo_epub(tmp_path / "book.epub")
+    r = _client(tmp_path).get(
+        "/api/search/folder", params={"path": str(tmp_path), "query": "resistance is futile"},
+    ).json()
+    assert r["files_scanned"] == 1 and r["count"] >= 1
+    hit = next(h for h in r["matches"] if "Resistance is futile." in h["text"])
+    assert hit["path"].endswith("#seg=0")  # points at the chapter
+    assert "The Test Book" in hit["file"]
+
+
+def test_folder_search_targets_a_book_directly(tmp_path: Path) -> None:
+    """`/api/search/folder` accepts an EPUB book as its target (not just a dir)."""
+    epub = _build_mo_epub(tmp_path / "book.epub")
+    r = _client(tmp_path).get(
+        "/api/search/folder", params={"path": str(epub), "query": "become one with the borg"},
+    ).json()
+    assert r["files_scanned"] == 1
+    assert any(h["path"].endswith("#seg=0") for h in r["matches"])
+
+
 def test_segment_media_streams_from_zip(tmp_path: Path) -> None:
     epub = _build_mo_epub(tmp_path / "book.epub")
     r = _client(tmp_path).get("/api/media", params={"path": str(epub) + "#seg=0"})

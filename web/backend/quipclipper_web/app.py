@@ -502,19 +502,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         search engine and collect the top results.  Returns a flat list of
         matches grouped by source file, sorted best-score-first across all files.
         """
-        # Resolve and validate every requested folder.
+        # Resolve and validate every requested target: a folder to scan, or an
+        # EPUB audiobook to search directly (its chapters are searched like files).
         folders: list[Path] = []
+        books: list[Path] = []
+        seen: set[Path] = set()
+        seen_books: set[Path] = set()
         for p in path:
-            folder = _resolve(p)
-            if not folder.is_dir():
-                raise HTTPException(status_code=400, detail=f"Not a directory: {p}")
-            folders.append(folder)
+            target = _resolve(p)
+            if epub_items.is_epub_book(target):
+                rp = target.resolve()
+                if rp not in seen_books:
+                    seen_books.add(rp)
+                    books.append(target)
+            elif target.is_dir():
+                folders.append(target)
+            else:
+                raise HTTPException(status_code=400, detail=f"Not a directory or book: {p}")
 
         all_hits: list[dict] = []
 
-        # Collect video files recursively across all folders, de-duplicated
-        # (folders may overlap) and sorted for deterministic order.
-        seen: set[Path] = set()
+        # Collect video files and EPUB books recursively across all folders,
+        # de-duplicated (folders may overlap) and sorted for deterministic order.
         videos: list[Path] = []
         for folder in folders:
             for c in folder.rglob("*"):
@@ -523,7 +532,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     if rp not in seen:
                         seen.add(rp)
                         videos.append(c)
+                elif c.suffix.lower() == ".epub" and epub_items.is_epub_book(c):
+                    rp = c.resolve()
+                    if rp not in seen_books:
+                        seen_books.add(rp)
+                        books.append(c)
         videos.sort(key=lambda p: p.name.lower())
+        books.sort(key=lambda p: p.name.lower())
 
         def _search_one(video: Path) -> list[dict]:
             try:
@@ -550,8 +565,42 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 for m in matches
             ]
 
+        def _search_book(epub: Path) -> list[dict]:
+            """Search every chapter of an EPUB audiobook; hits point at the chapter
+            (a segment ref) so opening one lands on the right line."""
+            try:
+                book = epub_items.book_for(epub)
+                segs = epub_items.segments(book)
+            except (ValueError, OSError):
+                return []
+            cand: list[tuple] = []
+            for s in segs:
+                for m in engine_search(
+                    query, [c.as_cue() for c in s.cues],
+                    limit=limit, min_score=min_score, max_span=max_span,
+                ):
+                    cand.append((s, m))
+            cand.sort(key=lambda sm: -sm[1].score)
+            title = book.title or epub.stem
+            return [
+                {
+                    "file": f"{title} — {s.title or f'Part {s.index + 1}'}",
+                    "path": epub_items.make_ref(epub, s.index),
+                    "score": round(m.score, 1),
+                    "text": m.text,
+                    "speaker": None,
+                    "start": m.start,
+                    "end": m.end,
+                    "start_ts": format_timestamp(m.start),
+                    "end_ts": format_timestamp(m.end),
+                    "cue_count": len(m.cues),
+                }
+                for s, m in cand[:limit]
+            ]
+
         with ThreadPoolExecutor(max_workers=4) as pool:
             futures = {pool.submit(_search_one, v): v for v in videos}
+            futures.update({pool.submit(_search_book, b): b for b in books})
             for fut in as_completed(futures):
                 all_hits.extend(fut.result())
 
@@ -560,7 +609,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {
             "query": query,
             "folders": path,
-            "files_scanned": len(videos),
+            "files_scanned": len(videos) + len(books),
             "count": len(all_hits),
             "matches": all_hits,
         }
