@@ -53,10 +53,17 @@ engine for scripting and quick one-off cuts.
   a result selects the matching dialogue line in **Marks** (highlighted in the
   script), ready to clip or fine-tune.
 - **Folder dialogue search** — search subtitles across every video in one or more
-  folders at once (including the folders surfaced by a library search). Useful for
-  finding a line when you don't know which episode it's in. Clicking a hit opens
-  that file and selects the matched line in Marks. A subtitle cache plus a
-  pre-index button make repeat searches near-instant.
+  folders at once. Useful for finding a line when you don't know which episode
+  it's in. Clicking a hit opens that file and selects the matched line in Marks.
+  A subtitle cache plus a pre-index button make repeat searches near-instant.
+  - **Scope follows the library filter.** When you type in the **library
+    (name) filter**, the dialogue search narrows to *exactly the folders that
+    filter surfaced* — not the whole folder you started in. The dialogue search
+    box shows which mode is active: **"Search dialogue across N folders…"** (scoped
+    to your N filtered folders) vs **"Search dialogue in this folder…"** (no
+    filter — the current folder, searched recursively). Clearing the filter
+    reverts to the current folder. (A filter that matches only *files*, not
+    folders, doesn't narrow the scope — it falls back to the current folder.)
 - **Scrolling script view** — the full subtitle script scrolls with playback;
   click a line to seek, hover (or tap, on touch) for Start/End buttons to select
   a clip range by dialogue lines (timestamps are derived from the selected cues).
