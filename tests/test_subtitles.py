@@ -4,6 +4,7 @@ import pytest
 
 from quipclipper.subtitles import (
     SubtitleTrack,
+    _sidecar_candidates,
     best_track,
     find_sidecar,
     load_subtitles,
@@ -226,6 +227,23 @@ def test_sidecar_glob_requires_dot_separator(tmp_path):
     v.write_bytes(b"")
     (tmp_path / "movie2.srt").write_text("x")  # belongs to a different "movie2"
     assert find_sidecar(v) is None
+
+
+def test_sidecar_finds_subs_when_filename_has_glob_metacharacters(tmp_path):
+    # Regression: media names routinely contain [...] release/quality tags (and
+    # *, ? too). A glob-based match reads "[1080p]" as a character class and finds
+    # NOTHING — dropping bare and language-suffixed sidecars alike. Literal-prefix
+    # matching must still find them.
+    stem = "Movie (2021) [1080p] {x265}"
+    v = tmp_path / f"{stem}.mkv"
+    v.write_bytes(b"")
+    (tmp_path / f"{stem}.srt").write_text("x")
+    (tmp_path / f"{stem}.en.srt").write_text("x")
+    (tmp_path / f"{stem}.hi.en.srt").write_text("x")
+    cands = sorted(p.name for p in _sidecar_candidates(v))
+    assert cands == [f"{stem}.en.srt", f"{stem}.hi.en.srt", f"{stem}.srt"]
+    # Plain English preferred over the HI-tagged one.
+    assert find_sidecar(v, ["en"]).name == f"{stem}.en.srt"
 
 
 def test_resolve_subtitles_missing_video_raises_clean_error(tmp_path):

@@ -403,12 +403,24 @@ def extract_embedded(video_path: str | Path, stream_index: int) -> list[Cue]:
 def _sidecar_candidates(video_path: Path) -> list[Path]:
     """All sidecar subtitle/transcript files for a video: ``<stem>.<…>.<ext>``.
 
-    The ``<stem>.*`` glob requires the dot separator, so a sibling ``movie2.srt``
-    isn't picked up for ``movie``. yt-dlp's ``*.info.json`` metadata is skipped."""
+    Matched by a literal ``<stem>.`` filename prefix — deliberately NOT ``glob``:
+    media filenames routinely carry glob metacharacters (``Movie (2021) [1080p].mkv``,
+    ``Show S01E01 [BluRay-x265].mkv``), and ``glob(f"{stem}.*")`` would read the ``[…]``
+    as a character class (and ``*``/``?`` as wildcards), silently matching *nothing* and
+    dropping every sidecar — bare ``.srt`` and language-suffixed ``.en.srt``/``.hi.en.srt``
+    alike. The trailing dot is still required, so a sibling ``movie2.srt`` isn't picked up
+    for ``movie``; yt-dlp's ``*.info.json`` metadata is skipped."""
+    prefix = video_path.stem + "."
+    try:
+        siblings = list(video_path.parent.iterdir())
+    except OSError:
+        return []
     return [
         p
-        for p in video_path.parent.glob(f"{video_path.stem}.*")
-        if p.suffix.lower() in SUBTITLE_EXTS and not p.name.lower().endswith(".info.json")
+        for p in siblings
+        if p.name.startswith(prefix)
+        and p.suffix.lower() in SUBTITLE_EXTS
+        and not p.name.lower().endswith(".info.json")
     ]
 
 
