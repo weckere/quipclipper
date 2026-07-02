@@ -61,6 +61,7 @@ function showItem() {
 
 let currentBrowsePath = null;
 let librarySearchTimer = null;
+let librarySearchId = 0;  // generation token so a slow search can't overwrite a newer one
 // When a library search surfaces folders, holds their paths so dialogue
 // search can span all of them. null = search the current folder only.
 let dialogueSearchScope = null;
@@ -127,6 +128,7 @@ async function librarySearch(query) {
   $("browser-empty").hidden = true;
   $("index-banner").hidden = true;
   ++indexCheckId;
+  const myId = ++librarySearchId;
 
   let url = `/api/library/search?query=${encodeURIComponent(query)}`;
   if (currentBrowsePath) url += `&path=${encodeURIComponent(currentBrowsePath)}`;
@@ -135,9 +137,11 @@ async function librarySearch(query) {
   try {
     data = await getJSON(url);
   } catch (err) {
+    if (myId !== librarySearchId) return;  // a newer search superseded us
     list.innerHTML = `<li class="error">Search failed: ${escapeHtml(err.message)}</li>`;
     return;
   }
+  if (myId !== librarySearchId) return;  // a newer search's results are already shown
   renderEntries(data.entries);
 
   // Enable cross-folder dialogue search over the folders this search surfaced.
@@ -623,9 +627,16 @@ async function openItem(path, name, opts) {
     info = await getJSON("/api/items" + qp(path) +
       (subtitleLangs() ? `&langs=${encodeURIComponent(subtitleLangs())}` : ""));
   } catch (err) {
+    if (signal.aborted) return;  // superseded while the request was in flight
     $("preview-note").innerHTML = `<span class="error">${escapeHtml(err.message)}</span>`;
     return;
   }
+  // A newer openItem may have started (aborting our signal) while /api/items was
+  // in flight. Bail before touching the shared player/pb/onerror/stream state —
+  // otherwise this stale response wires the previous item's media into the new
+  // item's view (and a clip would be cut from the wrong file). The per-item
+  // listeners below are already signal-scoped; these direct assignments are not.
+  if (signal.aborted) return;
 
   const player = $("player");
   player.style.aspectRatio = "";  // back to the default box until this item's dims load
@@ -1433,6 +1444,7 @@ $("player").addEventListener("timeupdate", updateScript);
 
 async function loadBookmarks() {
   if (!currentItem) return;
+  const item = currentItem;  // guard against an item switch during the fetch
   const list = $("bookmarks-list");
   const empty = $("bookmarks-empty");
   list.innerHTML = "";
@@ -1440,8 +1452,12 @@ async function loadBookmarks() {
 
   let data;
   try {
-    data = await getJSON(`/api/bookmarks${qp(currentItem.path)}`);
+    data = await getJSON(`/api/bookmarks${qp(item.path)}`);
   } catch { return; }
+
+  // A newer item was opened while this request was in flight — its own
+  // loadBookmarks owns the list now; don't overwrite it with stale bookmarks.
+  if (currentItem !== item) return;
 
   if (!data.bookmarks.length) {
     empty.hidden = false;

@@ -15,7 +15,9 @@ services:
       QC_CLIPS_DIR: /clips
       QC_CLIPS_URL_PREFIX: /clips     # nginx serves the clips volume directly
       QC_STATE_DIR: /state
-      # QC_PASSWORD: change-me           # presence flips the UI to "auth required"
+      # QC_PASSWORD: change-me           # presence flips the UI to "auth required".
+                                         # The gate itself is enforced by nginx —
+                                         # set the same value on the web service below.
     volumes:
       # Mount your real library here (read-only). Point QC_MEDIA_ROOTS at it.
       # - /srv/media:/media:ro
@@ -26,15 +28,26 @@ services:
     restart: unless-stopped
 
   web:
-    image: nginx:stable
+    # Build the bundled nginx image (bakes an empty quip-auth.conf + the
+    # 40-quip-auth.sh entrypoint + htpasswd). Stock nginx:stable can't be used
+    # here: nginx.conf `include`s /etc/nginx/quip-auth.conf, which only exists in
+    # this image, so a stock image would fail to start.
+    build:
+      context: ..
+      dockerfile: web/nginx/Dockerfile
     depends_on:
       - app
     ports:
       - "8896:80"
+    # Bind-mount the frontend + site config over the baked copies so edits show
+    # up on restart without a rebuild (dev ergonomics).
     volumes:
       - ./frontend:/usr/share/nginx/html:ro
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - quip-clips:/clips:ro
+    # environment:
+    #   QC_PASSWORD: change-me           # enables the HTTP basic-auth gate for the
+    #   QC_USERNAME: quip                 # whole site (username defaults to "quip")
     restart: unless-stopped
 
 volumes:

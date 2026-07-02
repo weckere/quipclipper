@@ -20,6 +20,11 @@ let
   stateDir = "/var/lib/quipclipper-web/state";
   # Group owning the clips dir: an explicit shared group, else the service's own.
   clipsGroupName = if cfg.clipsGroup != null then cfg.clipsGroup else cfg.group;
+  # Backend URL for the nginx reverse proxy. Bracket IPv6 literals (e.g. ::1)
+  # so proxy_pass gets http://[::1]:8000, not the invalid http://::1:8000.
+  proxyAddr = if lib.hasInfix ":" cfg.listenAddress
+    then "[${cfg.listenAddress}]" else cfg.listenAddress;
+  proxyTarget = "http://${proxyAddr}:${toString cfg.listenPort}";
   # nginx vhost listen entries: explicit `nginx.listen`, else derived from
   # `nginx.port`. The vhost is a catch-all default_server only when asked and no
   # server_name is set (a named vhost shouldn't grab every unmatched request).
@@ -233,6 +238,16 @@ in
       }
     ];
 
+    # The basic-auth gate is enforced by the bundled nginx. With nginx.enable =
+    # false, passwordFile enforces nothing (the backend has no auth of its own) —
+    # yet the UI still reports auth as required. Warn so a "bring your own front"
+    # setup doesn't ship believing it's password-protected when it isn't.
+    warnings = lib.optional (cfg.passwordFile != null && !cfg.nginx.enable) ''
+      services.quipclipper-web.passwordFile is set but nginx.enable = false, so
+      no HTTP basic-auth gate is applied. Enforce authentication in your own
+      reverse proxy, or the service is reachable without a password.
+    '';
+
     users.users = {
       ${cfg.user} = {
         isSystemUser = true;
@@ -346,7 +361,35 @@ in
           '';
         };
         locations."/api/" = {
-          proxyPass = "http://${cfg.listenAddress}:${toString cfg.listenPort}";
+          proxyPass = proxyTarget;
+        };
+        # Subtitle pre-indexing streams one progress line per file and can take
+        # several minutes — disable buffering (so the UI sees progress) and raise
+        # the read timeout well past nginx's 60s default.
+        locations."/api/search/folder/index" = {
+          proxyPass = proxyTarget;
+          extraConfig = ''
+            proxy_buffering off;
+            proxy_read_timeout 600s;
+          '';
+        };
+        # Folder dialogue search extracts subtitles from many files and can be slow.
+        locations."/api/search/folder" = {
+          proxyPass = proxyTarget;
+          extraConfig = ''
+            proxy_read_timeout 300s;
+          '';
+        };
+        # Transcode stream — a long-running live ffmpeg StreamingResponse feeding
+        # the <video> element. Disable buffering so output reaches the browser
+        # immediately, and allow a long connection.
+        locations."/api/media/transcode" = {
+          proxyPass = proxyTarget;
+          extraConfig = ''
+            proxy_buffering off;
+            proxy_read_timeout 3600s;
+            proxy_send_timeout 3600s;
+          '';
         };
         locations."/clips/" = {
           alias = "${cfg.clipsDir}/";

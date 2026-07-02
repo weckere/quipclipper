@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 import typer
 from typer.testing import CliRunner
@@ -246,8 +248,16 @@ def test_clip_epub_cuts_matched_line_from_embedded_audio(tmp_path, monkeypatch):
     cap = {}
 
     def fake_cut(source, rng, **kw):
+        # Mimic the real cut_clip: when `out` is None it auto-names next to the
+        # *source* (which for EPUB is the audio extracted into a TemporaryDirectory).
         cap.update(source=source, rng=rng, kw=kw)
-        return kw.get("out") or tmp_path / "out.mka"
+        out = kw.get("out")
+        if out is None:
+            src = Path(source)
+            out = src.with_name(f"{src.stem}_clip.mka")
+        out = Path(out)
+        out.write_bytes(b"clip")
+        return out
 
     monkeypatch.setattr(cli, "cut_clip", fake_cut)
     res = runner.invoke(cli.app, ["clip", "become one with the borg", "-v", str(epub), "--yes"])
@@ -259,6 +269,14 @@ def test_clip_epub_cuts_matched_line_from_embedded_audio(tmp_path, monkeypatch):
     assert cap["rng"].end == pytest.approx(5.5)
     # Cut from the extracted embedded audio member, not the .epub itself.
     assert cap["source"].name == "part1.mp4"
+    # Regression: with no --out the clip must be auto-named next to the *epub*,
+    # not next to the extracted audio (which lives in a temp dir deleted on exit).
+    out_path = cap["kw"]["out"]
+    assert out_path is not None, "cut_clip called with out=None → clip lands in the deleted temp dir"
+    assert out_path.parent == epub.parent
+    # And the file the CLI reported writing must still exist afterwards.
+    assert out_path.exists(), "reported clip does not exist after the command returned"
+    assert str(out_path) in res.output
 
 
 def test_clip_epub_rejects_split_channels(tmp_path):

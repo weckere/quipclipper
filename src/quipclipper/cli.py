@@ -239,7 +239,9 @@ def _clip_epub(
                 fg="bright_black",
             )
         rng = ClipRange(start=max(0.0, m.start - before), end=m.end + after)
-        out_path = out if single else _epub_clip_name(video, m.start, m.text, ext)
+        # Default the output next to the *epub* (not next to tmp_audio, which
+        # lives in the TemporaryDirectory below and would be deleted on exit).
+        out_path = out if out is not None else _epub_clip_name(video, m.start, m.text, ext)
         with tempfile.TemporaryDirectory() as td:
             tmp_audio = extract_audio_member(video, first.audio, Path(td) / Path(first.audio).name)
             written.append(cut_clip(
