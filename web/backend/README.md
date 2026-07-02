@@ -10,16 +10,16 @@ and a NixOS module.
 
 ## Deploy with Docker
 
-See the [Web App quick start](../../README.md#web-app) in the root README for a
-ready-to-paste `docker-compose.yml` that builds both images directly from the
-GitHub repo — you only need that one file on the server. For local development,
+See the [Quick start (Docker Compose)](../../README.md#quick-start-docker-compose)
+in the root README for a ready-to-edit `docker-compose.yml` using the prebuilt
+GHCR images (a build-from-source variant is shown there too). For local development,
 [`../docker-compose.yml`](../docker-compose.yml) builds from the working tree and
 bind-mounts the frontend/nginx config so edits show up without a rebuild.
 
 ## Run locally (dev)
 
 ```bash
-pip install -e ..        # install the quipclipper engine (repo root)
+pip install -e ../..     # install the quipclipper engine (repo root)
 pip install -e ".[dev]"  # install this backend + test deps
 quipclipper-web          # serves on QC_BIND:QC_PORT (default 127.0.0.1:8000)
 ```
@@ -29,7 +29,7 @@ deployment nginx serves the frontend and proxies `/api` to this process.
 
 ## Configuration
 
-Environment variables (mirrored 1:1 by the NixOS module options):
+Environment variables (mirrored by the NixOS module options):
 
 | Var | Default | Purpose |
 |---|---|---|

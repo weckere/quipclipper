@@ -95,7 +95,7 @@ quipclipper clip "get to the chopper" --video movie.mkv --type video --lossless
 
 ```
 subtitles ──parse──► cues ──fuzzy search──► ranked matches ──pick──► time range ──cut──► clip
- (.srt/.vtt/.ass/.json) (timed lines)          (non-overlapping)        (+padding)    (ffmpeg/mkvmerge)
+ (.srt/.vtt/.ass/.ssa/.sub/.json) (timed lines) (non-overlapping)       (+padding)    (ffmpeg/mkvmerge)
 ```
 
 1. **Parse** the subtitle source into `Cue`s (a timed line of dialogue). The
@@ -143,6 +143,7 @@ quipclipper search QUERY [OPTIONS]
 | `--subs`, `-s` | — | Subtitle/transcript file (`.srt`/`.vtt`/`.ass`/`.sub`/`.json`). |
 | `--video`, `-v` | — | Video file (used to find a sidecar or extract an embedded track). |
 | `--track` | — | Subtitle track by s:N index (from `tracks`); auto-selected when several exist (English full dialogue > SDH > forced). |
+| `--langs` | `en` | Preferred subtitle language(s) for auto-selection among sidecars/embedded tracks, comma-separated (e.g. `en,es`). |
 | `--limit`, `-n` | 10 | Maximum number of matches to show. |
 | `--min-score` | 60 | Drop matches scoring below this (0–100). |
 | `--max-span` | 3 | Max consecutive captions a single match may join. |
@@ -510,6 +511,7 @@ src/quipclipper/
   search.py      Fuzzy ranking over single cues and sliding windows; collapses overlapping span-variants.
   clip.py        Compute the padded time range and cut with ffmpeg (lossless copy, re-encode, or channel split).
   mkv.py         MKVToolNix (mkvmerge) backend for lossless cuts; remux-first; disk-space estimate.
+  epub.py        EPUB3 media-overlay audiobooks: detect, OPF/NCX/SMIL → chapters + cues, extract embedded audio.
   cli.py         typer CLI: search, clip, tracks.
 ```
 
@@ -527,8 +529,9 @@ pytest
 
 The test suite covers subtitle parsing (markup stripping, multi-line joining),
 search ranking and span-variant collapse, output/container selection, ffmpeg and
-mkvmerge command construction, channel grouping, the SRT renderer, and the CLI's
-selection parsing. The command-building tests are pure functions and need no
+mkvmerge command construction, channel grouping, the SRT renderer, the CLI's
+selection parsing, EPUB media-overlay parsing, and JSON transcript formats. The
+command-building tests are pure functions and need no
 media; the integration behaviour was verified against real `ffmpeg` and
 `mkvmerge` during development.
 

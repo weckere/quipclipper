@@ -1,5 +1,7 @@
 # quipclipper-web — Project Plan
 
+*Historical plan (pre-implementation); Jellyfin enrichment and `QC_SAVE_TO_LIBRARY` were later dropped — see [`WEBAPP_PROGRESS.md`](WEBAPP_PROGRESS.md).*
+
 A self-hosted **web application** that reproduces everything the quipclipper CLI
 does, served by **nginx**, deployable **either as a Docker container or as a Nix
 flake with a declarative NixOS module**. It is meant to run on the same host as

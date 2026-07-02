@@ -50,6 +50,9 @@ first**: never degrade the source unless explicitly asked.
 **Alternatives considered:** A GUI/web app, or speech-to-text search of the audio
 track. Both were rejected as far more work for no benefit when subtitles exist;
 the project deliberately targets "any video that ships with subtitles."
+(A web app was later added on top of the same engine — see
+[`WEBAPP_PLAN.md`](WEBAPP_PLAN.md); the CLI-first scoping here describes the
+original engine.)
 
 ---
 
@@ -103,6 +106,10 @@ explicitly because it is easy to conflate "lossless cut" with "lossless codec."
 **Exceptions:** GIF is inherently a re-encode. `--no-lossless` exists for the cases
 where a re-encode is actually wanted (frame-exact boundaries, or a portable format
 like MP3/MP4).
+
+*Update:* the video default later changed to a frame-exact re-encode (matching
+the web app's Exact toggle); audio remains a lossless copy by default.
+`--lossless` restores the stream-copy video cut.
 
 ---
 

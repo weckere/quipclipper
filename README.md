@@ -134,6 +134,7 @@ services:
     environment:
       QC_MEDIA_ROOTS: /media/movies:/media/shows
       QC_CLIPS_DIR: /clips
+      QC_CLIPS_URL_PREFIX: /clips
       QC_STATE_DIR: /state
     volumes:
       - /path/to/movies:/media/movies:ro
@@ -493,7 +494,7 @@ quipclipper clip "hasta la vista" --video movie.mkv --type gif
 quipclipper clip "i'll be back" --video movie.mkv --type audio --no-lossless
 
 # pick a different ranked match, name the output, skip the confirm prompt
-quipclipper clip "come with me" -v movie.mkv -i 1 -o out.m4a --yes
+quipclipper clip "come with me" -v movie.mkv -t audio -i 1 -o out.m4a --yes
 ```
 
 By default the clip covers the matched line's own start/end plus `--before` /
@@ -688,10 +689,11 @@ quipclipper clip "i'll be back" -v movie.mkv -t video --lossless --no-embed-subs
 | Module | Responsibility |
 |---|---|
 | `models.py` | `Cue` (a timed subtitle line) and `Match` (a ranked hit). |
-| `subtitles.py` | Parse `.srt`/`.vtt`/`.ass`/`.sub`; find sidecars; list/extract embedded tracks; list all streams. |
+| `subtitles.py` | Parse `.srt`/`.vtt`/`.ass`/`.ssa`/`.sub`/`.json`; find sidecars; list/extract embedded tracks; list all streams. |
 | `search.py` | Fuzzy ranking (`rapidfuzz`) over single cues and sliding windows of consecutive cues; collapses overlapping span-variants into non-overlapping results. |
 | `clip.py` | Turn a match into a padded time range and cut it with ffmpeg (lossless `-c copy`, re-encode, or surround channel split). |
 | `mkv.py` | MKVToolNix (`mkvmerge`) backend for lossless cuts of Matroska sources. |
+| `epub.py` | EPUB3 media-overlay audiobooks: detect by manifest, parse chapters/cues from OPF/NCX/SMIL, extract the embedded narration audio. |
 | `cli.py` | `typer` CLI: `search`, `clip`, `tracks`. |
 | `web/` | Self-hosted web app (FastAPI + nginx + vanilla JS) — the engine behind the [Features](#features) above. |
 
@@ -702,8 +704,9 @@ pip install -e ".[dev]"
 pytest
 ```
 
-The tests cover subtitle parsing (markup stripping, multi-line joining) and the
-search ranking, and don't require ffmpeg.
+The tests cover subtitle/transcript parsing, search ranking, ffmpeg and mkvmerge
+command construction, channel grouping, EPUB overlay parsing, and the CLI's
+selection logic — and don't require ffmpeg.
 
 ## License
 
