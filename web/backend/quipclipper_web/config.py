@@ -44,6 +44,12 @@ class Settings:
             # directly. Empty = downloads go through the backend API.
             clips_url_prefix=e.get("QC_CLIPS_URL_PREFIX", "").rstrip("/"),
             state_dir=Path(e.get("QC_STATE_DIR", "./state")).expanduser(),
+            # SECURITY: the backend has NO auth of its own — the nginx front is
+            # the only gate (HTTP basic auth when QC_PASSWORD is set). The safe
+            # default binds to loopback so the API is only reachable through that
+            # proxy. Setting QC_BIND to a non-loopback address without a proxy in
+            # front exposes every endpoint (media browse, clip, delete) unguarded
+            # on the LAN. Keep it 127.0.0.1 unless nginx is doing the auth.
             listen_address=e.get("QC_BIND", "127.0.0.1"),
             listen_port=int(e.get("QC_PORT", "8000")),
             max_concurrent_jobs=int(e.get("QC_MAX_CONCURRENT_JOBS", "2")),

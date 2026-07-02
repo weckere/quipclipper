@@ -15,11 +15,16 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from quipclipper.clip import ClipRange, _timestamp_slug
+from quipclipper.clip import ClipRange, _argv_path, _timestamp_slug
 from quipclipper.models import format_timestamp
 
 # Containers mkvmerge can split natively (Matroska family).
 MATROSKA_SUFFIXES = (".mkv", ".mka", ".mks", ".webm")
+
+# Subprocess timeouts (seconds): a generous ceiling for a cut/remux (mkvmerge can
+# copy a large source), a short one for the ffprobe keyframe scan.
+_CUT_TIMEOUT = 3600
+_PROBE_TIMEOUT = 60
 
 
 def mkvmerge_available() -> bool:
@@ -62,20 +67,39 @@ def _ts(seconds: float) -> str:
 
 def identify(source: str | Path) -> list[dict]:
     """Return mkvmerge's track list for `source` (id, type, codec, properties)."""
-    proc = subprocess.run(
-        ["mkvmerge", "-J", str(source)], capture_output=True, text=True
-    )
+    try:
+        proc = subprocess.run(
+            ["mkvmerge", "-J", _argv_path(source)], capture_output=True, text=True,
+            timeout=_PROBE_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"mkvmerge timed out identifying {source}.") from exc
     if proc.returncode not in (0, 1):  # 1 = warnings, still usable
         raise RuntimeError(f"mkvmerge identify failed:\n{proc.stderr.strip()}")
-    return json.loads(proc.stdout or "{}").get("tracks", [])
+    try:
+        return json.loads(proc.stdout or "{}").get("tracks", [])
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"mkvmerge returned unreadable output for {source}: {exc}") from exc
 
 
 def audio_track_ids(tracks: list[dict], audio_indices: list[int] | None) -> list[int]:
-    """Map ffmpeg-style a:N indices to mkvmerge global track ids (None = all)."""
+    """Map ffmpeg-style a:N indices to mkvmerge global track ids (None = all).
+
+    A requested index that names no audio stream is an error rather than being
+    silently dropped — otherwise ``--audio-track 0,5`` on a 2-audio source would
+    quietly keep only a:0 with no hint that a:5 was ignored."""
     audio = [t for t in tracks if t.get("type") == "audio"]
     if audio_indices is None:
         return [t["id"] for t in audio]
-    return [audio[i]["id"] for i in audio_indices if 0 <= i < len(audio)]
+    bad = [i for i in audio_indices if not 0 <= i < len(audio)]
+    if bad:
+        raise RuntimeError(
+            f"Requested audio track(s) {bad} do not exist — the source has "
+            f"{len(audio)} audio stream(s) (valid a:0–a:{len(audio) - 1})."
+            if audio else
+            f"Requested audio track(s) {bad} do not exist — the source has no audio streams."
+        )
+    return [audio[i]["id"] for i in audio_indices]
 
 
 def subtitle_track_ids(tracks: list[dict]) -> list[int]:
@@ -99,7 +123,7 @@ def build_mkvmerge_args(
     sub_ids: list[int] | None = None,
 ) -> list[str]:
     """Build the mkvmerge command line for a single-range lossless cut."""
-    cmd = ["mkvmerge", "-o", str(out), "--split", f"parts:{_ts(rng.start)}-{_ts(rng.end)}"]
+    cmd = ["mkvmerge", "-o", _argv_path(out), "--split", f"parts:{_ts(rng.start)}-{_ts(rng.end)}"]
     audio_sel = ["-a", ",".join(map(str, audio_ids))] if audio_ids else ["-A"]
     if kind == "audio":
         # audio only: drop video, subtitles, attachments, buttons
@@ -118,22 +142,25 @@ def build_mkvmerge_args(
     if kind == "video" and keep_subs and default_sub_id is not None and sub_ids:
         for sid in sub_ids:
             cmd += ["--default-track-flag", f"{sid}:{1 if sid == default_sub_id else 0}"]
-    cmd += [str(source)]
+    cmd += [_argv_path(source)]
     if kind == "video" and embed_subs is not None:
         # Added as an extra input: mkvmerge muxes it and the --split cut trims and
         # shifts it to match the clip automatically. When an embedded track is the
         # chosen default, clear this sidecar's default so the chosen track wins.
         if default_sub_id is not None:
             cmd += ["--default-track-flag", "0:0"]
-        cmd += [str(embed_subs)]
+        cmd += [_argv_path(embed_subs)]
     return cmd
 
 
 def remux_to_mkv(source: str | Path, extra_inputs: list[Path], out: Path) -> Path:
     """Losslessly mux `source` (plus any extra inputs, e.g. sidecar subs) into one MKV."""
-    cmd = ["mkvmerge", "-o", str(out), str(source)]
-    cmd += [str(e) for e in extra_inputs]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    cmd = ["mkvmerge", "-o", _argv_path(out), _argv_path(source)]
+    cmd += [_argv_path(e) for e in extra_inputs]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=_CUT_TIMEOUT)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"mkvmerge timed out remuxing {source} after {_CUT_TIMEOUT}s.") from exc
     if proc.returncode not in (0, 1):
         raise RuntimeError(f"mkvmerge remux failed:\n{(proc.stdout + proc.stderr).strip()}")
     return out
@@ -154,9 +181,12 @@ def _keyframe_at_or_before(source: Path, target: float) -> float:
         "-read_intervals", f"{scan_start}%{target + 0.5}",
         "-show_entries", "packet=pts_time,flags",
         "-of", "json",
-        str(source),
+        _argv_path(source),
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=_PROBE_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return target
     if proc.returncode != 0:
         return target
     try:
@@ -258,7 +288,10 @@ def cut_with_mkvmerge(
             embed_subs=embed_subs_path,
             default_sub_id=default_sub_id, sub_ids=sub_ids,
         )
-        proc = subprocess.run(args, capture_output=True, text=True)
+        try:
+            proc = subprocess.run(args, capture_output=True, text=True, timeout=_CUT_TIMEOUT)
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(f"mkvmerge timed out cutting the clip after {_CUT_TIMEOUT}s.") from exc
         if proc.returncode not in (0, 1):
             raise RuntimeError(f"mkvmerge failed:\n{(proc.stdout + proc.stderr).strip()}")
         # With a single retained part mkvmerge writes the exact name, but older

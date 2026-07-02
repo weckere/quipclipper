@@ -142,6 +142,9 @@ async function librarySearch(query) {
     return;
   }
   if (myId !== librarySearchId) return;  // a newer search's results are already shown
+  // A prior dialogue search may have left the batch bar showing; a name search
+  // has no selectable hits, so hide it.
+  $("search-batch").hidden = true;
   renderEntries(data.entries);
 
   // Enable cross-folder dialogue search over the folders this search surfaced.
@@ -295,7 +298,8 @@ async function bookmarkSearchHit(hit, statusEl) {
 
 $("dialogue-search-btn").addEventListener("click", dialogueSearch);
 $("dialogue-search").addEventListener("keydown", (e) => {
-  if (e.key === "Enter") dialogueSearch();
+  // Ignore Enter while a search is in flight (button disabled) to avoid double-submit.
+  if (e.key === "Enter" && !$("dialogue-search-btn").disabled) dialogueSearch();
 });
 
 // --- folder subtitle index --------------------------------------------------
@@ -710,7 +714,7 @@ async function openItem(path, name, opts) {
       settingSrc = false;
       if (autoplay) player.play().catch(() => {});
       updatePlaybackUI();  // sync the play/pause icon once the reload settles
-    }, { once: true });
+    }, { once: true, signal });
     $("preview-note").textContent = "";
     // With -c:v copy, ffmpeg starts from the nearest keyframe before
     // the requested time.  Query the actual keyframe position so we can
@@ -1057,7 +1061,7 @@ async function doSearch() {
   try {
     data = await getJSON(url);
   } catch (err) {
-    results.innerHTML = `<li class="error">Search failed: ${err.message}</li>`;
+    results.innerHTML = `<li class="error">Search failed: ${escapeHtml(err.message)}</li>`;
     $("search-btn").disabled = false;
     return;
   }
@@ -1091,9 +1095,14 @@ async function doSearch() {
 // seekTo is defined above (module-level, handles transcode offset)
 
 function escapeHtml(s) {
-  const d = document.createElement("div");
-  d.textContent = s;
-  return d.innerHTML;
+  // Escape &<> plus quotes so the output is safe in both text and (double- or
+  // single-quoted) attribute contexts. `&` must be replaced first.
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 $("search-btn").onclick = doSearch;

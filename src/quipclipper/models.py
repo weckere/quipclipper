@@ -58,7 +58,9 @@ class Match:
 
     @property
     def end(self) -> float:
-        return self.cues[-1].end
+        # The last cue isn't necessarily the one that ends latest — cues can
+        # overlap — so take the max end so the clip window never truncates.
+        return max(c.end for c in self.cues)
 
     @property
     def index(self) -> int:

@@ -23,6 +23,7 @@ import time
 from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from typing import Annotated
 from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -78,6 +79,11 @@ def _is_media_file(p: Path) -> bool:
 
 # Output extensions a finished clip can have (for listing the clips library).
 _CLIP_EXTS = (".mkv", ".mka", ".mp4", ".m4v", ".webm", ".gif", ".wav", ".flac", ".ogg", ".mp3")
+
+# Upper bound on how many media files a single recursive folder operation
+# (indexing, folder dialogue search) will touch. The nginx-side timeout is 600s,
+# so a huge tree can't be swept in one request — cap it and tell the client.
+INDEX_CAP = 500
 
 _SEASON_RE = re.compile(r"(?i)^(season\s*\d+|specials|extras)$")
 
@@ -180,8 +186,10 @@ def _live_pan_filter(p: Path, audio_index: int, chan: str) -> str | None:
     return None
 
 
-# Containers/extensions a browser can usually play in a <video> element. Used to
-# hint the UI; the engine still works on anything ffmpeg can read.
+# Containers/extensions a browser can usually play in a <video>/<audio> element.
+# Used to hint the UI and to serve source/clip files with a real Content-Type;
+# the engine still works on anything ffmpeg can read. Audio types matter for
+# in-browser playback — iOS Safari refuses to play application/octet-stream.
 _BROWSER_MIME = {
     ".mp4": "video/mp4",
     ".m4v": "video/mp4",
@@ -190,6 +198,17 @@ _BROWSER_MIME = {
     ".mov": "video/quicktime",
     ".ts": "video/mp2t",
     ".avi": "video/x-msvideo",
+    # Audio
+    ".mp3": "audio/mpeg",
+    ".m4a": "audio/mp4",
+    ".m4b": "audio/mp4",
+    ".aac": "audio/aac",
+    ".mka": "audio/x-matroska",
+    ".wav": "audio/wav",
+    ".flac": "audio/flac",
+    ".ogg": "audio/ogg",
+    ".oga": "audio/ogg",
+    ".opus": "audio/ogg",
 }
 
 
@@ -224,8 +243,10 @@ class ClipRequest(BaseModel):
     start: float | None = None
     end: float | None = None
     query: str | None = None
-    match_index: int = 0
-    track: int | None = None
+    # A negative index would bypass the >= len(matches) bounds check and index
+    # from the end of the list (or IndexError -> 500), so pin it non-negative.
+    match_index: int = Field(0, ge=0)
+    track: int | None = Field(None, ge=0)
     # Matched dialogue for the {cue} naming token when clipping by start/end
     # (the frontend sends the selected cue's text; search-based clips derive it).
     cue_text: str | None = None
@@ -237,7 +258,9 @@ class ClipRequest(BaseModel):
     audio_format: str | None = Field(None, pattern="^(wav|flac)$")
     before: float = Field(2.0, ge=0, le=60)
     after: float = Field(2.0, ge=0, le=60)
-    audio_tracks: list[int] | None = None
+    # Stream indices must be non-negative: a negative index selects the last
+    # stream (codecs[-1]) or produces a bad ffmpeg a:N specifier.
+    audio_tracks: list[Annotated[int, Field(ge=0)]] | None = None
     # Backend
     backend: str = Field("auto", pattern="^(auto|ffmpeg|mkvmerge)$")
     chapters: bool = True
@@ -255,7 +278,7 @@ class ClipRequest(BaseModel):
     template: str | None = None
     # Subtitle track (s:N) to mark as the default in the saved video clip (B17c);
     # all subtitle streams are still kept. None = leave source defaults.
-    default_sub_track: int | None = None
+    default_sub_track: int | None = Field(None, ge=0)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -524,8 +547,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         # Collect video files and EPUB books recursively across all folders,
         # de-duplicated (folders may overlap) and sorted for deterministic order.
+        # Capped at INDEX_CAP total files (R3): an uncapped rglob over a huge tree
+        # would blow the nginx timeout, so stop collecting once we hit the cap and
+        # surface `capped` so the UI can tell the user results are partial.
         videos: list[Path] = []
+        capped = False
         for folder in folders:
+            if capped:
+                break
             for c in folder.rglob("*"):
                 if _is_media_file(c):
                     rp = c.resolve()
@@ -537,6 +566,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     if rp not in seen_books:
                         seen_books.add(rp)
                         books.append(c)
+                if len(videos) + len(books) >= INDEX_CAP:
+                    capped = True
+                    break
         videos.sort(key=lambda p: p.name.lower())
         books.sort(key=lambda p: p.name.lower())
 
@@ -610,15 +642,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "query": query,
             "folders": path,
             "files_scanned": len(videos) + len(books),
+            "capped": capped,  # True if the scan hit INDEX_CAP (results partial)
             "count": len(all_hits),
             "matches": all_hits,
         }
 
     # --- folder subtitle index -------------------------------------------------
-
-    # Folders above this size are too large to index in one request (the
-    # nginx-side timeout is 600s); both index-status and (re)indexing skip them.
-    INDEX_CAP = 500
 
     def _folder_videos(self_path: str, cap: int | None = None) -> tuple[list[Path], bool]:
         """Recursively scan a folder for videos, sorted by name.
@@ -646,6 +675,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         indexed = sum(1 for v in videos if sub_cache.is_cached(v))
         return {"total": len(videos), "indexed": indexed, "skipped": False}
 
+    # SECURITY (CSRF, accepted risk): this and /api/items/subtitles/reindex take
+    # their input via the query string and no body, so a cross-site form/fetch
+    # could trigger them as a CORS "simple request" (auto-sending the basic-auth
+    # credentials). A robust fix would require a custom header or a JSON body, but
+    # the frontend posts these with a bare `fetch(url, {method:"POST"})` — no
+    # header, no body — and it's read-only here, so enforcing one would break it.
+    # The impact is limited: both only (re)build the subtitle cache — no data is
+    # exposed or destroyed — and the single-user LAN + nginx basic-auth gate makes
+    # a drive-by forgery implausible. Accepted for this deployment.
     @app.post("/api/search/folder/index")
     def folder_index(
         path: str = Query(...),
@@ -681,6 +719,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         return StreamingResponse(generate(), media_type="text/plain")
 
+    # SECURITY (CSRF, accepted risk): see the note on /api/search/folder/index —
+    # same query-string-only POST shape, same rebuild-only impact, same accepted
+    # risk for the single-user LAN + nginx basic-auth deployment.
     @app.post("/api/items/subtitles/reindex")
     def reindex_item_subtitles(path: str = Query(...)) -> dict:
         """Clear and re-extract the subtitle cache for a single video file.
@@ -832,11 +873,48 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # audio -> AAC) as fMP4 into a temp dir under the state dir; we serve the
     # playlist + segments and iOS handles seeking natively.
     _hls_root = settings.state_dir / "hls"
-    _hls_procs: dict[str, asyncio.subprocess.Process] = {}
+    # A sentinel value is registered here *before* the first await when starting
+    # a transcode, so two concurrent requests for the same token can't both
+    # launch ffmpeg into the same dir (C2). A None entry means "starting".
+    _hls_procs: dict[str, asyncio.subprocess.Process | None] = {}
+    _hls_lock = asyncio.Lock()
     _HLS_FILE_RE = re.compile(r"^(init\.mp4|seg\d+\.m4s)$")
 
     def _hls_token(p: Path, venc: int = 0) -> str:
-        return hashlib.sha256(f"{p}:{venc}".encode()).hexdigest()[:16]
+        # Include the source mtime so replacing the file (same path) yields a new
+        # token and fresh segments — otherwise stale segments are served (C3).
+        try:
+            mtime = p.stat().st_mtime
+        except OSError:
+            mtime = 0.0
+        return hashlib.sha256(f"{p}:{mtime}:{venc}".encode()).hexdigest()[:16]
+
+    def _hls_complete(playlist: Path) -> bool:
+        """True only if the transcode finished — the playlist has EXT-X-ENDLIST.
+
+        A playlist that merely *exists* may be a truncated leftover from a crash
+        or restart; reusing it would serve a partial video forever (C1)."""
+        try:
+            return "#EXT-X-ENDLIST" in playlist.read_text(encoding="utf-8")
+        except OSError:
+            return False
+
+    def _touch_hls(d: Path) -> None:
+        """Bump a token dir's mtime so an actively-watched session isn't pruned.
+
+        ffmpeg races ahead and stops writing once the (fast) transcode finishes,
+        so the dir mtime would otherwise freeze and _prune_hls could delete a dir
+        the viewer is still streaming from (C4). Called on each playlist/segment
+        access to keep the last-access time current."""
+        with contextlib.suppress(OSError):
+            os.utime(d, None)
+
+    def _reap_hls() -> None:
+        """Drop registry entries whose ffmpeg has exited, so _hls_procs doesn't
+        grow without bound over a long-running server (R4)."""
+        for tok, pr in list(_hls_procs.items()):
+            if pr is not None and pr.returncode is not None:
+                del _hls_procs[tok]
 
     def _prune_hls(max_age: float = 2 * 3600) -> None:
         if not _hls_root.is_dir():
@@ -867,32 +945,43 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         playlist = d / "index.m3u8"
         hw = bool(venc) and _vaapi_h264_available()
 
-        proc = _hls_procs.get(token)
-        running = proc is not None and proc.returncode is None
-        if not playlist.exists() and not running:
-            _prune_hls()
-            shutil.rmtree(d, ignore_errors=True)
-            d.mkdir(parents=True, exist_ok=True)
-            cmd = ["ffmpeg", "-nostdin"]
-            if hw:
-                cmd += ["-vaapi_device", _VAAPI_DEVICE]
-            cmd += ["-i", str(p)]
-            if venc:
-                cmd += (["-vf", "format=nv12,hwupload", "-c:v", "h264_vaapi", "-qp", "24"]
-                        if hw else ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23"])
-            else:
-                cmd += ["-c:v", "copy"]
-            cmd += [
-                "-c:a", "aac", "-b:a", "192k", "-ac", "2",
-                "-f", "hls", "-hls_time", "6", "-hls_list_size", "0",
-                "-hls_playlist_type", "event", "-hls_flags", "independent_segments",
-                "-hls_segment_type", "fmp4", "-hls_fmp4_init_filename", "init.mp4",
-                "-hls_segment_filename", str(d / "seg%05d.m4s"),
-                str(playlist),
-            ]
-            _hls_procs[token] = await asyncio.create_subprocess_exec(
-                *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
-            )
+        # Serialize the check→rebuild→register sequence: the registry write used
+        # to happen after an await, so two concurrent requests both passed the
+        # "not running" check and each launched ffmpeg into the same dir (C2).
+        async with _hls_lock:
+            _reap_hls()
+            proc = _hls_procs.get(token)
+            starting = token in _hls_procs and proc is None  # sentinel: mid-start
+            running = proc is not None and proc.returncode is None
+            # Reuse an existing transcode only if it's still running/starting OR
+            # it completed (playlist has EXT-X-ENDLIST). A merely-existing playlist
+            # may be a truncated crash leftover (C1) — rebuild it.
+            reusable = running or starting or (playlist.exists() and _hls_complete(playlist))
+            if not reusable:
+                _prune_hls()
+                shutil.rmtree(d, ignore_errors=True)
+                d.mkdir(parents=True, exist_ok=True)
+                _hls_procs[token] = None  # sentinel before the first await (C2)
+                cmd = ["ffmpeg", "-nostdin"]
+                if hw:
+                    cmd += ["-vaapi_device", _VAAPI_DEVICE]
+                cmd += ["-i", str(p)]
+                if venc:
+                    cmd += (["-vf", "format=nv12,hwupload", "-c:v", "h264_vaapi", "-qp", "24"]
+                            if hw else ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23"])
+                else:
+                    cmd += ["-c:v", "copy"]
+                cmd += [
+                    "-c:a", "aac", "-b:a", "192k", "-ac", "2",
+                    "-f", "hls", "-hls_time", "6", "-hls_list_size", "0",
+                    "-hls_playlist_type", "event", "-hls_flags", "independent_segments",
+                    "-hls_segment_type", "fmp4", "-hls_fmp4_init_filename", "init.mp4",
+                    "-hls_segment_filename", str(d / "seg%05d.m4s"),
+                    str(playlist),
+                ]
+                _hls_procs[token] = await asyncio.create_subprocess_exec(
+                    *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+                )
 
         for _ in range(150):  # wait up to ~15s for the playlist + first segment
             if playlist.exists() and any(d.glob("seg*.m4s")):
@@ -901,6 +990,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not playlist.exists():
             raise HTTPException(status_code=504, detail="HLS transcode did not start in time.")
 
+        _touch_hls(d)  # keep an actively-watched session from being pruned (C4)
         base = f"/api/media/hls/{token}/"
         lines = []
         for line in playlist.read_text(encoding="utf-8").splitlines():
@@ -919,13 +1009,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def hls_file(token: str, name: str) -> FileResponse:
         if not re.fullmatch(r"[0-9a-f]{16}", token) or not _HLS_FILE_RE.match(name):
             raise HTTPException(status_code=404, detail="Not found")
-        f = _hls_root / token / name
+        d = _hls_root / token
+        f = d / name
         for _ in range(50):  # a segment may be requested just before ffmpeg flushes it
             if f.is_file():
                 break
             await asyncio.sleep(0.1)
         if not f.is_file():
             raise HTTPException(status_code=404, detail="Segment not ready")
+        _touch_hls(d)  # mark the session active so _prune_hls leaves it alone (C4)
         return FileResponse(f, media_type="video/mp4")
 
     # --- clipping & jobs -------------------------------------------------------
@@ -951,203 +1043,228 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             req.embed_subs = False
         else:
             video = _resolve_any(req.path)
-        if not video.is_file():
-            raise HTTPException(status_code=404, detail=f"Not found: {req.path}")
+        # If anything fails before the job is submitted, the extracted EPUB
+        # temp (if any) would otherwise leak — do_cut's finally only runs once
+        # the job is queued. Wrap the pre-submit path so an early 4xx cleans it
+        # up; once submitted, ownership passes to do_cut's finally (R1).
+        _submitted = False
+        try:
+            if not video.is_file():
+                raise HTTPException(status_code=404, detail=f"Not found: {req.path}")
 
-        # An audio-only source (podcast/audiobook) can't produce a video clip;
-        # coerce a stray video request to audio so batch export and the CLI don't
-        # ask ffmpeg to map a non-existent video stream.
-        if req.kind == "video" and video.suffix.lower() in AUDIO_EXTS:
-            req.kind = "audio"
-            req.embed_subs = False
+            # An audio-only source (podcast/audiobook) can't produce a video clip;
+            # coerce a stray video request to audio so batch export and the CLI don't
+            # ask ffmpeg to map a non-existent video stream.
+            if req.kind == "video" and video.suffix.lower() in AUDIO_EXTS:
+                req.kind = "audio"
+                req.embed_subs = False
 
-        # Determine the clip range: explicit start (with optional end) or
-        # search-based. Omitting end with start set means "to the end of the
-        # file" — used by batch export to re-process a whole clip.
-        cue_text = ""  # matched dialogue, for the {cue} naming token
-        if req.start is not None:
-            # The frontend passes the selected cue's text so {cue} still works
-            # for cue-range clips (dialogue-search hits and manual Start/End).
-            cue_text = req.cue_text or ""
-            end = req.end
-            if end is None:
-                end = media.probe_duration(video)
+            # Determine the clip range: explicit start (with optional end) or
+            # search-based. Omitting end with start set means "to the end of the
+            # file" — used by batch export to re-process a whole clip.
+            cue_text = ""  # matched dialogue, for the {cue} naming token
+            if req.start is not None:
+                # The frontend passes the selected cue's text so {cue} still works
+                # for cue-range clips (dialogue-search hits and manual Start/End).
+                cue_text = req.cue_text or ""
+                end = req.end
                 if end is None:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Could not determine file duration for a whole-file clip.",
-                    )
-            rng = ClipRange(start=max(0.0, req.start - req.before), end=end + req.after)
-            label = f"{req.kind} clip {format_timestamp(req.start)}–{format_timestamp(end)}"
-        elif req.query:
-            try:
-                # Use the cache: extraction is slow and the same cues were very
-                # likely already extracted when the user searched in the UI.
-                cues = sub_cache.resolve(video, track=req.track)
-            except (ValueError, FileNotFoundError, RuntimeError) as exc:
-                raise HTTPException(status_code=400, detail=str(exc))
-            matches = engine_search(req.query, cues, limit=req.match_index + 1)
-            if req.match_index >= len(matches):
-                raise HTTPException(status_code=404, detail="Match index out of range.")
-            m = matches[req.match_index]
-            cue_text = m.text
-            rng = compute_range(m, before=req.before, after=req.after)
-            label = f"{req.kind} clip: \"{req.query}\" → {m.text[:60]}"
-        else:
-            raise HTTPException(
-                status_code=400,
-                detail="Provide either start (with optional end) or query to define the clip range.",
-            )
-
-        # Validation
-        if req.split_channels and req.kind != "audio":
-            raise HTTPException(status_code=400, detail="split_channels only applies to audio.")
-
-        # Full-mix lossless audio (one WAV/FLAC keeping every channel, e.g. 5.1).
-        # This is an ffmpeg re-encode, so it bypasses the mkvmerge/passthrough path.
-        fullmix = req.kind == "audio" and not req.split_channels and req.audio_format is not None
-
-        # Decide backend (mirrors cli.py logic).
-        mkv_capable = (
-            req.lossless and req.kind in ("audio", "video")
-            and not req.split_channels and not fullmix
-        )
-        if req.backend == "ffmpeg":
-            use_mkvmerge = False
-        elif req.backend == "mkvmerge":
-            if not mkv_capable:
+                    end = media.probe_duration(video)
+                    if end is None:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="Could not determine file duration for a whole-file clip.",
+                        )
+                rng = ClipRange(start=max(0.0, req.start - req.before), end=end + req.after)
+                label = f"{req.kind} clip {format_timestamp(req.start)}–{format_timestamp(end)}"
+            elif req.query:
+                try:
+                    # Use the cache: extraction is slow and the same cues were very
+                    # likely already extracted when the user searched in the UI.
+                    cues = sub_cache.resolve(video, track=req.track)
+                except (ValueError, FileNotFoundError, RuntimeError) as exc:
+                    raise HTTPException(status_code=400, detail=str(exc))
+                matches = engine_search(req.query, cues, limit=req.match_index + 1)
+                if req.match_index >= len(matches):
+                    raise HTTPException(status_code=404, detail="Match index out of range.")
+                m = matches[req.match_index]
+                cue_text = m.text
+                rng = compute_range(m, before=req.before, after=req.after)
+                label = f"{req.kind} clip: \"{req.query}\" → {m.text[:60]}"
+            else:
                 raise HTTPException(
                     status_code=400,
-                    detail="mkvmerge backend only supports lossless audio/video cuts.",
+                    detail="Provide either start (with optional end) or query to define the clip range.",
                 )
-            if not mkvmerge_available():
-                raise HTTPException(status_code=500, detail="mkvmerge not found on PATH.")
-            use_mkvmerge = True
-        else:  # auto
-            use_mkvmerge = mkv_capable and mkvmerge_available()
-            # For lossless VIDEO, prefer ffmpeg: mkvmerge can only end a kept
-            # range on a keyframe, so on a long-GOP source it extends the clip
-            # well past the cut point (a 3 s line became 22 s). ffmpeg's stream
-            # copy ends exactly (the start still snaps to the prior keyframe —
-            # unavoidable for a copy). Audio passthrough stays on mkvmerge: it
-            # keeps every track and now cuts at the exact time (no keyframe snap).
-            if use_mkvmerge and req.kind == "video":
-                use_mkvmerge = False
 
-        do_remux = use_mkvmerge and req.remux_first and not is_matroska(video)
+            # Validation
+            if req.split_channels and req.kind != "audio":
+                raise HTTPException(status_code=400, detail="split_channels only applies to audio.")
 
-        # Resolve subtitles for embedding (if applicable). Only the *sidecar*
-        # search subtitle is muxed in — embedded subtitle tracks already ride
-        # along in the lossless copy. We therefore only need find_sidecar (a
-        # cheap glob) and load_subtitles (parse a text file); no ffmpeg
-        # extraction. Populate BOTH the mkvmerge path (file) and the ffmpeg
-        # path (cues) so the mkvmerge→ffmpeg fallback in do_cut keeps the subs.
-        embed_cues = None
-        embed_subs_path = None
-        if req.embed_subs and req.kind == "video" and req.lossless:
-            try:
-                sidecar = find_sidecar(video)
-                if sidecar:
-                    embed_subs_path = sidecar          # used by the mkvmerge path
-                    embed_cues = load_subtitles(sidecar)  # used by the ffmpeg path/fallback
-            except Exception:
-                pass  # non-fatal: skip subtitle embedding
+            # Full-mix lossless audio (one WAV/FLAC keeping every channel, e.g. 5.1).
+            # This is an ffmpeg re-encode, so it bypasses the mkvmerge/passthrough path.
+            fullmix = req.kind == "audio" and not req.split_channels and req.audio_format is not None
 
-        # Determine extension.
-        if fullmix:
-            ext = req.audio_format  # "wav" | "flac"
-        elif use_mkvmerge:
-            ext = "mka" if req.kind == "audio" else "mkv"
-        elif req.split_channels:
-            ext = req.split_format if req.split_format != "original" else "wav"
-        else:
-            codecs = None
-            if req.lossless and req.kind == "audio":
-                codecs = probe_audio_streams(video)
-                if req.audio_tracks:
-                    codecs = [codecs[i] for i in req.audio_tracks if i < len(codecs)]
-            ext = output_extension(req.kind, lossless=req.lossless, audio_codecs=codecs)
-
-        # Output path from the user template (B9). The default reproduces the
-        # Phase 2 layout: {source}/{timestamp}_{cue}_{title}. "/" makes
-        # subfolders; absent tokens (e.g. {cue} on non-search clips) are dropped.
-        # Split-channel clips get a per-channel suffix appended by the splitter,
-        # so they pass the extensionless base.
-        ctx = _clip_template_context(name_source or video, rng, cue_text)
-        template = (req.template or "").strip() or DEFAULT_CLIP_TEMPLATE
-        rel = _render_clip_template(template, ctx) or ctx["timestamp"] or "clip"
-        clips_root = settings.clips_dir.resolve()
-        out_path = (clips_root / (rel if req.split_channels else f"{rel}.{ext}")).resolve()
-        if out_path != clips_root and not out_path.is_relative_to(clips_root):
-            raise HTTPException(
-                status_code=400, detail="Naming template resolves outside the clips directory."
+            # Decide backend (mirrors cli.py logic).
+            mkv_capable = (
+                req.lossless and req.kind in ("audio", "video")
+                and not req.split_channels and not fullmix
             )
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-
-        # Capture all values for the closure.
-        _video = video
-        _rng = rng
-        _kind = req.kind
-        _lossless = req.lossless
-        _audio_indices = req.audio_tracks
-        _use_mkvmerge = use_mkvmerge
-        _do_remux = do_remux
-        _chapters = req.chapters
-        _embed_cues = embed_cues
-        _embed_subs_path = embed_subs_path
-        _split_channels = req.split_channels
-        _split_format = req.split_format
-        _include_lfe = req.include_lfe
-        _split_groups = req.split_groups
-        _audio_codec = req.audio_format if fullmix else None
-        _default_sub_track = req.default_sub_track
-        _out_path = out_path
-        _epub_temp = epub_temp  # transient extracted EPUB audio, deleted post-cut
-        # Hardware-encode a re-encoded video clip on the iGPU (Quick Sync via
-        # VAAPI) when available — the same path the browser preview uses. Lossless
-        # cuts are stream copies (no encode); only re-encodes (Exact / --no-lossless,
-        # gif) hit the encoder. cut_clip falls back to libx264 if it fails.
-        _hw_encode = (not req.lossless) and req.kind == "video" and _vaapi_h264_available()
-
-        def do_cut() -> list[Path]:
-            try:
-                if _split_channels:
-                    return split_audio_channels(
-                        _video, _rng,
-                        audio_index=(_audio_indices[0] if _audio_indices else 0),
-                        fmt=_split_format, include_lfe=_include_lfe,
-                        categories=_split_groups, out=_out_path,
+            if req.backend == "ffmpeg":
+                use_mkvmerge = False
+            elif req.backend == "mkvmerge":
+                if not mkv_capable:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="mkvmerge backend only supports lossless audio/video cuts.",
                     )
-                if _use_mkvmerge:
-                    try:
-                        return [cut_with_mkvmerge(
-                            _video, _rng, kind=_kind, out=_out_path,
-                            audio_indices=_audio_indices, keep_subs=True,
-                            keep_chapters=_chapters, embed_subs=_embed_subs_path,
-                            remux_first=_do_remux, default_sub_track=_default_sub_track,
-                        )]
-                    except RuntimeError:
-                        # mkvmerge can't split some track types (e.g. FLAC).
-                        # Fall back to ffmpeg for a lossless copy-codec cut.
-                        _out_path.unlink(missing_ok=True)
-                        return [cut_clip(
-                            _video, _rng, kind=_kind, lossless=_lossless, out=_out_path,
-                            audio_indices=_audio_indices, embed_cues=_embed_cues,
-                            default_sub_track=_default_sub_track,
-                        )]
-                return [cut_clip(
-                    _video, _rng, kind=_kind, lossless=_lossless, out=_out_path,
-                    audio_indices=_audio_indices, embed_cues=_embed_cues,
-                    audio_codec=_audio_codec, default_sub_track=_default_sub_track,
-                    video_encoder="h264_vaapi" if _hw_encode else "libx264",
-                    vaapi_device=_VAAPI_DEVICE if _hw_encode else None,
-                )]
-            finally:
-                if _epub_temp is not None:
-                    _epub_temp.unlink(missing_ok=True)
+                if not mkvmerge_available():
+                    raise HTTPException(status_code=500, detail="mkvmerge not found on PATH.")
+                use_mkvmerge = True
+            else:  # auto
+                use_mkvmerge = mkv_capable and mkvmerge_available()
+                # For lossless VIDEO, prefer ffmpeg: mkvmerge can only end a kept
+                # range on a keyframe, so on a long-GOP source it extends the clip
+                # well past the cut point (a 3 s line became 22 s). ffmpeg's stream
+                # copy ends exactly (the start still snaps to the prior keyframe —
+                # unavoidable for a copy). Audio passthrough stays on mkvmerge: it
+                # keeps every track and now cuts at the exact time (no keyframe snap).
+                if use_mkvmerge and req.kind == "video":
+                    use_mkvmerge = False
 
-        job = jobs.submit(do_cut, label=label)
-        return {"job_id": job.id, "status": job.status.value}
+            do_remux = use_mkvmerge and req.remux_first and not is_matroska(video)
+
+            # Resolve subtitles for embedding (if applicable). Only the *sidecar*
+            # search subtitle is muxed in — embedded subtitle tracks already ride
+            # along in the lossless copy. We therefore only need find_sidecar (a
+            # cheap glob) and load_subtitles (parse a text file); no ffmpeg
+            # extraction. Populate BOTH the mkvmerge path (file) and the ffmpeg
+            # path (cues) so the mkvmerge→ffmpeg fallback in do_cut keeps the subs.
+            embed_cues = None
+            embed_subs_path = None
+            if req.embed_subs and req.kind == "video" and req.lossless:
+                try:
+                    sidecar = find_sidecar(video)
+                    if sidecar:
+                        embed_subs_path = sidecar          # used by the mkvmerge path
+                        embed_cues = load_subtitles(sidecar)  # used by the ffmpeg path/fallback
+                except Exception:
+                    pass  # non-fatal: skip subtitle embedding
+
+            # Determine extension.
+            if fullmix:
+                ext = req.audio_format  # "wav" | "flac"
+            elif use_mkvmerge:
+                ext = "mka" if req.kind == "audio" else "mkv"
+            elif req.split_channels:
+                ext = req.split_format if req.split_format != "original" else "wav"
+            else:
+                codecs = None
+                if req.lossless and req.kind == "audio":
+                    codecs = probe_audio_streams(video)
+                    if req.audio_tracks:
+                        codecs = [codecs[i] for i in req.audio_tracks if i < len(codecs)]
+                ext = output_extension(req.kind, lossless=req.lossless, audio_codecs=codecs)
+
+            # Output path from the user template (B9). The default reproduces the
+            # Phase 2 layout: {source}/{timestamp}_{cue}_{title}. "/" makes
+            # subfolders; absent tokens (e.g. {cue} on non-search clips) are dropped.
+            # Split-channel clips get a per-channel suffix appended by the splitter,
+            # so they pass the extensionless base.
+            ctx = _clip_template_context(name_source or video, rng, cue_text)
+            template = (req.template or "").strip() or DEFAULT_CLIP_TEMPLATE
+            rel = _render_clip_template(template, ctx) or ctx["timestamp"] or "clip"
+            clips_root = settings.clips_dir.resolve()
+            out_path = (clips_root / (rel if req.split_channels else f"{rel}.{ext}")).resolve()
+            if out_path != clips_root and not out_path.is_relative_to(clips_root):
+                raise HTTPException(
+                    status_code=400, detail="Naming template resolves outside the clips directory."
+                )
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Don't clobber an existing clip: the engine cuts with ffmpeg -y, so two
+            # exports resolving to the same path would overwrite the first (R6). Add a
+            # _2/_3/... suffix before the extension until the target is free. (Split-
+            # channel clips pass an extensionless base and get per-channel names from
+            # the splitter, so uniquifying that base isn't reliable — skip them.)
+            if not req.split_channels and out_path.exists():
+                stem, suffix = out_path.stem, out_path.suffix
+                n = 2
+                while True:
+                    candidate = out_path.with_name(f"{stem}_{n}{suffix}")
+                    if not candidate.exists():
+                        out_path = candidate
+                        break
+                    n += 1
+
+            # Capture all values for the closure.
+            _video = video
+            _rng = rng
+            _kind = req.kind
+            _lossless = req.lossless
+            _audio_indices = req.audio_tracks
+            _use_mkvmerge = use_mkvmerge
+            _do_remux = do_remux
+            _chapters = req.chapters
+            _embed_cues = embed_cues
+            _embed_subs_path = embed_subs_path
+            _split_channels = req.split_channels
+            _split_format = req.split_format
+            _include_lfe = req.include_lfe
+            _split_groups = req.split_groups
+            _audio_codec = req.audio_format if fullmix else None
+            _default_sub_track = req.default_sub_track
+            _out_path = out_path
+            _epub_temp = epub_temp  # transient extracted EPUB audio, deleted post-cut
+            # Hardware-encode a re-encoded video clip on the iGPU (Quick Sync via
+            # VAAPI) when available — the same path the browser preview uses. Lossless
+            # cuts are stream copies (no encode); only re-encodes (Exact / --no-lossless,
+            # gif) hit the encoder. cut_clip falls back to libx264 if it fails.
+            _hw_encode = (not req.lossless) and req.kind == "video" and _vaapi_h264_available()
+
+            def do_cut() -> list[Path]:
+                try:
+                    if _split_channels:
+                        return split_audio_channels(
+                            _video, _rng,
+                            audio_index=(_audio_indices[0] if _audio_indices else 0),
+                            fmt=_split_format, include_lfe=_include_lfe,
+                            categories=_split_groups, out=_out_path,
+                        )
+                    if _use_mkvmerge:
+                        try:
+                            return [cut_with_mkvmerge(
+                                _video, _rng, kind=_kind, out=_out_path,
+                                audio_indices=_audio_indices, keep_subs=True,
+                                keep_chapters=_chapters, embed_subs=_embed_subs_path,
+                                remux_first=_do_remux, default_sub_track=_default_sub_track,
+                            )]
+                        except RuntimeError:
+                            # mkvmerge can't split some track types (e.g. FLAC).
+                            # Fall back to ffmpeg for a lossless copy-codec cut.
+                            _out_path.unlink(missing_ok=True)
+                            return [cut_clip(
+                                _video, _rng, kind=_kind, lossless=_lossless, out=_out_path,
+                                audio_indices=_audio_indices, embed_cues=_embed_cues,
+                                default_sub_track=_default_sub_track,
+                            )]
+                    return [cut_clip(
+                        _video, _rng, kind=_kind, lossless=_lossless, out=_out_path,
+                        audio_indices=_audio_indices, embed_cues=_embed_cues,
+                        audio_codec=_audio_codec, default_sub_track=_default_sub_track,
+                        video_encoder="h264_vaapi" if _hw_encode else "libx264",
+                        vaapi_device=_VAAPI_DEVICE if _hw_encode else None,
+                    )]
+                finally:
+                    if _epub_temp is not None:
+                        _epub_temp.unlink(missing_ok=True)
+
+            job = jobs.submit(do_cut, label=label)
+            _submitted = True
+            return {"job_id": job.id, "status": job.status.value}
+        finally:
+            if epub_temp is not None and not _submitted:
+                epub_temp.unlink(missing_ok=True)
 
     @app.get("/api/jobs")
     def list_jobs() -> dict:
@@ -1159,6 +1276,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if job is None:
             raise HTTPException(status_code=404, detail="Job not found.")
         return job.to_dict()
+
+    @app.delete("/api/jobs/{job_id}")
+    def cancel_job(job_id: str) -> dict:
+        """Cancel a not-yet-started job, or prune a finished one (R2).
+
+        A queued job is pulled from the pool and marked cancelled; a finished job
+        (done/failed/cancelled) is dropped from the registry. A *running* job
+        can't be interrupted from here — its ffmpeg subprocess carries its own
+        timeout — so cancelling one returns 409.
+        """
+        if jobs.get(job_id) is None:
+            raise HTTPException(status_code=404, detail="Job not found.")
+        if not jobs.cancel(job_id):
+            raise HTTPException(
+                status_code=409, detail="Job is running and can't be cancelled."
+            )
+        return {"cancelled": job_id}
 
     @app.get("/api/jobs/{job_id}/download/{filename}")
     def download_clip(job_id: str, filename: str) -> FileResponse:

@@ -24,8 +24,21 @@ from quipclipper_web.app import (
     create_app,
 )
 from quipclipper.subtitles import StreamInfo
+from quipclipper_web import epub_items as epub_items_mod
 from quipclipper_web.config import Settings
-from quipclipper_web.media import cues_to_vtt, stream_dict
+from quipclipper_web.media import cues_to_vtt, probe_keyframe_before, stream_dict
+
+
+def test_probe_keyframe_before_falls_back_on_timeout() -> None:
+    """C5: ffprobe stalling must not 500 — the docstring promises a fallback to
+    the requested target, so a TimeoutExpired returns target unchanged."""
+    import subprocess as sp
+
+    def boom(*a, **k):
+        raise sp.TimeoutExpired(cmd="ffprobe", timeout=10)
+
+    with patch("quipclipper_web.media.subprocess.run", side_effect=boom):
+        assert probe_keyframe_before(Path("/fake.mkv"), 42.0) == 42.0
 
 
 def test_clean_title_uses_parent_folder():
@@ -142,6 +155,20 @@ def test_cues_to_vtt_emits_speaker_voice_tag() -> None:
     vtt = cues_to_vtt(cues)
     assert "<v Chris>Hello, friends." in vtt   # speaker → WebVTT voice tag
     assert "\nNo speaker here." in vtt          # untagged line unchanged
+
+
+def test_cues_to_vtt_sanitizes_injection() -> None:
+    """S3: cue text with a blank line, a '-->' arrow, or '<'/'&' must not break
+    WebVTT parsing — blank lines are dropped, the arrow is defused, and the
+    metacharacters are escaped."""
+    cues = [Cue(0, 1.0, 3.0, "line one\n\n--> not a cue\n<b> & stuff")]
+    vtt = cues_to_vtt(cues)
+    body = vtt.split("00:00:01.000 --> 00:00:03.000\n", 1)[1]
+    # The only real cue-timing arrow is the header we split on; the payload's
+    # literal '-->' must have been neutralised.
+    assert "\n-->" not in body
+    assert "&amp;" in body and "&lt;b>" in body   # & and < escaped (> is fine in VTT)
+    assert "\n\n" not in body.rstrip("\n")           # no blank line inside the cue
 
 
 def _client(root: Path) -> TestClient:
@@ -338,6 +365,31 @@ def test_clip_mkvmerge_fallback_to_ffmpeg(tmp_path: Path) -> None:
         time.sleep(0.1)
     assert job["status"] == "done"
     mock_ffmpeg.assert_called_once()
+
+
+def test_clip_negative_match_index_rejected(tmp_path: Path) -> None:
+    """C6: match_index must be >= 0 — a negative value would bypass the bounds
+    check and IndexError (500). Validation now rejects it with 422."""
+    video = tmp_path / "movie.mkv"
+    video.write_bytes(b"")
+    resp = _client(tmp_path).post(
+        "/api/clip",
+        json={"path": str(video), "query": "hi", "match_index": -1, "kind": "audio"},
+    )
+    assert resp.status_code == 422
+
+
+def test_clip_negative_audio_track_rejected(tmp_path: Path) -> None:
+    """C10: a negative audio_tracks index selects the last stream (codecs[-1]) or
+    yields a bad ffmpeg a:N specifier — rejected with 422."""
+    video = tmp_path / "movie.mkv"
+    video.write_bytes(b"")
+    resp = _client(tmp_path).post(
+        "/api/clip",
+        json={"path": str(video), "start": 1, "end": 2, "kind": "audio",
+              "audio_tracks": [-1]},
+    )
+    assert resp.status_code == 422
 
 
 def test_clip_forbids_outside(tmp_path: Path) -> None:
@@ -659,6 +711,34 @@ def test_clip_template_traversal_rejected(tmp_path: Path) -> None:
     assert out.is_relative_to(_clips.resolve())
 
 
+def test_clip_uniquifies_existing_target(tmp_path: Path) -> None:
+    """R6: a second export resolving to the same path must not clobber the first —
+    the target gets a _2 suffix (engine cuts with ffmpeg -y)."""
+    client, media, clips = _clips_client(tmp_path)
+    video = media / "movie.mkv"
+    video.write_bytes(b"")
+    # A clip already sitting at the default target path.
+    existing = clips / "movie" / "00-01-05_media.mka"
+    existing.parent.mkdir(parents=True)
+    existing.write_bytes(b"old")
+
+    def _fake_cut(*a, **k):
+        out = Path(k["out"])
+        out.write_bytes(b"new")
+        return out
+
+    with patch("quipclipper_web.app.cut_clip", side_effect=_fake_cut) as mock_cut:
+        resp = client.post("/api/clip", json={
+            "path": str(video), "start": 65, "end": 70, "before": 0, "after": 0,
+            "kind": "audio", "lossless": True, "backend": "ffmpeg",
+        })
+        assert resp.status_code == 200
+        assert _wait_done(client, resp.json()["job_id"])["status"] == "done"
+        out = Path(mock_cut.call_args.kwargs["out"])
+    assert out.name == "00-01-05_media_2.mka"   # suffixed, original untouched
+    assert existing.read_bytes() == b"old"
+
+
 def test_clip_split_passes_extensionless_base(tmp_path: Path) -> None:
     """For split-channels, the splitter gets the base WITHOUT extension so it can
     append '_<channel>.<ext>' (no doubled slug / mid-name extension)."""
@@ -741,6 +821,62 @@ def test_jobs_prune_old_finished() -> None:
     reg.shutdown()
 
 
+def test_job_cancel_queued_and_prune_finished() -> None:
+    """R2: a queued job can be cancelled; a finished one can be pruned."""
+    import threading
+    import time as time_mod
+
+    from quipclipper_web.jobs import JobRegistry, Status
+
+    reg = JobRegistry(max_workers=1)
+    # Occupy the single worker so the next job stays queued.
+    gate = threading.Event()
+    busy = reg.submit(lambda: (gate.wait(5), [])[1], label="busy")
+    for _ in range(50):
+        if busy.status == Status.running:
+            break
+        time_mod.sleep(0.02)
+
+    queued = reg.submit(lambda: [], label="queued")
+    assert queued.status == Status.queued
+    assert reg.cancel(queued.id) is True
+    assert reg.get(queued.id).status == Status.cancelled
+
+    # A running job can't be cancelled from here.
+    assert reg.cancel(busy.id) is False
+    gate.set()
+    for _ in range(50):
+        if busy.finished is not None:
+            break
+        time_mod.sleep(0.02)
+    # Finished job is pruned by cancel.
+    assert reg.cancel(busy.id) is True
+    assert reg.get(busy.id) is None
+    reg.shutdown()
+
+
+def test_cancel_job_endpoint(tmp_path: Path) -> None:
+    """R2: DELETE /api/jobs/{id} cancels/prunes; 404 for unknown."""
+    client = _client(tmp_path)
+    assert client.delete("/api/jobs/nope").status_code == 404
+
+    # A mocked instant job finishes, then DELETE prunes it (200).
+    video = tmp_path / "movie.mkv"
+    video.write_bytes(b"")
+    (tmp_path / "movie.srt").write_text(SRT, encoding="utf-8")
+    fake_out = tmp_path / "clip.mkv"
+    fake_out.write_bytes(b"x")
+    with patch("quipclipper_web.app.cut_clip", return_value=fake_out):
+        r = client.post("/api/clip", json={
+            "path": str(video), "query": "be back", "kind": "video",
+            "lossless": True, "backend": "ffmpeg",
+        })
+    job_id = r.json()["job_id"]
+    _wait_done(client, job_id)
+    assert client.delete(f"/api/jobs/{job_id}").status_code == 200
+    assert client.get(f"/api/jobs/{job_id}").status_code == 404
+
+
 def test_negative_track_rejected(tmp_path: Path) -> None:
     """Negative track values become bad ffmpeg stream specifiers — R12."""
     video = tmp_path / "movie.mkv"
@@ -808,6 +944,28 @@ def test_bookmark_stores_cue_for_export_naming(tmp_path: Path) -> None:
     assert resp.json()["cue"] == "Hasta la vista"
     got = client.get("/api/bookmarks", params={"path": str(video)}).json()["bookmarks"]
     assert got[0]["cue"] == "Hasta la vista"
+
+
+def test_bookmark_tolerates_unknown_stored_key(tmp_path: Path) -> None:
+    """C7: a stored record with an extra key (newer version / hand-edit) must not
+    crash the list/get — unknown keys are dropped, not passed to the constructor."""
+    import json as _json
+
+    from quipclipper_web.bookmarks import BookmarkStore
+
+    store = BookmarkStore(tmp_path)
+    # Write a record carrying a field the dataclass doesn't know about.
+    record = {
+        "id": "abc123", "path": "/m/movie.mkv", "label": "L",
+        "start": 1.0, "end": 2.0, "created": "2026-01-01T00:00:00+00:00",
+        "future_field": "surprise",
+    }
+    (tmp_path / "bookmarks.json").write_text(_json.dumps([record]), encoding="utf-8")
+
+    got = store.list_all()
+    assert len(got) == 1 and got[0].label == "L"      # loaded, not TypeError
+    assert store.get("abc123").id == "abc123"
+    assert store.list_for_path("/m/movie.mkv")[0].id == "abc123"
 
 
 def test_bookmark_forbids_outside(tmp_path: Path) -> None:
@@ -963,6 +1121,20 @@ def test_clips_download(tmp_path: Path) -> None:
     )
     resp = client.get("/api/clips/download/test.mkv")
     assert resp.status_code == 200
+
+
+def test_audio_clip_served_with_audio_mime(tmp_path: Path) -> None:
+    """C9: audio files must stream with a real audio Content-Type (not
+    application/octet-stream, which iOS Safari refuses)."""
+    clips = tmp_path / "clips"
+    clips.mkdir()
+    (clips / "clip.mp3").write_bytes(b"x")
+    (clips / "clip.flac").write_bytes(b"y")
+    client = TestClient(create_app(Settings.from_env({
+        "QC_MEDIA_ROOTS": str(tmp_path), "QC_CLIPS_DIR": str(clips),
+    })))
+    assert client.get("/api/clips/stream/clip.mp3").headers["content-type"] == "audio/mpeg"
+    assert client.get("/api/clips/stream/clip.flac").headers["content-type"] == "audio/flac"
 
 
 def test_clips_download_forbids_traversal(tmp_path: Path) -> None:
@@ -1157,6 +1329,30 @@ def test_folder_dialogue_search_skips_unparseable_subs(tmp_path: Path) -> None:
     assert all(m["file"] == "good.mkv" for m in data["matches"])
 
 
+def test_folder_dialogue_search_capped(tmp_path: Path) -> None:
+    """R3: an oversized folder scan stops at INDEX_CAP and reports capped=True so
+    the UI can tell the user results are partial."""
+    for i in range(5):
+        (tmp_path / f"ep{i}.mkv").write_bytes(b"")
+        (tmp_path / f"ep{i}.srt").write_text(SRT)
+    client = _client(tmp_path)
+    with patch("quipclipper_web.app.INDEX_CAP", 2):
+        resp = client.get("/api/search/folder", params={"path": str(tmp_path), "query": "back"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["capped"] is True
+    assert data["files_scanned"] <= 2
+
+
+def test_folder_dialogue_search_not_capped_when_small(tmp_path: Path) -> None:
+    (tmp_path / "ep.mkv").write_bytes(b"")
+    (tmp_path / "ep.srt").write_text(SRT)
+    resp = _client(tmp_path).get(
+        "/api/search/folder", params={"path": str(tmp_path), "query": "back"}
+    )
+    assert resp.json()["capped"] is False
+
+
 def test_folder_dialogue_search_forbids_outside(tmp_path: Path) -> None:
     client = _client(tmp_path)
     resp = client.get(
@@ -1336,6 +1532,29 @@ def test_segment_item_info_is_synthesized(tmp_path: Path) -> None:
     assert info["streams"][0]["codec"] == "aac"
     assert info["duration"] == 5.0  # last cue end
     assert not (tmp_path / "state" / "epub_audio").exists()
+
+
+def test_clip_epub_temp_cleaned_on_presubmit_error(tmp_path: Path) -> None:
+    """R1: a pre-submit 4xx (here: neither start nor query) must not leak the
+    extracted EPUB temp — do_cut's finally only runs once the job is queued."""
+    epub = _build_mo_epub(tmp_path / "book.epub")
+    client = _client(tmp_path)
+    ref = str(epub) + "#seg=0"
+
+    created: list[Path] = []
+    real_extract = epub_items_mod.extract_segment_temp
+
+    def _tracking_extract(ep, seg):
+        p = real_extract(ep, seg)
+        created.append(Path(p))
+        return p
+
+    with patch("quipclipper_web.app.epub_items.extract_segment_temp",
+               side_effect=_tracking_extract):
+        # No start and no query -> 400 after the temp is already extracted.
+        resp = client.post("/api/clip", json={"path": ref, "kind": "audio"})
+    assert resp.status_code == 400
+    assert created and not created[0].exists()   # temp was cleaned up
 
 
 def test_clip_from_segment_names_by_book(tmp_path: Path) -> None:

@@ -25,6 +25,8 @@ from quipclipper.clip import (
     _timestamp_slug,
     compute_range,
     cut_clip,
+    output_extension,
+    probe_audio_streams,
     split_audio_channels,
     vaapi_h264_available,
 )
@@ -94,13 +96,21 @@ def _resolve(
 
 
 def _parse_tracks(spec: Optional[str]) -> Optional[list[int]]:
-    """Parse a comma-separated audio-track spec like "0,2" into [0, 2]."""
+    """Parse a comma-separated audio-track spec like "0,2" into [0, 2].
+
+    Indices are 0-based a:N selectors, so negatives are rejected here — otherwise
+    ``-1`` would slip through to ``-map 0:a:-1`` (which ffmpeg refuses) and, worse,
+    index a per-stream codec list from the end.
+    """
     if not spec:
         return None
     try:
-        return [int(x) for x in spec.replace(" ", "").split(",") if x != ""]
+        tracks = [int(x) for x in spec.replace(" ", "").split(",") if x != ""]
     except ValueError:
         raise typer.BadParameter("--audio-track must be comma-separated integers, e.g. 0,2")
+    if any(t < 0 for t in tracks):
+        raise typer.BadParameter("--audio-track indices must be 0 or greater (a:N is 0-based).")
+    return tracks
 
 
 def _select_matches(candidates: list[Match]) -> list[Match]:
@@ -583,9 +593,45 @@ def clip(
         )]
 
     single = len(chosen) == 1
+
+    def _auto_out(rng, claimed: set[str]) -> Path:
+        """Build a unique auto-named output for a multi-match clip.
+
+        Auto-naming rounds the start to a whole second (``_timestamp_slug``), so
+        two chosen matches whose padded starts land in the same second would
+        otherwise resolve to the same filename and silently clobber each other.
+        Append ``_2``/``_3``… to the stem until the name is unused this run. Split
+        output is a no-extension prefix (``split_audio_channels`` appends the
+        channel label + extension); everything else gets a concrete extension.
+        """
+        stem = f"{video.stem}_{_timestamp_slug(rng.start)}"
+        if split_channels:
+            ext = ""  # prefix only; the channel label + ext are added downstream
+        elif use_mkvmerge:
+            ext = "mka" if kind == "audio" else "mkv"
+        elif fullmix:
+            ext = audio_format  # wav | flac
+        else:
+            codecs = None
+            if lossless and kind == "audio":
+                codecs = probe_audio_streams(video)
+                if audio_indices:
+                    codecs = [codecs[i] for i in audio_indices if i < len(codecs)]
+            ext = output_extension(kind, lossless=lossless, audio_codecs=codecs)
+        base = stem
+        n = 1
+        while (base + (f".{ext}" if ext else "")).lower() in claimed:
+            n += 1
+            base = f"{stem}_{n}"
+        name = base + (f".{ext}" if ext else "")
+        claimed.add(name.lower())
+        return video.with_name(name)
+
+    claimed: set[str] = set()
     try:
         for rng in ranges:
-            for w in _cut_one(rng, out if single else None):
+            out_path = out if single else _auto_out(rng, claimed)
+            for w in _cut_one(rng, out_path):
                 typer.secho(f"Wrote {w}", fg="green")
     except RuntimeError as exc:
         typer.secho(str(exc), fg="red", err=True)

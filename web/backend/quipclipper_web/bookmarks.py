@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import threading
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -47,6 +47,17 @@ class Bookmark:
     def to_dict(self) -> dict:
         return asdict(self)
 
+    @classmethod
+    def from_stored(cls, d: dict) -> "Bookmark":
+        """Build from a stored JSON record, ignoring unknown keys.
+
+        A record written by a newer version (or hand-edited) may carry extra
+        keys; ``Bookmark(**d)`` would raise TypeError and take down the whole
+        list/get. Drop anything that isn't a dataclass field so one odd record
+        can't break every read."""
+        known = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in d.items() if k in known})
+
 
 class BookmarkStore:
     """Thread-safe, file-backed bookmark store."""
@@ -74,7 +85,7 @@ class BookmarkStore:
         with self._lock:
             raw = self._read()
         return sorted(
-            [Bookmark(**d) for d in raw if d.get("path") == path],
+            [Bookmark.from_stored(d) for d in raw if d.get("path") == path],
             key=lambda b: b.created,
             reverse=True,
         )
@@ -84,7 +95,7 @@ class BookmarkStore:
         with self._lock:
             raw = self._read()
         bookmarks = sorted(
-            [Bookmark(**d) for d in raw],
+            [Bookmark.from_stored(d) for d in raw],
             key=lambda b: b.created,
             reverse=True,
         )
@@ -130,7 +141,7 @@ class BookmarkStore:
                 if d.get("id") == bookmark_id:
                     d.update(changes)
                     self._write(data)
-                    return Bookmark(**d)
+                    return Bookmark.from_stored(d)
         return None
 
     def delete(self, bookmark_id: str) -> bool:
@@ -156,5 +167,5 @@ class BookmarkStore:
         with self._lock:
             for d in self._read():
                 if d.get("id") == bookmark_id:
-                    return Bookmark(**d)
+                    return Bookmark.from_stored(d)
         return None

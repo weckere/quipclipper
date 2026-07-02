@@ -32,6 +32,15 @@ def test_parse_tracks_invalid():
         cli._parse_tracks("a,b")
 
 
+def test_parse_tracks_rejects_negative():
+    # a:N is 0-based; a negative index would slip through to -map 0:a:-1 and
+    # wrap a per-stream codec list from the end.
+    with pytest.raises(typer.BadParameter):
+        cli._parse_tracks("-1")
+    with pytest.raises(typer.BadParameter):
+        cli._parse_tracks("0,-2")
+
+
 def test_select_single_candidate_autoselects(monkeypatch):
     def boom(*a, **k):
         raise AssertionError("should not prompt for a single candidate")
@@ -155,6 +164,37 @@ def _stub_clip_backends(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "cut_clip", fake_cut)
     monkeypatch.setattr(cli, "cut_with_mkvmerge", fake_mkv)
     return cap
+
+
+def test_clip_multi_match_uniquifies_colliding_auto_names(tmp_path, monkeypatch):
+    """Two chosen matches whose padded starts round to the same whole second must
+    NOT resolve to the same auto-named output (which would silently clobber)."""
+    v = tmp_path / "movie.mkv"; v.write_bytes(b"")
+    # 10.3 and 10.4 both pad (-2.0) to ~8.3/8.4 -> slug 00-00-08 for both.
+    c0 = Cue(index=0, start=10.3, end=11.0, text="a")
+    c1 = Cue(index=1, start=10.4, end=11.0, text="b")
+    matches = [Match(100.0, (c0,), "a"), Match(100.0, (c1,), "b")]
+    monkeypatch.setattr(cli, "_resolve", lambda *a, **k: ResolvedSubtitles([c0, c1], None))
+    monkeypatch.setattr(cli, "search", lambda *a, **k: matches)
+    monkeypatch.setattr(cli, "mkvmerge_available", lambda: False)
+    outs = []
+
+    def fake_cut(video, rng, **kw):
+        out = kw.get("out")
+        outs.append(out)
+        Path(out).write_bytes(b"x")
+        return out
+
+    monkeypatch.setattr(cli, "cut_clip", fake_cut)
+    res = runner.invoke(cli.app, [
+        "clip", "a", "-v", str(v), "-t", "audio", "--backend", "ffmpeg",
+        "--pick", "--yes",
+    ], input="all\n")
+    assert res.exit_code == 0, res.output
+    assert len(outs) == 2
+    # distinct output paths — no clobber
+    assert outs[0] != outs[1]
+    assert len({str(o) for o in outs}) == 2
 
 
 def test_clip_video_defaults_to_reencode(tmp_path, monkeypatch):

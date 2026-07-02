@@ -115,6 +115,47 @@ def test_inflight_lock_pruned_after_resolve(cache, monkeypatch):
     assert cache._inflight == {}
 
 
+def test_write_survives_mkstemp_failure(cache, monkeypatch):
+    """C8: if tempfile.mkstemp raises, the OSError handler must not NameError on
+    an unbound `tmp` — the extraction result is still returned, just uncached."""
+    def boom(*a, **k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(sub_cache_mod.tempfile, "mkstemp", boom)
+    cp = cache._cache_path(VIDEO, track=0)
+    # Must not raise (no NameError); simply leaves nothing on disk.
+    cache._write(cp, VIDEO, [Cue(index=0, start=0.0, end=1.0, text="hi")])
+    assert not cp.exists()
+
+
+def test_stale_mtime_entries_swept_on_fresh_write(tmp_path, monkeypatch):
+    """R5: writing a fresh entry for a path removes entries keyed on a superseded
+    source mtime, so subtitle edits don't leave old JSON behind forever."""
+    import os as _os
+    import time as _time
+
+    video = tmp_path / "movie.mkv"
+    video.write_bytes(b"")
+    (tmp_path / "movie.srt").write_text("x")  # sidecar = the subtitle source
+
+    cache = SubtitleCache(tmp_path / "state")
+    _stub_resolver(monkeypatch, chosen_track=0)
+
+    cache.resolve(video, track=0)
+    first = list((tmp_path / "state" / "sub_cache").glob("*.json"))
+    assert len(first) >= 1
+
+    # "Edit" the subtitles: bump the sidecar mtime so the cache key changes.
+    future = _time.time() + 100
+    _os.utime(tmp_path / "movie.srt", (future, future))
+
+    cache.resolve(video, track=0)
+    after = list((tmp_path / "state" / "sub_cache").glob("*.json"))
+    # The stale (old-mtime) entry is gone; only the fresh key remains.
+    assert len(after) == 1
+    assert after[0] not in first
+
+
 def test_cache_roundtrips_speaker(cache):
     """Speaker attribution must survive the JSON disk cache — the first
     (in-memory) resolve had it; cached reloads must not silently drop it."""

@@ -31,6 +31,23 @@ from quipclipper.models import Cue, Match, format_timestamp
 # The render node used for VAAPI / Intel Quick Sync hardware H.264 encoding.
 DEFAULT_VAAPI_DEVICE = "/dev/dri/renderD128"
 
+# Subprocess timeouts (seconds). Cutting/splitting a clip can legitimately take a
+# while (a long re-encode), so it gets a generous ceiling; a stream probe should
+# return almost immediately, so it gets a short one. Either way a wedged
+# ffmpeg/ffprobe eventually raises instead of hanging the caller forever.
+_CUT_TIMEOUT = 3600
+_PROBE_TIMEOUT = 60
+
+
+def _argv_path(p: str | Path) -> str:
+    """Stringify a path for an ffmpeg/ffprobe argv slot, guarding a leading dash.
+    A relative filename that starts with ``-`` (e.g. ``-weird.mkv``) would be
+    parsed as an option, so prefix ``./``; absolute paths are left as-is."""
+    s = str(p)
+    if s.startswith("-"):
+        return "./" + s
+    return s
+
 
 @functools.lru_cache(maxsize=None)
 def vaapi_h264_available(device: str = DEFAULT_VAAPI_DEVICE) -> bool:
@@ -85,6 +102,13 @@ FULLMIX_AUDIO = {
 
 # Codecs we can re-encode back to when splitting with --split-format original.
 ORIGINAL_ENCODER_OK = {"ac3", "eac3", "aac", "mp3", "flac", "opus", "vorbis"}
+
+# ffmpeg's built-in encoders for opus/vorbis/mp3 are experimental (or absent) and
+# ffmpeg aborts on ``-c:a opus``/``-c:a vorbis`` unless you opt into the native
+# encoder; the libopus/libvorbis/libmp3lame external encoders are the real ones.
+# Map a source codec name to the encoder ffmpeg should actually use (codecs not
+# listed encode fine under their own name — ac3, eac3, aac, flac).
+CODEC_ENCODER = {"opus": "libopus", "vorbis": "libvorbis", "mp3": "libmp3lame"}
 
 # Channel names for the common ffmpeg layouts, used to split surround audio.
 LAYOUT_CHANNELS = {
@@ -182,12 +206,18 @@ def _probe_streams(source: str | Path, selector: str, fields: str = "codec_name"
         "ffprobe", "-v", "error",
         "-select_streams", selector,
         "-show_entries", f"stream={fields}",
-        "-of", "json", str(source),
+        "-of", "json", _argv_path(source),
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=_PROBE_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return []
     if proc.returncode != 0:
         return []
-    return json.loads(proc.stdout or "{}").get("streams", [])
+    try:
+        return json.loads(proc.stdout or "{}").get("streams", [])
+    except json.JSONDecodeError:
+        return []
 
 
 # --- output naming -----------------------------------------------------------
@@ -322,20 +352,21 @@ def _ffmpeg_args(
     vaapi_device: str | None = None,
 ) -> list[str]:
     head = ["ffmpeg", "-y", "-v", "error"]
-    inputs = ["-ss", f"{rng.start:.3f}", "-i", str(source)]
+    inputs = ["-ss", f"{rng.start:.3f}", "-i", _argv_path(source)]
     subs_input = None
     if kind == "video" and lossless and embed_subs is not None:
         # The sidecar SRT is pre-trimmed and time-shifted to the clip (see
         # cut_clip), so it is muxed WITHOUT -ss — ffmpeg's text-subtitle seeking
         # is unreliable, and these timestamps already align with the output.
-        inputs += ["-i", str(embed_subs)]
+        inputs += ["-i", _argv_path(embed_subs)]
         subs_input = 1
     dur = ["-t", f"{rng.duration:.3f}"]
+    out_arg = _argv_path(out)
 
     if kind == "gif":
         # Scale and cap fps; height -1 preserves aspect ratio. Always re-encoded.
         vf = f"fps={fps},scale={width}:-1:flags=lanczos"
-        return head + inputs + dur + ["-an", "-vf", vf, str(out)]
+        return head + inputs + dur + ["-an", "-vf", vf, out_arg]
 
     if kind == "audio" and audio_codec is not None:
         # Full-mix lossless re-encode of ONE audio stream, all channels kept
@@ -344,7 +375,7 @@ def _ffmpeg_args(
         # or a:0). ffmpeg writes WAVE_FORMAT_EXTENSIBLE with the channel mask.
         enc = FULLMIX_AUDIO[audio_codec][0]
         idx = audio_indices[0] if audio_indices else 0
-        return head + inputs + dur + ["-map", f"0:a:{idx}", "-c:a", enc, str(out)]
+        return head + inputs + dur + ["-map", f"0:a:{idx}", "-c:a", enc, out_arg]
 
     if lossless:
         # -avoid_negative_ts make_zero cleans up timestamps after a keyframe seek.
@@ -352,7 +383,7 @@ def _ffmpeg_args(
         # -c copy preserves each one's exact bitstream and channel layout (5.1/7.1).
         common = ["-c", "copy", "-avoid_negative_ts", "make_zero"]
         if kind == "audio":
-            return head + inputs + dur + _audio_map_args(audio_indices, optional=False) + common + [str(out)]
+            return head + inputs + dur + _audio_map_args(audio_indices, optional=False) + common + [out_arg]
         # video: keep all video, audio and (embedded) subtitle tracks
         maps = ["-map", "0:v?"] + _audio_map_args(audio_indices, optional=True) + ["-map", "0:s?"]
         if subs_input is not None:
@@ -364,12 +395,12 @@ def _ffmpeg_args(
         if default_sub_index is not None and sub_count:
             for i in range(sub_count):
                 disp += [f"-disposition:s:{i}", "default" if i == default_sub_index else "0"]
-        return head + inputs + dur + maps + common + disp + [str(out)]
+        return head + inputs + dur + maps + common + disp + [out_arg]
 
     # re-encode (no subtitle handling here — that is a lossless feature)
     if kind == "audio":
         maps = _audio_map_args(audio_indices, optional=False) if audio_indices else ["-vn"]
-        return head + inputs + dur + maps + [str(out)]
+        return head + inputs + dur + maps + [out_arg]
     maps = ["-map", "0:v:0?"] + _audio_map_args(audio_indices, optional=True)
     if video_encoder == "h264_vaapi":
         # Intel Quick Sync via VAAPI: initialise the render node, upload frames to
@@ -377,8 +408,8 @@ def _ffmpeg_args(
         dev = ["-vaapi_device", vaapi_device] if vaapi_device else []
         return (head + dev + inputs + dur + maps
                 + ["-vf", "format=nv12,hwupload", "-c:v", "h264_vaapi", "-qp", "24",
-                   "-c:a", "aac", "-movflags", "+faststart", str(out)])
-    return head + inputs + dur + maps + ["-c:v", "libx264", "-c:a", "aac", "-movflags", "+faststart", str(out)]
+                   "-c:a", "aac", "-movflags", "+faststart", out_arg])
+    return head + inputs + dur + maps + ["-c:v", "libx264", "-c:a", "aac", "-movflags", "+faststart", out_arg]
 
 
 def cut_clip(
@@ -466,11 +497,20 @@ def cut_clip(
             video_encoder=enc, vaapi_device=dev,
         )
     try:
-        proc = subprocess.run(build(video_encoder, vaapi_device), capture_output=True, text=True)
-        # A hardware encoder can fail at runtime (driver/permission/unsupported
-        # input); fall back to a software (libx264) re-encode so the clip still cuts.
-        if proc.returncode != 0 and video_encoder != "libx264":
-            proc = subprocess.run(build("libx264", None), capture_output=True, text=True)
+        try:
+            proc = subprocess.run(
+                build(video_encoder, vaapi_device), capture_output=True, text=True,
+                timeout=_CUT_TIMEOUT,
+            )
+            # A hardware encoder can fail at runtime (driver/permission/unsupported
+            # input); fall back to a software (libx264) re-encode so the clip still cuts.
+            if proc.returncode != 0 and video_encoder != "libx264":
+                proc = subprocess.run(
+                    build("libx264", None), capture_output=True, text=True,
+                    timeout=_CUT_TIMEOUT,
+                )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(f"ffmpeg timed out cutting the clip after {_CUT_TIMEOUT}s.") from exc
         if proc.returncode != 0:
             raise RuntimeError(f"ffmpeg failed:\n{proc.stderr.strip()}")
     finally:
@@ -496,7 +536,10 @@ def _split_codec(fmt: str, source: str | Path, audio_index: int) -> tuple[str, s
                 f"Cannot re-encode split channels to {codec or 'unknown'!r}; "
                 "use --split-format wav or flac instead."
             )
-        return codec, LOSSLESS_AUDIO_EXT.get(codec, FALLBACK_AUDIO_EXT)
+        # opus/vorbis/mp3 need their external encoder (libopus/…); the container
+        # extension still follows the source codec name.
+        encoder = CODEC_ENCODER.get(codec, codec)
+        return encoder, LOSSLESS_AUDIO_EXT.get(codec, FALLBACK_AUDIO_EXT)
     raise ValueError(f"split format must be wav, flac, or original, got {fmt!r}")
 
 
@@ -571,12 +614,15 @@ def split_audio_channels(
         )
         args = [
             "ffmpeg", "-y", "-v", "error",
-            "-ss", f"{rng.start - preroll:.3f}", "-i", str(source),
+            "-ss", f"{rng.start - preroll:.3f}", "-i", _argv_path(source),
             "-ss", f"{preroll:.3f}", "-t", f"{rng.duration:.3f}",
             "-map", f"0:a:{audio_index}",
-            "-filter:a", pan, "-c:a", encoder, str(target),
+            "-filter:a", pan, "-c:a", encoder, _argv_path(target),
         ]
-        proc = subprocess.run(args, capture_output=True, text=True)
+        try:
+            proc = subprocess.run(args, capture_output=True, text=True, timeout=_CUT_TIMEOUT)
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(f"ffmpeg timed out splitting {label} after {_CUT_TIMEOUT}s.") from exc
         if proc.returncode != 0:
             raise RuntimeError(f"ffmpeg failed splitting {label}:\n{proc.stderr.strip()}")
         written.append(target)

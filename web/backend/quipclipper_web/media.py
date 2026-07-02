@@ -43,17 +43,22 @@ def probe_keyframe_before(path: Path, target: float) -> float:
     # Read a window around the target; go back far enough to catch sparse
     # keyframe intervals (up to ~15 s for some encodes).
     window_start = max(0, target - 20)
-    result = subprocess.run(
-        [
-            "ffprobe", "-v", "error",
-            "-select_streams", "v:0",
-            "-show_entries", "packet=pts_time,flags",
-            "-of", "csv=p=0",
-            "-read_intervals", f"{window_start}%{target + 0.5}",
-            str(path),
-        ],
-        capture_output=True, text=True, timeout=10,
-    )
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe", "-v", "error",
+                "-select_streams", "v:0",
+                "-show_entries", "packet=pts_time,flags",
+                "-of", "csv=p=0",
+                "-read_intervals", f"{window_start}%{target + 0.5}",
+                str(path),
+            ],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (subprocess.TimeoutExpired, subprocess.CalledProcessError, OSError):
+        # ffprobe stalled or failed — fall back to the requested time (the
+        # frontend then treats the seek as landing exactly on target).
+        return target
     best = None
     for line in result.stdout.splitlines():
         if ",K" not in line:
@@ -118,6 +123,22 @@ def item_info(path: Path, langs=None) -> dict:
     }
 
 
+def _vtt_escape(text: str) -> str:
+    """Sanitize cue text so it can't break WebVTT parsing.
+
+    A blank line inside a cue payload terminates the cue early (the player then
+    treats the rest as a new cue with a bad timestamp), and the ``-->`` arrow or
+    an unescaped ``<``/``&`` are cue-syntax metacharacters. So: escape ``&`` and
+    ``<`` per the WebVTT rules, neutralise any literal ``-->``, and collapse the
+    blank lines within a cue into single newlines (WebVTT allows multi-line cues,
+    just not empty lines)."""
+    text = text.replace("&", "&amp;").replace("<", "&lt;")
+    text = text.replace("-->", "--‑>")  # non-breaking hyphen defuses the arrow
+    # Drop blank/whitespace-only lines that would prematurely end the cue.
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    return "\n".join(lines)
+
+
 def cues_to_vtt(cues: list[Cue], offset: float = 0) -> str:
     """Render cues as a WebVTT document.
 
@@ -131,9 +152,11 @@ def cues_to_vtt(cues: list[Cue], offset: float = 0) -> str:
         if end <= 0:
             continue
         start = max(0, c.start - offset)
+        text = _vtt_escape(c.text)
         lines.append(f"{format_timestamp(start)} --> {format_timestamp(end)}")
         # Re-emit the speaker as a WebVTT voice tag so the player caption shows it.
+        # The speaker is escaped too so a stray '>' can't close the tag early.
         speaker = getattr(c, "speaker", None)
-        lines.append(f"<v {speaker}>{c.text}" if speaker else c.text)
+        lines.append(f"<v {_vtt_escape(speaker)}>{text}" if speaker else text)
         lines.append("")
     return "\n".join(lines)

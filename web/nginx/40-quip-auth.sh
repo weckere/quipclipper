@@ -10,8 +10,9 @@ htpw=/etc/nginx/.htpasswd
 
 if [ -n "${QC_PASSWORD:-}" ]; then
     user="${QC_USERNAME:-quip}"
-    # -b: password from args, -m: apr1/MD5 (broadly supported by nginx), -c: create
-    htpasswd -bmc "$htpw" "$user" "$QC_PASSWORD" >/dev/null 2>&1
+    # -i: read password from stdin (keeps it off the process command line, unlike
+    # -b), -m: apr1/MD5 (broadly supported by nginx), -c: create.
+    printf '%s' "$QC_PASSWORD" | htpasswd -imc "$htpw" "$user" >/dev/null 2>&1
     # nginx workers run as the 'nginx' user, so the file must be readable by them
     # (root-only 600 makes credential checks fail with 500). Keep it off world.
     chown root:nginx "$htpw" 2>/dev/null || true

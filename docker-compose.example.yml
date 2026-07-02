@@ -32,6 +32,14 @@ services:
       - quip-state:/state
     expose:
       - "8000"
+    healthcheck:
+      # The image ships Python (no curl); hit the backend's own health endpoint.
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/health').status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
     # --- Optional: Intel Quick Sync hardware video transcode -----------------
     # Re-encodes undecodable video (HEVC for Firefox, XviD/MPEG-4 AVIs, …) to
     # H.264 on an Intel iGPU instead of the CPU. Find the render group GID with
@@ -45,7 +53,8 @@ services:
     image: ghcr.io/weckere/quipclipper-web:latest
     restart: unless-stopped
     depends_on:
-      - app
+      app:
+        condition: service_healthy   # don't proxy until the backend is ready
     ports:
       - "8896:80"         # browse at http://<host>:8896
     volumes:

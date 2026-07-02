@@ -31,6 +31,23 @@ AUDIO_EXTS = (".mp3", ".m4a", ".m4b", ".aac", ".flac", ".opus", ".ogg", ".oga",
 # Strip SubRip/ASS inline markup like <i>, {\an8}, etc.
 _TAG_RE = re.compile(r"<[^>]+>|\{[^}]*\}")
 
+# Timeout (seconds) for the short ffprobe metadata reads here; a wedged probe
+# shouldn't hang the caller forever. Extraction re-uses the generous cutting
+# timeout since it can transcode a whole track's worth of subtitles.
+_PROBE_TIMEOUT = 60
+_EXTRACT_TIMEOUT = 3600
+
+
+def _argv_path(p: str | Path) -> str:
+    """Stringify a path for an ffmpeg/ffprobe/mkvmerge argv slot, guarding a
+    leading dash. A relative filename that starts with ``-`` (e.g. ``-weird.mkv``)
+    would be parsed as an option, so prefix ``./``. Absolute paths are left as-is
+    (they already start with ``/``), keeping user-facing output names relative."""
+    s = str(p)
+    if s.startswith("-"):
+        return "./" + s
+    return s
+
 
 def _clean(text: str) -> str:
     text = text.replace(r"\N", " ").replace(r"\n", " ").replace("\n", " ")
@@ -53,12 +70,15 @@ def _norm_ts(s: str) -> str:
     return format_timestamp(sec) if sec is not None else s
 
 
-def _vtt_voice_speakers(path: Path) -> dict[str, str]:
-    """Map each VTT cue's start time (HH:MM:SS.mmm) to its ``<v Name>`` speaker.
+def _vtt_voice_speakers(path: Path) -> dict[str, list[str | None]]:
+    """Map each VTT cue's start time (HH:MM:SS.mmm) to its ``<v Name>`` speakers.
 
     pysubs2 discards voice tags, so we scan the raw file: the first text line
-    after a ``-->`` timing line carries the voice tag, if any."""
-    speakers: dict[str, str] = {}
+    after a ``-->`` timing line carries the voice tag, if any. Two cues can share
+    a start timestamp, so each key holds a *list* of speakers in file order (one
+    entry per cue, None when a cue has no voice tag); the loader consumes them
+    positionally so same-start cues don't collide."""
+    speakers: dict[str, list[str | None]] = {}
     try:
         text = path.read_text(encoding="utf-8-sig", errors="replace")
     except OSError:
@@ -70,8 +90,7 @@ def _vtt_voice_speakers(path: Path) -> dict[str, str]:
             start = _norm_ts(m.group(1))
         elif start is not None and line.strip():
             vm = _VOICE_RE.match(line.strip())
-            if vm:
-                speakers[start] = vm.group(1).strip()
+            speakers.setdefault(start, []).append(vm.group(1).strip() if vm else None)
             start = None  # only the first text line of a cue carries the tag
     return speakers
 
@@ -210,7 +229,15 @@ def load_subtitles(path: str | Path) -> list[Cue]:
         return _load_json_cues(path)
     try:
         subs = pysubs2.load(str(path))
-    except (Pysubs2Error, UnicodeDecodeError) as exc:
+    except UnicodeDecodeError:
+        # pysubs2.load assumes UTF-8; a cp1252/latin-1 .srt (still very common)
+        # raises here. Retry decoding as latin-1, which maps every byte, so any
+        # single-byte legacy encoding at least loads (mojibake beats a crash).
+        try:
+            subs = pysubs2.load(str(path), encoding="latin-1")
+        except (Pysubs2Error, UnicodeDecodeError) as exc:
+            raise ValueError(f"Could not parse subtitle file {path.name}: {exc}") from exc
+    except Pysubs2Error as exc:
         # An empty or non-text subtitle (e.g. an image/PGS track ffmpeg wrote out
         # as an empty SRT, or a malformed/garbage file) can't be format-detected
         # or decoded. Normalize to ValueError — the single exception type callers
@@ -218,21 +245,26 @@ def load_subtitles(path: str | Path) -> list[Cue]:
         # one unparseable file doesn't surface as a 500.
         raise ValueError(f"Could not parse subtitle file {path.name}: {exc}") from exc
     # WebVTT voice tags (<v Name>) are stripped by pysubs2 — recover them from
-    # the raw file, keyed by cue start time.
+    # the raw file, keyed by cue start time (a list per start, in file order, so
+    # two cues sharing a start don't collide).
     voice = _vtt_voice_speakers(path) if path.suffix.lower() == ".vtt" else {}
     cues: list[Cue] = []
     for i, line in enumerate(subs):
+        start = line.start / 1000.0  # pysubs2 stores milliseconds
+        # Consume this cue's voice entry positionally, whether or not its text is
+        # empty, so same-start cues stay aligned with the raw-file scan order.
+        queue = voice.get(format_timestamp(start))
+        speaker = queue.pop(0) if queue else None
         text = _clean(line.text)
         if not text:
             continue
-        start = line.start / 1000.0  # pysubs2 stores milliseconds
         cues.append(
             Cue(
                 index=i,
                 start=start,
                 end=line.end / 1000.0,
                 text=text,
-                speaker=voice.get(format_timestamp(start)),
+                speaker=speaker,
             )
         )
     cues = _apply_speaker_prefixes(cues)
@@ -272,14 +304,20 @@ def list_embedded_tracks(video_path: str | Path) -> list[SubtitleTrack]:
         "-show_entries",
         "stream=index,codec_name:stream_tags=language,title"
         ":stream_disposition=forced,hearing_impaired",
-        "-of", "json", str(video_path),
+        "-of", "json", _argv_path(video_path),
     ]
-    out = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=_PROBE_TIMEOUT)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"ffprobe timed out reading {video_path}.") from exc
     if out.returncode != 0:
         raise RuntimeError(
             f"ffprobe could not read {video_path}:\n{out.stderr.strip()}"
         )
-    streams = json.loads(out.stdout or "{}").get("streams", [])
+    try:
+        streams = json.loads(out.stdout or "{}").get("streams", [])
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"ffprobe returned unreadable output for {video_path}: {exc}") from exc
     tracks: list[SubtitleTrack] = []
     for rel, s in enumerate(streams):  # rel = subtitle-relative index (s:N)
         tags = s.get("tags", {}) or {}
@@ -340,14 +378,20 @@ def list_streams(video_path: str | Path) -> list[StreamInfo]:
         "stream=codec_type,codec_name,channels,channel_layout"
         ":stream_tags=language,title"
         ":stream_disposition=forced,hearing_impaired,attached_pic",
-        "-of", "json", str(video_path),
+        "-of", "json", _argv_path(video_path),
     ]
-    out = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=_PROBE_TIMEOUT)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"ffprobe timed out reading {video_path}.") from exc
     if out.returncode != 0:
         raise RuntimeError(
             f"ffprobe could not read {video_path}:\n{out.stderr.strip()}"
         )
-    streams = json.loads(out.stdout or "{}").get("streams", [])
+    try:
+        streams = json.loads(out.stdout or "{}").get("streams", [])
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"ffprobe returned unreadable output for {video_path}: {exc}") from exc
     counts: dict[str, int] = {}
     infos: list[StreamInfo] = []
     for s in streams:
@@ -380,16 +424,32 @@ def extract_embedded(video_path: str | Path, stream_index: int) -> list[Cue]:
     video_path = Path(video_path)
     if shutil.which("ffmpeg") is None:
         raise RuntimeError("ffmpeg not found on PATH. Install ffmpeg to extract embedded subtitles.")
+    # Bounds-check the requested track first, so an out-of-range --track reports
+    # "track doesn't exist" rather than the generic "image subtitles" message
+    # (every ffmpeg -map failure otherwise looked like an unsupported codec).
+    n_tracks = len(list_embedded_tracks(video_path))
+    if not 0 <= stream_index < n_tracks:
+        raise RuntimeError(
+            f"Subtitle track s:{stream_index} does not exist — "
+            f"{video_path} has {n_tracks} subtitle track(s) (valid s:0–s:{n_tracks - 1})."
+            if n_tracks else
+            f"Subtitle track s:{stream_index} does not exist — {video_path} has no subtitle tracks."
+        )
     with tempfile.NamedTemporaryFile(suffix=".srt", delete=False) as tmp:
         tmp_path = Path(tmp.name)
     try:
         cmd = [
             "ffmpeg", "-y", "-v", "error",
-            "-i", str(video_path),
+            "-i", _argv_path(video_path),
             "-map", f"0:s:{stream_index}",  # subtitle-relative index (s:N)
-            "-f", "srt", str(tmp_path),
+            "-f", "srt", _argv_path(tmp_path),
         ]
-        proc = subprocess.run(cmd, capture_output=True, text=True)
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=_EXTRACT_TIMEOUT)
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                f"ffmpeg timed out extracting subtitle track s:{stream_index}."
+            ) from exc
         if proc.returncode != 0:
             raise RuntimeError(
                 f"Could not extract subtitle track s:{stream_index} as text — image "
@@ -410,7 +470,7 @@ def _sidecar_candidates(video_path: Path) -> list[Path]:
     dropping every sidecar — bare ``.srt`` and language-suffixed ``.en.srt``/``.hi.en.srt``
     alike. The trailing dot is still required, so a sibling ``movie2.srt`` isn't picked up
     for ``movie``; yt-dlp's ``*.info.json`` metadata is skipped."""
-    prefix = video_path.stem + "."
+    prefix = (video_path.stem + ".").lower()
     try:
         siblings = list(video_path.parent.iterdir())
     except OSError:
@@ -418,7 +478,10 @@ def _sidecar_candidates(video_path: Path) -> list[Path]:
     return [
         p
         for p in siblings
-        if p.name.startswith(prefix)
+        # Case-insensitive prefix match, consistent with _sidecar_tags (which
+        # lowercases before comparing the stem), so ``Movie.EN.SRT`` matches
+        # ``movie.mkv`` on case-preserving filesystems.
+        if p.name.lower().startswith(prefix)
         and p.suffix.lower() in SUBTITLE_EXTS
         and not p.name.lower().endswith(".info.json")
     ]
@@ -602,9 +665,13 @@ def resolve_subtitles(
     if not Path(video).exists():
         raise FileNotFoundError(f"Video file not found: {video}")
 
-    sidecar = find_sidecar(video, langs)
-    if sidecar:
-        return ResolvedSubtitles(load_subtitles(sidecar), sidecar)
+    # An explicit --track names an embedded stream, so it takes priority over
+    # sidecar auto-selection — otherwise the sidecar would silently win and the
+    # requested track would be ignored. Sidecars only fill in when no track is set.
+    if track is None:
+        sidecar = find_sidecar(video, langs)
+        if sidecar:
+            return ResolvedSubtitles(load_subtitles(sidecar), sidecar)
 
     tracks = list_embedded_tracks(video)
     if not tracks:
@@ -614,13 +681,3 @@ def resolve_subtitles(
     if track is None:
         track = best_track(tracks, langs).index
     return ResolvedSubtitles(extract_embedded(video, track), None, track)
-
-
-def resolve_cues(
-    *,
-    subs: str | Path | None,
-    video: str | Path | None,
-    track: int | None = None,
-) -> list[Cue]:
-    """Resolve cues from the best available source (see `resolve_subtitles`)."""
-    return resolve_subtitles(subs=subs, video=video, track=track).cues

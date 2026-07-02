@@ -14,7 +14,7 @@ from __future__ import annotations
 import threading
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -26,6 +26,7 @@ class Status(str, Enum):
     running = "running"
     done = "done"
     failed = "failed"
+    cancelled = "cancelled"
 
 
 @dataclass
@@ -72,6 +73,7 @@ class JobRegistry:
     def __init__(self, max_workers: int = 2) -> None:
         self._pool = ThreadPoolExecutor(max_workers=max_workers)
         self._jobs: dict[str, Job] = {}
+        self._futures: dict[str, Future] = {}
         self._lock = threading.Lock()
 
     def submit(self, fn: Callable[[], list[Path]], *, label: str = "") -> Job:
@@ -81,12 +83,42 @@ class JobRegistry:
             for jid, j in list(self._jobs.items()):
                 if j.finished is not None and j.finished < cutoff:
                     del self._jobs[jid]
+                    self._futures.pop(jid, None)
             self._jobs[job.id] = job
-        self._pool.submit(self._run, job, fn)
+            self._futures[job.id] = self._pool.submit(self._run, job, fn)
         return job
 
     def get(self, job_id: str) -> Job | None:
         return self._jobs.get(job_id)
+
+    def cancel(self, job_id: str) -> bool:
+        """Cancel a job. Returns True if the job existed and was cancelled/pruned.
+
+        A queued job that hasn't started is pulled from the pool and marked
+        cancelled. A job that's already finished (done/failed/cancelled) is simply
+        pruned from the registry. A *running* job can't be interrupted from here
+        (its ffmpeg subprocess has its own timeout), so this returns False for it —
+        the caller surfaces that as "can't cancel a running job".
+        """
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return False
+            if job.status in (Status.done, Status.failed, Status.cancelled):
+                del self._jobs[job_id]
+                self._futures.pop(job_id, None)
+                return True
+            if job.status == Status.running:
+                return False  # in flight; the subprocess timeout will free it
+            # Queued: try to yank the future from the pool before it starts.
+            fut = self._futures.get(job_id)
+            if fut is not None and fut.cancel():
+                job.status = Status.cancelled
+                job.finished = time.time()
+                self._futures.pop(job_id, None)
+                return True
+            # The worker grabbed it between our checks — treat as running.
+            return False
 
     def list_recent(self, limit: int = 20) -> list[Job]:
         with self._lock:
@@ -97,6 +129,8 @@ class JobRegistry:
         self._pool.shutdown(wait=False)
 
     def _run(self, job: Job, fn: Callable[[], list[Path]]) -> None:
+        if job.status == Status.cancelled:  # cancelled after submit, before start
+            return
         job.status = Status.running
         job.started = time.time()
         try:

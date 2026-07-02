@@ -1,0 +1,27 @@
+# Build context is the repo root (see web/Dockerfile). Keep dev/test artifacts
+# and local state out of the images.
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.venv/
+venv/
+
+# Local web backend runtime state / persisted data
+web/backend/state/
+state/
+
+# Generated clips
+clips/
+
+# Editor / OS cruft
+.DS_Store
+.idea/
+.vscode/

@@ -119,6 +119,7 @@ class SubtitleCache:
                 ],
             },
         )
+        tmp = None  # so a mkstemp failure doesn't NameError the cleanup below
         try:
             fd, tmp = tempfile.mkstemp(dir=self._dir, suffix=".tmp")
             with os.fdopen(fd, "w") as f:
@@ -126,8 +127,9 @@ class SubtitleCache:
             os.replace(tmp, cp)
         except OSError:
             # Best-effort cleanup; extraction result is still returned.
-            with contextlib.suppress(OSError):
-                os.unlink(tmp)
+            if tmp is not None:
+                with contextlib.suppress(OSError):
+                    os.unlink(tmp)
 
     def resolve(self, video: Path, track: int | None = None) -> list[Cue]:
         cp = self._cache_path(video, track)
@@ -160,6 +162,12 @@ class SubtitleCache:
                     concrete = self._cache_path(video, resolved.track)
                     if concrete != cp and self._read(concrete) is None:
                         self._write(concrete, video, cues)
+
+                # Sweep stale entries for this video written under a superseded
+                # source mtime — otherwise every subtitle edit leaves the old
+                # JSON behind forever (R5). The just-written current-key files
+                # are kept; only differently-keyed entries for the same path go.
+                self._sweep_stale(video)
         finally:
             self._prune_inflight(key)
 
@@ -174,6 +182,54 @@ class SubtitleCache:
         except (json.JSONDecodeError, OSError):
             return None
         return data.get("video") if isinstance(data, dict) else None
+
+    def _sweep_stale(self, video: Path) -> int:
+        """Remove cache entries for *video* keyed on a *different* source mtime.
+
+        A cache filename embeds the source mtime, so an entry whose key doesn't
+        match the video's current mtime-based key (for any track) is stale — it
+        was written before the subtitles last changed and can never be read
+        again. Returns the number of stale files removed. Best-effort.
+        """
+        removed = 0
+        target = str(video)
+        current_mtime = self._source_mtime(video)
+        for f in self._dir.glob("*.json"):
+            if self._stored_video(f) != target:
+                continue
+            # Recompute the key prefix for this file's video at the current
+            # mtime; a stale file's name won't match any current-mtime key.
+            key_stem = f.stem
+            raw_auto = f"{target}:{current_mtime}:auto"
+            if hashlib.sha256(raw_auto.encode()).hexdigest() == key_stem:
+                continue  # current auto entry
+            # A concrete-track key: brute-forcing every track is wasteful, so
+            # instead reconstruct only the concrete track we might have dual-keyed
+            # by reading the stored mtime portion — cheaper to just keep entries
+            # whose mtime matches the current one.
+            if self._entry_mtime_matches(f, current_mtime):
+                continue
+            with contextlib.suppress(OSError):
+                f.unlink()
+                removed += 1
+        return removed
+
+    def _entry_mtime_matches(self, cache_file: Path, mtime: float) -> bool:
+        """True if this cache entry's key was built from *mtime*.
+
+        The key is a hash so the mtime isn't recoverable directly; instead we
+        recompute the hash for the entry's stored video across the plausible
+        track keys (auto + any small track index) at *mtime* and check for a
+        match. Cheap and bounded — subtitle tracks are single digits."""
+        stored = self._stored_video(cache_file)
+        if stored is None:
+            return False
+        key_stem = cache_file.stem
+        for tkey in ("auto", *(str(t) for t in range(16))):
+            raw = f"{stored}:{mtime}:{tkey}"
+            if hashlib.sha256(raw.encode()).hexdigest() == key_stem:
+                return True
+        return False
 
     def clear(self, video: Path) -> int:
         """Remove all cache entries for a video (current key + stale orphans).

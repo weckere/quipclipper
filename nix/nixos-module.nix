@@ -5,7 +5,7 @@
 # behind basic-auth. Set `nginx.enable = false` to run only the backend and bring
 # your own front. The nginx vhost's port/bind/default_server are configurable
 # (`nginx.{port,listen,defaultServer}`) so quipclipper can share a host. Option
-# names mirror the Docker env vars 1:1 (see docs/WEBAPP_PLAN.md §6).
+# names mirror the Docker env vars (see the option table in the README).
 #
 # Imported via `inputs.quipclipper.nixosModules.default`, which passes `self`
 # so the module can resolve the packages built by the flake.
@@ -31,7 +31,17 @@ let
   nginxListen =
     if cfg.nginx.listen != null then cfg.nginx.listen
     else [ { addr = "0.0.0.0"; port = cfg.nginx.port; } ];
-  nginxFirewallPorts = map (l: l.port) nginxListen;
+  # A listen entry may omit `port` (nginx then defaults to 80) — default it here
+  # so `openFirewall` doesn't throw "attribute 'port' missing" on such entries.
+  nginxFirewallPorts = map (l: l.port or 80) nginxListen;
+  # A shared clipsGroup only reaches other users if new subdirs inherit it, which
+  # needs the setgid bit on clipsDir. That's the leading digit of a 4-digit mode
+  # having the "2" bit set (2/3/6/7) — e.g. 2775, 6755. A 3-digit mode (0750) has
+  # no special-bits digit, so no setgid.
+  clipsModeHasSetgid =
+    let s = cfg.clipsMode; in
+    lib.stringLength s >= 4
+    && (let d = lib.toInt (lib.substring 0 1 s); in d == 2 || d == 3 || d == 6 || d == 7);
 in
 {
   options.services.quipclipper-web = {
@@ -236,6 +246,21 @@ in
           directory — otherwise the app starts with an empty, unusable library.
         '';
       }
+      {
+        # A misspelled clipsGroup evaluates fine but the service/nginx then join a
+        # group that doesn't exist, and clip downloads 403 at runtime. Catch the
+        # typo at build time. (Skipped when clipsGroup is null / the service's own
+        # group, which the module always defines.)
+        assertion = cfg.clipsGroup == null
+          || cfg.clipsGroup == cfg.group
+          || config.users.groups ? ${cfg.clipsGroup};
+        message = ''
+          services.quipclipper-web.clipsGroup = "${toString cfg.clipsGroup}" is not
+          a group defined in config.users.groups. Define it (e.g. in
+          users.groups.${toString cfg.clipsGroup}), or fix the spelling — otherwise
+          the service and nginx join a non-existent group and clip downloads 403.
+        '';
+      }
     ];
 
     # The basic-auth gate is enforced by the bundled nginx. With nginx.enable =
@@ -246,6 +271,12 @@ in
       services.quipclipper-web.passwordFile is set but nginx.enable = false, so
       no HTTP basic-auth gate is applied. Enforce authentication in your own
       reverse proxy, or the service is reachable without a password.
+    '' ++ lib.optional (cfg.clipsGroup != null && cfg.manageClipsDir && !clipsModeHasSetgid) ''
+      services.quipclipper-web.clipsGroup = "${cfg.clipsGroup}" shares clipsDir,
+      but clipsMode = "${cfg.clipsMode}" lacks the setgid bit. New per-source
+      subdirs will be owned by the service's own group, so ${cfg.clipsGroup}
+      members can't read clips created after startup. Use a setgid mode like
+      "2775" so subdirs inherit clipsGroup.
     '';
 
     users.users = {
@@ -279,9 +310,11 @@ in
       description = "quipclipper web backend";
       wantedBy = [ "multi-user.target" ];
       after = [ "network.target" ];
-      # Wait for the filesystem holding clipsDir — important when it's an external
-      # mount (SMB/mergerfs) the admin manages (manageClipsDir = false).
-      unitConfig.RequiresMountsFor = [ (toString cfg.clipsDir) ];
+      # Wait for the filesystems holding clipsDir and the media roots — important
+      # when any is an external mount (SMB/mergerfs) that may not be ready at boot.
+      # A media root racing its mount would otherwise start with an empty library.
+      unitConfig.RequiresMountsFor =
+        [ (toString cfg.clipsDir) ] ++ map toString cfg.mediaRoots;
 
       environment = {
         QC_MEDIA_ROOTS = lib.concatStringsSep ":" (map toString cfg.mediaRoots);
@@ -319,8 +352,12 @@ in
         ProtectSystem = "strict";
         ProtectHome = true;
         PrivateTmp = true;
-        ReadOnlyPaths = map toString cfg.mediaRoots;
-        ReadWritePaths = [ (toString cfg.clipsDir) stateDir ];
+        # Use Bind*Paths, not Read{Only,Write}Paths: ProtectHome=true hides all of
+        # /home *after* the latter re-mount, so a mediaRoot/clipsDir under /home
+        # would be invisible. BindReadOnlyPaths/BindPaths bind the source in
+        # explicitly, so /home roots keep working under ProtectHome.
+        BindReadOnlyPaths = map toString cfg.mediaRoots;
+        BindPaths = [ (toString cfg.clipsDir) stateDir ];
 
         # When the clips dir is shared (clipsGroup set), write group-writable so
         # the shared group can delete/manage clips, not just read them. With the

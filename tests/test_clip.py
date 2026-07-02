@@ -5,6 +5,7 @@ import pytest
 
 from quipclipper.clip import (
     ClipRange,
+    _argv_path,
     _ffmpeg_args,
     _split_codec,
     _timestamp_slug,
@@ -22,6 +23,15 @@ from quipclipper.models import Cue, Match
 def make_match(start=10.0, end=12.0):
     cue = Cue(index=0, start=start, end=end, text="line")
     return Match(score=100.0, cues=(cue,), text="line")
+
+
+def test_match_end_uses_latest_cue_end_with_overlap():
+    # Overlapping cues: the LAST cue in order isn't the one that ends latest.
+    # Match.end must take the max so a clip window never truncates the tail.
+    early_long = Cue(index=0, start=10.0, end=20.0, text="long line")
+    later_short = Cue(index=1, start=11.0, end=12.0, text="short overlap")
+    m = Match(score=100.0, cues=(early_long, later_short), text="x")
+    assert m.end == 20.0  # not later_short.end (12.0)
 
 
 def test_compute_range_pads_both_sides():
@@ -144,6 +154,26 @@ def test_ffmpeg_args_gif_is_always_reencoded():
     )
     assert "copy" not in args
     assert any("fps=12" in a and "scale=320" in a for a in args)
+
+
+def test_argv_path_guards_leading_dash():
+    # A relative filename starting with '-' would be read as an option; prefix ./.
+    assert _argv_path("-weird.mkv") == "./-weird.mkv"
+    assert _argv_path(Path("-weird.mkv")) == "./-weird.mkv"
+    # Ordinary and absolute paths are untouched.
+    assert _argv_path("movie.mkv") == "movie.mkv"
+    assert _argv_path("/abs/-weird.mkv") == "/abs/-weird.mkv"
+
+
+def test_ffmpeg_args_guards_leading_dash_in_source_and_out():
+    # Both the input source and the output path must be dash-guarded so ffmpeg
+    # doesn't parse a leading '-' filename as an option.
+    args = _ffmpeg_args(
+        source=Path("-weird.mkv"), rng=ClipRange(0.0, 2.0), kind="audio",
+        out=Path("-out.mka"), lossless=True, fps=15, width=480,
+    )
+    assert "./-weird.mkv" in args and "-weird.mkv" not in args
+    assert "./-out.mka" in args and "-out.mka" not in args
 
 
 def test_ffmpeg_args_seeks_before_input():
@@ -312,6 +342,30 @@ def test_split_codec_wav_and_flac():
 def test_split_codec_rejects_unknown_format():
     with pytest.raises(ValueError):
         _split_codec("mp4", "in.mkv", 0)
+
+
+def test_split_codec_original_maps_opus_and_vorbis_to_external_encoders():
+    # ffmpeg's built-in opus/vorbis/mp3 encoders are experimental/absent, so
+    # -c:a opus/vorbis aborts. --split-format original must emit libopus/
+    # libvorbis/libmp3lame while keeping the source-codec container extension.
+    with patch("quipclipper.clip.probe_audio_streams", return_value=["opus"]):
+        assert _split_codec("original", "in.webm", 0) == ("libopus", "opus")
+    with patch("quipclipper.clip.probe_audio_streams", return_value=["vorbis"]):
+        assert _split_codec("original", "in.ogg", 0) == ("libvorbis", "ogg")
+    with patch("quipclipper.clip.probe_audio_streams", return_value=["mp3"]):
+        assert _split_codec("original", "in.mp3", 0) == ("libmp3lame", "mp3")
+
+
+def test_split_codec_original_keeps_native_encoder_for_ac3():
+    # ac3/eac3/aac/flac encode fine under their own name — not remapped.
+    with patch("quipclipper.clip.probe_audio_streams", return_value=["ac3"]):
+        assert _split_codec("original", "in.mkv", 0) == ("ac3", "ac3")
+
+
+def test_split_codec_original_rejects_uncopyable_codec():
+    with patch("quipclipper.clip.probe_audio_streams", return_value=["truehd"]):
+        with pytest.raises(RuntimeError):
+            _split_codec("original", "in.mkv", 0)
 
 
 def _cue(i, start, end, text):

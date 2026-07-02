@@ -1,12 +1,19 @@
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+import quipclipper.subtitles as subtitles
+from quipclipper.models import Cue
 from quipclipper.subtitles import (
     SubtitleTrack,
+    _PROBE_TIMEOUT,
+    _argv_path,
     _sidecar_candidates,
     best_track,
+    extract_embedded,
     find_sidecar,
+    list_embedded_tracks,
     load_subtitles,
     resolve_subtitles,
 )
@@ -396,3 +403,136 @@ def test_best_track_two_letter_and_three_letter_codes_match():
     # "en" preference matches an "eng"-tagged track and vice-versa.
     assert best_track([_trk(0, "ger"), _trk(1, "eng")], ["en"]).index == 1
     assert best_track([_trk(0, "ger"), _trk(1, "en")], ["eng"]).index == 1
+
+
+# --- M1: an explicit --track beats sidecar auto-selection --------------------
+
+def test_resolve_subtitles_explicit_track_uses_embedded_not_sidecar(tmp_path):
+    """When --track is given, the embedded track is used even if a sidecar exists;
+    otherwise the sidecar would silently win and the requested track be ignored."""
+    video = tmp_path / "movie.mkv"
+    video.write_bytes(b"")
+    sidecar = tmp_path / "movie.srt"
+    sidecar.write_text("x")
+
+    calls = {}
+
+    def fake_extract(v, idx):
+        calls["track"] = idx
+        return [Cue(0, 1.0, 2.0, "from embedded track")]
+
+    with patch.object(subtitles, "list_embedded_tracks",
+                      return_value=[_trk(0), _trk(1), _trk(2)]), \
+         patch.object(subtitles, "extract_embedded", side_effect=fake_extract), \
+         patch.object(subtitles, "load_subtitles",
+                      side_effect=AssertionError("sidecar must not be loaded")):
+        resolved = resolve_subtitles(subs=None, video=video, track=1)
+
+    assert calls["track"] == 1
+    assert resolved.track == 1
+    assert resolved.path is None  # came from the embedded track, not the sidecar
+
+
+# --- M3: leading-dash paths are guarded --------------------------------------
+
+def test_argv_path_guards_leading_dash():
+    assert _argv_path("-weird.mkv") == "./-weird.mkv"
+    assert _argv_path(Path("-weird.mkv")) == "./-weird.mkv"
+    assert _argv_path("movie.mkv") == "movie.mkv"
+    assert _argv_path("/abs/-weird.mkv") == "/abs/-weird.mkv"
+
+
+def test_list_embedded_tracks_guards_leading_dash_source(tmp_path):
+    captured = {}
+
+    def fake_run(cmd, **kw):
+        captured["cmd"] = cmd
+        return MagicMock(returncode=0, stdout='{"streams":[]}', stderr="")
+
+    with patch.object(subtitles.shutil, "which", return_value="/ffprobe"), \
+         patch.object(subtitles.subprocess, "run", side_effect=fake_run):
+        list_embedded_tracks(Path("-weird.mkv"))
+    assert "./-weird.mkv" in captured["cmd"] and "-weird.mkv" not in captured["cmd"]
+
+
+# --- L2: legacy (latin-1) subtitle encodings load ----------------------------
+
+def test_load_subtitles_latin1_encoding(tmp_path):
+    # A cp1252/latin-1 .srt (0xE9 = 'é') must load instead of raising
+    # UnicodeDecodeError from pysubs2's UTF-8-only default.
+    srt = tmp_path / "legacy.srt"
+    srt.write_bytes(
+        b"1\r\n00:00:01,000 --> 00:00:03,000\r\nCaf\xe9 ferm\xe9\r\n\r\n"
+    )
+    cues = load_subtitles(srt)
+    assert len(cues) == 1
+    assert "Caf" in cues[0].text  # decoded without crashing
+
+
+# --- L3: two VTT cues sharing a start timestamp don't collide -----------------
+
+def test_vtt_same_start_cues_keep_distinct_speakers(tmp_path):
+    vtt = tmp_path / "s.vtt"
+    vtt.write_text(
+        "WEBVTT\n\n"
+        "00:00:01.000 --> 00:00:03.000\n<v Alice> Hello there.\n\n"
+        "00:00:01.000 --> 00:00:04.000\n<v Bob> General Kenobi.\n"
+    )
+    cues = load_subtitles(vtt)
+    by_text = {c.text: c.speaker for c in cues}
+    assert by_text["Hello there."] == "Alice"
+    assert by_text["General Kenobi."] == "Bob"  # not clobbered by the shared start
+
+
+# --- L5: an out-of-range --track reports "doesn't exist", not "image subs" ----
+
+def test_extract_embedded_out_of_range_track_reports_missing(tmp_path):
+    video = tmp_path / "movie.mkv"
+    video.write_bytes(b"")
+    with patch.object(subtitles.shutil, "which", return_value="/ffmpeg"), \
+         patch.object(subtitles, "list_embedded_tracks",
+                      return_value=[_trk(0), _trk(1)]):
+        with pytest.raises(RuntimeError, match="does not exist"):
+            extract_embedded(video, 5)
+
+
+def test_extract_embedded_negative_track_reports_missing(tmp_path):
+    video = tmp_path / "movie.mkv"
+    video.write_bytes(b"")
+    with patch.object(subtitles.shutil, "which", return_value="/ffmpeg"), \
+         patch.object(subtitles, "list_embedded_tracks",
+                      return_value=[_trk(0)]):
+        with pytest.raises(RuntimeError, match="does not exist"):
+            extract_embedded(video, -1)
+
+
+# --- L7: sidecar prefix match is case-insensitive -----------------------------
+
+def test_find_sidecar_case_insensitive_prefix(tmp_path):
+    video = tmp_path / "movie.mkv"
+    video.write_bytes(b"")
+    srt = tmp_path / "Movie.EN.srt"  # differs in case from the stem
+    srt.write_text("x")
+    assert find_sidecar(video, ["en"]) == srt
+
+
+# --- L8: resolve_cues was dead code and is gone -------------------------------
+
+def test_resolve_cues_removed():
+    assert not hasattr(subtitles, "resolve_cues")
+
+
+# --- L9: timeout constant exists and ffprobe garbage is a clean error ---------
+
+def test_probe_timeout_constant_exists():
+    assert isinstance(_PROBE_TIMEOUT, (int, float)) and _PROBE_TIMEOUT > 0
+
+
+def test_list_embedded_tracks_garbage_json_is_clean_error(tmp_path):
+    # rc=0 but non-JSON stdout must become a RuntimeError, not a raw
+    # json.JSONDecodeError bubbling out.
+    with patch.object(subtitles.shutil, "which", return_value="/ffprobe"), \
+         patch.object(subtitles.subprocess, "run",
+                      return_value=MagicMock(returncode=0, stdout="not json", stderr="")):
+        with pytest.raises(RuntimeError):
+            list_embedded_tracks(Path("movie.mkv"))

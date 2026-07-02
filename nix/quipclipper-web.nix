@@ -23,9 +23,17 @@ python3Packages.buildPythonApplication {
     python3Packages.uvicorn
   ];
 
-  # Tests use fastapi's TestClient (httpx); run them in the dev shell rather
-  # than during the build for now.
-  doCheck = false;
+  # web/backend/tests/ exercises the API via fastapi's TestClient (httpx). Run
+  # them at build time so `nix flake check` (and every rebuild) covers the
+  # backend, not just the Linux VM test. quipclipper (the engine) is already on
+  # the import path via dependencies; ffmpeg/mkvmerge are wrapped on for the
+  # /api/health tool probe (the tests mock out the actual cut calls).
+  nativeCheckInputs = [
+    python3Packages.pytestCheckHook
+    python3Packages.httpx
+    ffmpeg
+    mkvtoolnix-cli
+  ];
 
   makeWrapperArgs = [
     "--prefix" "PATH" ":" (lib.makeBinPath [ ffmpeg mkvtoolnix-cli ])

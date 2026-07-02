@@ -1,6 +1,8 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from quipclipper.clip import ClipRange
 from quipclipper.mkv import (
     audio_track_ids,
@@ -36,8 +38,13 @@ def test_audio_track_ids_maps_relative_index_to_global_id():
     assert audio_track_ids(TRACKS, [0, 1]) == [1, 2]
 
 
-def test_audio_track_ids_ignores_out_of_range():
-    assert audio_track_ids(TRACKS, [5]) == []
+def test_audio_track_ids_rejects_out_of_range():
+    # A requested a:N that names no audio stream is an error, not a silent drop.
+    with pytest.raises(RuntimeError):
+        audio_track_ids(TRACKS, [5])
+    # A mix of valid + invalid still errors (rather than keeping only the valid one).
+    with pytest.raises(RuntimeError):
+        audio_track_ids(TRACKS, [0, 5])
 
 
 def _video_args(**overrides):
@@ -85,6 +92,18 @@ def test_build_args_video_embeds_sidecar_as_extra_input():
     args = _video_args(audio_ids=[1], embed_subs=Path("subs.srt"))
     # sidecar appended after the source input
     assert args.index("subs.srt") > args.index("in.mkv")
+
+
+def test_build_args_guards_leading_dash_in_source_and_out():
+    # A leading-dash source/out/sidecar would be parsed as an mkvmerge option.
+    args = build_mkvmerge_args(
+        source=Path("-weird.mkv"), rng=ClipRange(5.0, 7.7), kind="video",
+        out=Path("-out.mkv"), audio_ids=[1], all_audio=True,
+        keep_subs=True, keep_chapters=True, embed_subs=Path("-subs.srt"),
+    )
+    assert "./-weird.mkv" in args and "-weird.mkv" not in args
+    assert "./-out.mkv" in args and "-out.mkv" not in args
+    assert "./-subs.srt" in args and "-subs.srt" not in args
 
 
 def test_subtitle_track_ids():
