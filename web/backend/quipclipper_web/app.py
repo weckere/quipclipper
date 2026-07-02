@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -27,7 +28,7 @@ from typing import Annotated
 from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -281,6 +282,17 @@ class ClipRequest(BaseModel):
     default_sub_track: int | None = Field(None, ge=0)
 
 
+# CSRF guard: state-changing requests must carry this header. A cross-site
+# "simple request" (form post / no-cors fetch) can't set a custom header, and
+# adding one forces a CORS preflight this API never grants — so a malicious page
+# can't ride the browser's cached basic-auth credentials to POST here. The
+# frontend sends it on every request (see apiFetch in app.js).
+_CSRF_HEADER = "x-quipclipper"
+_UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+# Shared-secret header the front proxy injects (see Settings.proxy_secret).
+_PROXY_SECRET_HEADER = "x-quip-proxy-secret"
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
     jobs = JobRegistry(max_workers=settings.max_concurrent_jobs)
@@ -294,6 +306,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(title="quipclipper-web", version=__version__, lifespan=lifespan)
     app.state.settings = settings
+
+    @app.middleware("http")
+    async def _security_gate(request: Request, call_next):
+        # S1 — proxy shared secret (opt-in). When configured, every request must
+        # carry the matching secret that nginx injects; direct hits on the backend
+        # port (bypassing nginx) are refused. /api/health is exempt so container
+        # liveness probes can hit the backend directly.
+        if settings.proxy_secret and request.url.path != "/api/health":
+            supplied = request.headers.get(_PROXY_SECRET_HEADER, "")
+            if not hmac.compare_digest(supplied, settings.proxy_secret):
+                return JSONResponse({"detail": "Forbidden"}, status_code=403)
+        # S2 — CSRF: state-changing requests must carry the custom header.
+        if request.method in _UNSAFE_METHODS and _CSRF_HEADER not in request.headers:
+            return JSONResponse(
+                {"detail": f"Missing {_CSRF_HEADER} header (CSRF guard)."},
+                status_code=403,
+            )
+        return await call_next(request)
 
     @app.get("/api/health")
     def health() -> dict:
@@ -675,15 +705,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         indexed = sum(1 for v in videos if sub_cache.is_cached(v))
         return {"total": len(videos), "indexed": indexed, "skipped": False}
 
-    # SECURITY (CSRF, accepted risk): this and /api/items/subtitles/reindex take
-    # their input via the query string and no body, so a cross-site form/fetch
-    # could trigger them as a CORS "simple request" (auto-sending the basic-auth
-    # credentials). A robust fix would require a custom header or a JSON body, but
-    # the frontend posts these with a bare `fetch(url, {method:"POST"})` — no
-    # header, no body — and it's read-only here, so enforcing one would break it.
-    # The impact is limited: both only (re)build the subtitle cache — no data is
-    # exposed or destroyed — and the single-user LAN + nginx basic-auth gate makes
-    # a drive-by forgery implausible. Accepted for this deployment.
+    # This and /api/items/subtitles/reindex take their input via the query string
+    # and no body, so they would be CORS "simple requests" — the classic CSRF
+    # vector. The _security_gate middleware neutralises it: every state-changing
+    # request must carry the X-Quipclipper header, which a cross-site page can't
+    # set without triggering a preflight this API never grants.
     @app.post("/api/search/folder/index")
     def folder_index(
         path: str = Query(...),
@@ -719,9 +745,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         return StreamingResponse(generate(), media_type="text/plain")
 
-    # SECURITY (CSRF, accepted risk): see the note on /api/search/folder/index —
-    # same query-string-only POST shape, same rebuild-only impact, same accepted
-    # risk for the single-user LAN + nginx basic-auth deployment.
+    # Query-string-only POST like /api/search/folder/index — same CSRF surface,
+    # covered by the same X-Quipclipper requirement in _security_gate.
     @app.post("/api/items/subtitles/reindex")
     def reindex_item_subtitles(path: str = Query(...)) -> dict:
         """Clear and re-extract the subtitle cache for a single video file.

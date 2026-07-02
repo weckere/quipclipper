@@ -171,8 +171,16 @@ def test_cues_to_vtt_sanitizes_injection() -> None:
     assert "\n\n" not in body.rstrip("\n")           # no blank line inside the cue
 
 
+def _csrf(client: TestClient) -> TestClient:
+    """Attach the CSRF header the frontend sends, so state-changing requests pass
+    the _security_gate middleware. Tests for the gate itself construct a raw
+    TestClient without this."""
+    client.headers["X-Quipclipper"] = "1"
+    return client
+
+
 def _client(root: Path) -> TestClient:
-    return TestClient(create_app(Settings.from_env({"QC_MEDIA_ROOTS": str(root)})))
+    return _csrf(TestClient(create_app(Settings.from_env({"QC_MEDIA_ROOTS": str(root)}))))
 
 
 def test_browse_route(tmp_path: Path) -> None:
@@ -507,11 +515,11 @@ def _clips_client(tmp_path: Path):
     media.mkdir()
     clips = tmp_path / "clips"
     clips.mkdir()
-    client = TestClient(create_app(Settings.from_env({
+    client = _csrf(TestClient(create_app(Settings.from_env({
         "QC_MEDIA_ROOTS": str(media),
         "QC_CLIPS_DIR": str(clips),
         "QC_STATE_DIR": str(tmp_path / "state"),
-    })))
+    }))))
     return client, media, clips
 
 

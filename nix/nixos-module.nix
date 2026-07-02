@@ -277,6 +277,14 @@ in
       subdirs will be owned by the service's own group, so ${cfg.clipsGroup}
       members can't read clips created after startup. Use a setgid mode like
       "2775" so subdirs inherit clipsGroup.
+    '' ++ lib.optional
+      (cfg.nginx.enable && !(builtins.elem cfg.listenAddress [ "127.0.0.1" "::1" "localhost" ])) ''
+      services.quipclipper-web.listenAddress = "${cfg.listenAddress}" is not a
+      loopback address, so the backend port (${toString cfg.listenPort}) is
+      reachable directly on the network — bypassing nginx and its basic-auth
+      gate (the backend has no auth of its own). Bind it to 127.0.0.1 (the
+      default) and let nginx be the sole entry point, unless another proxy
+      enforces access on that address.
     '';
 
     users.users = {

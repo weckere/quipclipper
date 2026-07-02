@@ -33,6 +33,7 @@ class Settings:
     max_concurrent_jobs: int
     auth_required: bool
     subtitle_langs: list[str]
+    proxy_secret: str
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> "Settings":
@@ -62,4 +63,12 @@ class Settings:
             subtitle_langs=[
                 s.strip() for s in e.get("QC_SUBTITLE_LANGS", "").split(",") if s.strip()
             ] or ["en"],
+            # SECURITY (defence in depth): a shared secret the front proxy (nginx)
+            # injects on every request it forwards. When set, the backend rejects
+            # any request that lacks it (except /api/health), so reaching the
+            # backend port directly — bypassing nginx and its basic-auth gate, e.g.
+            # another container on the same Docker network — gets 403. Empty (the
+            # default) disables the check; the loopback bind is then the only
+            # boundary. See web/nginx/40-quip-auth.sh for the nginx side.
+            proxy_secret=e.get("QC_PROXY_SECRET", ""),
         )

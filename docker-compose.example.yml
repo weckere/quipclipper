@@ -22,6 +22,11 @@ services:
       # Preferred subtitle language(s) to auto-select, in order (default "en").
       # The UI's Auto-lang box overrides this per browser.
       # QC_SUBTITLE_LANGS: eng,spa
+      # Optional defence-in-depth: a shared secret nginx injects on every proxied
+      # request so the backend refuses anything reaching port 8000 directly (e.g.
+      # another container on this Docker network). Set the SAME value on the web
+      # service below. Generate one with `openssl rand -hex 32`.
+      # QC_PROXY_SECRET: "paste-a-long-random-string-here"
     volumes:
       # Your media, mounted READ-ONLY. Left = host path, right = the in-container
       # path referenced by QC_MEDIA_ROOTS above.
@@ -62,10 +67,12 @@ services:
       - /path/to/clips:/clips:ro
     # --- Optional: password gate (HTTP basic auth) ---------------------------
     # Set QC_PASSWORD to require a login for the whole site (username defaults to
-    # "quip"). Leave it unset for an open LAN instance.
+    # "quip"). Leave it unset for an open LAN instance. QC_PROXY_SECRET, if used,
+    # must match the value on the app service above (nginx injects it upstream).
     # environment:
     #   QC_PASSWORD: "your-secret"
     #   QC_USERNAME: "quip"
+    #   QC_PROXY_SECRET: "paste-a-long-random-string-here"
 
 volumes:
   quip-state:

@@ -2,8 +2,17 @@
 
 const $ = (id) => document.getElementById(id);
 
+// Every API request carries this header. The backend requires it on
+// state-changing methods as a CSRF guard: a cross-site page can't set a custom
+// header without triggering a CORS preflight the API never grants. Sending it on
+// GETs too keeps every call going through one wrapper.
+const API_HEADER = "X-Quipclipper";
+function apiFetch(url, opts = {}) {
+  return fetch(url, { ...opts, headers: { ...(opts.headers || {}), [API_HEADER]: "1" } });
+}
+
 async function getJSON(url) {
-  const resp = await fetch(url);
+  const resp = await apiFetch(url);
   if (!resp.ok) {
     let detail = `${resp.status}`;
     try { detail = (await resp.json()).detail || detail; } catch {}
@@ -13,7 +22,7 @@ async function getJSON(url) {
 }
 
 async function postJSON(url, body) {
-  const resp = await fetch(url, {
+  const resp = await apiFetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -333,7 +342,7 @@ $("index-btn").addEventListener("click", async () => {
   text.textContent = "Indexing…";
 
   try {
-    const resp = await fetch(`/api/search/folder/index?path=${encodeURIComponent(currentBrowsePath)}`, { method: "POST" });
+    const resp = await apiFetch(`/api/search/folder/index?path=${encodeURIComponent(currentBrowsePath)}`, { method: "POST" });
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
     let last = "";
@@ -355,7 +364,7 @@ $("index-btn").addEventListener("click", async () => {
 async function streamFolderIndex(folder, force, onProgress) {
   let url = `/api/search/folder/index?path=${encodeURIComponent(folder)}`;
   if (force) url += "&force=true";
-  const resp = await fetch(url, { method: "POST" });
+  const resp = await apiFetch(url, { method: "POST" });
   const reader = resp.body.getReader();
   const decoder = new TextDecoder();
   while (true) {
@@ -1524,7 +1533,7 @@ function wireBmBufferControls(li, bm, onSaved) {
     const b = parseFloat(before.value) || 0;
     const a = parseFloat(after.value) || 0;
     try {
-      await fetch(`/api/bookmarks/${bm.id}`, {
+      await apiFetch(`/api/bookmarks/${bm.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ before: b, after: a }),
@@ -1573,7 +1582,7 @@ function restoreSelect(id, value) {
 
 async function deleteBookmark(id) {
   try {
-    await fetch(`/api/bookmarks/${id}`, { method: "DELETE" });
+    await apiFetch(`/api/bookmarks/${id}`, { method: "DELETE" });
     loadBookmarks();
   } catch {}
 }
@@ -1954,7 +1963,7 @@ async function browseBookmarks() {
       li.querySelector(".bookmark-del").onclick = async (e) => {
         e.stopPropagation();
         try {
-          await fetch(`/api/bookmarks/${bm.id}`, { method: "DELETE" });
+          await apiFetch(`/api/bookmarks/${bm.id}`, { method: "DELETE" });
           browseBookmarks();
         } catch {}
       };
@@ -2164,7 +2173,7 @@ $("bm-batch-export").onclick = () => {
 $("bm-clear-all").onclick = async () => {
   if (!confirm("Delete ALL bookmarks? This cannot be undone.")) return;
   try {
-    await fetch("/api/bookmarks", { method: "DELETE" });
+    await apiFetch("/api/bookmarks", { method: "DELETE" });
     browseBookmarks();
   } catch (err) {
     alert("Failed to clear bookmarks: " + err.message);

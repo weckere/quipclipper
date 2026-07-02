@@ -43,6 +43,13 @@ Environment variables (mirrored by the NixOS module options):
 | `QC_PASSWORD` | (unset) | when set on the **nginx** service, gates the whole site with HTTP basic auth (also reported via `/api/config`) |
 | `QC_USERNAME` | `quip` | basic-auth username (used only when `QC_PASSWORD` is set) |
 | `QC_SUBTITLE_LANGS` | `en` | ordered subtitle-language auto-select preference (comma-separated, e.g. `eng,spa`); UI Auto-lang box overrides per browser |
+| `QC_PROXY_SECRET` | (unset) | defence-in-depth: when set on **both** services, nginx injects it and the backend rejects any request that reaches port 8000 without it (except `/api/health`), blocking direct hits that bypass nginx |
+
+The backend has **no auth of its own** — the nginx front is the only gate. Two
+built-in defences back that up: every state-changing request must carry an
+`X-Quipclipper` header (a CSRF guard the frontend sends automatically), and
+`QC_PROXY_SECRET` (above) lets the backend refuse traffic that didn't come
+through nginx. Keep `QC_BIND` on loopback unless another proxy fronts it.
 
 **Hardware video transcode:** the backend auto-detects an Intel iGPU at
 `/dev/dri/renderD128` (probed once, reported as `hw_encode` in `/api/config`) and

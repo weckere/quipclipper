@@ -9,7 +9,9 @@ from quipclipper_web.config import Settings
 
 
 def _client(env: dict[str, str] | None = None) -> TestClient:
-    return TestClient(create_app(Settings.from_env(env or {})))
+    c = TestClient(create_app(Settings.from_env(env or {})))
+    c.headers["X-Quipclipper"] = "1"  # CSRF header the frontend sends on every request
+    return c
 
 
 def test_health_ok() -> None:
