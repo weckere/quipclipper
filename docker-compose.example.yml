@@ -27,6 +27,11 @@ services:
       # another container on this Docker network). Set the SAME value on the web
       # service below. Generate one with `openssl rand -hex 32`.
       # QC_PROXY_SECRET: "paste-a-long-random-string-here"
+      # API token(s) for agents/scripts (comma-separated for rotation). A client
+      # sends it as X-API-Key, Authorization: Bearer, or `-u api:<token>`; the
+      # backend then skips the browser CSRF header. Set the SAME value on the web
+      # service so `-u api:<token>` also passes the basic-auth gate. See docs/API.md.
+      # QC_API_TOKEN: "paste-a-long-random-string-here"
     volumes:
       # Your media, mounted READ-ONLY. Left = host path, right = the in-container
       # path referenced by QC_MEDIA_ROOTS above.
@@ -73,6 +78,7 @@ services:
     #   QC_PASSWORD: "your-secret"
     #   QC_USERNAME: "quip"
     #   QC_PROXY_SECRET: "paste-a-long-random-string-here"
+    #   QC_API_TOKEN: "paste-a-long-random-string-here"   # match the app service
 
 volumes:
   quip-state:

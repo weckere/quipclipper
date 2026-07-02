@@ -20,6 +20,8 @@ services:
                                          # set the same value on the web service below.
       # QC_PROXY_SECRET: change-me-too   # backend rejects direct (non-nginx) hits;
                                          # set the SAME value on the web service below.
+      # QC_API_TOKEN: change-me-token    # lets agents/scripts authenticate (see
+                                         # docs/API.md); set the SAME value on web.
     volumes:
       # Mount your real library here (read-only). Point QC_MEDIA_ROOTS at it.
       # - /srv/media:/media:ro
@@ -60,6 +62,7 @@ services:
     #   QC_PASSWORD: change-me           # enables the HTTP basic-auth gate for the
     #   QC_USERNAME: quip                 # whole site (username defaults to "quip")
     #   QC_PROXY_SECRET: change-me-too    # must match the app service's value
+    #   QC_API_TOKEN: change-me-token     # must match the app service's value
     restart: unless-stopped
 
 volumes:

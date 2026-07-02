@@ -44,12 +44,18 @@ Environment variables (mirrored by the NixOS module options):
 | `QC_USERNAME` | `quip` | basic-auth username (used only when `QC_PASSWORD` is set) |
 | `QC_SUBTITLE_LANGS` | `en` | ordered subtitle-language auto-select preference (comma-separated, e.g. `eng,spa`); UI Auto-lang box overrides per browser |
 | `QC_PROXY_SECRET` | (unset) | defence-in-depth: when set on **both** services, nginx injects it and the backend rejects any request that reaches port 8000 without it (except `/api/health`), blocking direct hits that bypass nginx |
+| `QC_API_TOKEN` | (unset) | token(s) for programmatic clients (comma-separated for rotation); a client sends it as `X-API-Key`/`Bearer`/`-u api:<token>` and is then exempt from the CSRF header. Set on **both** services so `-u api:<token>` also passes the basic-auth gate. See [`../../docs/API.md`](../../docs/API.md) |
 
 The backend has **no auth of its own** — the nginx front is the only gate. Two
 built-in defences back that up: every state-changing request must carry an
 `X-Quipclipper` header (a CSRF guard the frontend sends automatically), and
 `QC_PROXY_SECRET` (above) lets the backend refuse traffic that didn't come
 through nginx. Keep `QC_BIND` on loopback unless another proxy fronts it.
+
+**Driving the API from agents/scripts:** set `QC_API_TOKEN` and use it as shown
+in [`../../docs/API.md`](../../docs/API.md) — the full endpoint reference, auth
+options, and worked examples. The live schema is at `/openapi.json` (`/docs` for
+Swagger UI).
 
 **Hardware video transcode:** the backend auto-detects an Intel iGPU at
 `/dev/dri/renderD128` (probed once, reported as `hw_encode` in `/api/config`) and

@@ -200,6 +200,25 @@ in
       '';
     };
 
+    apiTokenFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      example = "/run/secrets/quipclipper-api-token";
+      description = ''
+        Path to a systemd EnvironmentFile that sets an API token for programmatic
+        clients (agents/scripts), e.g. a file containing
+        `QC_API_TOKEN=<long-random-token>` (comma-separate several for rotation).
+        A client presents the token as an `X-API-Key` / `Authorization: Bearer`
+        header (or the HTTP Basic password) and is then exempt from the browser
+        CSRF-header requirement. Kept out of the Nix store.
+
+        To pass the token through the bundled nginx basic-auth gate with a single
+        credential (`curl -u api:<token>`), add an `api` line to `passwordFile`
+        (`htpasswd -B <file> api`); otherwise reach the backend with a normal
+        basic-auth user plus the `X-API-Key` header. See docs/API.md.
+      '';
+    };
+
     hardwareAcceleration = {
       enable = lib.mkEnableOption ''
         Intel Quick Sync (VAAPI) hardware H.264 encoding for the browser-preview
@@ -352,6 +371,9 @@ in
         User = cfg.user;
         Group = cfg.group;
         Restart = "on-failure";
+        # API token(s) for programmatic clients, loaded from a file so the secret
+        # stays out of the Nix store (see apiTokenFile).
+        EnvironmentFile = lib.mkIf (cfg.apiTokenFile != null) cfg.apiTokenFile;
 
         # Hardening. Media roots are exposed read-only; only the clips + state
         # dirs are writable. These are created up front by the tmpfiles rules

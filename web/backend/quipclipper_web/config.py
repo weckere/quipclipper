@@ -34,6 +34,7 @@ class Settings:
     auth_required: bool
     subtitle_langs: list[str]
     proxy_secret: str
+    api_tokens: frozenset[str]
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> "Settings":
@@ -69,6 +70,14 @@ class Settings:
             # backend port directly — bypassing nginx and its basic-auth gate, e.g.
             # another container on the same Docker network — gets 403. Empty (the
             # default) disables the check; the loopback bind is then the only
-            # boundary. See web/nginx/40-quip-auth.sh for the nginx side.
+            # boundary. See web/nginx/50-quip-proxy.sh for the nginx side.
             proxy_secret=e.get("QC_PROXY_SECRET", ""),
+            # API tokens for programmatic clients (agents/scripts). Comma-separated
+            # so several can be valid at once (rotation). A client presents a token
+            # as X-API-Key, Authorization: Bearer, or the HTTP Basic password; the
+            # backend then treats the request as an authenticated machine client
+            # and skips the browser CSRF-header requirement. Empty = disabled.
+            api_tokens=frozenset(
+                t.strip() for t in e.get("QC_API_TOKEN", "").split(",") if t.strip()
+            ),
         )

@@ -39,8 +39,9 @@ engine for scripting and quick one-off cuts.
 ![quipclipper web app — searching dialogue and selecting a line to clip](docs/screenshot.png)
 
 > **Documentation:** [`docs/MANUAL.md`](docs/MANUAL.md) is the complete user
-> manual; [`docs/DESIGN_NOTES.md`](docs/DESIGN_NOTES.md) explains the design
-> decisions and their rationale.
+> manual; [`docs/API.md`](docs/API.md) documents the HTTP API for driving the web
+> app from agents/scripts; [`docs/DESIGN_NOTES.md`](docs/DESIGN_NOTES.md) explains
+> the design decisions and their rationale.
 
 ## Features
 

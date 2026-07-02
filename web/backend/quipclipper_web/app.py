@@ -12,6 +12,8 @@ Routes:
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import contextlib
 import hashlib
 import hmac
@@ -291,6 +293,42 @@ _CSRF_HEADER = "x-quipclipper"
 _UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 # Shared-secret header the front proxy injects (see Settings.proxy_secret).
 _PROXY_SECRET_HEADER = "x-quip-proxy-secret"
+# Programmatic clients (agents/scripts) present an API token here, as
+# `Authorization: Bearer <token>`, or as the HTTP Basic password.
+_API_KEY_HEADER = "x-api-key"
+
+
+def _token_ok(candidate: str, tokens: frozenset[str]) -> bool:
+    """Constant-time check that `candidate` is one of the configured tokens."""
+    # any() short-circuits but each compare_digest is itself constant-time, so a
+    # per-token timing signal can't reveal a token's contents.
+    return any(hmac.compare_digest(candidate, t) for t in tokens)
+
+
+def _api_token_status(request: Request, tokens: frozenset[str]) -> str | None:
+    """Classify a request's API-token attempt.
+
+    Returns "ok" for a valid token (X-API-Key, Bearer, or the Basic password),
+    "bad" when an *explicit* token header (X-API-Key / Bearer) is present but
+    wrong (→ 401), or None when no token was offered — a plain Basic user
+    password that isn't a token counts as None, so real browser users fall
+    through to the normal CSRF rules instead of being rejected.
+    """
+    key = request.headers.get(_API_KEY_HEADER)
+    if key is not None:
+        return "ok" if _token_ok(key, tokens) else "bad"
+    scheme, _, value = request.headers.get("authorization", "").partition(" ")
+    scheme = scheme.lower()
+    if scheme == "bearer" and value:
+        return "ok" if _token_ok(value, tokens) else "bad"
+    if scheme == "basic" and value:
+        try:
+            _, _, password = base64.b64decode(value).decode("utf-8", "replace").partition(":")
+        except (binascii.Error, ValueError):
+            return None
+        if password and _token_ok(password, tokens):
+            return "ok"
+    return None
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -317,8 +355,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             supplied = request.headers.get(_PROXY_SECRET_HEADER, "")
             if not hmac.compare_digest(supplied, settings.proxy_secret):
                 return JSONResponse({"detail": "Forbidden"}, status_code=403)
-        # S2 — CSRF: state-changing requests must carry the custom header.
-        if request.method in _UNSAFE_METHODS and _CSRF_HEADER not in request.headers:
+        # A programmatic client authenticated with an API token is a machine, not
+        # a browser, so it's exempt from the CSRF-header requirement below. An
+        # explicit but wrong token (X-API-Key / Bearer) is rejected outright.
+        api_client = False
+        if settings.api_tokens:
+            status = _api_token_status(request, settings.api_tokens)
+            if status == "bad":
+                return JSONResponse({"detail": "Invalid API token."}, status_code=401)
+            api_client = status == "ok"
+        # S2 — CSRF: state-changing browser requests must carry the custom header.
+        if (
+            not api_client
+            and request.method in _UNSAFE_METHODS
+            and _CSRF_HEADER not in request.headers
+        ):
             return JSONResponse(
                 {"detail": f"Missing {_CSRF_HEADER} header (CSRF guard)."},
                 status_code=403,

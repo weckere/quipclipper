@@ -1,11 +1,18 @@
-"""Tests for the _security_gate middleware: CSRF header + proxy shared secret."""
+"""Tests for the _security_gate middleware: CSRF header, proxy shared secret,
+and API-token auth for programmatic clients."""
 
 from __future__ import annotations
+
+import base64
 
 from fastapi.testclient import TestClient
 
 from quipclipper_web.app import create_app
 from quipclipper_web.config import Settings
+
+
+def _basic(user: str, password: str) -> str:
+    return "Basic " + base64.b64encode(f"{user}:{password}".encode()).decode()
 
 
 def _app(env: dict[str, str] | None = None) -> TestClient:
@@ -84,3 +91,83 @@ def test_proxy_secret_still_requires_csrf_on_unsafe_methods() -> None:
     resp = client.delete("/api/bookmarks", headers={"X-Quip-Proxy-Secret": "s3cr3t-token"})
     assert resp.status_code == 403
     assert "csrf" in resp.json()["detail"].lower()
+
+
+# --- API token auth for programmatic clients ----------------------------------
+
+_TOKEN = {"QC_API_TOKEN": "tok-abc123"}
+
+
+def test_api_token_exempts_csrf_via_x_api_key() -> None:
+    client = _app(_TOKEN)
+    # A state-changing request with a valid token needs no CSRF header.
+    resp = client.delete("/api/bookmarks", headers={"X-API-Key": "tok-abc123"})
+    assert resp.status_code == 200
+
+
+def test_api_token_exempts_csrf_via_bearer() -> None:
+    client = _app(_TOKEN)
+    resp = client.delete("/api/bookmarks", headers={"Authorization": "Bearer tok-abc123"})
+    assert resp.status_code == 200
+
+
+def test_api_token_exempts_csrf_via_basic_password() -> None:
+    client = _app(_TOKEN)
+    # The token supplied as the HTTP Basic password (username ignored) — one
+    # credential (`curl -u api:tok-abc123`) satisfies auth and skips CSRF.
+    resp = client.delete("/api/bookmarks", headers={"Authorization": _basic("api", "tok-abc123")})
+    assert resp.status_code == 200
+
+
+def test_invalid_x_api_key_rejected() -> None:
+    client = _app(_TOKEN)
+    resp = client.delete("/api/bookmarks", headers={"X-API-Key": "wrong"})
+    assert resp.status_code == 401
+
+
+def test_invalid_bearer_rejected() -> None:
+    client = _app(_TOKEN)
+    resp = client.get("/api/config", headers={"Authorization": "Bearer wrong"})
+    assert resp.status_code == 401
+
+
+def test_normal_basic_user_is_not_treated_as_a_token_attempt() -> None:
+    # A real browser user's Basic password isn't the token, so it's NOT a "bad
+    # token" (no 401) — it just falls through to the normal CSRF rules (403 here).
+    client = _app(_TOKEN)
+    resp = client.delete("/api/bookmarks", headers={"Authorization": _basic("quip", "hunter2")})
+    assert resp.status_code == 403
+    assert "csrf" in resp.json()["detail"].lower()
+
+
+def test_api_token_valid_get_passes() -> None:
+    client = _app(_TOKEN)
+    assert client.get("/api/config", headers={"X-API-Key": "tok-abc123"}).status_code == 200
+
+
+def test_multiple_tokens_are_all_accepted() -> None:
+    client = _app({"QC_API_TOKEN": "old-token, new-token"})
+    for tok in ("old-token", "new-token"):
+        r = client.delete("/api/bookmarks", headers={"X-API-Key": tok})
+        assert r.status_code == 200, tok
+
+
+def test_no_token_configured_ignores_api_key_header() -> None:
+    # With QC_API_TOKEN unset, the X-API-Key header means nothing: an unsafe
+    # request still needs the CSRF header.
+    client = _app()
+    resp = client.delete("/api/bookmarks", headers={"X-API-Key": "anything"})
+    assert resp.status_code == 403
+
+
+def test_proxy_secret_applies_even_to_token_clients() -> None:
+    # The proxy secret is a transport gate checked before token auth: a valid API
+    # token doesn't exempt a request from it (nginx injects it for real clients).
+    client = _app({**_SECRET, **_TOKEN})
+    resp = client.get("/api/config", headers={"X-API-Key": "tok-abc123"})
+    assert resp.status_code == 403  # missing X-Quip-Proxy-Secret
+    ok = client.get(
+        "/api/config",
+        headers={"X-API-Key": "tok-abc123", "X-Quip-Proxy-Secret": "s3cr3t-token"},
+    )
+    assert ok.status_code == 200
