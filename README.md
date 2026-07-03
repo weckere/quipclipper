@@ -110,6 +110,13 @@ engine for scripting and quick one-off cuts.
   (the subfolder) and `{title}` is the cleaned parent-folder/series name, so a
   dialogue-search clip lands at e.g.
   `The.Sandlot.1993.1080p/00-27-58_Youre_killing_me_Smalls_The_Sandlot_1993.mkv`.
+- **HTTP API for agents & scripts** — everything the UI does is a plain
+  HTTP+JSON API, designed so self-hosters can drive quipclipper
+  programmatically: browse the library, search dialogue, cut clips, and
+  download them from a script, a cron job, or an AI agent. One `QC_API_TOKEN`
+  gets a machine client through the password gate, and Swagger/OpenAPI docs are
+  served from the app itself. See [HTTP API](#http-api-agents--scripts) below
+  and the full reference in [`docs/API.md`](docs/API.md).
 
 By default a **video** clip is re-encoded to a frame-exact H.264 file (a lossless
 copy can only start on a keyframe, so it runs long on long-GOP sources), while
@@ -218,6 +225,24 @@ All settings are environment variables on the `app` service:
 | `QC_PASSWORD` | *(none)* | When set, nginx gates the whole site with HTTP basic auth (username `QC_USERNAME`). Must be set on the **web** (nginx) service. Unset = open. |
 | `QC_USERNAME` | `quip` | Basic-auth username (only used when `QC_PASSWORD` is set). |
 | `QC_SUBTITLE_LANGS` | `en` | Ordered subtitle-language preference for auto-selection (comma-separated, e.g. `eng,spa`). The UI's **Auto-lang** box overrides it per browser. |
+| `QC_API_TOKEN` | *(none)* | Token(s) for programmatic clients — agents and scripts (comma-separated to rotate). Set the same value on **both** services so `-u api:<token>` passes the basic-auth gate too. See [HTTP API](#http-api-agents--scripts). |
+
+## HTTP API (agents & scripts)
+
+The web app is a thin frontend over a plain HTTP+JSON API, and the API is a
+first-class interface: it's designed so self-hosters can point **agents and
+scripts** at their instance and use *all* of quipclipper's functionality
+programmatically — browse the library, fuzzy-search dialogue across folders,
+cut lossless clips, poll the job, download the result.
+
+- **Auth in one secret:** set `QC_API_TOKEN` and a client passes both the
+  password gate and the CSRF guard with `curl -u api:<token>` (or
+  `X-API-Key`/`Bearer` headers).
+- **Self-documenting:** Swagger UI at `/docs`, ReDoc at `/redoc`, and the
+  OpenAPI schema at `/openapi.json` — served by your own instance (behind the
+  same gate), so an agent can discover the API without leaving your network.
+- **Full reference:** [`docs/API.md`](docs/API.md) documents every endpoint,
+  the `POST /api/clip` body, and a worked find-a-line-and-cut-it example.
 
 ## Architecture
 

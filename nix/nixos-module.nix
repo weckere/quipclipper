@@ -458,6 +458,18 @@ in
             proxy_send_timeout 3600s;
           '';
         };
+        # OpenAPI schema + interactive docs (FastAPI serves them at the root, not
+        # under /api/). Exact-match so nothing else is exposed; they inherit the
+        # vhost's basic-auth gate like everything else. Mirrors web/nginx/nginx.conf.
+        locations."= /openapi.json" = {
+          proxyPass = proxyTarget;
+        };
+        locations."= /docs" = {
+          proxyPass = proxyTarget;
+        };
+        locations."= /redoc" = {
+          proxyPass = proxyTarget;
+        };
         locations."/clips/" = {
           alias = "${cfg.clipsDir}/";
         };
