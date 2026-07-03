@@ -156,6 +156,30 @@ def test_stale_mtime_entries_swept_on_fresh_write(tmp_path, monkeypatch):
     assert after[0] not in first
 
 
+def test_unreadable_cache_entry_is_a_miss_not_an_error(cache, monkeypatch):
+    """An entry the service can't read (e.g. owned by a stale UID after a host
+    user migration) must fall through to fresh extraction, not raise
+    PermissionError up into a 500 on every subtitle load."""
+    import os as _os
+
+    if _os.geteuid() == 0:
+        pytest.skip("chmod 000 doesn't block root")
+
+    counter = {"n": 0}
+    _stub_resolver(monkeypatch, counter=counter)
+    cache.resolve(VIDEO, track=0)
+    assert counter["n"] == 1
+
+    cp = cache._cache_path(VIDEO, track=0)
+    cp.chmod(0o000)
+    try:
+        cues = cache.resolve(VIDEO, track=0)  # must not raise
+    finally:
+        cp.chmod(0o600)  # restore so tmp_path cleanup works everywhere
+    assert cues[0].text == "track=0"
+    assert counter["n"] == 2  # unreadable entry -> treated as a miss, re-extracted
+
+
 def test_cache_roundtrips_speaker(cache):
     """Speaker attribution must survive the JSON disk cache — the first
     (in-memory) resolve had it; cached reloads must not silently drop it."""

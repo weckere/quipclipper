@@ -404,6 +404,11 @@ in
     # admin manages it externally (manageClipsDir = false, e.g. an SMB share).
     systemd.tmpfiles.rules = [
       "d ${stateDir} 0750 ${cfg.user} ${cfg.group} - -"
+      # Recursively (re)own the state tree on every activation ("Z", mode left
+      # alone). Self-heals UID drift: cache/bookmark files written under an old
+      # UID (user recreated, host migration) would otherwise be unreadable and
+      # break subtitle loading until someone chowns them by hand.
+      "Z ${stateDir} - ${cfg.user} ${cfg.group} - -"
     ] ++ lib.optional cfg.manageClipsDir
       "d ${toString cfg.clipsDir} ${cfg.clipsMode} ${cfg.user} ${clipsGroupName} - -";
 

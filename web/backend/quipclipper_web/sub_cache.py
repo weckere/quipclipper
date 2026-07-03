@@ -103,6 +103,12 @@ class SubtitleCache:
                     speaker=c.get("speaker"))
                 for c in cues_raw
             ]
+        except OSError:
+            # An unreadable entry (e.g. owned by a stale UID after a host user
+            # migration) is a cache MISS, not an error: fall through to a fresh
+            # extraction rather than 500ing every subtitle load. Don't unlink —
+            # we likely can't, and the file may become readable again.
+            return None
         except (json.JSONDecodeError, KeyError, TypeError):
             cp.unlink(missing_ok=True)
             return None
