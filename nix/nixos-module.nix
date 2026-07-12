@@ -471,6 +471,15 @@ in
             proxy_read_timeout 300s;
           '';
         };
+        # Per-item reindex re-extracts subs, or re-fetches a YouTube transcript
+        # via yt-dlp — either can exceed the 60s default. (Adding a YouTube URL
+        # is a background job, so /api/youtube itself returns instantly.)
+        locations."/api/items/subtitles/reindex" = {
+          proxyPass = proxyTarget;
+          extraConfig = ''
+            proxy_read_timeout 300s;
+          '';
+        };
         # Transcode stream — a long-running live ffmpeg StreamingResponse feeding
         # the <video> element. Disable buffering so output reaches the browser
         # immediately, and allow a long connection.

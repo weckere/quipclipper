@@ -349,18 +349,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Full-video downloads run for up to an hour each — give them their own
     # single-worker pool so they can never starve the clip workers.
     dl_jobs = JobRegistry(max_workers=1)
+    # Adding a YouTube URL and reindexing its transcript are yt-dlp fetches that
+    # can be slow (and unpredictably so). Run them as background jobs in their
+    # own pool so the request returns instantly — no proxy read-timeout (504)
+    # and no contention with clips or downloads.
+    yt_jobs = JobRegistry(max_workers=2)
     bookmarks = BookmarkStore(settings.state_dir)
     sub_cache = SubtitleCache(settings.state_dir, default_langs=settings.subtitle_langs)
     yt_store = youtube_items.YouTubeStore(settings.state_dir)
-    # video id -> last download job id, so repeat POSTs return the in-flight job
-    # instead of queueing a duplicate.
+    # video id -> last download / add job id, so a repeat POST returns the
+    # in-flight job instead of queueing a duplicate.
     active_downloads: dict[str, str] = {}
+    active_adds: dict[str, str] = {}
 
     @contextlib.asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         yield
         jobs.shutdown()
         dl_jobs.shutdown()
+        yt_jobs.shutdown()
 
     app = FastAPI(title="quipclipper-web", version=__version__, lifespan=lifespan)
     app.state.settings = settings
@@ -499,14 +506,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/youtube")
     def youtube_add(req: YouTubeAdd) -> dict:
         """Add a YouTube video: fetch metadata + subtitles (no video download).
-        Idempotent — re-adding an existing video returns its stored entry."""
-        try:
-            meta = yt_store.add(req.url, settings.subtitle_langs)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-        except RuntimeError as exc:  # yt-dlp failure (network, gone, unavailable)
-            raise HTTPException(status_code=502, detail=str(exc))
-        return {"entry": youtube_items.entry_dict(meta), "meta": meta}
+
+        The fetch runs as a **background job** (yt-dlp can be slow and its
+        latency is unpredictable — a synchronous fetch risks a proxy 504). The
+        URL is validated synchronously; then either the already-added entry is
+        returned immediately (job_id null), or a job is queued — poll it like a
+        clip/download job, and re-list the YouTube folder when it's done. A
+        repeat POST while an add is in flight returns the same job."""
+        vid = youtube_items.extract_video_id(req.url)
+        if vid is None:
+            raise HTTPException(status_code=400, detail="Not a recognised YouTube video URL.")
+        if yt_store.is_added(vid):
+            try:
+                meta = yt_store.meta(vid)
+            except RuntimeError as exc:  # corrupt info.json
+                raise HTTPException(status_code=500, detail=str(exc))
+            return {"job_id": None, "status": "done", "entry": youtube_items.entry_dict(meta)}
+        running = yt_jobs.get(active_adds.get(vid, ""))
+        if running is not None and running.status.value in ("queued", "running"):
+            return {"job_id": running.id, "status": running.status.value}
+        url, langs = req.url, settings.subtitle_langs
+
+        def _do_add() -> list:
+            yt_store.add(url, langs)  # RuntimeError → the job fails with its message
+            return []
+
+        job = yt_jobs.submit(_do_add, label=f"add: {vid}")
+        active_adds[vid] = job.id
+        return {"job_id": job.id, "status": job.status.value}
 
     @app.delete("/api/youtube/{video_id}")
     def youtube_remove(video_id: str) -> dict:
@@ -1669,19 +1696,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 epub_temp.unlink(missing_ok=True)
 
     def _find_job(job_id: str):
-        """A job from either pool (clips or full-video downloads), plus its
-        registry — the /api/jobs surface presents both as one list."""
-        job = jobs.get(job_id)
-        if job is not None:
-            return job, jobs
-        job = dl_jobs.get(job_id)
-        if job is not None:
-            return job, dl_jobs
+        """A job from any pool (clips, downloads, or YouTube add/reindex), plus
+        its registry — the /api/jobs surface presents them as one list."""
+        for registry in (jobs, dl_jobs, yt_jobs):
+            job = registry.get(job_id)
+            if job is not None:
+                return job, registry
         return None, None
 
     @app.get("/api/jobs")
     def list_jobs() -> dict:
-        merged = [*jobs.list_recent(), *dl_jobs.list_recent()]
+        merged = [*jobs.list_recent(), *dl_jobs.list_recent(), *yt_jobs.list_recent()]
         merged.sort(key=lambda j: j.created, reverse=True)
         return {"jobs": [j.to_dict() for j in merged[:20]]}
 

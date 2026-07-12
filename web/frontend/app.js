@@ -259,17 +259,45 @@ async function addYouTubeUrl() {
   const status = $("yt-add-status");
   btn.disabled = true;
   status.hidden = false;
-  status.textContent = "Fetching subtitles + metadata… (a few seconds)";
+  status.textContent = "Fetching subtitles + metadata…";
+  let job;
   try {
-    await postJSON("/api/youtube", { url });
-    input.value = "";
-    status.hidden = true;
-    browse("yt:");  // the new entry appears in the listing
+    // The add runs server-side as a job (yt-dlp can be slow); we poll it.
+    job = await postJSON("/api/youtube", { url });
   } catch (err) {
     status.textContent = `Could not add: ${err.message}`;
-  } finally {
     btn.disabled = false;
+    return;
   }
+  if (!job.job_id) {  // already added — show it immediately
+    input.value = "";
+    status.hidden = true;
+    btn.disabled = false;
+    browse("yt:");
+    return;
+  }
+  const poll = setInterval(async () => {
+    const resp = await apiFetch(`/api/jobs/${encodeURIComponent(job.job_id)}`);
+    if (resp.status === 404) {  // job lost (e.g. server restart)
+      clearInterval(poll);
+      status.textContent = "Add didn't complete — try again.";
+      btn.disabled = false;
+      return;
+    }
+    if (!resp.ok) return;  // transient — keep polling
+    const j = await resp.json();
+    if (j.status === "done") {
+      clearInterval(poll);
+      input.value = "";
+      status.hidden = true;
+      btn.disabled = false;
+      browse("yt:");  // the new entry appears in the listing
+    } else if (j.status === "failed" || j.status === "cancelled") {
+      clearInterval(poll);
+      status.textContent = `Could not add: ${j.error || "see server logs"}`;
+      btn.disabled = false;
+    }
+  }, 1500);
 }
 $("yt-add-btn").addEventListener("click", addYouTubeUrl);
 $("yt-url").addEventListener("keydown", (e) => {

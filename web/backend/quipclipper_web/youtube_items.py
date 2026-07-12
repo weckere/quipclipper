@@ -435,6 +435,13 @@ class YouTubeStore:
             meta["download_size"] = None
         return meta
 
+    def is_added(self, video_id: str) -> bool:
+        """Whether this video has been added (its metadata is stored)."""
+        try:
+            return (self._item_dir(video_id) / "info.json").is_file()
+        except KeyError:
+            return False
+
     def video_path(self, video_id: str) -> Path | None:
         """The locally downloaded video file, if present."""
         vp = self._item_dir(video_id) / "video.mp4"

@@ -99,6 +99,17 @@ def _client(tmp_path, monkeypatch, run=None) -> TestClient:
     return c
 
 
+def _add(client, url=WATCH):
+    """Add a video and wait for the async add job to finish (idempotent re-adds
+    return job_id null). Returns the endpoint's response body."""
+    resp = client.post("/api/youtube", json={"url": url})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    if body.get("job_id"):
+        assert _wait(client, body["job_id"])["status"] == "done"
+    return body
+
+
 # --- refs & URL parsing --------------------------------------------------------
 
 def test_parse_and_make_ref_roundtrip():
@@ -291,12 +302,14 @@ def test_stream_url_resolution_and_cache(monkeypatch):
 
 # --- endpoints --------------------------------------------------------------------
 
-def test_add_endpoint_and_browse(tmp_path, monkeypatch):
+def test_add_endpoint_is_async_and_browse(tmp_path, monkeypatch):
     client = _client(tmp_path, monkeypatch)
+    # The add returns a job immediately (no synchronous yt-dlp wait → no 504).
     resp = client.post("/api/youtube", json={"url": WATCH})
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["entry"]["path"] == REF and body["entry"]["is_youtube"] is True
+    assert body["job_id"] and body["status"] in ("queued", "running", "done")
+    assert _wait(client, body["job_id"])["status"] == "done"
 
     root = client.get("/api/library/browse").json()
     folder = [e for e in root["entries"] if e.get("is_youtube")]
@@ -306,22 +319,49 @@ def test_add_endpoint_and_browse(tmp_path, monkeypatch):
     assert [e["path"] for e in listing["entries"]] == [REF]
     assert listing["entries"][0]["name"] == "Test Video"
 
+    # Re-adding is idempotent and returns the entry immediately (job_id null).
+    again = client.post("/api/youtube", json={"url": WATCH}).json()
+    assert again["job_id"] is None and again["entry"]["path"] == REF
 
-def test_add_endpoint_rejects_bad_url(tmp_path, monkeypatch):
+
+def test_add_endpoint_rejects_bad_url_synchronously(tmp_path, monkeypatch):
+    # URL validation happens before the job is queued, so a bad URL is a fast 400.
     client = _client(tmp_path, monkeypatch)
     assert client.post("/api/youtube", json={"url": "https://evil.com/x"}).status_code == 400
 
 
-def test_add_endpoint_maps_ytdlp_failure_to_502(tmp_path, monkeypatch):
+def test_add_job_fails_on_ytdlp_error(tmp_path, monkeypatch):
     def boom(args, timeout=120):
         raise RuntimeError("yt-dlp failed: 403")
     client = _client(tmp_path, monkeypatch, run=boom)
-    assert client.post("/api/youtube", json={"url": WATCH}).status_code == 502
+    body = client.post("/api/youtube", json={"url": WATCH}).json()
+    assert body["job_id"]  # accepted; the failure surfaces on the job
+    job = _wait(client, body["job_id"])
+    assert job["status"] == "failed"
+    assert "403" in job["error"]
+
+
+def test_add_dedupes_in_flight(tmp_path, monkeypatch):
+    import threading
+    gate = threading.Event()
+    real = youtube_items.YouTubeStore.add
+
+    def blocking_add(self, url, langs):
+        gate.wait(5)
+        return real(self, url, langs)
+
+    monkeypatch.setattr(youtube_items.YouTubeStore, "add", blocking_add)
+    client = _client(tmp_path, monkeypatch)
+    j1 = client.post("/api/youtube", json={"url": WATCH}).json()
+    j2 = client.post("/api/youtube", json={"url": WATCH}).json()
+    assert j1["job_id"] and j1["job_id"] == j2["job_id"]  # same in-flight job
+    gate.set()
+    assert _wait(client, j1["job_id"])["status"] == "done"
 
 
 def test_delete_endpoint(tmp_path, monkeypatch):
     client = _client(tmp_path, monkeypatch)
-    client.post("/api/youtube", json={"url": WATCH})
+    _add(client)
     assert client.delete(f"/api/youtube/{VID}").status_code == 200
     assert client.get("/api/library/browse", params={"path": "yt:"}).json()["entries"] == []
     assert client.delete(f"/api/youtube/{VID}").status_code == 404
@@ -329,7 +369,7 @@ def test_delete_endpoint(tmp_path, monkeypatch):
 
 def test_item_info_synthesized(tmp_path, monkeypatch):
     client = _client(tmp_path, monkeypatch)
-    client.post("/api/youtube", json={"url": WATCH})
+    _add(client)
     info = client.get("/api/items", params={"path": REF}).json()
     assert info["is_youtube"] is True
     assert info["duration"] == 212.0
@@ -341,7 +381,7 @@ def test_item_info_synthesized(tmp_path, monkeypatch):
 
 def test_subtitles_json_and_vtt(tmp_path, monkeypatch):
     client = _client(tmp_path, monkeypatch)
-    client.post("/api/youtube", json={"url": WATCH})
+    _add(client)
     cues = client.get("/api/items/subtitles", params={"path": REF, "fmt": "json"}).json()
     assert cues[0]["text"] == "never gonna give you up"
     vtt = client.get("/api/items/subtitles", params={"path": REF})
@@ -351,7 +391,7 @@ def test_subtitles_json_and_vtt(tmp_path, monkeypatch):
 
 def test_dialogue_search_on_item_and_folder(tmp_path, monkeypatch):
     client = _client(tmp_path, monkeypatch)
-    client.post("/api/youtube", json={"url": WATCH})
+    _add(client)
     hits = client.get("/api/search", params={"path": REF, "query": "let you down"}).json()
     assert hits["count"] >= 1
     assert hits["matches"][0]["text"] == "never gonna let you down"
@@ -365,7 +405,7 @@ def test_dialogue_search_on_item_and_folder(tmp_path, monkeypatch):
 
 def test_reindex_refetches_transcript(tmp_path, monkeypatch):
     client = _client(tmp_path, monkeypatch)
-    client.post("/api/youtube", json={"url": WATCH})
+    _add(client)
     resp = client.post("/api/items/subtitles/reindex", params={"path": REF})
     assert resp.status_code == 200
     assert resp.json()["cues"] == 2
@@ -373,7 +413,7 @@ def test_reindex_refetches_transcript(tmp_path, monkeypatch):
 
 def test_media_endpoints_for_yt(tmp_path, monkeypatch):
     client = _client(tmp_path, monkeypatch)
-    client.post("/api/youtube", json={"url": WATCH})
+    _add(client)
     # Raw media: defensive 400 (the frontend uses the transcode path).
     assert client.get("/api/media", params={"path": REF}).status_code == 400
     # Keyframe probe: echo (no local file to probe).
@@ -383,7 +423,7 @@ def test_media_endpoints_for_yt(tmp_path, monkeypatch):
 
 def test_bookmarks_accept_yt_refs(tmp_path, monkeypatch):
     client = _client(tmp_path, monkeypatch)
-    client.post("/api/youtube", json={"url": WATCH})
+    _add(client)
     resp = client.post("/api/bookmarks", json={
         "path": REF, "label": "chorus", "start": 43.0, "end": 61.0,
     })
@@ -410,7 +450,7 @@ def _download(client):
 
 def test_download_creates_local_file_and_flags(tmp_path, monkeypatch):
     client = _client(tmp_path, monkeypatch)
-    client.post("/api/youtube", json={"url": WATCH})
+    _add(client)
     _download(client)
     vp = tmp_path / "state" / "youtube" / VID / "video.mp4"
     assert vp.read_bytes() == b"fake-mp4-bytes"
@@ -425,7 +465,7 @@ def test_download_creates_local_file_and_flags(tmp_path, monkeypatch):
 
 def test_downloaded_media_served_raw_and_keyframe_probed(tmp_path, monkeypatch):
     client = _client(tmp_path, monkeypatch)
-    client.post("/api/youtube", json={"url": WATCH})
+    _add(client)
     # Before download: raw media is a 400.
     assert client.get("/api/media", params={"path": REF}).status_code == 400
     _download(client)
@@ -459,7 +499,7 @@ def test_downloaded_clip_uses_local_file_not_urls(tmp_path, monkeypatch):
 
 def test_remove_download_keeps_transcript(tmp_path, monkeypatch):
     client = _client(tmp_path, monkeypatch)
-    client.post("/api/youtube", json={"url": WATCH})
+    _add(client)
     _download(client)
     assert client.delete(f"/api/youtube/{VID}/download").status_code == 200
     assert not (tmp_path / "state" / "youtube" / VID / "video.mp4").exists()
@@ -489,7 +529,7 @@ def test_concurrent_download_posts_return_the_same_job(tmp_path, monkeypatch):
 
     monkeypatch.setattr(youtube_items.YouTubeStore, "download", blocking_download)
     client = _client(tmp_path, monkeypatch)
-    client.post("/api/youtube", json={"url": WATCH})
+    _add(client)
 
     j1 = client.post(f"/api/youtube/{VID}/download").json()
     j2 = client.post(f"/api/youtube/{VID}/download").json()
@@ -501,7 +541,7 @@ def test_concurrent_download_posts_return_the_same_job(tmp_path, monkeypatch):
 def test_download_job_appears_in_jobs_list(tmp_path, monkeypatch):
     """Download jobs run in their own pool but surface through /api/jobs."""
     client = _client(tmp_path, monkeypatch)
-    client.post("/api/youtube", json={"url": WATCH})
+    _add(client)
     job_id = client.post(f"/api/youtube/{VID}/download").json()["job_id"]
     _wait(client, job_id)
     ids = [j["id"] for j in client.get("/api/jobs").json()["jobs"]]
@@ -512,7 +552,7 @@ def test_corrupt_info_json_is_clean_500_not_crash(tmp_path, monkeypatch):
     """L4: a corrupt info.json yields a 500 with a message, not an unhandled
     traceback, on /api/items and bookmark creation."""
     client = _client(tmp_path, monkeypatch)
-    client.post("/api/youtube", json={"url": WATCH})
+    _add(client)
     (tmp_path / "state" / "youtube" / VID / "info.json").write_text("{ not json", encoding="utf-8")
     assert client.get("/api/items", params={"path": REF}).status_code == 500
     assert client.post("/api/bookmarks", json={
@@ -524,7 +564,7 @@ def test_corrupt_info_json_is_clean_500_not_crash(tmp_path, monkeypatch):
 
 def _clip_setup(tmp_path, monkeypatch, urls):
     client = _client(tmp_path, monkeypatch, run=fake_ytdlp(urls=urls))
-    client.post("/api/youtube", json={"url": WATCH})
+    _add(client)
     captured = {}
 
     def fake_cut(source, rng, **kw):
@@ -646,7 +686,7 @@ def test_clip_unknown_video_404(tmp_path, monkeypatch):
 
 def test_clip_stream_resolution_failure_502(tmp_path, monkeypatch):
     client = _client(tmp_path, monkeypatch)
-    client.post("/api/youtube", json={"url": WATCH})
+    _add(client)
 
     def boom(url):
         raise RuntimeError("yt-dlp failed: gated")

@@ -4,13 +4,20 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    # yt-dlp bit-rots against YouTube changes, and the main nixpkgs pin can lag
+    # months behind its ~weekly releases. Pin it separately so `nix flake update
+    # nixpkgs-ytdlp` refreshes ONLY yt-dlp (and its deps) — not the whole
+    # python/ffmpeg closure.
+    nixpkgs-ytdlp.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
+  outputs = { self, nixpkgs, flake-utils, nixpkgs-ytdlp }:
     let
       perSystem = flake-utils.lib.eachDefaultSystem (system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
+          # yt-dlp from its own fresh pin (see the input comment above).
+          yt-dlp-fresh = nixpkgs-ytdlp.legacyPackages.${system}.yt-dlp;
           python = pkgs.python313;
 
           quipclipper = python.pkgs.buildPythonApplication {
@@ -50,6 +57,7 @@
           quipclipper-web = pkgs.callPackage ./nix/quipclipper-web.nix {
             inherit quipclipper;
             python3Packages = python.pkgs;
+            yt-dlp = yt-dlp-fresh;
           };
         in {
           packages = {
@@ -64,7 +72,7 @@
               python.pkgs.httpx
               python.pkgs.fastapi
               python.pkgs.uvicorn
-              pkgs.yt-dlp   # YouTube subtitle/metadata fetch + stream-URL resolution
+              yt-dlp-fresh   # YouTube subtitle/metadata fetch + stream-URL resolution
             ];
           };
 
