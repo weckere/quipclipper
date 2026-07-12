@@ -578,6 +578,20 @@ def test_external_download_illegal_title_chars_sanitized(tmp_path, monkeypatch):
     assert vp.is_file()
 
 
+def test_remove_video_deletes_external_download(tmp_path, monkeypatch):
+    """Removing a whole video must also delete its external download + sidecar,
+    not orphan them in the media folder."""
+    monkeypatch.setattr(youtube_items, "_run_ytdlp", fake_ytdlp())
+    dl = tmp_path / "media" / "one-offs"
+    store = YouTubeStore(tmp_path / "state", download_dir=dl)
+    store.add(WATCH, ["en"])
+    vp = store.download(VID)
+    assert vp.is_file() and vp.with_suffix(".vtt").is_file()
+    assert store.remove(VID) is True
+    assert not vp.exists() and not vp.with_suffix(".vtt").exists()
+    assert not (tmp_path / "state" / "youtube" / VID).exists()
+
+
 def test_download_endpoint_uses_configured_youtube_dir(tmp_path, monkeypatch):
     """End-to-end: QC_YOUTUBE_DIR routes the download endpoint's output there."""
     monkeypatch.setattr(youtube_items, "_run_ytdlp", fake_ytdlp())

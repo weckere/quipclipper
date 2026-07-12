@@ -424,6 +424,10 @@ class YouTubeStore:
             url = self.meta(video_id).get("webpage_url")
             with _url_lock:
                 _url_cache.pop(url, None)
+        # Also delete an external download (video + sidecar) so removing a video
+        # doesn't orphan it in the media folder — must run before the state dir
+        # (which holds the recorded download_path) is gone.
+        self.remove_download(video_id)
         shutil.rmtree(item_dir, ignore_errors=True)
         return True
 
