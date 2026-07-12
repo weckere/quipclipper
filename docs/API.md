@@ -9,7 +9,7 @@ all over HTTP.
   endpoints are under `/api/`.
 - **Format:** requests and responses are JSON (file downloads stream bytes).
   Errors are `{"detail": "..."}` with a 4xx/5xx status.
-- **Times** are seconds (floats); `*_ts` fields are `H:MM:SS.mmm` strings.
+- **Times** are seconds (floats); `*_ts` fields are `HH:MM:SS.mmm` strings.
 - **Paths** are in-container paths under a configured media root
   (`QC_MEDIA_ROOTS`), e.g. `/media/movies/Heat (1995)/Heat.mkv` — exactly the
   `path` values that `/api/library/browse` returns.
@@ -71,7 +71,7 @@ FastAPI publishes the live schema, served behind the same gate:
 | GET | `/api/library/browse?path=` | List a folder (or an EPUB book's segments). Omit `path` for the roots. |
 | GET | `/api/library/search?query=&path=` | Filename search across the library (or under `path`). |
 | GET | `/api/items?path=&langs=` | Probe one media item: streams, duration, subtitle tracks. |
-| GET | `/api/items/subtitles?path=&track=&offset=` | Subtitles as WebVTT + a script view. |
+| GET | `/api/items/subtitles?path=&track=&offset=&fmt=` | Subtitles as WebVTT (`fmt=vtt`, default) or JSON cues `{start, end, text, speaker}` (`fmt=json` — what the script view uses). |
 | POST | `/api/items/subtitles/reindex?path=` | Rebuild the subtitle cache for one file. |
 
 ### YouTube sources
@@ -85,7 +85,8 @@ FastAPI publishes the live schema, served behind the same gate:
 
 Added videos are addressed by the **virtual ref `yt:<video-id>`** everywhere a
 `path` is accepted: `/api/items`, `/api/items/subtitles` (+`/reindex`, which
-re-fetches the transcript), `/api/search`, `/api/bookmarks`, and `POST
+re-fetches the transcript), `/api/search`, `/api/bookmarks`,
+`/api/media/keyframe` (echoes the requested time until downloaded), and `POST
 /api/clip`. The pseudo-folder itself is `path=yt:` — browse it for the listing,
 or pass it to `/api/search/folder` to dialogue-search every added video.
 Preview streams via `/api/media/transcode?path=yt:<id>` (raw `/api/media` and
@@ -112,7 +113,7 @@ start, end, start_ts, end_ts, cue_count}]}`. The `index` is what you pass back a
 | GET | `/api/media?path=` | Stream the raw file. |
 | GET | `/api/media/keyframe?path=&time=` | Nearest keyframe at/just before `time`. |
 | GET | `/api/media/transcode?path=&...` | On-the-fly transcode stream (desktop preview). |
-| GET | `/api/media/hls?path=&venc=` | HLS playlist (iOS preview). |
+| GET | `/api/media/hls?path=&venc=` | HLS playlist (iOS preview). Segment/init URIs inside it point at `/api/media/hls/{token}/{name}` — clients just follow the playlist. |
 
 ### Clipping & jobs
 | Method | Path | Purpose |
@@ -123,9 +124,9 @@ start, end, start_ts, end_ts, cue_count}]}`. The `index` is what you pass back a
 | DELETE | `/api/jobs/{id}` | Cancel a queued job / prune a finished one. |
 | GET | `/api/jobs/{id}/download/{filename}` | Download a finished clip by name. |
 
-A job is `{id, status, label, created[, started, finished, elapsed, files]}`
-where `status` is `pending|running|done|failed|cancelled` and `files` is
-`[{name, size}]` once done.
+A job is `{id, status, label, created[, started, finished, elapsed, files, error]}`
+where `status` is `queued|running|done|failed|cancelled`, `files` is
+`[{name, size}]` once done, and `error` is the failure message on a failed job.
 
 ### Clips library
 | Method | Path | Purpose |
@@ -137,7 +138,7 @@ where `status` is `pending|running|done|failed|cancelled` and `files` is
 ### Bookmarks & meta
 | Method | Path | Purpose |
 |---|---|---|
-| GET/POST | `/api/bookmarks` | List / create bookmarks. |
+| GET/POST | `/api/bookmarks` | List (optionally filtered by `?path=`) / create bookmarks. |
 | PATCH/DELETE | `/api/bookmarks/{id}` | Edit / delete one. `DELETE /api/bookmarks` clears all. |
 | GET | `/api/health` | Liveness + tool presence (no auth-secret required). |
 | GET | `/api/config` | Non-secret config the UI needs. |
@@ -150,9 +151,10 @@ CLI).
 
 | Field | Default | Notes |
 |---|---|---|
-| `path` | — | **Required.** Media path (or `<epub>#seg=N` for an audiobook chapter). |
+| `path` | — | **Required.** Media path, `<epub>#seg=N` for an audiobook chapter, or `yt:<video-id>` for a YouTube source. |
 | `start`, `end` | — | Explicit time range (seconds). `start` with no `end` = to EOF. |
 | `query`, `match_index` | —, `0` | Search-based range: cut the Nth match of `query`. |
+| `cue_text` | — | Matched dialogue for the `{cue}` naming token when clipping by `start`/`end` (search-based clips derive it). |
 | `kind` | `"video"` | `audio` \| `video` \| `gif`. |
 | `lossless` | `true` | `false` re-encodes (frame-exact video / MP3 audio). |
 | `before`, `after` | `2.0` | Padding (s) around the line, 0–60. |
@@ -162,8 +164,11 @@ CLI).
 | `split_channels` | `false` | Split surround into per-group files (audio). |
 | `split_format` | `"wav"` | `wav`\|`flac`\|`original` with `split_channels`. |
 | `split_groups` | all | Subset of `center,front,surround,lfe`. |
+| `include_lfe` | `true` | Emit the LFE channel as its own file with `split_channels`. |
 | `backend` | `"auto"` | `auto`\|`ffmpeg`\|`mkvmerge`. |
+| `remux_first` | `false` | Remux a non-MKV source to a temp MKV first (mkvmerge backend). |
 | `embed_subs` | `true` | Mux the sidecar subtitle into a lossless video clip. |
+| `default_sub_track` | — | Subtitle track (s:N) to mark as the default in the saved video clip. |
 | `chapters` | `true` | Keep chapters (mkvmerge). |
 | `template` | default | Output-name template, `{source}/{timestamp}_{cue}_{title}`. |
 

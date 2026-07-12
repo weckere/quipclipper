@@ -232,6 +232,11 @@ All settings are environment variables on the `app` service:
 | `QC_USERNAME` | `quip` | Basic-auth username (only used when `QC_PASSWORD` is set). |
 | `QC_SUBTITLE_LANGS` | `en` | Ordered subtitle-language preference for auto-selection (comma-separated, e.g. `eng,spa`). The UI's **Auto-lang** box overrides it per browser. |
 | `QC_API_TOKEN` | *(none)* | Token(s) for programmatic clients — agents and scripts (comma-separated to rotate). Set the same value on **both** services so `-u api:<token>` passes the basic-auth gate too. See [HTTP API](#http-api-agents--scripts). |
+| `QC_PROXY_SECRET` | *(none)* | Defence-in-depth: a shared secret nginx injects on every proxied request. When set on **both** services, the backend rejects anything that reaches its port without it (except `/api/health`) — blocking direct hits that bypass nginx. |
+
+(`QC_BIND`, `QC_PORT`, and `QC_VAAPI_DEVICE` also exist for non-default network
+binds and hardware-transcode setups — see
+[`web/backend/README.md`](web/backend/README.md) for the full table.)
 
 ## HTTP API (agents & scripts)
 
@@ -362,6 +367,7 @@ Optional settings (all off/defaulted unless set):
 | Option | Purpose |
 |---|---|
 | `passwordFile` | Gate the whole site behind HTTP basic auth — path to a ready-made nginx htpasswd file (kept out of the store). Unlike Docker's plaintext `QC_PASSWORD`, the module takes the htpasswd directly. |
+| `apiTokenFile` | API token(s) for agents/scripts — path to a systemd `EnvironmentFile` containing `QC_API_TOKEN=<token>` (kept out of the store). Add an `api` user with the token as password to `passwordFile` so one secret passes the basic-auth gate too. |
 | `hardwareAcceleration.enable` | Intel Quick Sync H.264 encoding (else software `libx264`). Adds the service user to the `render` group, exposes the render node, and enables the Intel media driver. |
 | `virtualHost` | nginx server name for a public hostname; pair with `enableACME`/`forceSSL` on that vhost for TLS. Default (null) is a catch-all vhost for LAN-by-IP over `:80`. |
 | `nginx.enable` | `false` runs **only** the hardened backend on `listenAddress:listenPort` and skips the bundled vhost — bring your own front (nginx/Caddy/Tailscale) proxying to it (the backend then serves clips itself). |
@@ -370,7 +376,7 @@ Optional settings (all off/defaulted unless set):
 | `clipsDir` | Where finished clips live (default `/var/lib/quipclipper-web/clips`, private to the service). |
 | `clipsGroup` / `clipsMode` | Share `clipsDir` with other users/services (SMB export, Jellyfin library). See below. |
 | `manageClipsDir` | `false` = `clipsDir` is owned/created elsewhere (e.g. an existing SMB mount); the module won't chown/chmod it. See below. |
-| `subtitleLangs`, `listenPort`, `maxConcurrentJobs` | Mirror the Docker env vars `QC_SUBTITLE_LANGS` / `QC_PORT` / `QC_MAX_CONCURRENT_JOBS`. |
+| `subtitleLangs`, `listenAddress`, `listenPort`, `maxConcurrentJobs` | Mirror the Docker env vars `QC_SUBTITLE_LANGS` / `QC_BIND` / `QC_PORT` / `QC_MAX_CONCURRENT_JOBS`. |
 
 The module builds the app from quipclipper's own pinned nixpkgs, so you don't
 need an `inputs.nixpkgs.follows`.
@@ -773,7 +779,7 @@ quipclipper clip "i'll be back" -v movie.mkv -t video --lossless --no-embed-subs
 | `models.py` | `Cue` (a timed subtitle line) and `Match` (a ranked hit). |
 | `subtitles.py` | Parse `.srt`/`.vtt`/`.ass`/`.ssa`/`.sub`/`.json`; find sidecars; list/extract embedded tracks; list all streams. |
 | `search.py` | Fuzzy ranking (`rapidfuzz`) over single cues and sliding windows of consecutive cues; collapses overlapping span-variants into non-overlapping results. |
-| `clip.py` | Turn a match into a padded time range and cut it with ffmpeg (lossless `-c copy`, re-encode, or surround channel split). |
+| `clip.py` | Turn a match into a padded time range and cut it with ffmpeg (lossless `-c copy`, re-encode, or surround channel split). Sources can be local files or http(s) URLs (e.g. resolved YouTube streams — used by the web app). |
 | `mkv.py` | MKVToolNix (`mkvmerge`) backend for lossless cuts of Matroska sources. |
 | `epub.py` | EPUB3 media-overlay audiobooks: detect by manifest, parse chapters/cues from OPF/NCX/SMIL, extract the embedded narration audio. |
 | `cli.py` | `typer` CLI: `search`, `clip`, `tracks`. |

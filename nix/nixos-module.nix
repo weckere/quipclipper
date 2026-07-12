@@ -423,17 +423,36 @@ in
         locations."/" = {
           tryFiles = "$uri $uri/ /index.html";
         };
+        # Minimal hardening, mirroring web/nginx/nginx.conf. `always` so error
+        # responses carry them too. nginx add_header does NOT inherit into a
+        # location that sets its own add_header, so the html|js|css block below
+        # repeats them.
+        extraConfig = ''
+          add_header X-Content-Type-Options "nosniff" always;
+          add_header X-Frame-Options "SAMEORIGIN" always;
+        '';
         # App shell + assets have no content hash, so always revalidate (nginx
         # still 304s when unchanged) — a deploy is picked up without a hard
         # refresh instead of being served stale from the browser cache.
         locations."~* \\.(?:html|js|css)$" = {
           tryFiles = "$uri /index.html";
           extraConfig = ''
+            add_header X-Content-Type-Options "nosniff" always;
+            add_header X-Frame-Options "SAMEORIGIN" always;
             add_header Cache-Control "no-cache";
           '';
         };
         locations."/api/" = {
           proxyPass = proxyTarget;
+        };
+        # Raw media streaming: don't spool large files through nginx's proxy
+        # temp dir. Longest-prefix matching keeps /api/media/transcode (below)
+        # taking precedence over this.
+        locations."/api/media" = {
+          proxyPass = proxyTarget;
+          extraConfig = ''
+            proxy_buffering off;
+          '';
         };
         # Subtitle pre-indexing streams one progress line per file and can take
         # several minutes — disable buffering (so the UI sees progress) and raise

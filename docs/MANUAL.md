@@ -507,9 +507,10 @@ quipclipper clip   "you will become one with the borg" --video "Book (readaloud)
 ```
 src/quipclipper/
   models.py      Cue (a timed subtitle line) and Match (a ranked hit); timestamp formatting.
-  subtitles.py   Parse .srt/.vtt/.ass/.sub; find sidecars; list/extract embedded tracks; list all streams.
+  subtitles.py   Parse .srt/.vtt/.ass/.ssa/.sub/.json; find sidecars; list/extract embedded tracks; list all streams.
   search.py      Fuzzy ranking over single cues and sliding windows; collapses overlapping span-variants.
   clip.py        Compute the padded time range and cut with ffmpeg (lossless copy, re-encode, or channel split).
+                 Sources may be local files or http(s) URLs (resolved YouTube streams — used by the web app).
   mkv.py         MKVToolNix (mkvmerge) backend for lossless cuts; remux-first; disk-space estimate.
   epub.py        EPUB3 media-overlay audiobooks: detect, OPF/NCX/SMIL → chapters + cues, extract embedded audio.
   cli.py         typer CLI: search, clip, tracks.

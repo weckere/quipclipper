@@ -27,6 +27,10 @@ quipclipper-web          # serves on QC_BIND:QC_PORT (default 127.0.0.1:8000)
 Then open the API directly, e.g. <http://127.0.0.1:8000/api/health>. In a real
 deployment nginx serves the frontend and proxies `/api` to this process.
 
+External tools on PATH: `ffmpeg`/`ffprobe` (required), `mkvmerge` (optional —
+the preferred lossless cutting backend), and `yt-dlp` (optional — required for
+YouTube sources). `/api/health` reports which are present.
+
 ## Configuration
 
 Environment variables (mirrored by the NixOS module options):
