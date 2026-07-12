@@ -19,7 +19,7 @@ def test_health_ok() -> None:
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "ok"
-    assert set(body["tools"]) == {"ffmpeg", "ffprobe", "mkvmerge"}
+    assert set(body["tools"]) == {"ffmpeg", "ffprobe", "mkvmerge", "yt-dlp"}
 
 
 def test_config_reflects_env() -> None:

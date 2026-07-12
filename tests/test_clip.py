@@ -147,6 +147,95 @@ def test_ffmpeg_args_reencode_video_vaapi_uses_quick_sync():
     assert args.index("-vaapi_device") < args.index("-i")
 
 
+# --- URL sources + DASH audio pair (YouTube) ----------------------------------
+
+def test_ffmpeg_args_aux_audio_lossless_maps_dash_pair():
+    """A separate audio URL becomes input 1, seeked like the video, mapped
+    explicitly — and 0:s? is dropped (a video-only stream has no subs)."""
+    args = _ffmpeg_args(
+        source="https://v.example/video", rng=ClipRange(5.0, 8.0), kind="video",
+        out=Path("out.mkv"), lossless=True, fps=15, width=480,
+        aux_audio="https://a.example/audio",
+    )
+    assert args.count("-i") == 2
+    assert args.count("-ss") == 2  # both inputs seeked to the same spot
+    i_video, i_audio = [i for i, a in enumerate(args) if a == "-i"]
+    assert args[i_video + 1] == "https://v.example/video"
+    assert args[i_audio + 1] == "https://a.example/audio"
+    maps = [args[i + 1] for i, a in enumerate(args) if a == "-map"]
+    assert maps == ["0:v:0", "1:a:0"]
+    assert "0:s?" not in args
+    assert args[args.index("-c") + 1] == "copy"
+    # network inputs carry reconnect flags
+    assert "-reconnect" in args
+
+
+def test_ffmpeg_args_aux_audio_reencode_maps_dash_pair():
+    args = _ffmpeg_args(
+        source="https://v.example/video", rng=ClipRange(0.0, 4.0), kind="video",
+        out=Path("out.mp4"), lossless=False, fps=15, width=480,
+        aux_audio="https://a.example/audio",
+    )
+    maps = [args[i + 1] for i, a in enumerate(args) if a == "-map"]
+    assert maps == ["0:v:0", "1:a:0"]
+    assert "libx264" in args
+
+
+def test_ffmpeg_args_aux_audio_shifts_embed_subs_input(tmp_path):
+    srt = tmp_path / "subs.srt"
+    srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nhi\n")
+    args = _ffmpeg_args(
+        source="https://v.example/video", rng=ClipRange(0.0, 4.0), kind="video",
+        out=Path("out.mkv"), lossless=True, fps=15, width=480,
+        aux_audio="https://a.example/audio", embed_subs=srt,
+    )
+    # inputs: 0 = video URL, 1 = audio URL, 2 = the SRT — mapped as 2:0
+    assert args.count("-i") == 3
+    maps = [args[i + 1] for i, a in enumerate(args) if a == "-map"]
+    assert maps == ["0:v:0", "1:a:0", "2:0"]
+
+
+def test_ffmpeg_args_local_file_has_no_reconnect_flags():
+    args = _ffmpeg_args(
+        source=Path("in.mkv"), rng=ClipRange(0.0, 4.0), kind="video",
+        out=Path("out.mkv"), lossless=True, fps=15, width=480,
+    )
+    assert "-reconnect" not in args
+
+
+def test_cut_clip_url_source_skips_exists_check(monkeypatch, tmp_path):
+    """A URL source must reach ffmpeg (no local stat); out is required."""
+    import quipclipper.clip as clip_mod
+
+    captured = {}
+
+    def fake_run(cmd, **kw):
+        captured["cmd"] = cmd
+
+        class R:
+            returncode = 0
+            stderr = ""
+        return R()
+
+    monkeypatch.setattr(clip_mod.subprocess, "run", fake_run)
+    monkeypatch.setattr(clip_mod.shutil, "which", lambda _: "/usr/bin/ffmpeg")
+    out = tmp_path / "clip.mkv"
+    result = cut_clip(
+        "https://v.example/video", ClipRange(1.0, 2.0), kind="video",
+        lossless=True, out=out, aux_audio="https://a.example/audio",
+    )
+    assert result == out
+    assert "https://v.example/video" in captured["cmd"]
+    assert "https://a.example/audio" in captured["cmd"]
+
+
+def test_cut_clip_url_source_requires_out(monkeypatch):
+    import quipclipper.clip as clip_mod
+    monkeypatch.setattr(clip_mod.shutil, "which", lambda _: "/usr/bin/ffmpeg")
+    with pytest.raises(ValueError, match="out is required"):
+        cut_clip("https://v.example/video", ClipRange(0.0, 1.0), kind="video")
+
+
 def test_ffmpeg_args_gif_is_always_reencoded():
     args = _ffmpeg_args(
         source=Path("in.mkv"), rng=ClipRange(0.0, 4.0), kind="gif",

@@ -64,6 +64,7 @@
               python.pkgs.httpx
               python.pkgs.fastapi
               python.pkgs.uvicorn
+              pkgs.yt-dlp   # YouTube subtitle/metadata fetch + stream-URL resolution
             ];
           };
 

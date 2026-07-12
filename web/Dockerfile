@@ -24,9 +24,11 @@ COPY pyproject.toml README.md ./engine/
 COPY src ./engine/src
 RUN pip install --no-cache-dir ./engine
 
-# …then the web backend that depends on it.
+# …then the web backend that depends on it. yt-dlp (YouTube sources) comes from
+# pip, not apt — Debian's package rots fast and stale yt-dlp breaks against
+# YouTube changes; rebuilding the image picks up a current release.
 COPY web/backend ./backend
-RUN pip install --no-cache-dir ./backend
+RUN pip install --no-cache-dir ./backend yt-dlp
 
 ENV QC_BIND=0.0.0.0 \
     QC_PORT=8000 \

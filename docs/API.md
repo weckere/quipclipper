@@ -74,6 +74,23 @@ FastAPI publishes the live schema, served behind the same gate:
 | GET | `/api/items/subtitles?path=&track=&offset=` | Subtitles as WebVTT + a script view. |
 | POST | `/api/items/subtitles/reindex?path=` | Rebuild the subtitle cache for one file. |
 
+### YouTube sources
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/youtube` | Add a video: `{"url": "<watch URL>"}` → yt-dlp fetches subtitles + metadata (no video download). Idempotent. Returns `{entry, meta}`. 400 = not a YouTube URL, 502 = yt-dlp failure. |
+| DELETE | `/api/youtube/{video_id}` | Remove an added video (metadata + stored transcript). |
+
+Added videos are addressed by the **virtual ref `yt:<video-id>`** everywhere a
+`path` is accepted: `/api/items`, `/api/items/subtitles` (+`/reindex`, which
+re-fetches the transcript), `/api/search`, `/api/bookmarks`, and `POST
+/api/clip`. The pseudo-folder itself is `path=yt:` — browse it for the listing,
+or pass it to `/api/search/folder` to dialogue-search every added video.
+Preview streams via `/api/media/transcode?path=yt:<id>` (raw `/api/media` and
+HLS don't apply); clips cut straight from resolved stream URLs, so
+`split_channels` and `backend=mkvmerge` return 400 for `yt:` refs. Requires
+`yt-dlp` on the backend PATH (reported by `/api/health`).
+
 ### Dialogue search
 | Method | Path | Purpose |
 |---|---|---|

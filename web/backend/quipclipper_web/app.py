@@ -54,7 +54,7 @@ from quipclipper.mkv import (
 )
 from quipclipper.search import search as engine_search
 from quipclipper.subtitles import AUDIO_EXTS, VIDEO_EXTS, find_sidecar, load_subtitles
-from quipclipper_web import __version__, epub_items, library, media
+from quipclipper_web import __version__, epub_items, library, media, youtube_items
 from quipclipper_web.bookmarks import BookmarkStore
 from quipclipper_web.config import Settings
 from quipclipper_web.jobs import JobRegistry
@@ -284,6 +284,13 @@ class ClipRequest(BaseModel):
     default_sub_track: int | None = Field(None, ge=0)
 
 
+class YouTubeAdd(BaseModel):
+    """Body of POST /api/youtube. Module-level (like ClipRequest) so FastAPI can
+    resolve the string annotation under ``from __future__ import annotations``."""
+
+    url: str
+
+
 # CSRF guard: state-changing requests must carry this header. A cross-site
 # "simple request" (form post / no-cors fetch) can't set a custom header, and
 # adding one forces a CORS preflight this API never grants — so a malicious page
@@ -336,6 +343,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     jobs = JobRegistry(max_workers=settings.max_concurrent_jobs)
     bookmarks = BookmarkStore(settings.state_dir)
     sub_cache = SubtitleCache(settings.state_dir, default_langs=settings.subtitle_langs)
+    yt_store = youtube_items.YouTubeStore(settings.state_dir)
 
     @contextlib.asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -387,6 +395,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "ffmpeg": shutil.which("ffmpeg") is not None,
                 "ffprobe": shutil.which("ffprobe") is not None,
                 "mkvmerge": shutil.which("mkvmerge") is not None,
+                "yt-dlp": shutil.which("yt-dlp") is not None,
             },
         }
 
@@ -429,6 +438,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/library/browse")
     def browse(path: str | None = None) -> dict:
+        # The "▶ YouTube" pseudo-folder lists every added video (yt: refs) —
+        # branch before _resolve, like the EPUB one below; a yt: ref is not a
+        # filesystem path.
+        if youtube_items.is_folder_ref(path):
+            return {"path": path,
+                    "entries": [youtube_items.entry_dict(m) for m in yt_store.list_all()]}
         # A synced EPUB audiobook browses into its audio segments like a folder.
         if path:
             ep = _resolve(path)
@@ -442,7 +457,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=str(exc))
         except NotADirectoryError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
-        return {"path": path, "entries": [library.entry_dict(e) for e in entries]}
+        out = [library.entry_dict(e) for e in entries]
+        if not path:
+            # Root listing: the YouTube pseudo-folder rides along after the roots.
+            out.append(youtube_items.folder_entry())
+        return {"path": path, "entries": out}
 
     @app.get("/api/library/search")
     def search_library(
@@ -460,10 +479,42 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             entries = library.search(query, settings.media_roots, max_results=limit)
         return {"query": query, "count": len(entries), "entries": [library.entry_dict(e) for e in entries]}
 
+    # --- YouTube sources -------------------------------------------------------
+    # A pasted watch URL becomes a persistent virtual item (ref "yt:<id>") whose
+    # transcript is fetched by yt-dlp — no video download; playback and cutting
+    # stream from resolved googlevideo URLs on demand (see youtube_items).
+
+    @app.post("/api/youtube")
+    def youtube_add(req: YouTubeAdd) -> dict:
+        """Add a YouTube video: fetch metadata + subtitles (no video download).
+        Idempotent — re-adding an existing video returns its stored entry."""
+        try:
+            meta = yt_store.add(req.url, settings.subtitle_langs)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except RuntimeError as exc:  # yt-dlp failure (network, gone, unavailable)
+            raise HTTPException(status_code=502, detail=str(exc))
+        return {"entry": youtube_items.entry_dict(meta), "meta": meta}
+
+    @app.delete("/api/youtube/{video_id}")
+    def youtube_remove(video_id: str) -> dict:
+        """Remove an added video (its metadata + stored transcript)."""
+        if not yt_store.remove(video_id):
+            raise HTTPException(status_code=404, detail=f"Unknown YouTube video: {video_id}")
+        return {"deleted": video_id}
+
     # --- file inspection -----------------------------------------------------
 
     @app.get("/api/items")
     def item(path: str = Query(...), langs: str | None = Query(None)) -> dict:
+        # A YouTube ref (yt:<id>): synthesized info from stored metadata —
+        # nothing is probed or downloaded.
+        vid = youtube_items.parse_ref(path)
+        if vid is not None:
+            try:
+                return youtube_items.item_info(yt_store.meta(vid))
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail=str(exc))
         # An EPUB segment ref (<epub>#seg=N): probe the extracted chapter audio.
         epub_ref, seg = epub_items.parse_ref(path)
         if seg is not None:
@@ -492,6 +543,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         offset: float = Query(0, ge=0),
         fmt: str = Query("vtt"),
     ) -> Response:
+        # YouTube ref: cues come from the stored transcript (SubtitleCache bypassed).
+        vid = youtube_items.parse_ref(path)
+        if vid is not None:
+            try:
+                cues = yt_store.cues(vid)
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail=str(exc))
+            except RuntimeError as exc:
+                raise HTTPException(status_code=500, detail=str(exc))
+            if fmt == "json":
+                return Response(
+                    content=json.dumps(
+                        [{"start": c.start, "end": c.end, "text": c.text, "speaker": c.speaker}
+                         for c in cues]),
+                    media_type="application/json",
+                )
+            return Response(content=media.cues_to_vtt(cues, offset=offset), media_type="text/vtt")
         # EPUB segment: cues come from the media overlay, not a sidecar/track.
         epub_ref, seg = epub_items.parse_ref(path)
         if seg is not None:
@@ -545,8 +613,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         min_score: float = Query(60.0, ge=0, le=100),
         max_span: int = Query(3, ge=1, le=10),
     ) -> dict:
+        vid = youtube_items.parse_ref(path)
         epub_ref, seg = epub_items.parse_ref(path)
-        if seg is not None:
+        if vid is not None:
+            try:
+                cues = yt_store.cues(vid)
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail=str(exc))
+            except RuntimeError as exc:
+                raise HTTPException(status_code=500, detail=str(exc))
+        elif seg is not None:
             try:
                 cues = epub_items.segment_cues(_resolve(epub_ref), seg)
             except (IndexError, ValueError) as exc:
@@ -606,13 +682,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         search engine and collect the top results.  Returns a flat list of
         matches grouped by source file, sorted best-score-first across all files.
         """
-        # Resolve and validate every requested target: a folder to scan, or an
-        # EPUB audiobook to search directly (its chapters are searched like files).
+        # Resolve and validate every requested target: a folder to scan, an
+        # EPUB audiobook to search directly (its chapters are searched like
+        # files), or the YouTube pseudo-folder (every stored transcript).
         folders: list[Path] = []
         books: list[Path] = []
+        yt_videos: list[dict] = []
         seen: set[Path] = set()
         seen_books: set[Path] = set()
         for p in path:
+            if youtube_items.is_folder_ref(p):
+                if not yt_videos:
+                    yt_videos = yt_store.list_all()
+                continue
             target = _resolve(p)
             if epub_items.is_epub_book(target):
                 rp = target.resolve()
@@ -711,9 +793,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 for s, m in cand[:limit]
             ]
 
+        def _search_yt(meta: dict) -> list[dict]:
+            """Search one stored YouTube transcript; hits point at the yt: ref."""
+            try:
+                cues = yt_store.cues(meta["id"])
+            except (KeyError, RuntimeError):
+                return []
+            matches = engine_search(
+                query, cues,
+                limit=limit, min_score=min_score, max_span=max_span,
+            )
+            return [
+                {
+                    "file": meta.get("title") or meta["id"],
+                    "path": youtube_items.make_ref(meta["id"]),
+                    "score": round(m.score, 1),
+                    "text": m.text,
+                    "speaker": m.cues[0].speaker if m.cues else None,
+                    "start": m.start,
+                    "end": m.end,
+                    "start_ts": format_timestamp(m.start),
+                    "end_ts": format_timestamp(m.end),
+                    "cue_count": len(m.cues),
+                }
+                for m in matches
+            ]
+
         with ThreadPoolExecutor(max_workers=4) as pool:
             futures = {pool.submit(_search_one, v): v for v in videos}
             futures.update({pool.submit(_search_book, b): b for b in books})
+            futures.update({pool.submit(_search_yt, m): m["id"] for m in yt_videos})
             for fut in as_completed(futures):
                 all_hits.extend(fut.result())
 
@@ -722,7 +831,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {
             "query": query,
             "folders": path,
-            "files_scanned": len(videos) + len(books),
+            "files_scanned": len(videos) + len(books) + len(yt_videos),
             "capped": capped,  # True if the scan hit INDEX_CAP (results partial)
             "count": len(all_hits),
             "matches": all_hits,
@@ -805,6 +914,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         Use this when a file's subtitles have changed and you want the script
         and dialogue search to reflect the new subtitles immediately.
         """
+        # YouTube ref: re-fetch the transcript from YouTube via yt-dlp.
+        vid = youtube_items.parse_ref(path)
+        if vid is not None:
+            try:
+                cues = yt_store.refresh_subs(vid, settings.subtitle_langs)
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail=str(exc))
+            except RuntimeError as exc:
+                raise HTTPException(status_code=502, detail=str(exc))
+            return {"cleared": 1, "cues": cues}
         p = _resolve_any(path)
         if not p.is_file():
             raise HTTPException(status_code=404, detail=f"Not found: {path}")
@@ -824,6 +943,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         Starlette's FileResponse handles Range requests (206), so the browser can
         seek. Whether it actually decodes depends on the codec/container.
         """
+        # YouTube refs have no local file — the player must use the transcode
+        # endpoint (the frontend forces that path for yt items; this is defensive).
+        if youtube_items.parse_ref(path) is not None:
+            raise HTTPException(
+                status_code=400,
+                detail="YouTube items stream via /api/media/transcode.",
+            )
         # EPUB segment: stream the chapter audio straight from the zip (Range-aware,
         # no copy on disk).
         epub_ref, seg = epub_items.parse_ref(path)
@@ -850,6 +976,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         with ``-c:v copy``) will actually land, so subtitle offsets can be
         computed accurately.
         """
+        # YouTube: no local file to probe — echo the requested time. Subtitle
+        # sync after a mid-stream seek can drift by up to one GOP (a few
+        # seconds); probing the stream URL's window is a possible follow-up.
+        if youtube_items.parse_ref(path) is not None:
+            return {"requested": time, "actual": time}
         p = _resolve_any(path)
         if not p.is_file():
             raise HTTPException(status_code=404, detail=f"Not found: {path}")
@@ -879,6 +1010,63 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         channel group (front/center/lfe/side/back/surround) via a ``pan`` filter
         — both for the stream selector (B17).
         """
+        async def _ffmpeg_stream(cmd: list[str]) -> StreamingResponse:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+
+            async def _stream():
+                assert proc.stdout is not None
+                try:
+                    while True:
+                        chunk = await proc.stdout.read(64 * 1024)
+                        if not chunk:
+                            break
+                        yield chunk
+                finally:
+                    proc.kill()
+                    await proc.wait()
+
+            return StreamingResponse(
+                _stream(),
+                media_type="video/webm",
+                headers={"Accept-Ranges": "none"},
+            )
+
+        # YouTube ref: same remux, but the input is 1-2 resolved googlevideo
+        # URLs (h264/mp4 + m4a per FORMAT_EXPR) instead of a local file. Video
+        # is always h264 so it's stream-copied (`venc` ignored); audio → Opus
+        # like every other transcode. `audio`/`chan` don't apply (stereo source).
+        vid = youtube_items.parse_ref(path)
+        if vid is not None:
+            try:
+                meta = yt_store.meta(vid)
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail=str(exc))
+            try:
+                video_url, audio_url = await asyncio.to_thread(
+                    youtube_items.resolve_stream_urls, meta["webpage_url"])
+            except RuntimeError as exc:
+                raise HTTPException(status_code=502, detail=str(exc))
+            cmd = ["ffmpeg"]
+            reconnect = ["-reconnect", "1", "-reconnect_streamed", "1",
+                         "-reconnect_delay_max", "5"]
+            seek = ["-ss", str(start)] if start is not None else []
+            cmd += reconnect + seek + ["-i", video_url]
+            if audio_url:
+                cmd += reconnect + seek + ["-i", audio_url]
+            if end is not None:
+                cmd += ["-to", str(end - (start or 0))]
+            if audio_url:
+                cmd += ["-map", "0:v:0", "-map", "1:a:0"]
+            cmd += ["-c:v", "copy", "-c:a", "libopus", "-b:a", "192k", "-ac", "2"]
+            if meta.get("duration"):
+                cmd += ["-metadata", f"DURATION={meta['duration']}"]
+            cmd += ["-f", "matroska", "-"]
+            return await _ffmpeg_stream(cmd)
+
         p = _resolve_any(path)
         if not p.is_file():
             raise HTTPException(status_code=404, detail=f"Not found: {path}")
@@ -918,29 +1106,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             cmd += ["-metadata", f"DURATION={duration}"]
         cmd += ["-f", "matroska", "-"]
 
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-
-        async def _stream():
-            assert proc.stdout is not None
-            try:
-                while True:
-                    chunk = await proc.stdout.read(64 * 1024)
-                    if not chunk:
-                        break
-                    yield chunk
-            finally:
-                proc.kill()
-                await proc.wait()
-
-        return StreamingResponse(
-            _stream(),
-            media_type="video/webm",
-            headers={"Accept-Ranges": "none"},
-        )
+        return await _ffmpeg_stream(cmd)
 
     # --- HLS (iOS playback) ---------------------------------------------------
     # iOS Safari can't play progressive Matroska/Opus, raw .mkv, or a chunked
@@ -1106,7 +1272,43 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         epub_ref, seg = epub_items.parse_ref(req.path)
         name_source: Path | None = None
         epub_temp: Path | None = None
-        if seg is not None:
+        # A YouTube ref cuts straight from resolved googlevideo stream URLs —
+        # ffmpeg reads them over HTTPS, so Exact/lossless semantics match local
+        # files with no temp download. (If URL cutting ever proves too fragile —
+        # e.g. gated formats ffmpeg can't fetch — the v2 fallback is a yt-dlp
+        # temp download fed through this same pipeline, like the EPUB temp.)
+        yt_vid = youtube_items.parse_ref(req.path)
+        yt_meta: dict | None = None
+        yt_aux: str | None = None
+        if yt_vid is not None:
+            try:
+                yt_meta = yt_store.meta(yt_vid)
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail=str(exc))
+            if req.split_channels:
+                raise HTTPException(
+                    status_code=400,
+                    detail="split_channels isn't available for YouTube sources (stereo audio).",
+                )
+            if req.backend == "mkvmerge":
+                raise HTTPException(
+                    status_code=400,
+                    detail="mkvmerge can't cut from a stream URL; use the ffmpeg backend.",
+                )
+            req.backend = "ffmpeg"  # auto would route lossless audio to mkvmerge
+            try:
+                video_url, audio_url = youtube_items.resolve_stream_urls(yt_meta["webpage_url"])
+            except RuntimeError as exc:
+                raise HTTPException(status_code=502, detail=str(exc))
+            if req.kind == "audio":
+                # Cut audio from the audio stream alone (or the muxed progressive).
+                video = audio_url or video_url
+            else:
+                video = video_url
+                # gif drops audio entirely; only a video cut needs the DASH pair.
+                yt_aux = audio_url if req.kind == "video" else None
+            name_source = youtube_items.clip_name_source(yt_meta)
+        elif seg is not None:
             ep = _resolve(epub_ref)
             try:
                 # ffmpeg/mkvmerge need a seekable file; extract a temp now and
@@ -1125,15 +1327,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # up; once submitted, ownership passes to do_cut's finally (R1).
         _submitted = False
         try:
-            if not video.is_file():
-                raise HTTPException(status_code=404, detail=f"Not found: {req.path}")
+            # URL sources (YouTube) have no local file to stat or sniff.
+            if yt_vid is None:
+                if not video.is_file():
+                    raise HTTPException(status_code=404, detail=f"Not found: {req.path}")
 
-            # An audio-only source (podcast/audiobook) can't produce a video clip;
-            # coerce a stray video request to audio so batch export and the CLI don't
-            # ask ffmpeg to map a non-existent video stream.
-            if req.kind == "video" and video.suffix.lower() in AUDIO_EXTS:
-                req.kind = "audio"
-                req.embed_subs = False
+                # An audio-only source (podcast/audiobook) can't produce a video clip;
+                # coerce a stray video request to audio so batch export and the CLI don't
+                # ask ffmpeg to map a non-existent video stream.
+                if req.kind == "video" and video.suffix.lower() in AUDIO_EXTS:
+                    req.kind = "audio"
+                    req.embed_subs = False
 
             # Determine the clip range: explicit start (with optional end) or
             # search-based. Omitting end with start set means "to the end of the
@@ -1145,8 +1349,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 cue_text = req.cue_text or ""
                 end = req.end
                 if end is None:
-                    end = media.probe_duration(video)
-                    if end is None:
+                    # No local file to probe for a YouTube ref — the stored
+                    # metadata knows the duration.
+                    end = yt_meta.get("duration") if yt_meta else media.probe_duration(video)
+                    if not end:
                         raise HTTPException(
                             status_code=400,
                             detail="Could not determine file duration for a whole-file clip.",
@@ -1155,10 +1361,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 label = f"{req.kind} clip {format_timestamp(req.start)}–{format_timestamp(end)}"
             elif req.query:
                 try:
-                    # Use the cache: extraction is slow and the same cues were very
-                    # likely already extracted when the user searched in the UI.
-                    cues = sub_cache.resolve(video, track=req.track)
-                except (ValueError, FileNotFoundError, RuntimeError) as exc:
+                    # YouTube: search the stored transcript; else use the cache —
+                    # extraction is slow and the same cues were very likely
+                    # already extracted when the user searched in the UI.
+                    cues = (yt_store.cues(yt_vid) if yt_vid is not None
+                            else sub_cache.resolve(video, track=req.track))
+                except (KeyError, ValueError, FileNotFoundError, RuntimeError) as exc:
                     raise HTTPException(status_code=400, detail=str(exc))
                 matches = engine_search(req.query, cues, limit=req.match_index + 1)
                 if req.match_index >= len(matches):
@@ -1219,13 +1427,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             embed_cues = None
             embed_subs_path = None
             if req.embed_subs and req.kind == "video" and req.lossless:
-                try:
-                    sidecar = find_sidecar(video)
-                    if sidecar:
-                        embed_subs_path = sidecar          # used by the mkvmerge path
-                        embed_cues = load_subtitles(sidecar)  # used by the ffmpeg path/fallback
-                except Exception:
-                    pass  # non-fatal: skip subtitle embedding
+                if yt_vid is not None:
+                    # The stored transcript plays the sidecar's role (no local
+                    # files exist for a stream URL).
+                    with contextlib.suppress(KeyError, RuntimeError):
+                        embed_cues = yt_store.cues(yt_vid) or None
+                else:
+                    try:
+                        sidecar = find_sidecar(video)
+                        if sidecar:
+                            embed_subs_path = sidecar          # used by the mkvmerge path
+                            embed_cues = load_subtitles(sidecar)  # used by the ffmpeg path/fallback
+                    except Exception:
+                        pass  # non-fatal: skip subtitle embedding
 
             # Determine extension.
             if fullmix:
@@ -1237,7 +1451,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             else:
                 codecs = None
                 if req.lossless and req.kind == "audio":
-                    codecs = probe_audio_streams(video)
+                    # YouTube audio is m4a/AAC by format selection — probing a
+                    # stream URL would be slow, and the answer is known.
+                    codecs = ["aac"] if yt_vid is not None else probe_audio_streams(video)
                     if req.audio_tracks:
                         codecs = [codecs[i] for i in req.audio_tracks if i < len(codecs)]
                 ext = output_extension(req.kind, lossless=req.lossless, audio_codecs=codecs)
@@ -1292,6 +1508,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             _default_sub_track = req.default_sub_track
             _out_path = out_path
             _epub_temp = epub_temp  # transient extracted EPUB audio, deleted post-cut
+            _aux_audio = yt_aux  # separate audio URL of a DASH pair (YouTube)
             # Hardware-encode a re-encoded video clip on the iGPU (Quick Sync via
             # VAAPI) when available — the same path the browser preview uses. Lossless
             # cuts are stream copies (no encode); only re-encodes (Exact / --no-lossless,
@@ -1330,6 +1547,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         audio_codec=_audio_codec, default_sub_track=_default_sub_track,
                         video_encoder="h264_vaapi" if _hw_encode else "libx264",
                         vaapi_device=_VAAPI_DEVICE if _hw_encode else None,
+                        aux_audio=_aux_audio,
                     )]
                 finally:
                     if _epub_temp is not None:
@@ -1385,10 +1603,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # --- bookmarks ---------------------------------------------------------------
 
+    def _check_bookmark_path(path: str) -> None:
+        """Path-safety for a bookmark key: a real path must resolve within the
+        allowed roots; a virtual yt: ref must name a stored video."""
+        vid = youtube_items.parse_ref(path)
+        if vid is not None:
+            try:
+                yt_store.meta(vid)
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail=str(exc))
+            return
+        _resolve_any(path)
+
     @app.get("/api/bookmarks")
     def list_bookmarks(path: str | None = None) -> dict:
         if path:
-            _resolve_any(path)  # path-safety check
+            _check_bookmark_path(path)
             bms = bookmarks.list_for_path(path)
         else:
             bms = bookmarks.list_all()
@@ -1396,7 +1626,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/bookmarks")
     def create_bookmark(req: BookmarkCreate) -> dict:
-        _resolve_any(req.path)  # path-safety check
+        _check_bookmark_path(req.path)
         if not req.label:
             req.label = f"{format_timestamp(req.start)} – {format_timestamp(req.end)}"
         bm = bookmarks.add(

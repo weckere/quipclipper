@@ -23,6 +23,14 @@
         <div class="library-search-bar">
           <input id="library-search" type="text" placeholder="Search library…" autocomplete="off" />
         </div>
+        <!-- Add-a-YouTube-URL bar, shown only inside the ▶ YouTube pseudo-folder. -->
+        <div id="yt-add-bar" class="library-search-bar yt-add-bar" hidden>
+          <div class="dialogue-search-row">
+            <input id="yt-url" type="text" placeholder="Paste a YouTube URL to add it…" autocomplete="off" spellcheck="false" />
+            <button id="yt-add-btn">Add</button>
+          </div>
+          <p id="yt-add-status" class="muted" hidden></p>
+        </div>
         <div id="dialogue-search-bar" class="library-search-bar dialogue-search-bar" hidden>
           <div class="dialogue-search-row">
             <input id="dialogue-search" type="text" placeholder="Search dialogue in this folder…" autocomplete="off" />

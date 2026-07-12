@@ -93,6 +93,16 @@ h1 { margin: 0; font-size: 1.45rem; letter-spacing: -0.02em; cursor: pointer; di
   padding: 0.05rem 0.4rem; border-radius: 5px;
 }
 
+/* YouTube: remove-button on a listing row + the add-URL bar. */
+.yt-remove {
+  margin-left: auto; flex-shrink: 0;
+  background: none; border: none; color: var(--muted);
+  font-size: 0.9rem; cursor: pointer; padding: 0.2rem 0.5rem; border-radius: 6px;
+}
+.yt-remove:hover { color: var(--fg); background: var(--badge); }
+.yt-add-bar .dialogue-search-row { display: flex; gap: 0.5rem; }
+.yt-add-bar input { flex: 1; }
+
 .back {
   background: none; border: 1px solid var(--badge); color: var(--fg);
   padding: 0.35rem 0.8rem; border-radius: 8px; cursor: pointer; margin: 1.5rem 0 0.5rem;

@@ -49,6 +49,17 @@ def _argv_path(p: str | Path) -> str:
     return s
 
 
+def _is_url(source: str | Path) -> bool:
+    """True for an http(s) source ffmpeg should read over the network (e.g. a
+    resolved YouTube stream URL) rather than a local file."""
+    return isinstance(source, str) and source.startswith(("http://", "https://"))
+
+
+# Keep a network input alive across transient stalls — googlevideo streams in
+# particular drop connections mid-transfer.
+_URL_INPUT_FLAGS = ["-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5"]
+
+
 @functools.lru_cache(maxsize=None)
 def vaapi_h264_available(device: str = DEFAULT_VAAPI_DEVICE) -> bool:
     """True if the host can hardware-encode H.264 via VAAPI (Intel Quick Sync) on
@@ -336,7 +347,7 @@ def _audio_map_args(audio_indices: list[int] | None, *, optional: bool) -> list[
 
 def _ffmpeg_args(
     *,
-    source: Path,
+    source: str | Path,
     rng: ClipRange,
     kind: str,
     out: Path,
@@ -350,16 +361,25 @@ def _ffmpeg_args(
     sub_count: int = 0,
     video_encoder: str = "libx264",
     vaapi_device: str | None = None,
+    aux_audio: str | None = None,
 ) -> list[str]:
     head = ["ffmpeg", "-y", "-v", "error"]
-    inputs = ["-ss", f"{rng.start:.3f}", "-i", _argv_path(source)]
+    url_flags = _URL_INPUT_FLAGS if _is_url(source) else []
+    inputs = url_flags + ["-ss", f"{rng.start:.3f}", "-i", _argv_path(source)]
+    # A separate audio stream fetched alongside a video-only source (a DASH pair,
+    # e.g. resolved YouTube stream URLs): second input, seeked to the same spot.
+    aux_input = None
+    if aux_audio is not None:
+        aux_flags = _URL_INPUT_FLAGS if _is_url(aux_audio) else []
+        inputs += aux_flags + ["-ss", f"{rng.start:.3f}", "-i", _argv_path(aux_audio)]
+        aux_input = 1
     subs_input = None
     if kind == "video" and lossless and embed_subs is not None:
         # The sidecar SRT is pre-trimmed and time-shifted to the clip (see
         # cut_clip), so it is muxed WITHOUT -ss — ffmpeg's text-subtitle seeking
         # is unreliable, and these timestamps already align with the output.
         inputs += ["-i", _argv_path(embed_subs)]
-        subs_input = 1
+        subs_input = 2 if aux_input is not None else 1
     dur = ["-t", f"{rng.duration:.3f}"]
     out_arg = _argv_path(out)
 
@@ -384,8 +404,13 @@ def _ffmpeg_args(
         common = ["-c", "copy", "-avoid_negative_ts", "make_zero"]
         if kind == "audio":
             return head + inputs + dur + _audio_map_args(audio_indices, optional=False) + common + [out_arg]
-        # video: keep all video, audio and (embedded) subtitle tracks
-        maps = ["-map", "0:v?"] + _audio_map_args(audio_indices, optional=True) + ["-map", "0:s?"]
+        if aux_input is not None:
+            # DASH pair: video from input 0, audio from input 1. No 0:s? — a
+            # video-only stream carries no subtitles.
+            maps = ["-map", "0:v:0", "-map", f"{aux_input}:a:0"]
+        else:
+            # video: keep all video, audio and (embedded) subtitle tracks
+            maps = ["-map", "0:v?"] + _audio_map_args(audio_indices, optional=True) + ["-map", "0:s?"]
         if subs_input is not None:
             maps += ["-map", f"{subs_input}:0"]
         # Default-subtitle flag (B17c): mark the selected output subtitle default,
@@ -401,7 +426,10 @@ def _ffmpeg_args(
     if kind == "audio":
         maps = _audio_map_args(audio_indices, optional=False) if audio_indices else ["-vn"]
         return head + inputs + dur + maps + [out_arg]
-    maps = ["-map", "0:v:0?"] + _audio_map_args(audio_indices, optional=True)
+    if aux_input is not None:
+        maps = ["-map", "0:v:0", "-map", f"{aux_input}:a:0"]
+    else:
+        maps = ["-map", "0:v:0?"] + _audio_map_args(audio_indices, optional=True)
     if video_encoder == "h264_vaapi":
         # Intel Quick Sync via VAAPI: initialise the render node, upload frames to
         # the GPU, and encode there. cut_clip retries on libx264 if this fails.
@@ -427,6 +455,7 @@ def cut_clip(
     default_sub_track: int | None = None,
     video_encoder: str = "libx264",
     vaapi_device: str | None = None,
+    aux_audio: str | None = None,
 ) -> Path:
     """Cut `source` between `rng.start` and `rng.end` into the chosen `kind`.
 
@@ -442,15 +471,25 @@ def cut_clip(
     file. This differs from passthrough (`lossless=True`, original codec) and from
     `split_audio_channels` (one file per channel group). Returns the path written.
     Requires ffmpeg.
+
+    `source` may also be an **http(s) URL** (e.g. a resolved YouTube stream):
+    ffmpeg reads it over the network, with `aux_audio` optionally supplying a
+    separate audio stream URL (a DASH video+audio pair) mapped alongside. URL
+    sources skip the local existence check and require an explicit `out`.
     """
-    source = Path(source)
+    is_url = _is_url(source)
+    if not is_url:
+        source = Path(source)
     if kind not in ("audio", "video", "gif"):
         raise ValueError(f"kind must be audio, video, or gif, got {kind!r}")
     if audio_codec is not None and audio_codec not in FULLMIX_AUDIO:
         raise ValueError(f"audio_codec must be one of {sorted(FULLMIX_AUDIO)}, got {audio_codec!r}")
     if shutil.which("ffmpeg") is None:
         raise RuntimeError("ffmpeg not found on PATH. Install ffmpeg to cut clips.")
-    if not source.exists():
+    if is_url:
+        if out is None:
+            raise ValueError("out is required when cutting from a URL source.")
+    elif not source.exists():
         raise RuntimeError(f"Video file not found: {source}")
 
     if out is None:
@@ -481,9 +520,11 @@ def cut_clip(
             embed_subs = Path(tmp.name)
 
     # For the default-subtitle flag (B17c) count the output subtitle streams:
-    # the source's embedded subtitles plus the muxed sidecar, if any.
+    # the source's embedded subtitles plus the muxed sidecar, if any. URL
+    # sources skip the probe (slow over the network, and stream URLs carry no
+    # embedded subtitles).
     sub_count = 0
-    if kind == "video" and lossless and default_sub_track is not None:
+    if kind == "video" and lossless and default_sub_track is not None and not is_url:
         sub_count = len(_probe_streams(source, "s", fields="codec_type"))
         if embed_subs is not None:
             sub_count += 1
@@ -494,7 +535,7 @@ def cut_clip(
             width=width, audio_indices=audio_indices, embed_subs=embed_subs,
             audio_codec=audio_codec,
             default_sub_index=default_sub_track, sub_count=sub_count,
-            video_encoder=enc, vaapi_device=dev,
+            video_encoder=enc, vaapi_device=dev, aux_audio=aux_audio,
         )
     try:
         try:

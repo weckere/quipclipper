@@ -117,6 +117,12 @@ engine for scripting and quick one-off cuts.
   gets a machine client through the password gate, and Swagger/OpenAPI docs are
   served from the app itself. See [HTTP API](#http-api-agents--scripts) below
   and the full reference in [`docs/API.md`](docs/API.md).
+- **YouTube sources (experimental)** — paste a watch URL into the **▶ YouTube**
+  section and yt-dlp fetches the **subtitles + metadata only** (no video
+  download). The video then behaves like a library item: browse the transcript,
+  fuzzy-search its dialogue, bookmark ranges, and cut clips — Exact or lossless —
+  with playback and cutting streaming from YouTube on demand. See
+  [YouTube sources](#youtube-sources-experimental) below.
 
 By default a **video** clip is re-encoded to a frame-exact H.264 file (a lossless
 copy can only start on a keyframe, so it runs long on long-GOP sources), while
@@ -243,6 +249,43 @@ cut lossless clips, poll the job, download the result.
   same gate), so an agent can discover the API without leaving your network.
 - **Full reference:** [`docs/API.md`](docs/API.md) documents every endpoint,
   the `POST /api/clip` body, and a worked find-a-line-and-cut-it example.
+
+## YouTube sources (experimental)
+
+Open the **▶ YouTube** entry at the library root and paste a watch URL
+(`youtube.com/watch`, `youtu.be/…`, shorts/embed links work too). quipclipper
+runs **yt-dlp** to fetch the video's **subtitles and metadata only** — nothing
+is downloaded — and the video joins the list permanently (stored under the
+state dir; ✕ on a row removes it).
+
+From there it works like any library item:
+
+- **Transcript & search** — the scrolling script view, per-item dialogue
+  search, and cross-video dialogue search over the whole YouTube section all
+  run on the fetched captions. Manual subtitles are preferred; YouTube's
+  auto-captions are used as a fallback (with their rolling-duplicate lines
+  cleaned up). ↻ Reindex re-fetches the transcript.
+- **Preview** — playback streams through the server: yt-dlp resolves the
+  direct stream URLs and ffmpeg remuxes them live to the player (same
+  transcode path as unplayable library codecs). Seeking works via the custom
+  seek bar. *(Not yet available on iOS; everything else works there.)*
+- **Bookmarks** — saved against the video like any file, and visible in the
+  Bookmarks view.
+- **Clipping** — cuts run ffmpeg **directly against the stream URLs**, so
+  nothing is downloaded even then: **Exact** re-encodes a frame-tight H.264
+  clip; unticking it stream-copies losslessly (keyframe-aligned start, no
+  quality loss). Clips land in the clips library under
+  `<Video Title>/<timestamp>_<cue>_<Channel>…` and are named by the same
+  template tokens as everything else. (Channel-split export and the mkvmerge
+  backend don't apply to stream sources.)
+
+Requires `yt-dlp` on the backend's PATH — the Docker image installs it via pip
+(rebuild the image to pick up a current release when YouTube changes something),
+and the Nix package wraps it in. `/api/health` reports whether it's present.
+Stream URLs expire after a few hours; quipclipper re-resolves them on demand,
+so long sessions just keep working. Heads-up: some videos only expose formats
+ffmpeg can't fetch directly — those fail with a clear error rather than
+silently degrading.
 
 ## Architecture
 

@@ -1,10 +1,11 @@
 # The quipclipper-web backend, packaged like the CLI: a buildPythonApplication
-# with ffmpeg + mkvmerge wrapped onto PATH. `quipclipper` (the engine) is passed
-# in by the flake so both share one Python.
+# with ffmpeg + mkvmerge + yt-dlp wrapped onto PATH. `quipclipper` (the engine)
+# is passed in by the flake so both share one Python.
 { lib
 , python3Packages
 , ffmpeg
 , mkvtoolnix-cli
+, yt-dlp
 , quipclipper
 }:
 
@@ -33,10 +34,11 @@ python3Packages.buildPythonApplication {
     python3Packages.httpx
     ffmpeg
     mkvtoolnix-cli
+    yt-dlp
   ];
 
   makeWrapperArgs = [
-    "--prefix" "PATH" ":" (lib.makeBinPath [ ffmpeg mkvtoolnix-cli ])
+    "--prefix" "PATH" ":" (lib.makeBinPath [ ffmpeg mkvtoolnix-cli yt-dlp ])
   ];
 
   meta = {

@@ -91,6 +91,12 @@ async function browse(path) {
   $("reindex-folder-status").hidden = true;
   // Show dialogue search bar only when inside a folder (not at root)
   $("dialogue-search-bar").hidden = !path;
+  const isYtFolder = path === "yt:";
+  // The add-URL bar lives in the ▶ YouTube pseudo-folder; the folder-reindex
+  // link doesn't apply there (each item has its own ↻ in the item view).
+  $("yt-add-bar").hidden = !isYtFolder;
+  $("yt-add-status").hidden = true;
+  document.querySelector(".reindex-row").hidden = isYtFolder;
   let data;
   try {
     data = await getJSON("/api/library/browse" + (path ? qp(path) : ""));
@@ -101,7 +107,7 @@ async function browse(path) {
 
   renderBreadcrumb(path);
   renderEntries(data.entries);
-  checkFolderIndex(path);
+  if (!isYtFolder) checkFolderIndex(path);  // index-status is for real folders
 }
 
 function renderEntries(entries) {
@@ -119,10 +125,26 @@ function renderEntries(entries) {
     // A book (EPUB audiobook) browses into its chapters like a folder.
     const intoFolder = e.is_dir || e.is_book;
     li.className = "entry " + (intoFolder ? "dir" : "video");
-    const icon = e.is_dir ? "📁" : e.is_book ? "📚" : e.is_audio ? "🎵" : "🎬";
+    const icon = e.is_dir ? "📁" : e.is_book ? "📚" : e.is_youtube ? "▶️" : e.is_audio ? "🎵" : "🎬";
     const tag = (!intoFolder && e.has_sidecar) ? ' <span class="badge">sub</span>' : "";
     li.innerHTML = `<span class="icon">${icon}</span><span class="label">${escapeHtml(e.name)}</span>${tag}`;
     li.onclick = () => (intoFolder ? browse(e.path) : openItem(e.path, e.name));
+    // A YouTube item row gets a remove button (forgets the video + transcript).
+    if (e.is_youtube && !e.is_dir) {
+      const del = document.createElement("button");
+      del.className = "yt-remove";
+      del.title = "Remove this video from the YouTube list";
+      del.textContent = "✕";
+      del.onclick = async (ev) => {
+        ev.stopPropagation();
+        const id = e.path.slice("yt:".length);
+        try {
+          await apiFetch(`/api/youtube/${encodeURIComponent(id)}`, { method: "DELETE" });
+        } catch { /* non-fatal; the re-browse below shows the truth */ }
+        browse("yt:");
+      };
+      li.appendChild(del);
+    }
     list.appendChild(li);
   }
 }
@@ -173,6 +195,33 @@ async function librarySearch(query) {
 $("library-search").addEventListener("input", (e) => {
   clearTimeout(librarySearchTimer);
   librarySearchTimer = setTimeout(() => librarySearch(e.target.value), 300);
+});
+
+// --- YouTube: add a video by URL ---------------------------------------------
+
+async function addYouTubeUrl() {
+  const input = $("yt-url");
+  const url = input.value.trim();
+  if (!url) return;
+  const btn = $("yt-add-btn");
+  const status = $("yt-add-status");
+  btn.disabled = true;
+  status.hidden = false;
+  status.textContent = "Fetching subtitles + metadata… (a few seconds)";
+  try {
+    await postJSON("/api/youtube", { url });
+    input.value = "";
+    status.hidden = true;
+    browse("yt:");  // the new entry appears in the listing
+  } catch (err) {
+    status.textContent = `Could not add: ${err.message}`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+$("yt-add-btn").addEventListener("click", addYouTubeUrl);
+$("yt-url").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !$("yt-add-btn").disabled) addYouTubeUrl();
 });
 
 // --- folder dialogue search ------------------------------------------------
@@ -450,6 +499,13 @@ function renderBreadcrumb(path) {
     addCurrent("Library");
     return;
   }
+  // The YouTube pseudo-folder isn't a filesystem path — one fixed crumb.
+  if (path === "yt:") {
+    addLink("Library", null);
+    addSep();
+    addCurrent("▶ YouTube");
+    return;
+  }
   addLink("Library", null);
 
   // Find the media root that contains this path so we don't make segments
@@ -684,12 +740,15 @@ async function openItem(path, name, opts) {
   // (it needs HTTP range support). It plays HLS natively, so iOS uses the HLS
   // endpoint with the browser's own controls/seeking instead of our transcode.
   const hlsUrl = "/api/media/hls" + qp(path) + (iosVideoReencode ? "&venc=1" : "");
+  // A YouTube item has no local file: it always streams through the transcode
+  // endpoint (the backend feeds ffmpeg resolved googlevideo URLs).
+  const isYouTube = !!info.is_youtube;
   // Does the primary video codec need re-encoding to H.264 for this (desktop)
   // browser? (HEVC on Firefox, MPEG-4 ASP/XviD, MPEG-2, VC1, …) — B20/B22.
   const videoReencode = !IS_IOS && primaryVideo && needsVideoReencode(primaryVideo.codec);
   const transcodeUrl = "/api/media/transcode" + qp(path) + (videoReencode ? "&venc=1" : "");
   const needsTranscode = !IS_IOS &&
-    ((primaryAudio && !BROWSER_AUDIO.has(primaryAudio.codec)) || videoReencode);
+    (isYouTube || (primaryAudio && !BROWSER_AUDIO.has(primaryAudio.codec)) || videoReencode);
   // Show/refresh the video-re-encode indicator (loading/seeking may be slower).
   setVideoReencodeNote(videoReencode || iosVideoReencode);
 
@@ -864,6 +923,14 @@ async function openItem(path, name, opts) {
     seekDurLabel.textContent = formatTime(probedDuration);
     seekSlider.max = 100;
     loadTranscode(seekTarget || 0);
+  } else if (IS_IOS && isYouTube) {
+    // No YouTube preview on iOS yet (it would need the HLS path fed with
+    // stream URLs). The transcript, search, bookmarks, and clipping all work.
+    seekBar.hidden = true;
+    seekHint.hidden = true;
+    transcodeOffset = 0;
+    $("preview-note").textContent =
+      "YouTube preview isn't supported on iOS yet — the script, search, and clipping still work.";
   } else {
     // Native playback: raw source on desktop, HLS on iOS (Safari seeks both
     // natively, so the custom transcode seek bar stays hidden).
