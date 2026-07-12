@@ -201,6 +201,78 @@ def test_cues_and_meta(store, monkeypatch):
         store.meta("aaaaaaaaaaa")
 
 
+def test_refresh_preserves_transcript_when_refetch_fails(store, monkeypatch):
+    """M1: a failed reindex must NOT destroy the stored transcript — for a
+    since-deleted video it would be unrecoverable."""
+    monkeypatch.setattr(youtube_items, "_run_ytdlp", fake_ytdlp())
+    store.add(WATCH, ["en"])
+    assert len(store.cues(VID)) == 2
+
+    def boom(args, timeout=120):
+        raise RuntimeError("yt-dlp failed: video is private")
+    monkeypatch.setattr(youtube_items, "_run_ytdlp", boom)
+    with pytest.raises(RuntimeError):
+        store.refresh_subs(VID, ["en"])
+    # The old transcript survives.
+    assert len(store.cues(VID)) == 2
+    assert (store._item_dir(VID) / "subs.vtt").is_file()
+
+
+def test_refresh_preserves_transcript_when_no_captions(store, monkeypatch):
+    """A refetch that succeeds but finds no captions keeps the old transcript
+    (and the old sub_lang/sub_source), rather than blanking it."""
+    monkeypatch.setattr(youtube_items, "_run_ytdlp", fake_ytdlp())
+    store.add(WATCH, ["en"])
+    # Refetch produces nothing (subs disabled on the video now).
+    monkeypatch.setattr(youtube_items, "_run_ytdlp", fake_ytdlp(subs_on=()))
+    store.refresh_subs(VID, ["en"])
+    assert len(store.cues(VID)) == 2
+    assert store.meta(VID)["sub_source"] == "manual"
+
+
+def test_download_ignores_stale_partial_fragments(store, monkeypatch):
+    """M2: leftover video-dl.* fragments from a prior failed run must never be
+    promoted to video.mp4 — only the merged output is installed."""
+    monkeypatch.setattr(youtube_items, "_run_ytdlp", fake_ytdlp())
+    store.add(WATCH, ["en"])
+    item_dir = store._item_dir(VID)
+    # A stale audio fragment that sorts BEFORE "video-dl.mp4" ('f' < 'm').
+    (item_dir / "video-dl.f140.m4a.part").write_bytes(b"garbage-partial")
+    vp = store.download(VID)
+    assert vp.name == "video.mp4"
+    assert vp.read_bytes() == b"fake-mp4-bytes"       # the real merged output
+    assert not list(item_dir.glob("video-dl.*"))      # temps cleaned up
+
+
+def test_download_cleans_temps_on_failure(store, monkeypatch):
+    monkeypatch.setattr(youtube_items, "_run_ytdlp", fake_ytdlp())
+    store.add(WATCH, ["en"])
+    item_dir = store._item_dir(VID)
+
+    def boom(args, timeout=120):
+        (item_dir / "video-dl.f137.mp4.part").write_bytes(b"partial")  # simulate a fragment
+        raise RuntimeError("yt-dlp failed mid-download")
+    monkeypatch.setattr(youtube_items, "_run_ytdlp", boom)
+    with pytest.raises(RuntimeError):
+        store.download(VID)
+    assert not list(item_dir.glob("video-dl.*"))  # cleaned even on failure
+    assert store.video_path(VID) is None
+
+
+def test_iso639_2_lang_codes_normalized_for_youtube(store, monkeypatch):
+    """L1: QC_SUBTITLE_LANGS is documented with 3-letter codes ('eng'); YouTube
+    uses 2-letter tags. The fetch must request 'en' so captions actually land."""
+    run = fake_ytdlp()
+    monkeypatch.setattr(youtube_items, "_run_ytdlp", run)
+    store.add(WATCH, ["eng", "spa"])
+    sub_calls = [c for c in run.calls if "--sub-langs" in c]
+    assert sub_calls, "no subtitle fetch happened"
+    spec = sub_calls[0][sub_calls[0].index("--sub-langs") + 1]
+    tags = spec.split(",")
+    assert "en" in tags and "es" in tags
+    assert store.meta(VID)["sub_source"] == "manual"  # captions actually landed
+
+
 def test_stream_url_resolution_and_cache(monkeypatch):
     run = fake_ytdlp(urls=["https://v.example/video", "https://a.example/audio"])
     monkeypatch.setattr(youtube_items, "_run_ytdlp", run)
@@ -401,6 +473,51 @@ def test_remove_download_keeps_transcript(tmp_path, monkeypatch):
 def test_download_unknown_video_404(tmp_path, monkeypatch):
     client = _client(tmp_path, monkeypatch)
     assert client.post("/api/youtube/aaaaaaaaaaa/download").status_code == 404
+
+
+def test_concurrent_download_posts_return_the_same_job(tmp_path, monkeypatch):
+    """M3: a repeat download POST while one is in flight returns the SAME job,
+    not a duplicate — the store lock + the endpoint's in-flight map."""
+    import threading
+
+    gate = threading.Event()
+    orig = youtube_items.YouTubeStore.download
+
+    def blocking_download(self, video_id):
+        gate.wait(5)  # hold the job "running" until the test releases it
+        return orig(self, video_id)
+
+    monkeypatch.setattr(youtube_items.YouTubeStore, "download", blocking_download)
+    client = _client(tmp_path, monkeypatch)
+    client.post("/api/youtube", json={"url": WATCH})
+
+    j1 = client.post(f"/api/youtube/{VID}/download").json()
+    j2 = client.post(f"/api/youtube/{VID}/download").json()
+    assert j1["job_id"] and j1["job_id"] == j2["job_id"]  # deduped
+    gate.set()
+    assert _wait(client, j1["job_id"])["status"] == "done"
+
+
+def test_download_job_appears_in_jobs_list(tmp_path, monkeypatch):
+    """Download jobs run in their own pool but surface through /api/jobs."""
+    client = _client(tmp_path, monkeypatch)
+    client.post("/api/youtube", json={"url": WATCH})
+    job_id = client.post(f"/api/youtube/{VID}/download").json()["job_id"]
+    _wait(client, job_id)
+    ids = [j["id"] for j in client.get("/api/jobs").json()["jobs"]]
+    assert job_id in ids
+
+
+def test_corrupt_info_json_is_clean_500_not_crash(tmp_path, monkeypatch):
+    """L4: a corrupt info.json yields a 500 with a message, not an unhandled
+    traceback, on /api/items and bookmark creation."""
+    client = _client(tmp_path, monkeypatch)
+    client.post("/api/youtube", json={"url": WATCH})
+    (tmp_path / "state" / "youtube" / VID / "info.json").write_text("{ not json", encoding="utf-8")
+    assert client.get("/api/items", params={"path": REF}).status_code == 500
+    assert client.post("/api/bookmarks", json={
+        "path": REF, "label": "x", "start": 0, "end": 1,
+    }).status_code == 500
 
 
 # --- clip branch --------------------------------------------------------------------

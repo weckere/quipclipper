@@ -119,6 +119,14 @@ def test_api_token_exempts_csrf_via_basic_password() -> None:
     assert resp.status_code == 200
 
 
+def test_token_check_rejects_non_ascii_without_raising() -> None:
+    # A latin-1-decoded header (e.g. from nginx) can contain non-ASCII, which
+    # hmac.compare_digest rejects with TypeError. _token_ok must swallow it and
+    # return False (a mismatch) rather than let it become a 500.
+    from quipclipper_web.app import _token_ok
+    assert _token_ok("t\xe9k", frozenset({"tok-abc123"})) is False
+
+
 def test_invalid_x_api_key_rejected() -> None:
     client = _app(_TOKEN)
     resp = client.delete("/api/bookmarks", headers={"X-API-Key": "wrong"})

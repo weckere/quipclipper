@@ -236,6 +236,21 @@ def test_cut_clip_url_source_requires_out(monkeypatch):
         cut_clip("https://v.example/video", ClipRange(0.0, 1.0), kind="video")
 
 
+def test_ffmpeg_args_url_source_muxed_sub_gets_default_flag(tmp_path):
+    """A URL source can't be probed for embedded subs, but a muxed sidecar is a
+    known single output subtitle stream — default_sub_track must still flag it
+    (no probe needed)."""
+    srt = tmp_path / "subs.srt"
+    srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nhi\n")
+    args = _ffmpeg_args(
+        source="https://v.example/video", rng=ClipRange(0.0, 4.0), kind="video",
+        out=Path("out.mkv"), lossless=True, fps=15, width=480,
+        aux_audio="https://a.example/audio", embed_subs=srt,
+        default_sub_index=0, sub_count=1,
+    )
+    assert args[args.index("-disposition:s:0") + 1] == "default"
+
+
 def test_ffmpeg_args_gif_is_always_reencoded():
     args = _ffmpeg_args(
         source=Path("in.mkv"), rng=ClipRange(0.0, 4.0), kind="gif",

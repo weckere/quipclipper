@@ -100,6 +100,34 @@ def _run_ytdlp(args: list[str], timeout: int = _YTDLP_TIMEOUT) -> str:
     return proc.stdout
 
 
+# QC_SUBTITLE_LANGS is documented with ISO-639-2 codes ("eng,spa") because the
+# embedded-track selector matches those; YouTube caption tags are ISO-639-1
+# ("en", "es"). Map the common 3-letter codes so a docs-per-the-README config
+# doesn't silently fetch no captions; unknown values pass through unchanged.
+_ISO639_2_TO_1 = {
+    "eng": "en", "spa": "es", "fre": "fr", "fra": "fr", "ger": "de", "deu": "de",
+    "ita": "it", "por": "pt", "jpn": "ja", "kor": "ko", "chi": "zh", "zho": "zh",
+    "rus": "ru", "dut": "nl", "nld": "nl", "swe": "sv", "nor": "no", "dan": "da",
+    "fin": "fi", "pol": "pl", "ara": "ar", "hin": "hi", "tur": "tr", "ces": "cs",
+    "cze": "cs", "ell": "el", "gre": "el", "heb": "he", "hun": "hu", "ind": "id",
+    "tha": "th", "ukr": "uk", "vie": "vi",
+}
+
+
+def _yt_lang_tags(langs: list[str]) -> list[str]:
+    """Language tags for yt-dlp --sub-langs: normalize 3-letter codes to
+    YouTube's 2-letter tags, keeping the originals too (harmless, and covers
+    the odd channel that labels captions with a 3-letter tag)."""
+    out: list[str] = []
+    for lang in langs:
+        norm = _ISO639_2_TO_1.get(lang.lower())
+        if norm and norm not in out:
+            out.append(norm)
+        if lang not in out:
+            out.append(lang)
+    return out
+
+
 def dedupe_auto_cues(cues: list[Cue]) -> list[Cue]:
     """Collapse YouTube auto-caption "rolling window" duplicates.
 
@@ -233,6 +261,12 @@ def resolve_stream_urls(webpage_url: str) -> tuple[str, str | None]:
         raise RuntimeError("yt-dlp returned no stream URLs.")
     urls = (lines[0], lines[1] if len(lines) > 1 else None)
     with _url_lock:
+        # Keep the cache bounded: drop expired entries, then the oldest if a
+        # (pathological) number of distinct videos is still live.
+        for k in [k for k, (ts, _) in _url_cache.items() if now - ts >= _URL_TTL]:
+            del _url_cache[k]
+        while len(_url_cache) >= 256:
+            del _url_cache[min(_url_cache, key=lambda k: _url_cache[k][0])]
         _url_cache[webpage_url] = (now, urls)
     return urls
 
@@ -253,6 +287,14 @@ class YouTubeStore:
     def __init__(self, state_dir: Path) -> None:
         self._dir = state_dir / "youtube"
         self._dir.mkdir(parents=True, exist_ok=True)
+        # Serialize downloads per video: two concurrent download() calls would
+        # otherwise run two yt-dlp processes into the same output template.
+        self._dl_locks: dict[str, threading.Lock] = {}
+        self._dl_guard = threading.Lock()
+
+    def _dl_lock(self, video_id: str) -> threading.Lock:
+        with self._dl_guard:
+            return self._dl_locks.setdefault(video_id, threading.Lock())
 
     def _item_dir(self, video_id: str) -> Path:
         if not _ID_RE.match(video_id):
@@ -265,8 +307,10 @@ class YouTubeStore:
                     langs: list[str]) -> tuple[str | None, str | None]:
         """Fetch a .vtt into *item_dir* as ``subs.vtt``. Manual subs first, auto
         captions as fallback. Returns (lang, source) — (None, None) if the video
-        has no captions at all."""
-        lang_spec = ",".join(langs) if langs else "en"
+        has no captions at all. An existing ``subs.vtt`` is only replaced when a
+        fresh one actually lands, so a failed or caption-less refetch can't
+        destroy a stored transcript."""
+        lang_spec = ",".join(_yt_lang_tags(langs)) if langs else "en"
         for flag, source in (("--write-subs", "manual"), ("--write-auto-subs", "auto")):
             _run_ytdlp([
                 "--no-playlist", "--skip-download", flag,
@@ -275,13 +319,16 @@ class YouTubeStore:
             ])
             vtts = sorted(item_dir.glob(f"{video_id}.*.vtt"))
             if vtts:
-                # Prefer the configured language order, then whatever came first.
+                # Prefer the configured language order (normalized like the
+                # fetch itself), then whatever came first.
+                prefs = [t.lower() for t in _yt_lang_tags(langs)]
+
                 def rank(p: Path) -> int:
                     tag = p.name[len(video_id) + 1:-len(".vtt")].lower()
-                    for i, lang in enumerate(langs):
-                        if tag == lang.lower() or tag.startswith(lang.lower() + "-"):
+                    for i, lang in enumerate(prefs):
+                        if tag == lang or tag.startswith(lang + "-"):
                             return i
-                    return len(langs)
+                    return len(prefs)
                 vtts.sort(key=rank)
                 chosen = vtts[0]
                 lang_tag = chosen.name[len(video_id) + 1:-len(".vtt")]
@@ -345,6 +392,11 @@ class YouTubeStore:
             return False
         if not item_dir.is_dir():
             return False
+        # Drop the video's stream-URL cache entry along with its state.
+        with contextlib.suppress(KeyError, RuntimeError):
+            url = self.meta(video_id).get("webpage_url")
+            with _url_lock:
+                _url_cache.pop(url, None)
         shutil.rmtree(item_dir, ignore_errors=True)
         return True
 
@@ -388,29 +440,42 @@ class YouTubeStore:
         vp = self._item_dir(video_id) / "video.mp4"
         return vp if vp.is_file() else None
 
+    def _clean_dl_temps(self, item_dir: Path) -> None:
+        """Drop yt-dlp working files (``video-dl.*`` — fragments, ``.part``s,
+        the merged output) so a retry can never pick up a stale partial."""
+        for leftover in item_dir.glob("video-dl.*"):
+            leftover.unlink(missing_ok=True)
+
     def download(self, video_id: str) -> Path:
         """Download the full video (browser-native h264/aac mp4) next to its
-        transcript. Idempotent: an existing download is returned as-is."""
+        transcript. Idempotent: an existing download is returned as-is, and
+        concurrent calls for the same video serialize on a per-video lock."""
         meta = self.meta(video_id)  # KeyError for unknown ids
-        existing = self.video_path(video_id)
-        if existing is not None:
-            return existing
-        item_dir = self._item_dir(video_id)
-        tmp_tpl = item_dir / "video-dl.%(ext)s"
-        _run_ytdlp([
-            "--no-playlist", "-f", FORMAT_EXPR, "--merge-output-format", "mp4",
-            "-o", str(tmp_tpl), "--", meta["webpage_url"],
-        ], timeout=_DOWNLOAD_TIMEOUT)
-        produced = sorted(item_dir.glob("video-dl.*"))
-        if not produced:
-            raise RuntimeError("yt-dlp reported success but produced no video file.")
-        # Atomic-ish move to the canonical name; readers only ever see video.mp4
-        # once it's complete.
-        final = item_dir / "video.mp4"
-        produced[0].replace(final)
-        for leftover in produced[1:]:
-            leftover.unlink(missing_ok=True)
-        return final
+        with self._dl_lock(video_id):
+            existing = self.video_path(video_id)
+            if existing is not None:
+                return existing
+            item_dir = self._item_dir(video_id)
+            # A previous failed/timed-out run may have left fragments behind;
+            # start clean so nothing stale can be mistaken for the result.
+            self._clean_dl_temps(item_dir)
+            try:
+                _run_ytdlp([
+                    "--no-playlist", "-f", FORMAT_EXPR, "--merge-output-format", "mp4",
+                    "-o", str(item_dir / "video-dl.%(ext)s"), "--", meta["webpage_url"],
+                ], timeout=_DOWNLOAD_TIMEOUT)
+                # --merge-output-format mp4 pins the merged output's name; the
+                # f*-fragment intermediates and .part files never match it.
+                merged = item_dir / "video-dl.mp4"
+                if not merged.is_file():
+                    raise RuntimeError("yt-dlp reported success but produced no merged video file.")
+                # Atomic move to the canonical name; readers only ever see
+                # video.mp4 once it's complete.
+                final = item_dir / "video.mp4"
+                merged.replace(final)
+            finally:
+                self._clean_dl_temps(item_dir)
+            return final
 
     def remove_download(self, video_id: str) -> bool:
         """Delete the local video file (the transcript/metadata stay)."""
@@ -434,12 +499,20 @@ class YouTubeStore:
         return cues
 
     def refresh_subs(self, video_id: str, langs: list[str]) -> int:
-        """Re-fetch the transcript (the reindex button). Returns the cue count."""
+        """Re-fetch the transcript (the reindex button). Returns the cue count.
+
+        The stored ``subs.vtt`` is never deleted up front: _fetch_subs replaces
+        it only when a fresh transcript actually lands, so a failed refetch (or
+        a video whose captions were since removed) keeps the old transcript —
+        for a deleted video it would otherwise be unrecoverable."""
         meta = self.meta(video_id)
         item_dir = self._item_dir(video_id)
-        (item_dir / "subs.vtt").unlink(missing_ok=True)
         sub_lang, sub_source = self._fetch_subs(
             item_dir, video_id, meta["webpage_url"], langs)
-        meta["sub_lang"], meta["sub_source"] = sub_lang, sub_source
-        (item_dir / "info.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+        if sub_source is not None:  # keep the old lang/source when nothing new came
+            meta["sub_lang"], meta["sub_source"] = sub_lang, sub_source
+        # downloaded/download_size are derived from disk (_with_download), not
+        # stored state — strip them before persisting.
+        stored = {k: v for k, v in meta.items() if k not in ("downloaded", "download_size")}
+        (item_dir / "info.json").write_text(json.dumps(stored, indent=2), encoding="utf-8")
         return len(self.cues(video_id))

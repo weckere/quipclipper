@@ -307,9 +307,14 @@ _API_KEY_HEADER = "x-api-key"
 
 def _token_ok(candidate: str, tokens: frozenset[str]) -> bool:
     """Constant-time check that `candidate` is one of the configured tokens."""
-    # any() short-circuits but each compare_digest is itself constant-time, so a
-    # per-token timing signal can't reveal a token's contents.
-    return any(hmac.compare_digest(candidate, t) for t in tokens)
+    try:
+        # any() short-circuits but each compare_digest is itself constant-time, so
+        # a per-token timing signal can't reveal a token's contents.
+        return any(hmac.compare_digest(candidate, t) for t in tokens)
+    except TypeError:
+        # compare_digest rejects non-ASCII str (headers decode as latin-1); such
+        # a value can never match a configured token — mismatch, not a 500.
+        return False
 
 
 def _api_token_status(request: Request, tokens: frozenset[str]) -> str | None:
@@ -341,14 +346,21 @@ def _api_token_status(request: Request, tokens: frozenset[str]) -> str | None:
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
     jobs = JobRegistry(max_workers=settings.max_concurrent_jobs)
+    # Full-video downloads run for up to an hour each — give them their own
+    # single-worker pool so they can never starve the clip workers.
+    dl_jobs = JobRegistry(max_workers=1)
     bookmarks = BookmarkStore(settings.state_dir)
     sub_cache = SubtitleCache(settings.state_dir, default_langs=settings.subtitle_langs)
     yt_store = youtube_items.YouTubeStore(settings.state_dir)
+    # video id -> last download job id, so repeat POSTs return the in-flight job
+    # instead of queueing a duplicate.
+    active_downloads: dict[str, str] = {}
 
     @contextlib.asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         yield
         jobs.shutdown()
+        dl_jobs.shutdown()
 
     app = FastAPI(title="quipclipper-web", version=__version__, lifespan=lifespan)
     app.state.settings = settings
@@ -508,17 +520,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """Download the full video to the server (async job). Once present, the
         local file transparently replaces stream URLs everywhere: raw playback
         with native seeking, accurate keyframe probes, and cutting — no network
-        at cut time. Idempotent; poll the returned job like a clip job."""
+        at cut time. Idempotent twice over: an existing download short-circuits
+        (job_id null), and a repeat POST while a download is in flight returns
+        the SAME job instead of queueing a duplicate. Downloads run in their own
+        single-worker pool, so they never block clip jobs. Poll the returned job
+        like a clip job."""
         try:
             meta = yt_store.meta(video_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc))
         if meta.get("downloaded"):
             return {"job_id": None, "status": "done", "size": meta.get("download_size")}
-        job = jobs.submit(
+        running = dl_jobs.get(active_downloads.get(video_id, ""))
+        if running is not None and running.status.value in ("queued", "running"):
+            return {"job_id": running.id, "status": running.status.value}
+        job = dl_jobs.submit(
             lambda: [yt_store.download(video_id)],
             label=f"download: {meta.get('title') or video_id}",
         )
+        active_downloads[video_id] = job.id
         return {"job_id": job.id, "status": job.status.value}
 
     @app.delete("/api/youtube/{video_id}/download")
@@ -545,6 +565,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 synthesized = youtube_items.item_info(yt_store.meta(vid))
             except KeyError as exc:
                 raise HTTPException(status_code=404, detail=str(exc))
+            except RuntimeError as exc:  # corrupt info.json — clean error, not a traceback
+                raise HTTPException(status_code=500, detail=str(exc))
             local = yt_store.video_path(vid)
             if local is not None:
                 with contextlib.suppress(RuntimeError):
@@ -1582,6 +1604,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             _out_path = out_path
             _epub_temp = epub_temp  # transient extracted EPUB audio, deleted post-cut
             _aux_audio = yt_aux  # separate audio URL of a DASH pair (YouTube)
+            # Stream-URL cuts re-resolve at run time: googlevideo URLs expire
+            # (~6h) and the job may sit queued — the handler's resolution above
+            # validated/failed fast, and the TTL cache makes the re-resolve free
+            # in the common case.
+            _yt_webpage = yt_meta["webpage_url"] if yt_streaming else None
             # Hardware-encode a re-encoded video clip on the iGPU (Quick Sync via
             # VAAPI) when available — the same path the browser preview uses. Lossless
             # cuts are stream copies (no encode); only re-encodes (Exact / --no-lossless,
@@ -1614,13 +1641,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                 audio_indices=_audio_indices, embed_cues=_embed_cues,
                                 default_sub_track=_default_sub_track,
                             )]
+                    src, aux = _video, _aux_audio
+                    if _yt_webpage is not None:
+                        v_url, a_url = youtube_items.resolve_stream_urls(_yt_webpage)
+                        if _kind == "audio":
+                            src, aux = (a_url or v_url), None
+                        else:
+                            src = v_url
+                            aux = a_url if _kind == "video" else None
                     return [cut_clip(
-                        _video, _rng, kind=_kind, lossless=_lossless, out=_out_path,
+                        src, _rng, kind=_kind, lossless=_lossless, out=_out_path,
                         audio_indices=_audio_indices, embed_cues=_embed_cues,
                         audio_codec=_audio_codec, default_sub_track=_default_sub_track,
                         video_encoder="h264_vaapi" if _hw_encode else "libx264",
                         vaapi_device=_VAAPI_DEVICE if _hw_encode else None,
-                        aux_audio=_aux_audio,
+                        aux_audio=aux,
                     )]
                 finally:
                     if _epub_temp is not None:
@@ -1633,13 +1668,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if epub_temp is not None and not _submitted:
                 epub_temp.unlink(missing_ok=True)
 
+    def _find_job(job_id: str):
+        """A job from either pool (clips or full-video downloads), plus its
+        registry — the /api/jobs surface presents both as one list."""
+        job = jobs.get(job_id)
+        if job is not None:
+            return job, jobs
+        job = dl_jobs.get(job_id)
+        if job is not None:
+            return job, dl_jobs
+        return None, None
+
     @app.get("/api/jobs")
     def list_jobs() -> dict:
-        return {"jobs": [j.to_dict() for j in jobs.list_recent()]}
+        merged = [*jobs.list_recent(), *dl_jobs.list_recent()]
+        merged.sort(key=lambda j: j.created, reverse=True)
+        return {"jobs": [j.to_dict() for j in merged[:20]]}
 
     @app.get("/api/jobs/{job_id}")
     def get_job(job_id: str) -> dict:
-        job = jobs.get(job_id)
+        job, _ = _find_job(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="Job not found.")
         return job.to_dict()
@@ -1653,9 +1701,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         can't be interrupted from here — its ffmpeg subprocess carries its own
         timeout — so cancelling one returns 409.
         """
-        if jobs.get(job_id) is None:
+        job, registry = _find_job(job_id)
+        if job is None:
             raise HTTPException(status_code=404, detail="Job not found.")
-        if not jobs.cancel(job_id):
+        if not registry.cancel(job_id):
             raise HTTPException(
                 status_code=409, detail="Job is running and can't be cancelled."
             )
@@ -1663,7 +1712,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/jobs/{job_id}/download/{filename}")
     def download_clip(job_id: str, filename: str) -> FileResponse:
-        job = jobs.get(job_id)
+        job, _ = _find_job(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="Job not found.")
         if job.status.value != "done":
@@ -1685,6 +1734,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 yt_store.meta(vid)
             except KeyError as exc:
                 raise HTTPException(status_code=404, detail=str(exc))
+            except RuntimeError as exc:  # corrupt info.json — clean error
+                raise HTTPException(status_code=500, detail=str(exc))
             return
         _resolve_any(path)
 

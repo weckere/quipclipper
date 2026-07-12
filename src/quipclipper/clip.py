@@ -522,12 +522,16 @@ def cut_clip(
     # For the default-subtitle flag (B17c) count the output subtitle streams:
     # the source's embedded subtitles plus the muxed sidecar, if any. URL
     # sources skip the probe (slow over the network, and stream URLs carry no
-    # embedded subtitles).
+    # embedded subtitles) — their only possible subtitle stream is the muxed
+    # sidecar, so the default flag still applies to it.
     sub_count = 0
-    if kind == "video" and lossless and default_sub_track is not None and not is_url:
-        sub_count = len(_probe_streams(source, "s", fields="codec_type"))
-        if embed_subs is not None:
-            sub_count += 1
+    if kind == "video" and lossless and default_sub_track is not None:
+        if is_url:
+            sub_count = 1 if embed_subs is not None else 0
+        else:
+            sub_count = len(_probe_streams(source, "s", fields="codec_type"))
+            if embed_subs is not None:
+                sub_count += 1
 
     def build(enc: str, dev: str | None) -> list[str]:
         return _ffmpeg_args(

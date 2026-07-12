@@ -42,6 +42,11 @@ const qp = (path) => `?path=${encodeURIComponent(path)}`;
 /** Stop playback and release the source so audio doesn't keep playing
  *  after navigating away from the item view. */
 function stopPlayer() {
+  // Leaving the item view: abort this item's listeners/pollers (transcode range
+  // loop, the embed poller, and a running download poll) and forget the item,
+  // so a background poll can't yank the user back in or drive a stale player.
+  if (itemListeners) { itemListeners.abort(); itemListeners = null; }
+  currentItem = null;
   destroyYtEmbed();
   const player = $("player");
   if (!player) return;
@@ -56,7 +61,7 @@ function stopPlayer() {
 // When active, `ytEmbed` supplants the <video id="player"> element: playerTime/
 // seekTo/updatePlaybackUI read the IFrame API instead, and a poller in openItem
 // stands in for the timeupdate events (script sync + range preview loop).
-let ytEmbed = null;      // { player: YT.Player, ready: bool } while an embed drives playback
+let ytEmbed = null;      // { player: YT.Player, ready: bool, pendingSeek: number|null }
 let ytApiPromise = null; // one-time IFrame API loader
 
 // "official" (default on iOS, where the server stream can't play) or "stream".
@@ -66,12 +71,15 @@ function ytPlayerPref() {
 
 function loadYtApi() {
   if (ytApiPromise) return ytApiPromise;
-  ytApiPromise = new Promise((resolve) => {
+  ytApiPromise = new Promise((resolve, reject) => {
     if (window.YT && window.YT.Player) { resolve(); return; }
     window.onYouTubeIframeAPIReady = () => resolve();
     const s = document.createElement("script");
     s.src = "https://www.youtube.com/iframe_api";
-    s.onerror = () => { ytApiPromise = null; };  // retry on next open if blocked
+    s.onerror = () => {
+      ytApiPromise = null;  // let a later open retry
+      reject(new Error("YouTube IFrame API failed to load"));
+    };
     document.head.appendChild(s);
   });
   return ytApiPromise;
@@ -271,6 +279,11 @@ $("yt-url").addEventListener("keydown", (e) => {
 /** Wire the per-item Download control (in #yt-player-row). Downloading runs as
  *  a server job; once the file exists, playback seeks natively and clips cut
  *  from the local copy — the control then offers to remove it. */
+// Download job ids in flight this page session, keyed by item path — so
+// reopening an item mid-download (a Player-mode toggle, a bookmark seek)
+// resumes the "Downloading…" state instead of offering a duplicate download.
+const ytDownloadJobs = {};
+
 function wireYtDownload(path, name, info, signal) {
   const btn = $("yt-download-btn");
   const status = $("yt-download-status");
@@ -280,6 +293,7 @@ function wireYtDownload(path, name, info, signal) {
   const vid = path.slice("yt:".length);
 
   if (info.downloaded) {
+    delete ytDownloadJobs[path];
     const mb = info.download_size ? ` (${(info.download_size / 1048576).toFixed(1)} MB)` : "";
     btn.textContent = `💾 Remove download${mb}`;
     btn.onclick = async () => {
@@ -293,6 +307,44 @@ function wireYtDownload(path, name, info, signal) {
   }
 
   btn.textContent = "⬇ Download video";
+
+  // Follow a download job to completion: reload the item on success (native
+  // playback from the local file), surface failures, and stop cleanly when the
+  // job is lost (backend restart) or the user navigates away.
+  const followJob = (jobId) => {
+    ytDownloadJobs[path] = jobId;
+    btn.disabled = true;
+    status.hidden = false;
+    status.textContent = "Downloading…";
+    const poll = setInterval(async () => {
+      if (signal.aborted) { clearInterval(poll); return; }
+      const resp = await apiFetch(`/api/jobs/${encodeURIComponent(jobId)}`);
+      if (resp.status === 404) {  // job registry lost it (e.g. server restart)
+        clearInterval(poll);
+        delete ytDownloadJobs[path];
+        status.textContent = "Download state lost — try again.";
+        btn.disabled = false;
+        return;
+      }
+      if (!resp.ok) return;  // transient — keep polling
+      const j = await resp.json();
+      if (j.status === "done") {
+        clearInterval(poll);
+        delete ytDownloadJobs[path];
+        if (!signal.aborted && currentItem && currentItem.path === path) openItem(path, name, {});
+      } else if (j.status === "failed" || j.status === "cancelled") {
+        clearInterval(poll);
+        delete ytDownloadJobs[path];
+        status.textContent = `Download failed: ${j.error || "see server logs"}`;
+        btn.disabled = false;
+      }
+    }, 1500);
+  };
+
+  // Already downloading (reopened mid-flight): resume following, don't offer a
+  // second download.
+  if (ytDownloadJobs[path]) { followJob(ytDownloadJobs[path]); return; }
+
   btn.onclick = async () => {
     btn.disabled = true;
     status.hidden = false;
@@ -306,20 +358,7 @@ function wireYtDownload(path, name, info, signal) {
       return;
     }
     if (!job.job_id) { openItem(path, name, {}); return; }  // already downloaded
-    const poll = setInterval(async () => {
-      if (signal.aborted) { clearInterval(poll); return; }
-      let j;
-      try { j = await getJSON(`/api/jobs/${job.job_id}`); } catch { return; }
-      if (j.status === "done") {
-        clearInterval(poll);
-        // Reload with the local file (native seeking) unless the user navigated on.
-        if (!signal.aborted && currentItem && currentItem.path === path) openItem(path, name, {});
-      } else if (j.status === "failed") {
-        clearInterval(poll);
-        status.textContent = `Download failed: ${j.error || "see server logs"}`;
-        btn.disabled = false;
-      }
-    }, 1500);
+    followJob(job.job_id);
   };
 }
 
@@ -734,6 +773,10 @@ function seekTo(seconds) {
     if (ytEmbed.ready) {
       ytEmbed.player.seekTo(seconds, true);
       ytEmbed.player.playVideo();
+    } else {
+      // The IFrame API is still loading — remember the target and apply it in
+      // onReady, so an early script-line click isn't silently dropped.
+      ytEmbed.pendingSeek = seconds;
     }
     return;
   }
@@ -866,7 +909,9 @@ async function openItem(path, name, opts) {
     sel.value = ytPlayerPref();
     sel.onchange = () => {
       localStorage.setItem("qcYtPlayer", sel.value);
-      openItem(path, name, {});  // rewire playback with the new player
+      // Rewire playback with the new player, keeping the current position.
+      const at = playerTime();
+      openItem(path, name, at > 0.5 ? { seekTo: at } : {});
     };
     wireYtDownload(path, name, info, signal);
   }
@@ -1052,26 +1097,38 @@ async function openItem(path, name, opts) {
     seekBar.hidden = true;
     seekHint.hidden = true;
     transcodeOffset = 0;
+    // Stop and detach the <video> so a previous server-stream doesn't keep
+    // playing (audio) underneath the embed, and so seekTo takes the embed path.
+    player.pause();
+    player.removeAttribute("src");
+    player.load();
     player.hidden = true;
+    // Mark embed mode active SYNCHRONOUSLY (player filled in when the API
+    // loads): playerTime/seekTo/pb all gate on `.ready`, so an early script
+    // click queues into pendingSeek instead of driving the hidden <video>.
+    const embed = ytEmbed = { player: null, ready: false, pendingSeek: seekTarget ?? null };
     const holder = $("yt-embed");
     holder.hidden = false;
     const videoId = path.slice("yt:".length);
     loadYtApi().then(() => {
-      if (signal.aborted) return;
+      if (signal.aborted || ytEmbed !== embed) return;  // superseded
       const mount = holder.appendChild(document.createElement("div"));
-      const p = new YT.Player(mount, {
+      embed.player = new YT.Player(mount, {
         videoId,
         playerVars: { playsinline: 1, rel: 0 },
         events: {
           onReady: () => {
-            if (!ytEmbed || ytEmbed.player !== p) return;  // superseded
-            ytEmbed.ready = true;
-            if (seekTarget != null) p.seekTo(seekTarget, true);
+            if (ytEmbed !== embed) return;  // superseded before ready
+            embed.ready = true;
+            if (embed.pendingSeek != null) embed.player.seekTo(embed.pendingSeek, true);
           },
           onStateChange: () => updatePlaybackUI(),
         },
       });
-      ytEmbed = { player: p, ready: false };
+    }).catch(() => {
+      if (ytEmbed !== embed) return;
+      $("preview-note").textContent =
+        "Couldn't load the YouTube player — switch Player to “Server stream”.";
     });
     const poll = setInterval(() => {
       if (!ytEmbed || !ytEmbed.ready) return;
