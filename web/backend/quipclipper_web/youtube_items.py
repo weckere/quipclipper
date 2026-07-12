@@ -17,7 +17,9 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import re
+import shlex
 import shutil
 import subprocess
 import threading
@@ -83,6 +85,18 @@ def extract_video_id(url: str) -> str | None:
     return None
 
 
+# Fail-fast args on every yt-dlp call. yt-dlp cycles through several YouTube
+# "player clients"; when some hang (throttling / unresponsive endpoints) the
+# default long socket timeout + retries can turn a trivial fetch into 80s+.
+# Capping the socket timeout and extractor retries roughly halved that on a real
+# server (82s → 34s) with no loss of success. Overridable via QC_YTDLP_ARGS
+# (space-separated) for a host that needs different tuning; set it empty to
+# restore yt-dlp's defaults. (Fragment --retries for the actual video download
+# are left at the default, so a downloaded byte-stream stays robust.)
+_DEFAULT_YTDLP_ARGS = ["--socket-timeout", "10", "--extractor-retries", "1"]
+_EXTRA_ARGS = shlex.split(os.environ.get("QC_YTDLP_ARGS", " ".join(_DEFAULT_YTDLP_ARGS)))
+
+
 def _run_ytdlp(args: list[str], timeout: int = _YTDLP_TIMEOUT) -> str:
     """Run yt-dlp and return stdout. THE test seam — every network call routes
     through here. Raises RuntimeError with a stderr excerpt on failure."""
@@ -90,7 +104,7 @@ def _run_ytdlp(args: list[str], timeout: int = _YTDLP_TIMEOUT) -> str:
         raise RuntimeError("yt-dlp not found on PATH. Install yt-dlp for YouTube support.")
     try:
         proc = subprocess.run(
-            ["yt-dlp", *args], capture_output=True, text=True, timeout=timeout,
+            ["yt-dlp", *_EXTRA_ARGS, *args], capture_output=True, text=True, timeout=timeout,
         )
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(f"yt-dlp timed out after {timeout}s.") from exc
