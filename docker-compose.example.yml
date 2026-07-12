@@ -32,11 +32,19 @@ services:
       # backend then skips the browser CSRF header. Set the SAME value on the web
       # service so `-u api:<token>` also passes the basic-auth gate. See docs/API.md.
       # QC_API_TOKEN: "paste-a-long-random-string-here"
+      # Where downloaded YouTube videos land (the ⬇ Download button). Point it
+      # at a folder under a media root — mounted read-WRITE — so a download
+      # becomes "<Title> [<id>].mp4" + a .vtt sidecar: a browsable, searchable
+      # library item. Unset = kept private in the state dir.
+      # QC_YOUTUBE_DIR: /media/youtube/one-offs
     volumes:
       # Your media, mounted READ-ONLY. Left = host path, right = the in-container
       # path referenced by QC_MEDIA_ROOTS above.
       - /path/to/movies:/media/movies:ro
       - /path/to/shows:/media/shows:ro
+      # A library quipclipper may write into (YouTube downloads / subtitle
+      # backfill) — read-WRITE, and add its in-container path to QC_MEDIA_ROOTS.
+      # - /path/to/youtube:/media/youtube
       # Where finished clips are written (read-write).
       - /path/to/clips:/clips
       - quip-state:/state

@@ -241,6 +241,15 @@ def _fs_safe(name: str) -> str:
     return re.sub(r"[/\\\0]", "_", name).strip() or "YouTube"
 
 
+def _fs_safe_filename(name: str) -> str:
+    """A portable file NAME from a video title: drop characters illegal on
+    Linux/Windows/SMB (``/ \\ < > : " | ? *`` + control chars) and collapse
+    whitespace, so a downloaded ``<Title> [<id>].mp4`` is safe on a ZFS/SMB share."""
+    name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "", name)
+    name = re.sub(r"\s+", " ", name).strip().rstrip(".")
+    return name or "video"
+
+
 def clip_name_source(meta: dict) -> Path:
     """A synthetic path whose stem is the video title and whose parent is the
     channel, so the default clip template yields
@@ -298,9 +307,13 @@ class YouTubeStore:
     No index file — the listing is a directory scan, so adds/removes are atomic
     per-video and can't race each other."""
 
-    def __init__(self, state_dir: Path) -> None:
+    def __init__(self, state_dir: Path, download_dir: Path | None = None) -> None:
         self._dir = state_dir / "youtube"
         self._dir.mkdir(parents=True, exist_ok=True)
+        # Where a full-video download is written. None → keep it private in the
+        # item dir (``<item>/video.mp4``). A real folder (ideally under a media
+        # root) → a browsable ``<Title> [<id>].mp4`` + ``.vtt`` sidecar.
+        self._download_dir = download_dir
         # Serialize downloads per video: two concurrent download() calls would
         # otherwise run two yt-dlp processes into the same output template.
         self._dl_locks: dict[str, threading.Lock] = {}
@@ -436,17 +449,34 @@ class YouTubeStore:
             raise RuntimeError(f"Corrupt metadata for {video_id}: {exc}") from exc
         return self._with_download(meta)
 
+    def _raw(self, video_id: str) -> dict:
+        """The persisted info.json as a plain dict ({} on any error)."""
+        with contextlib.suppress(OSError, json.JSONDecodeError, KeyError):
+            return json.loads((self._item_dir(video_id) / "info.json").read_text(encoding="utf-8"))
+        return {}
+
+    def _download_loc(self, video_id: str, recorded: str | None) -> Path | None:
+        """The existing download file for a video: the externally-recorded path
+        (info.json ``download_path``) if it still exists, else the private
+        state-dir ``video.mp4``; None if neither is present."""
+        if recorded:
+            p = Path(recorded)
+            if p.is_file():
+                return p
+        vp = self._dir / video_id / "video.mp4"
+        return vp if vp.is_file() else None
+
     def _with_download(self, meta: dict) -> dict:
-        """Annotate a meta dict with the local download's presence/size. The file
-        on disk is the source of truth — nothing is recorded in info.json, so a
-        hand-deleted file simply reads as not-downloaded."""
-        vp = self._dir / meta["id"] / "video.mp4"
-        try:
-            meta["download_size"] = vp.stat().st_size
-            meta["downloaded"] = True
-        except OSError:
-            meta["downloaded"] = False
-            meta["download_size"] = None
+        """Annotate a meta dict with the download's presence/size (from disk —
+        the file is the source of truth, so a hand-deleted file reads as gone)."""
+        vp = self._download_loc(meta["id"], meta.get("download_path"))
+        if vp is not None:
+            with contextlib.suppress(OSError):
+                meta["download_size"] = vp.stat().st_size
+                meta["downloaded"] = True
+                return meta
+        meta["downloaded"] = False
+        meta["download_size"] = None
         return meta
 
     def is_added(self, video_id: str) -> bool:
@@ -457,53 +487,85 @@ class YouTubeStore:
             return False
 
     def video_path(self, video_id: str) -> Path | None:
-        """The locally downloaded video file, if present."""
-        vp = self._item_dir(video_id) / "video.mp4"
-        return vp if vp.is_file() else None
+        """The locally downloaded video file, if present (external or state-dir)."""
+        return self._download_loc(video_id, self._raw(video_id).get("download_path"))
 
-    def _clean_dl_temps(self, item_dir: Path) -> None:
-        """Drop yt-dlp working files (``video-dl.*`` — fragments, ``.part``s,
-        the merged output) so a retry can never pick up a stale partial."""
+    def _clean_dl_temps(self, item_dir: Path, video_id: str) -> None:
+        """Drop yt-dlp working files for this video (``video-dl.*`` in the state
+        dir, and the hidden ``.qc-dl-<id>.*`` temps in the download dir) so a
+        retry can never pick up a stale partial."""
         for leftover in item_dir.glob("video-dl.*"):
             leftover.unlink(missing_ok=True)
+        if self._download_dir is not None and self._download_dir.is_dir():
+            for leftover in self._download_dir.glob(f".qc-dl-{video_id}.*"):
+                leftover.unlink(missing_ok=True)
 
     def download(self, video_id: str) -> Path:
-        """Download the full video (browser-native h264/aac mp4) next to its
-        transcript. Idempotent: an existing download is returned as-is, and
-        concurrent calls for the same video serialize on a per-video lock."""
+        """Download the full video (browser-native h264/aac mp4). Idempotent: an
+        existing download is returned as-is, and concurrent calls for the same
+        video serialize on a per-video lock.
+
+        With no configured download dir the file stays private in the item dir
+        (``video.mp4``). With one, it lands as ``<Title> [<id>].mp4`` there,
+        with a ``.vtt`` transcript sidecar, and its path is recorded in
+        info.json — so it's a browsable, dialogue-searchable library item."""
         meta = self.meta(video_id)  # KeyError for unknown ids
         with self._dl_lock(video_id):
             existing = self.video_path(video_id)
             if existing is not None:
                 return existing
             item_dir = self._item_dir(video_id)
+            external = self._download_dir is not None
+            if external:
+                self._download_dir.mkdir(parents=True, exist_ok=True)
+                tmp_tpl = self._download_dir / f".qc-dl-{video_id}.%(ext)s"
+                merged = self._download_dir / f".qc-dl-{video_id}.mp4"
+                final = (self._download_dir /
+                         f"{_fs_safe_filename(meta.get('title') or video_id)} [{video_id}].mp4")
+            else:
+                tmp_tpl = item_dir / "video-dl.%(ext)s"
+                merged = item_dir / "video-dl.mp4"
+                final = item_dir / "video.mp4"
             # A previous failed/timed-out run may have left fragments behind;
             # start clean so nothing stale can be mistaken for the result.
-            self._clean_dl_temps(item_dir)
+            self._clean_dl_temps(item_dir, video_id)
             try:
                 _run_ytdlp([
                     "--no-playlist", "-f", FORMAT_EXPR, "--merge-output-format", "mp4",
-                    "-o", str(item_dir / "video-dl.%(ext)s"), "--", meta["webpage_url"],
+                    "-o", str(tmp_tpl), "--", meta["webpage_url"],
                 ], timeout=_DOWNLOAD_TIMEOUT)
                 # --merge-output-format mp4 pins the merged output's name; the
                 # f*-fragment intermediates and .part files never match it.
-                merged = item_dir / "video-dl.mp4"
                 if not merged.is_file():
                     raise RuntimeError("yt-dlp reported success but produced no merged video file.")
-                # Atomic move to the canonical name; readers only ever see
-                # video.mp4 once it's complete.
-                final = item_dir / "video.mp4"
+                # Atomic move to the final name; readers only ever see it complete.
                 merged.replace(final)
+                if external:
+                    # A transcript sidecar next to the video makes it a
+                    # dialogue-searchable library item (and Jellyfin-visible).
+                    subs = item_dir / "subs.vtt"
+                    if subs.is_file():
+                        with contextlib.suppress(OSError):
+                            shutil.copyfile(subs, final.with_suffix(".vtt"))
+                    raw = self._raw(video_id)
+                    raw["download_path"] = str(final)
+                    (item_dir / "info.json").write_text(json.dumps(raw, indent=2), encoding="utf-8")
             finally:
-                self._clean_dl_temps(item_dir)
+                self._clean_dl_temps(item_dir, video_id)
             return final
 
     def remove_download(self, video_id: str) -> bool:
-        """Delete the local video file (the transcript/metadata stay)."""
+        """Delete the local video file + its sidecar (transcript/metadata stay)."""
         vp = self.video_path(video_id)
         if vp is None:
             return False
         vp.unlink(missing_ok=True)
+        vp.with_suffix(".vtt").unlink(missing_ok=True)  # the sidecar we wrote (external only)
+        raw = self._raw(video_id)
+        if raw.pop("download_path", None) is not None:
+            with contextlib.suppress(OSError):
+                (self._item_dir(video_id) / "info.json").write_text(
+                    json.dumps(raw, indent=2), encoding="utf-8")
         return True
 
     def cues(self, video_id: str) -> list[Cue]:

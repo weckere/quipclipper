@@ -292,13 +292,16 @@ From there it works like any library item:
   template tokens as everything else. (Channel-split export and the mkvmerge
   backend don't apply to stream sources.)
 - **Optional full download** — a **⬇ Download video** button on each item
-  fetches the whole video to the server once (browser-native mp4, stored next
-  to its transcript in the state dir). Everything then transparently prefers
-  the local copy: playback seeks natively (no transcode proxy), keyframe
-  probes are exact, and clips cut from the file with the **full** pipeline
-  (channel split and mkvmerge included) — no YouTube round-trips at all.
-  A 💾 badge marks downloaded videos; **Remove download** deletes the file
-  and keeps the transcript.
+  fetches the whole video to the server once (browser-native mp4). Everything
+  then transparently prefers the local copy: playback seeks natively (no
+  transcode proxy), keyframe probes are exact, and clips cut from the file with
+  the **full** pipeline (channel split and mkvmerge included) — no YouTube
+  round-trips at all. A 💾 badge marks downloaded videos; **Remove download**
+  deletes the file and keeps the transcript. By default the file is private to
+  the app; set **`QC_YOUTUBE_DIR`** (Docker) / **`youtubeDir`** (NixOS) to a
+  real folder and each download lands as `<Title> [<id>].mp4` with a `.vtt`
+  sidecar — a browsable, dialogue-searchable library item, visible to Jellyfin
+  and Samba too.
 
 Requires `yt-dlp` on the backend's PATH — the Docker image installs it via pip
 (rebuild the image to pick up a current release when YouTube changes something),
@@ -379,7 +382,9 @@ Optional settings (all off/defaulted unless set):
 | `clipsDir` | Where finished clips live (default `/var/lib/quipclipper-web/clips`, private to the service). |
 | `clipsGroup` / `clipsMode` | Share `clipsDir` with other users/services (SMB export, Jellyfin library). See below. |
 | `manageClipsDir` | `false` = `clipsDir` is owned/created elsewhere (e.g. an existing SMB mount); the module won't chown/chmod it. See below. |
-| `subtitleLangs`, `listenAddress`, `listenPort`, `maxConcurrentJobs` | Mirror the Docker env vars `QC_SUBTITLE_LANGS` / `QC_BIND` / `QC_PORT` / `QC_MAX_CONCURRENT_JOBS`. |
+| `writableMediaRoots` | Media roots the app may **write into** (bound read-write, not read-only) — so it can drop subtitle sidecars next to your videos (downloaded transcripts, subtitle backfill). Browsed and clipped exactly like `mediaRoots`. Use it for a library you want quipclipper to enrich (e.g. a Pinchflat/yt-dlp folder). |
+| `youtubeDir` | Where downloaded YouTube videos land (default `null` = private in the state dir). Point it at a folder — ideally under a `writableMediaRoots` entry — and each download becomes `<Title> [<id>].mp4` with a `.vtt` sidecar: a browsable, dialogue-searchable library item, visible to Jellyfin/Samba too. |
+| `subtitleLangs`, `listenAddress`, `listenPort`, `maxConcurrentJobs` | Mirror the Docker env vars `QC_SUBTITLE_LANGS` / `QC_BIND` / `QC_PORT` / `QC_MAX_CONCURRENT_JOBS`. `youtubeDir` mirrors `QC_YOUTUBE_DIR`. |
 
 The module builds the app from quipclipper's own pinned nixpkgs, so you don't
 need an `inputs.nixpkgs.follows`.

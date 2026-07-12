@@ -2261,7 +2261,9 @@ async function browseBookmarks() {
   }
 
   for (const [path, bookmarks] of groups) {
-    const fileName = path.split("/").pop() || path;
+    // Prefer the backend's display name (a YouTube ref's title, else the file
+    // name); the path-derived fallback shows an ugly "yt:<id>" for YouTube items.
+    const fileName = bookmarks[0].source_name || path.split("/").pop() || path;
     const header = document.createElement("li");
     header.className = "bm-browser-group";
     header.innerHTML =

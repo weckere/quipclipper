@@ -20,6 +20,12 @@ let
   stateDir = "/var/lib/quipclipper-web/state";
   # Group owning the clips dir: an explicit shared group, else the service's own.
   clipsGroupName = if cfg.clipsGroup != null then cfg.clipsGroup else cfg.group;
+  # youtubeDir needs its own writable bind + tmpfiles dir only when it isn't
+  # already inside a writableMediaRoot (which is bound rw as a whole). When it
+  # is nested, the app creates the subdir lazily in that already-writable tree.
+  ytDirOwnBind = cfg.youtubeDir != null
+    && !(lib.any (r: lib.hasPrefix (toString r + "/") (toString cfg.youtubeDir + "/"))
+          cfg.writableMediaRoots);
   # Backend URL for the nginx reverse proxy. Bracket IPv6 literals (e.g. ::1)
   # so proxy_pass gets http://[::1]:8000, not the invalid http://::1:8000.
   proxyAddr = if lib.hasInfix ":" cfg.listenAddress
@@ -52,6 +58,33 @@ in
       default = [ ];
       example = [ "/srv/media/movies" "/srv/media/tv" ];
       description = "Whitelist of media directories the app may read and clip from.";
+    };
+
+    writableMediaRoots = lib.mkOption {
+      type = lib.types.listOf lib.types.path;
+      default = [ ];
+      example = [ "/srv/media/youtube" ];
+      description = ''
+        Media roots the app may also **write into** — bound read-write instead of
+        read-only, so quipclipper can drop subtitle sidecars (e.g. transcripts it
+        downloads, or the subtitle-backfill feature) next to your videos. Browsed
+        and clipped exactly like `mediaRoots`; only the mount mode differs. Use
+        this for a folder you want quipclipper to enrich (a Pinchflat/yt-dlp
+        library); keep everything you want protected in `mediaRoots`.
+      '';
+    };
+
+    youtubeDir = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      example = "/srv/media/youtube/one-offs";
+      description = ''
+        Where downloaded YouTube videos are written. `null` keeps them private in
+        the state dir. Set it to a real folder — ideally under a
+        `writableMediaRoots` entry — so a download lands as `<Title> [<id>].mp4`
+        with a `.vtt` sidecar and becomes a browsable, dialogue-searchable library
+        item. The module creates it and binds it read-write.
+      '';
     };
 
     clipsDir = lib.mkOption {
@@ -259,10 +292,11 @@ in
   config = lib.mkIf cfg.enable {
     assertions = [
       {
-        assertion = cfg.mediaRoots != [ ];
+        assertion = cfg.mediaRoots != [ ] || cfg.writableMediaRoots != [ ];
         message = ''
-          services.quipclipper-web.mediaRoots must list at least one media
-          directory — otherwise the app starts with an empty, unusable library.
+          services.quipclipper-web needs at least one media directory in
+          mediaRoots or writableMediaRoots — otherwise the app starts with an
+          empty, unusable library.
         '';
       }
       {
@@ -341,16 +375,23 @@ in
       # when any is an external mount (SMB/mergerfs) that may not be ready at boot.
       # A media root racing its mount would otherwise start with an empty library.
       unitConfig.RequiresMountsFor =
-        [ (toString cfg.clipsDir) ] ++ map toString cfg.mediaRoots;
+        [ (toString cfg.clipsDir) ]
+        ++ map toString cfg.mediaRoots
+        ++ map toString cfg.writableMediaRoots;
 
       environment = {
-        QC_MEDIA_ROOTS = lib.concatStringsSep ":" (map toString cfg.mediaRoots);
+        # The app treats read-only and writable roots the same for browsing;
+        # the read/write split is purely a mount-mode concern below.
+        QC_MEDIA_ROOTS = lib.concatStringsSep ":"
+          (map toString (cfg.mediaRoots ++ cfg.writableMediaRoots));
         QC_CLIPS_DIR = toString cfg.clipsDir;
         QC_STATE_DIR = stateDir;
         QC_BIND = cfg.listenAddress;
         QC_PORT = toString cfg.listenPort;
         QC_MAX_CONCURRENT_JOBS = toString cfg.maxConcurrentJobs;
         QC_SUBTITLE_LANGS = lib.concatStringsSep "," cfg.subtitleLangs;
+      } // lib.optionalAttrs (cfg.youtubeDir != null) {
+        QC_YOUTUBE_DIR = toString cfg.youtubeDir;
       } // lib.optionalAttrs cfg.nginx.enable {
         # The bundled nginx serves the clips dir directly at /clips/ (see the vhost
         # below). Without nginx, the backend serves clips itself under /api.
@@ -387,7 +428,11 @@ in
         # would be invisible. BindReadOnlyPaths/BindPaths bind the source in
         # explicitly, so /home roots keep working under ProtectHome.
         BindReadOnlyPaths = map toString cfg.mediaRoots;
-        BindPaths = [ (toString cfg.clipsDir) stateDir ];
+        # Writable: clips, state, the writable media roots, and (if set and not
+        # already covered by one of those) the YouTube download dir.
+        BindPaths = [ (toString cfg.clipsDir) stateDir ]
+          ++ map toString cfg.writableMediaRoots
+          ++ lib.optional ytDirOwnBind (toString cfg.youtubeDir);
 
         # When the clips dir is shared (clipsGroup set), write group-writable so
         # the shared group can delete/manage clips, not just read them. With the
@@ -410,7 +455,12 @@ in
       # break subtitle loading until someone chowns them by hand.
       "Z ${stateDir} - ${cfg.user} ${cfg.group} - -"
     ] ++ lib.optional cfg.manageClipsDir
-      "d ${toString cfg.clipsDir} ${cfg.clipsMode} ${cfg.user} ${clipsGroupName} - -";
+      "d ${toString cfg.clipsDir} ${cfg.clipsMode} ${cfg.user} ${clipsGroupName} - -"
+      # Create a standalone youtubeDir (world-readable, so Jellyfin/Samba can
+      # read the downloads) — it must exist before the service's bind mount. A
+      # youtubeDir nested in a writableMediaRoot is created lazily by the app.
+      ++ lib.optional ytDirOwnBind
+        "d ${toString cfg.youtubeDir} 0755 ${cfg.user} ${cfg.group} - -";
 
     services.nginx = lib.mkIf cfg.nginx.enable {
       enable = true;

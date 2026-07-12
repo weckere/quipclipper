@@ -48,6 +48,7 @@ Environment variables (mirrored by the NixOS module options):
 | `QC_USERNAME` | `quip` | basic-auth username (used only when `QC_PASSWORD` is set) |
 | `QC_SUBTITLE_LANGS` | `en` | ordered subtitle-language auto-select preference (comma-separated, e.g. `eng,spa`); UI Auto-lang box overrides per browser |
 | `QC_YTDLP_ARGS` | `--socket-timeout 10 --extractor-retries 1` | extra args prepended to every `yt-dlp` call (fail-fast so a hung YouTube endpoint doesn't stall a fetch for ~80s). Override to tune; set empty for yt-dlp's defaults |
+| `QC_YOUTUBE_DIR` | (unset) | where downloaded YouTube videos are written. Unset = private in the state dir. Set to a real folder (ideally under a media root) and a download lands as `<Title> [<id>].mp4` with a `.vtt` sidecar — a browsable, dialogue-searchable library item |
 | `QC_PROXY_SECRET` | (unset) | defence-in-depth: when set on **both** services, nginx injects it and the backend rejects any request that reaches port 8000 without it (except `/api/health`), blocking direct hits that bypass nginx |
 | `QC_API_TOKEN` | (unset) | token(s) for programmatic clients (comma-separated for rotation); a client sends it as `X-API-Key`/`Bearer`/`-u api:<token>` and is then exempt from the CSRF header. Set on **both** services so `-u api:<token>` also passes the basic-auth gate. See [`../../docs/API.md`](../../docs/API.md) |
 

@@ -436,6 +436,22 @@ def test_bookmarks_accept_yt_refs(tmp_path, monkeypatch):
     }).status_code == 404
 
 
+def test_bookmark_listing_has_youtube_title_as_source_name(tmp_path, monkeypatch):
+    """The Bookmarks browser groups by path; a yt: ref must carry the real video
+    title as source_name (not the raw 'yt:<id>' the frontend would otherwise show)."""
+    client = _client(tmp_path, monkeypatch)
+    _add(client)
+    client.post("/api/bookmarks", json={"path": REF, "label": "a", "start": 1, "end": 2})
+    # A plain file bookmark's source_name is its file name.
+    (tmp_path / "media" / "movie.mkv").write_bytes(b"")
+    fpath = str(tmp_path / "media" / "movie.mkv")
+    client.post("/api/bookmarks", json={"path": fpath, "label": "b", "start": 1, "end": 2})
+
+    by_path = {b["path"]: b for b in client.get("/api/bookmarks").json()["bookmarks"]}
+    assert by_path[REF]["source_name"] == "Test Video"
+    assert by_path[fpath]["source_name"] == "movie.mkv"
+
+
 # --- full-video download ------------------------------------------------------------
 
 def _download(client):
@@ -513,6 +529,72 @@ def test_remove_download_keeps_transcript(tmp_path, monkeypatch):
 def test_download_unknown_video_404(tmp_path, monkeypatch):
     client = _client(tmp_path, monkeypatch)
     assert client.post("/api/youtube/aaaaaaaaaaa/download").status_code == 404
+
+
+# --- downloads to a user-defined folder (youtubeDir) --------------------------
+
+def test_download_to_external_dir_names_and_sidecar(tmp_path, monkeypatch):
+    """With a download dir, the video lands as '<Title> [<id>].mp4' with a .vtt
+    sidecar, and its path is recorded so the yt: item still finds it."""
+    monkeypatch.setattr(youtube_items, "_run_ytdlp", fake_ytdlp())
+    dl = tmp_path / "media" / "one-offs"
+    store = YouTubeStore(tmp_path / "state", download_dir=dl)
+    store.add(WATCH, ["en"])
+    vp = store.download(VID)
+    assert vp == dl / "Test Video [dQw4w9WgXcQ].mp4"
+    assert vp.read_bytes() == b"fake-mp4-bytes"
+    assert vp.with_suffix(".vtt").is_file()          # searchable sidecar
+    assert "never gonna" in vp.with_suffix(".vtt").read_text()
+    # No hidden temp left behind.
+    assert not list(dl.glob(".qc-dl-*"))
+    # The state dir keeps only the transcript/metadata, not the video.
+    assert not (tmp_path / "state" / "youtube" / VID / "video.mp4").exists()
+    # meta/video_path resolve the external file.
+    assert store.meta(VID)["downloaded"] is True
+    assert store.video_path(VID) == vp
+
+
+def test_remove_external_download_clears_path_and_sidecar(tmp_path, monkeypatch):
+    monkeypatch.setattr(youtube_items, "_run_ytdlp", fake_ytdlp())
+    dl = tmp_path / "media" / "one-offs"
+    store = YouTubeStore(tmp_path / "state", download_dir=dl)
+    store.add(WATCH, ["en"])
+    vp = store.download(VID)
+    assert store.remove_download(VID) is True
+    assert not vp.exists() and not vp.with_suffix(".vtt").exists()
+    assert store.video_path(VID) is None
+    assert "download_path" not in store._raw(VID)
+    assert store.meta(VID)["downloaded"] is False
+
+
+def test_external_download_illegal_title_chars_sanitized(tmp_path, monkeypatch):
+    info = {**INFO, "title": 'a/b: "c" | d? <e>'}
+    monkeypatch.setattr(youtube_items, "_run_ytdlp", fake_ytdlp(info=info))
+    dl = tmp_path / "dl"
+    store = YouTubeStore(tmp_path / "state", download_dir=dl)
+    store.add(WATCH, ["en"])
+    vp = store.download(VID)
+    assert vp.name == "ab c d e [dQw4w9WgXcQ].mp4"  # illegal chars dropped, spaces collapsed
+    assert vp.is_file()
+
+
+def test_download_endpoint_uses_configured_youtube_dir(tmp_path, monkeypatch):
+    """End-to-end: QC_YOUTUBE_DIR routes the download endpoint's output there."""
+    monkeypatch.setattr(youtube_items, "_run_ytdlp", fake_ytdlp())
+    youtube_items.clear_url_cache()
+    media = tmp_path / "media"; media.mkdir()
+    dl = media / "one-offs"
+    client = TestClient(create_app(Settings.from_env({
+        "QC_MEDIA_ROOTS": str(media),
+        "QC_CLIPS_DIR": str(tmp_path / "clips"),
+        "QC_STATE_DIR": str(tmp_path / "state"),
+        "QC_YOUTUBE_DIR": str(dl),
+    })))
+    client.headers["X-Quipclipper"] = "1"
+    _add(client)
+    _download(client)
+    assert (dl / "Test Video [dQw4w9WgXcQ].mp4").is_file()
+    assert (dl / "Test Video [dQw4w9WgXcQ].vtt").is_file()
 
 
 def test_concurrent_download_posts_return_the_same_job(tmp_path, monkeypatch):

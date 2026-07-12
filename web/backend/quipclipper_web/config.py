@@ -35,6 +35,7 @@ class Settings:
     subtitle_langs: list[str]
     proxy_secret: str
     api_tokens: frozenset[str]
+    youtube_dir: Path | None
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> "Settings":
@@ -79,5 +80,13 @@ class Settings:
             # and skips the browser CSRF-header requirement. Empty = disabled.
             api_tokens=frozenset(
                 t.strip() for t in e.get("QC_API_TOKEN", "").split(",") if t.strip()
+            ),
+            # Where downloaded YouTube videos are written. Unset = they stay
+            # private in the state dir (state/youtube/<id>/video.mp4). Set it to
+            # a real, browsable folder — ideally under a media root — so a
+            # download lands as "<Title> [<id>].mp4" (with a .vtt sidecar) and is
+            # a first-class library item, visible to other tools too.
+            youtube_dir=(
+                Path(e["QC_YOUTUBE_DIR"]).expanduser() if e.get("QC_YOUTUBE_DIR") else None
             ),
         )

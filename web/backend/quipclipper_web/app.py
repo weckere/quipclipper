@@ -356,7 +356,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     yt_jobs = JobRegistry(max_workers=2)
     bookmarks = BookmarkStore(settings.state_dir)
     sub_cache = SubtitleCache(settings.state_dir, default_langs=settings.subtitle_langs)
-    yt_store = youtube_items.YouTubeStore(settings.state_dir)
+    yt_store = youtube_items.YouTubeStore(settings.state_dir, download_dir=settings.youtube_dir)
     # video id -> last download / add job id, so a repeat POST returns the
     # in-flight job instead of queueing a duplicate.
     active_downloads: dict[str, str] = {}
@@ -1764,6 +1764,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return
         _resolve_any(path)
 
+    def _bookmark_source_name(path: str) -> str:
+        """A human display name for a bookmark's source, for the Bookmarks browser
+        (which groups by path). A ``yt:`` ref → the stored video title (the raw
+        ref is a meaningless id otherwise); everything else → the file's name."""
+        vid = youtube_items.parse_ref(path)
+        if vid is not None:
+            with contextlib.suppress(KeyError, RuntimeError):
+                return yt_store.meta(vid).get("title") or path
+            return path
+        epub_ref, seg = epub_items.parse_ref(path)
+        return Path(epub_ref if seg is not None else path).name
+
+    def _bookmark_dict(b) -> dict:
+        d = b.to_dict()
+        d["source_name"] = _bookmark_source_name(d["path"])
+        return d
+
     @app.get("/api/bookmarks")
     def list_bookmarks(path: str | None = None) -> dict:
         if path:
@@ -1771,7 +1788,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             bms = bookmarks.list_for_path(path)
         else:
             bms = bookmarks.list_all()
-        return {"bookmarks": [b.to_dict() for b in bms]}
+        return {"bookmarks": [_bookmark_dict(b) for b in bms]}
 
     @app.post("/api/bookmarks")
     def create_bookmark(req: BookmarkCreate) -> dict:
