@@ -8,7 +8,10 @@ subtitles → fuzzy-search the line you remember → map the match back to its t
 span → cut it out with ffmpeg. quipclipper is a **self-hosted web app**: point it
 at your media folders, browse to a video (or search dialogue across a whole
 folder), type the line you remember, and cut a lossless clip — all in the
-browser.
+browser. It works on **YouTube videos** too: paste a URL and quipclipper (via
+[yt-dlp](https://github.com/yt-dlp/yt-dlp)) fetches the transcript so you can
+search, bookmark, and clip them the same way — see
+[YouTube sources](#youtube-sources-experimental).
 
 > [!NOTE]
 > **Audio-only support (podcasts, audiobooks) is experimental.** The video
