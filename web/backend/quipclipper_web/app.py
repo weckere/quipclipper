@@ -498,23 +498,62 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.delete("/api/youtube/{video_id}")
     def youtube_remove(video_id: str) -> dict:
-        """Remove an added video (its metadata + stored transcript)."""
+        """Remove an added video (its metadata + stored transcript + download)."""
         if not yt_store.remove(video_id):
             raise HTTPException(status_code=404, detail=f"Unknown YouTube video: {video_id}")
         return {"deleted": video_id}
+
+    @app.post("/api/youtube/{video_id}/download")
+    def youtube_download(video_id: str) -> dict:
+        """Download the full video to the server (async job). Once present, the
+        local file transparently replaces stream URLs everywhere: raw playback
+        with native seeking, accurate keyframe probes, and cutting — no network
+        at cut time. Idempotent; poll the returned job like a clip job."""
+        try:
+            meta = yt_store.meta(video_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        if meta.get("downloaded"):
+            return {"job_id": None, "status": "done", "size": meta.get("download_size")}
+        job = jobs.submit(
+            lambda: [yt_store.download(video_id)],
+            label=f"download: {meta.get('title') or video_id}",
+        )
+        return {"job_id": job.id, "status": job.status.value}
+
+    @app.delete("/api/youtube/{video_id}/download")
+    def youtube_remove_download(video_id: str) -> dict:
+        """Delete the local video file (the transcript and metadata stay)."""
+        try:
+            yt_store.meta(video_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        if not yt_store.remove_download(video_id):
+            raise HTTPException(status_code=404, detail="No download to remove.")
+        return {"removed": video_id}
 
     # --- file inspection -----------------------------------------------------
 
     @app.get("/api/items")
     def item(path: str = Query(...), langs: str | None = Query(None)) -> dict:
-        # A YouTube ref (yt:<id>): synthesized info from stored metadata —
-        # nothing is probed or downloaded.
+        # A YouTube ref (yt:<id>): synthesized info from stored metadata. When
+        # the video has been downloaded, probe the real local file instead so
+        # duration/codecs are exact (the ref/flags stay virtual either way).
         vid = youtube_items.parse_ref(path)
         if vid is not None:
             try:
-                return youtube_items.item_info(yt_store.meta(vid))
+                synthesized = youtube_items.item_info(yt_store.meta(vid))
             except KeyError as exc:
                 raise HTTPException(status_code=404, detail=str(exc))
+            local = yt_store.video_path(vid)
+            if local is not None:
+                with contextlib.suppress(RuntimeError):
+                    probed = media.item_info(local, langs=settings.subtitle_langs)
+                    synthesized.update(
+                        duration=probed["duration"], streams=probed["streams"],
+                        size=probed["size"],
+                    )
+            return synthesized
         # An EPUB segment ref (<epub>#seg=N): probe the extracted chapter audio.
         epub_ref, seg = epub_items.parse_ref(path)
         if seg is not None:
@@ -943,12 +982,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         Starlette's FileResponse handles Range requests (206), so the browser can
         seek. Whether it actually decodes depends on the codec/container.
         """
-        # YouTube refs have no local file — the player must use the transcode
-        # endpoint (the frontend forces that path for yt items; this is defensive).
-        if youtube_items.parse_ref(path) is not None:
+        # YouTube refs: a downloaded video serves like any local file (Range
+        # support → native seeking); without a download there's nothing to
+        # serve raw — the player must use the transcode endpoint (the frontend
+        # picks the right one; this is defensive).
+        yt_vid_media = youtube_items.parse_ref(path)
+        if yt_vid_media is not None:
+            local = yt_store.video_path(yt_vid_media)
+            if local is not None:
+                return FileResponse(local, media_type="video/mp4")
             raise HTTPException(
                 status_code=400,
-                detail="YouTube items stream via /api/media/transcode.",
+                detail="YouTube items stream via /api/media/transcode until downloaded.",
             )
         # EPUB segment: stream the chapter audio straight from the zip (Range-aware,
         # no copy on disk).
@@ -976,11 +1021,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         with ``-c:v copy``) will actually land, so subtitle offsets can be
         computed accurately.
         """
-        # YouTube: no local file to probe — echo the requested time. Subtitle
-        # sync after a mid-stream seek can drift by up to one GOP (a few
-        # seconds); probing the stream URL's window is a possible follow-up.
-        if youtube_items.parse_ref(path) is not None:
-            return {"requested": time, "actual": time}
+        # YouTube: probe the local file when downloaded (accurate offsets);
+        # otherwise echo the requested time — subtitle sync after a mid-stream
+        # seek can then drift by up to one GOP (a few seconds).
+        yt_vid_kf = youtube_items.parse_ref(path)
+        if yt_vid_kf is not None:
+            local = yt_store.video_path(yt_vid_kf)
+            if local is None:
+                return {"requested": time, "actual": time}
+            return {"requested": time, "actual": media.probe_keyframe_before(local, time)}
         p = _resolve_any(path)
         if not p.is_file():
             raise HTTPException(status_code=404, detail=f"Not found: {path}")
@@ -1039,8 +1088,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # URLs (h264/mp4 + m4a per FORMAT_EXPR) instead of a local file. Video
         # is always h264 so it's stream-copied (`venc` ignored); audio → Opus
         # like every other transcode. `audio`/`chan` don't apply (stereo source).
+        # A downloaded video takes the normal local-file path below instead
+        # (its state-dir location is handed over directly — it's not a media
+        # root, so _resolve_any wouldn't admit it).
         vid = youtube_items.parse_ref(path)
-        if vid is not None:
+        yt_local = yt_store.video_path(vid) if vid is not None else None
+        if vid is not None and yt_local is None:
             try:
                 meta = yt_store.meta(vid)
             except KeyError as exc:
@@ -1067,7 +1120,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             cmd += ["-f", "matroska", "-"]
             return await _ffmpeg_stream(cmd)
 
-        p = _resolve_any(path)
+        p = yt_local if yt_local is not None else _resolve_any(path)
         if not p.is_file():
             raise HTTPException(status_code=404, detail=f"Not found: {path}")
 
@@ -1179,7 +1232,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         for codecs iOS can't decode (XviD/MPEG-4 ASP, MPEG-2, VC1, …) — the iOS
         side of B20/B22, hardware via Quick Sync when available.
         """
-        p = _resolve_any(path)
+        # A downloaded YouTube video segments like any local file (its state-dir
+        # location is handed over directly); un-downloaded yt refs have no file
+        # to segment — the UI uses the official embed on iOS in that case.
+        yt_vid_hls = youtube_items.parse_ref(path)
+        if yt_vid_hls is not None:
+            p = yt_store.video_path(yt_vid_hls)
+            if p is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="HLS needs a downloaded video — use the official player instead.",
+                )
+        else:
+            p = _resolve_any(path)
         if not p.is_file():
             raise HTTPException(status_code=404, detail=f"Not found: {path}")
         token = _hls_token(p, venc)
@@ -1280,34 +1345,42 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         yt_vid = youtube_items.parse_ref(req.path)
         yt_meta: dict | None = None
         yt_aux: str | None = None
+        yt_streaming = False  # True when cutting from stream URLs (no local file)
         if yt_vid is not None:
             try:
                 yt_meta = yt_store.meta(yt_vid)
             except KeyError as exc:
                 raise HTTPException(status_code=404, detail=str(exc))
-            if req.split_channels:
-                raise HTTPException(
-                    status_code=400,
-                    detail="split_channels isn't available for YouTube sources (stereo audio).",
-                )
-            if req.backend == "mkvmerge":
-                raise HTTPException(
-                    status_code=400,
-                    detail="mkvmerge can't cut from a stream URL; use the ffmpeg backend.",
-                )
-            req.backend = "ffmpeg"  # auto would route lossless audio to mkvmerge
-            try:
-                video_url, audio_url = youtube_items.resolve_stream_urls(yt_meta["webpage_url"])
-            except RuntimeError as exc:
-                raise HTTPException(status_code=502, detail=str(exc))
-            if req.kind == "audio":
-                # Cut audio from the audio stream alone (or the muxed progressive).
-                video = audio_url or video_url
-            else:
-                video = video_url
-                # gif drops audio entirely; only a video cut needs the DASH pair.
-                yt_aux = audio_url if req.kind == "video" else None
             name_source = youtube_items.clip_name_source(yt_meta)
+            local = yt_store.video_path(yt_vid)
+            if local is not None:
+                # Downloaded: cut from the local file — the full pipeline applies
+                # (mkvmerge, split_channels, sub-count probes), like any library file.
+                video = local
+            else:
+                yt_streaming = True
+                if req.split_channels:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="split_channels isn't available for YouTube sources (stereo audio).",
+                    )
+                if req.backend == "mkvmerge":
+                    raise HTTPException(
+                        status_code=400,
+                        detail="mkvmerge can't cut from a stream URL; use the ffmpeg backend.",
+                    )
+                req.backend = "ffmpeg"  # auto would route lossless audio to mkvmerge
+                try:
+                    video_url, audio_url = youtube_items.resolve_stream_urls(yt_meta["webpage_url"])
+                except RuntimeError as exc:
+                    raise HTTPException(status_code=502, detail=str(exc))
+                if req.kind == "audio":
+                    # Cut audio from the audio stream alone (or the muxed progressive).
+                    video = audio_url or video_url
+                else:
+                    video = video_url
+                    # gif drops audio entirely; only a video cut needs the DASH pair.
+                    yt_aux = audio_url if req.kind == "video" else None
         elif seg is not None:
             ep = _resolve(epub_ref)
             try:
@@ -1327,8 +1400,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # up; once submitted, ownership passes to do_cut's finally (R1).
         _submitted = False
         try:
-            # URL sources (YouTube) have no local file to stat or sniff.
-            if yt_vid is None:
+            # URL sources (un-downloaded YouTube) have no local file to stat or sniff.
+            if not yt_streaming:
                 if not video.is_file():
                     raise HTTPException(status_code=404, detail=f"Not found: {req.path}")
 

@@ -128,8 +128,17 @@ video.audio-only {
   width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0;
   border-radius: 10px; margin: 0.5rem 0; background: #000;
 }
-.yt-player-row { margin: 0.2rem 0 0.4rem; font-size: 0.85rem; }
+.yt-player-row {
+  margin: 0.2rem 0 0.4rem; font-size: 0.85rem;
+  display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap;
+}
 .yt-player-row select { margin-left: 0.4rem; }
+.yt-download-btn {
+  background: none; border: 1px solid var(--badge); color: var(--fg);
+  padding: 0.25rem 0.7rem; border-radius: 8px; cursor: pointer; font-size: 0.85rem;
+}
+.yt-download-btn:hover:not(:disabled) { background: var(--hover); }
+.yt-download-btn:disabled { opacity: 0.5; cursor: default; }
 
 /* Clean title (folder name) on top, filename in smaller text beneath it. */
 #item-name { margin-bottom: 0.1rem; }

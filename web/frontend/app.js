@@ -168,7 +168,9 @@ function renderEntries(entries) {
     const intoFolder = e.is_dir || e.is_book;
     li.className = "entry " + (intoFolder ? "dir" : "video");
     const icon = e.is_dir ? "📁" : e.is_book ? "📚" : e.is_youtube ? "▶️" : e.is_audio ? "🎵" : "🎬";
-    const tag = (!intoFolder && e.has_sidecar) ? ' <span class="badge">sub</span>' : "";
+    let tag = (!intoFolder && e.has_sidecar) ? ' <span class="badge">sub</span>' : "";
+    // A locally downloaded YouTube video plays/cuts from the server's own copy.
+    if (e.is_youtube && e.downloaded) tag += ' <span class="badge" title="Downloaded to the server">💾</span>';
     li.innerHTML = `<span class="icon">${icon}</span><span class="label">${escapeHtml(e.name)}</span>${tag}`;
     li.onclick = () => (intoFolder ? browse(e.path) : openItem(e.path, e.name));
     // A YouTube item row gets a remove button (forgets the video + transcript).
@@ -265,6 +267,61 @@ $("yt-add-btn").addEventListener("click", addYouTubeUrl);
 $("yt-url").addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !$("yt-add-btn").disabled) addYouTubeUrl();
 });
+
+/** Wire the per-item Download control (in #yt-player-row). Downloading runs as
+ *  a server job; once the file exists, playback seeks natively and clips cut
+ *  from the local copy — the control then offers to remove it. */
+function wireYtDownload(path, name, info, signal) {
+  const btn = $("yt-download-btn");
+  const status = $("yt-download-status");
+  btn.hidden = false;
+  status.hidden = true;
+  btn.disabled = false;
+  const vid = path.slice("yt:".length);
+
+  if (info.downloaded) {
+    const mb = info.download_size ? ` (${(info.download_size / 1048576).toFixed(1)} MB)` : "";
+    btn.textContent = `💾 Remove download${mb}`;
+    btn.onclick = async () => {
+      btn.disabled = true;
+      try {
+        await apiFetch(`/api/youtube/${encodeURIComponent(vid)}/download`, { method: "DELETE" });
+      } catch { /* re-open shows the truth */ }
+      openItem(path, name, {});
+    };
+    return;
+  }
+
+  btn.textContent = "⬇ Download video";
+  btn.onclick = async () => {
+    btn.disabled = true;
+    status.hidden = false;
+    status.textContent = "Downloading…";
+    let job;
+    try {
+      job = await postJSON(`/api/youtube/${encodeURIComponent(vid)}/download`, {});
+    } catch (err) {
+      status.textContent = `Download failed: ${err.message}`;
+      btn.disabled = false;
+      return;
+    }
+    if (!job.job_id) { openItem(path, name, {}); return; }  // already downloaded
+    const poll = setInterval(async () => {
+      if (signal.aborted) { clearInterval(poll); return; }
+      let j;
+      try { j = await getJSON(`/api/jobs/${job.job_id}`); } catch { return; }
+      if (j.status === "done") {
+        clearInterval(poll);
+        // Reload with the local file (native seeking) unless the user navigated on.
+        if (!signal.aborted && currentItem && currentItem.path === path) openItem(path, name, {});
+      } else if (j.status === "failed") {
+        clearInterval(poll);
+        status.textContent = `Download failed: ${j.error || "see server logs"}`;
+        btn.disabled = false;
+      }
+    }, 1500);
+  };
+}
 
 // --- folder dialogue search ------------------------------------------------
 
@@ -801,6 +858,7 @@ async function openItem(path, name, opts) {
   // server transcode stream (ffmpeg reading resolved googlevideo URLs).
   const isYouTube = !!info.is_youtube;
   const useEmbed = isYouTube && ytPlayerPref() === "official";
+  const ytDownloaded = isYouTube && !!info.downloaded;
   if (isYouTube) {
     const row = $("yt-player-row");
     const sel = $("yt-player-mode");
@@ -810,13 +868,15 @@ async function openItem(path, name, opts) {
       localStorage.setItem("qcYtPlayer", sel.value);
       openItem(path, name, {});  // rewire playback with the new player
     };
+    wireYtDownload(path, name, info, signal);
   }
   // Does the primary video codec need re-encoding to H.264 for this (desktop)
   // browser? (HEVC on Firefox, MPEG-4 ASP/XviD, MPEG-2, VC1, …) — B20/B22.
   const videoReencode = !IS_IOS && primaryVideo && needsVideoReencode(primaryVideo.codec);
   const transcodeUrl = "/api/media/transcode" + qp(path) + (videoReencode ? "&venc=1" : "");
   const needsTranscode = !IS_IOS && !useEmbed &&
-    (isYouTube || (primaryAudio && !BROWSER_AUDIO.has(primaryAudio.codec)) || videoReencode);
+    ((isYouTube && !ytDownloaded) ||
+     (primaryAudio && !BROWSER_AUDIO.has(primaryAudio.codec)) || videoReencode);
   // Show/refresh the video-re-encode indicator (loading/seeking may be slower).
   setVideoReencodeNote(videoReencode || iosVideoReencode);
 
@@ -1051,14 +1111,15 @@ async function openItem(path, name, opts) {
     seekDurLabel.textContent = formatTime(probedDuration);
     seekSlider.max = 100;
     loadTranscode(seekTarget || 0);
-  } else if (IS_IOS && isYouTube) {
-    // The user explicitly chose the server stream on iOS — that path can't
-    // play there (no Matroska/Opus). The official player (the default) can.
+  } else if (IS_IOS && isYouTube && !ytDownloaded) {
+    // The user explicitly chose the server stream on iOS — without a local
+    // download that path can't play there (no Matroska/Opus). The official
+    // player (the default) can; a downloaded video plays natively via HLS.
     seekBar.hidden = true;
     seekHint.hidden = true;
     transcodeOffset = 0;
     $("preview-note").textContent =
-      "The server stream can't play on iOS — switch Player to “Official YouTube”.";
+      "The server stream can't play on iOS — switch Player to “Official YouTube” or download the video.";
   } else {
     // Native playback: raw source on desktop, HLS on iOS (Safari seeks both
     // natively, so the custom transcode seek bar stays hidden).

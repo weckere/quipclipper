@@ -283,6 +283,14 @@ From there it works like any library item:
   `<Video Title>/<timestamp>_<cue>_<Channel>…` and are named by the same
   template tokens as everything else. (Channel-split export and the mkvmerge
   backend don't apply to stream sources.)
+- **Optional full download** — a **⬇ Download video** button on each item
+  fetches the whole video to the server once (browser-native mp4, stored next
+  to its transcript in the state dir). Everything then transparently prefers
+  the local copy: playback seeks natively (no transcode proxy), keyframe
+  probes are exact, and clips cut from the file with the **full** pipeline
+  (channel split and mkvmerge included) — no YouTube round-trips at all.
+  A 💾 badge marks downloaded videos; **Remove download** deletes the file
+  and keeps the transcript.
 
 Requires `yt-dlp` on the backend's PATH — the Docker image installs it via pip
 (rebuild the image to pick up a current release when YouTube changes something),

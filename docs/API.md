@@ -79,7 +79,9 @@ FastAPI publishes the live schema, served behind the same gate:
 | Method | Path | Purpose |
 |---|---|---|
 | POST | `/api/youtube` | Add a video: `{"url": "<watch URL>"}` → yt-dlp fetches subtitles + metadata (no video download). Idempotent. Returns `{entry, meta}`. 400 = not a YouTube URL, 502 = yt-dlp failure. |
-| DELETE | `/api/youtube/{video_id}` | Remove an added video (metadata + stored transcript). |
+| DELETE | `/api/youtube/{video_id}` | Remove an added video (metadata + transcript + any download). |
+| POST | `/api/youtube/{video_id}/download` | Download the full video to the server (async — poll the returned `job_id` like a clip job; `job_id: null` = already downloaded). Once present, playback/keyframe/clipping all use the local file, and the stream-source restrictions below no longer apply. |
+| DELETE | `/api/youtube/{video_id}/download` | Delete the local video file; the transcript and metadata stay. |
 
 Added videos are addressed by the **virtual ref `yt:<video-id>`** everywhere a
 `path` is accepted: `/api/items`, `/api/items/subtitles` (+`/reindex`, which

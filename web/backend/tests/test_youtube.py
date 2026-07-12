@@ -53,9 +53,11 @@ def _outdir(args: list[str]) -> Path:
     return Path(tpl).parent
 
 
-def fake_ytdlp(*, subs_on=("--write-subs",), vtt=VTT, info=None, urls=None):
-    """A _run_ytdlp stand-in. Writes canned info/subs for fetches; returns
-    canned -g output for stream-URL resolution. Records calls."""
+def fake_ytdlp(*, subs_on=("--write-subs",), vtt=VTT, info=None, urls=None,
+               video_bytes=b"fake-mp4-bytes"):
+    """A _run_ytdlp stand-in. Writes canned info/subs for fetches, a canned
+    video file for downloads, and returns canned -g output for stream-URL
+    resolution. Records calls."""
     calls: list[list[str]] = []
 
     def run(args, timeout=120):
@@ -63,6 +65,10 @@ def fake_ytdlp(*, subs_on=("--write-subs",), vtt=VTT, info=None, urls=None):
         if "-g" in args:
             return "\n".join(urls or ["https://v.example/stream"]) + "\n"
         out = _outdir(args)
+        if "--merge-output-format" in args:  # full-video download
+            tpl = Path(args[args.index("-o") + 1])
+            tpl.with_name(tpl.name.replace("%(ext)s", "mp4")).write_bytes(video_bytes)
+            return ""
         if "--write-info-json" in args:
             (out / f"{VID}.info.json").write_text(
                 json.dumps(info or INFO), encoding="utf-8")
@@ -316,6 +322,85 @@ def test_bookmarks_accept_yt_refs(tmp_path, monkeypatch):
     assert client.post("/api/bookmarks", json={
         "path": "yt:aaaaaaaaaaa", "label": "x", "start": 0, "end": 1,
     }).status_code == 404
+
+
+# --- full-video download ------------------------------------------------------------
+
+def _download(client):
+    """POST the download and wait for its job (the pool runs it async)."""
+    resp = client.post(f"/api/youtube/{VID}/download")
+    assert resp.status_code == 200, resp.text
+    job_id = resp.json()["job_id"]
+    if job_id is None:
+        return  # already downloaded
+    assert _wait(client, job_id)["status"] == "done"
+
+
+def test_download_creates_local_file_and_flags(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    client.post("/api/youtube", json={"url": WATCH})
+    _download(client)
+    vp = tmp_path / "state" / "youtube" / VID / "video.mp4"
+    assert vp.read_bytes() == b"fake-mp4-bytes"
+    info = client.get("/api/items", params={"path": REF}).json()
+    assert info["downloaded"] is True
+    entry = client.get("/api/library/browse", params={"path": "yt:"}).json()["entries"][0]
+    assert entry["downloaded"] is True
+    # Idempotent: a second POST short-circuits without a job.
+    again = client.post(f"/api/youtube/{VID}/download").json()
+    assert again["job_id"] is None and again["status"] == "done"
+
+
+def test_downloaded_media_served_raw_and_keyframe_probed(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    client.post("/api/youtube", json={"url": WATCH})
+    # Before download: raw media is a 400.
+    assert client.get("/api/media", params={"path": REF}).status_code == 400
+    _download(client)
+    resp = client.get("/api/media", params={"path": REF})
+    assert resp.status_code == 200
+    assert resp.content == b"fake-mp4-bytes"
+    assert resp.headers["content-type"] == "video/mp4"
+    # Keyframe: no longer the echo — the local file is probed (fake bytes make
+    # ffprobe fail, and probe_keyframe_before falls back to the target).
+    kf = client.get("/api/media/keyframe", params={"path": REF, "time": 3.0}).json()
+    assert kf["requested"] == 3.0
+
+
+def test_downloaded_clip_uses_local_file_not_urls(tmp_path, monkeypatch):
+    client, cap = _clip_setup(tmp_path, monkeypatch, ["https://v.example/video", "https://a.example/audio"])
+    _download(client)
+    resp = client.post("/api/clip", json={
+        "path": REF, "start": 1.0, "end": 2.0, "kind": "video", "lossless": False,
+        "backend": "ffmpeg",
+    })
+    assert resp.status_code == 200, resp.text
+    assert _wait(client, resp.json()["job_id"])["status"] == "done"
+    assert str(cap["source"]).endswith("video.mp4")  # the local file
+    assert cap["aux_audio"] is None
+    # And split_channels is no longer rejected (local file = full pipeline).
+    resp2 = client.post("/api/clip", json={
+        "path": REF, "start": 1.0, "end": 2.0, "kind": "audio", "split_channels": True,
+    })
+    assert resp2.status_code == 200, resp2.text
+
+
+def test_remove_download_keeps_transcript(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    client.post("/api/youtube", json={"url": WATCH})
+    _download(client)
+    assert client.delete(f"/api/youtube/{VID}/download").status_code == 200
+    assert not (tmp_path / "state" / "youtube" / VID / "video.mp4").exists()
+    assert (tmp_path / "state" / "youtube" / VID / "subs.vtt").exists()
+    info = client.get("/api/items", params={"path": REF}).json()
+    assert info["downloaded"] is False
+    # Nothing to remove now.
+    assert client.delete(f"/api/youtube/{VID}/download").status_code == 404
+
+
+def test_download_unknown_video_404(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    assert client.post("/api/youtube/aaaaaaaaaaa/download").status_code == 404
 
 
 # --- clip branch --------------------------------------------------------------------

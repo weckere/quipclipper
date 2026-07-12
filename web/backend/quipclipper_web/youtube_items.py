@@ -52,7 +52,8 @@ FORMAT_EXPR = (
     "/b[protocol^=http]"
 )
 
-_YTDLP_TIMEOUT = 120  # seconds; metadata/sub fetches finish in a few
+_YTDLP_TIMEOUT = 120       # seconds; metadata/sub fetches finish in a few
+_DOWNLOAD_TIMEOUT = 3600   # a full video download can legitimately take a while
 
 
 def parse_ref(path: str) -> str | None:
@@ -140,6 +141,7 @@ def entry_dict(meta: dict) -> dict:
         "is_audio": False,
         "is_book": False,
         "is_youtube": True,
+        "downloaded": bool(meta.get("downloaded")),
     }
 
 
@@ -178,13 +180,15 @@ def item_info(meta: dict) -> dict:
     return {
         "name": meta.get("title") or meta["id"],
         "path": make_ref(meta["id"]),
-        "size": None,
+        "size": meta.get("download_size"),
         "duration": float(meta.get("duration") or 0.0),
         "streams": [video_stream, audio_stream],
         "subtitle_tracks": [],
         "best_track": None,
         "has_sidecar": True,
         "is_youtube": True,
+        "downloaded": bool(meta.get("downloaded")),
+        "download_size": meta.get("download_size"),
         "channel": meta.get("channel"),
         "webpage_url": meta.get("webpage_url"),
     }
@@ -352,18 +356,69 @@ class YouTubeStore:
             if not (d.is_dir() and info.is_file()):
                 continue
             with contextlib.suppress(OSError, json.JSONDecodeError):
-                out.append(json.loads(info.read_text(encoding="utf-8")))
+                out.append(self._with_download(json.loads(info.read_text(encoding="utf-8"))))
         out.sort(key=lambda m: m.get("added_at") or 0, reverse=True)
         return out
 
     def meta(self, video_id: str) -> dict:
         info = self._item_dir(video_id) / "info.json"
         try:
-            return json.loads(info.read_text(encoding="utf-8"))
+            meta = json.loads(info.read_text(encoding="utf-8"))
         except OSError as exc:
             raise KeyError(f"Unknown YouTube video: {video_id}") from exc
         except json.JSONDecodeError as exc:
             raise RuntimeError(f"Corrupt metadata for {video_id}: {exc}") from exc
+        return self._with_download(meta)
+
+    def _with_download(self, meta: dict) -> dict:
+        """Annotate a meta dict with the local download's presence/size. The file
+        on disk is the source of truth — nothing is recorded in info.json, so a
+        hand-deleted file simply reads as not-downloaded."""
+        vp = self._dir / meta["id"] / "video.mp4"
+        try:
+            meta["download_size"] = vp.stat().st_size
+            meta["downloaded"] = True
+        except OSError:
+            meta["downloaded"] = False
+            meta["download_size"] = None
+        return meta
+
+    def video_path(self, video_id: str) -> Path | None:
+        """The locally downloaded video file, if present."""
+        vp = self._item_dir(video_id) / "video.mp4"
+        return vp if vp.is_file() else None
+
+    def download(self, video_id: str) -> Path:
+        """Download the full video (browser-native h264/aac mp4) next to its
+        transcript. Idempotent: an existing download is returned as-is."""
+        meta = self.meta(video_id)  # KeyError for unknown ids
+        existing = self.video_path(video_id)
+        if existing is not None:
+            return existing
+        item_dir = self._item_dir(video_id)
+        tmp_tpl = item_dir / "video-dl.%(ext)s"
+        _run_ytdlp([
+            "--no-playlist", "-f", FORMAT_EXPR, "--merge-output-format", "mp4",
+            "-o", str(tmp_tpl), "--", meta["webpage_url"],
+        ], timeout=_DOWNLOAD_TIMEOUT)
+        produced = sorted(item_dir.glob("video-dl.*"))
+        if not produced:
+            raise RuntimeError("yt-dlp reported success but produced no video file.")
+        # Atomic-ish move to the canonical name; readers only ever see video.mp4
+        # once it's complete.
+        final = item_dir / "video.mp4"
+        produced[0].replace(final)
+        for leftover in produced[1:]:
+            leftover.unlink(missing_ok=True)
+        return final
+
+    def remove_download(self, video_id: str) -> bool:
+        """Delete the local video file (the transcript/metadata stay)."""
+        vp = self.video_path(video_id)
+        if vp is None:
+            return False
+        vp.unlink(missing_ok=True)
+        return True
 
     def cues(self, video_id: str) -> list[Cue]:
         """The stored transcript as engine Cues; [] when the video has none.
