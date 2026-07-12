@@ -814,7 +814,7 @@ def test_jobs_prune_old_finished() -> None:
     from quipclipper_web.jobs import JobRegistry
 
     reg = JobRegistry(max_workers=1)
-    old = reg.submit(lambda: [], label="old")
+    old = reg.submit(lambda _job: [], label="old")
     # Wait for it to finish, then age it past the cutoff.
     for _ in range(50):
         if old.finished is not None:
@@ -823,7 +823,7 @@ def test_jobs_prune_old_finished() -> None:
     assert old.finished is not None
     old.finished -= JobRegistry.MAX_FINISHED_AGE + 1
 
-    fresh = reg.submit(lambda: [], label="fresh")
+    fresh = reg.submit(lambda _job: [], label="fresh")
     assert reg.get(old.id) is None
     assert reg.get(fresh.id) is not None
     reg.shutdown()
@@ -839,13 +839,13 @@ def test_job_cancel_queued_and_prune_finished() -> None:
     reg = JobRegistry(max_workers=1)
     # Occupy the single worker so the next job stays queued.
     gate = threading.Event()
-    busy = reg.submit(lambda: (gate.wait(5), [])[1], label="busy")
+    busy = reg.submit(lambda _job: (gate.wait(5), [])[1], label="busy")
     for _ in range(50):
         if busy.status == Status.running:
             break
         time_mod.sleep(0.02)
 
-    queued = reg.submit(lambda: [], label="queued")
+    queued = reg.submit(lambda _job: [], label="queued")
     assert queued.status == Status.queued
     assert reg.cancel(queued.id) is True
     assert reg.get(queued.id).status == Status.cancelled

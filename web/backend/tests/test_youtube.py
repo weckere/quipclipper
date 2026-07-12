@@ -65,15 +65,21 @@ def fake_ytdlp(*, subs_on=("--write-subs",), vtt=VTT, info=None, urls=None,
         if "-g" in args:
             return "\n".join(urls or ["https://v.example/stream"]) + "\n"
         out = _outdir(args)
+        # The id yt-dlp would name files by, derived from the request URL (last
+        # arg after `--`), so backfilling files with different ids works.
+        url = args[-1]
+        vid = url.split("v=")[-1] if "v=" in url else VID
         if "--merge-output-format" in args:  # full-video download
             tpl = Path(args[args.index("-o") + 1])
             tpl.with_name(tpl.name.replace("%(ext)s", "mp4")).write_bytes(video_bytes)
             return ""
         if "--write-info-json" in args:
-            (out / f"{VID}.info.json").write_text(
-                json.dumps(info or INFO), encoding="utf-8")
+            meta = dict(info or INFO)
+            if info is None:
+                meta["id"] = vid
+            (out / f"{vid}.info.json").write_text(json.dumps(meta), encoding="utf-8")
         if any(flag in args for flag in subs_on):
-            (out / f"{VID}.en.vtt").write_text(vtt, encoding="utf-8")
+            (out / f"{vid}.en.vtt").write_text(vtt, encoding="utf-8")
         return ""
 
     run.calls = calls
@@ -148,6 +154,55 @@ def test_extract_video_id_rejects_junk():
         "notaurl",
     ):
         assert extract_video_id(url) is None, url
+
+
+# --- subtitle backfill: id detection + fetch (library files) --------------------
+
+from quipclipper_web.youtube_items import fetch_subs_for_file, youtube_id_for_file
+
+AAA = "AAAAAAAAAAA"  # a second valid 11-char id
+
+
+def test_youtube_id_for_file_from_brackets(tmp_path):
+    assert youtube_id_for_file(tmp_path / f"s01e02 the title [{VID}].mp4") == VID
+    # The id is the LAST bracketed token before the extension.
+    assert youtube_id_for_file(tmp_path / f"a [{AAA}] b [{VID}].mp4") == VID
+    assert youtube_id_for_file(tmp_path / "no id at all.mp4") is None
+    assert youtube_id_for_file(tmp_path / "short [abc].mp4") is None  # not 11 chars
+
+
+def test_youtube_id_for_file_from_info_json(tmp_path):
+    v = tmp_path / "clip.mp4"
+    (tmp_path / "clip.info.json").write_text(json.dumps({"id": VID}), encoding="utf-8")
+    assert youtube_id_for_file(v) == VID
+
+
+def test_fetch_subs_for_file_writes_sidecar(tmp_path, monkeypatch):
+    monkeypatch.setattr(youtube_items, "_run_ytdlp", fake_ytdlp())
+    v = tmp_path / f"My Vid [{VID}].mp4"; v.write_bytes(b"")
+    res = fetch_subs_for_file(v, ["en"])
+    assert res["status"] == "ok" and res["id"] == VID
+    sidecar = tmp_path / f"My Vid [{VID}].vtt"
+    assert sidecar.is_file() and "never gonna" in sidecar.read_text()
+
+
+def test_fetch_subs_for_file_skips_existing(tmp_path, monkeypatch):
+    monkeypatch.setattr(youtube_items, "_run_ytdlp", fake_ytdlp())
+    v = tmp_path / f"V [{VID}].mp4"; v.write_bytes(b"")
+    (tmp_path / f"V [{VID}].vtt").write_text("WEBVTT\n", encoding="utf-8")
+    assert fetch_subs_for_file(v, ["en"])["status"] == "skipped"
+
+
+def test_fetch_subs_for_file_no_id_raises(tmp_path):
+    with pytest.raises(ValueError):
+        fetch_subs_for_file(tmp_path / "no-id.mp4", ["en"])
+
+
+def test_fetch_subs_for_file_no_captions(tmp_path, monkeypatch):
+    monkeypatch.setattr(youtube_items, "_run_ytdlp", fake_ytdlp(subs_on=()))
+    v = tmp_path / f"V [{VID}].mp4"; v.write_bytes(b"")
+    assert fetch_subs_for_file(v, ["en"])["status"] == "none"
+    assert not (tmp_path / f"V [{VID}].vtt").exists()
 
 
 # --- dedupe_auto_cues ------------------------------------------------------------
@@ -409,6 +464,65 @@ def test_reindex_refetches_transcript(tmp_path, monkeypatch):
     resp = client.post("/api/items/subtitles/reindex", params={"path": REF})
     assert resp.status_code == 200
     assert resp.json()["cues"] == 2
+
+
+# --- subtitle backfill endpoints ------------------------------------------------
+
+def test_fetch_subs_file_endpoint_then_searchable(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    v = tmp_path / "media" / f"My Vid [{VID}].mp4"; v.write_bytes(b"")
+    job = client.post("/api/media/fetch-subs", params={"path": str(v)}).json()
+    assert job["job_id"]
+    assert _wait(client, job["job_id"])["status"] == "done"
+    assert (tmp_path / "media" / f"My Vid [{VID}].vtt").is_file()
+    # Now dialogue search on the LIBRARY file works via the fresh sidecar.
+    hits = client.get("/api/search", params={"path": str(v), "query": "give you up"}).json()
+    assert hits["count"] >= 1
+
+
+def test_items_flags_backfillable_youtube_file(tmp_path, monkeypatch):
+    """/api/items surfaces youtube_id + backfill_writable for a library video
+    with a YT id and no subtitles, so the UI can offer 'Fetch subtitles'."""
+    import quipclipper_web.media as media_mod
+    monkeypatch.setattr(media_mod, "item_info", lambda p, langs=None: {
+        "name": p.name, "path": str(p), "size": 0, "duration": 5.0,
+        "streams": [{"kind": "video", "index": 0}], "subtitle_tracks": [],
+        "best_track": None, "has_sidecar": False,
+    })
+    client = _client(tmp_path, monkeypatch)
+    v = tmp_path / "media" / f"Vid [{VID}].mp4"; v.write_bytes(b"")
+    info = client.get("/api/items", params={"path": str(v)}).json()
+    assert info["youtube_id"] == VID and info["backfill_writable"] is True
+
+
+def test_fetch_subs_file_no_id_400(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    v = tmp_path / "media" / "no-id.mp4"; v.write_bytes(b"")
+    assert client.post("/api/media/fetch-subs", params={"path": str(v)}).status_code == 400
+
+
+def test_fetch_subs_folder_endpoint(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    d = tmp_path / "media" / "chan"; d.mkdir()
+    (d / f"a [{VID}].mp4").write_bytes(b"")
+    (d / f"b [{AAA}].mp4").write_bytes(b"")   # a different id
+    (d / "no-id.mp4").write_bytes(b"")        # not a candidate
+    (d / f"has-subs [{'B' * 11}].mp4").write_bytes(b"")
+    (d / f"has-subs [{'B' * 11}].vtt").write_text("WEBVTT\n")  # already has subs → skipped
+
+    resp = client.post("/api/search/folder/fetch-subs", params={"path": str(d)}).json()
+    assert resp["candidates"] == 2  # only the two id'd, subtitle-less files
+    assert _wait(client, resp["job_id"])["status"] == "done"
+    assert (d / f"a [{VID}].vtt").is_file()
+    assert (d / f"b [{AAA}].vtt").is_file()
+
+
+def test_fetch_subs_folder_no_candidates(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    d = tmp_path / "media" / "empty"; d.mkdir()
+    (d / "plain.mp4").write_bytes(b"")  # no YouTube id
+    resp = client.post("/api/search/folder/fetch-subs", params={"path": str(d)}).json()
+    assert resp["candidates"] == 0 and resp["job_id"] is None
 
 
 def test_media_endpoints_for_yt(tmp_path, monkeypatch):

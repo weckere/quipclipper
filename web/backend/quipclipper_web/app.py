@@ -527,7 +527,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return {"job_id": running.id, "status": running.status.value}
         url, langs = req.url, settings.subtitle_langs
 
-        def _do_add() -> list:
+        def _do_add(_job) -> list:
             yt_store.add(url, langs)  # RuntimeError → the job fails with its message
             return []
 
@@ -562,7 +562,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if running is not None and running.status.value in ("queued", "running"):
             return {"job_id": running.id, "status": running.status.value}
         job = dl_jobs.submit(
-            lambda: [yt_store.download(video_id)],
+            lambda _job: [yt_store.download(video_id)],
             label=f"download: {meta.get('title') or video_id}",
         )
         active_downloads[video_id] = job.id
@@ -620,9 +620,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # for which track auto-selects (B14); blank uses the server default.
         pref = [s.strip() for s in langs.split(",") if s.strip()] if langs else None
         try:
-            return media.item_info(p, langs=pref or settings.subtitle_langs)
+            info = media.item_info(p, langs=pref or settings.subtitle_langs)
         except RuntimeError as exc:  # ffprobe failure
             raise HTTPException(status_code=500, detail=str(exc))
+        # A library video with a detectable YouTube id but no subtitles can have
+        # its transcript backfilled from YouTube (writable roots only). The UI
+        # shows the "Fetch subtitles" action off this hint.
+        if not info.get("has_sidecar") and not info.get("subtitle_tracks"):
+            yid = youtube_items.youtube_id_for_file(p)
+            if yid is not None:
+                info["youtube_id"] = yid
+                info["backfill_writable"] = os.access(p.parent, os.W_OK)
+        return info
 
     @app.get("/api/items/subtitles")
     def subtitles(
@@ -1021,6 +1030,78 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except (ValueError, FileNotFoundError, RuntimeError) as exc:
             raise HTTPException(status_code=409, detail=str(exc))
         return {"cleared": cleared, "cues": len(cues)}
+
+    # --- subtitle backfill from YouTube ----------------------------------------
+    # For a *library* video that came from YouTube (a Pinchflat/yt-dlp download,
+    # with the id in its name) but has no subtitles, fetch the transcript from
+    # YouTube and write a .vtt sidecar next to it — making it dialogue-searchable.
+    # Requires the folder to be writable (writableMediaRoots). yt-dlp is slow, so
+    # these run as background jobs.
+
+    @app.post("/api/media/fetch-subs")
+    def fetch_subs_file(path: str = Query(...)) -> dict:
+        """Backfill one library video's subtitles from YouTube (async job)."""
+        p = _resolve(path)
+        if not p.is_file():
+            raise HTTPException(status_code=404, detail=f"Not found: {path}")
+        if youtube_items.youtube_id_for_file(p) is None:
+            raise HTTPException(
+                status_code=400, detail="No YouTube id in the file name or a sibling .info.json.")
+        if not os.access(p.parent, os.W_OK):
+            raise HTTPException(
+                status_code=400,
+                detail="That folder is read-only — add it to writableMediaRoots to backfill.")
+
+        def _do(job) -> list:
+            res = youtube_items.fetch_subs_for_file(p, settings.subtitle_langs, force=True)
+            if res["status"] == "ok":
+                sub_cache.clear(p)  # drop any "no subs" cache so the sidecar is picked up
+            job.progress = res["status"]
+            return []
+
+        job = yt_jobs.submit(_do, label=f"subtitles: {p.name}")
+        return {"job_id": job.id, "status": job.status.value}
+
+    @app.post("/api/search/folder/fetch-subs")
+    def fetch_subs_folder(path: str = Query(...)) -> dict:
+        """Backfill subtitles for every YouTube-sourced video in a folder that
+        lacks them (async job with progress; cancellable). Skips files that
+        already have subtitles, so it's safe to re-run."""
+        folder = _resolve(path)
+        if not folder.is_dir():
+            raise HTTPException(status_code=400, detail=f"Not a directory: {path}")
+        if not os.access(folder, os.W_OK):
+            raise HTTPException(
+                status_code=400,
+                detail="That folder is read-only — add it to writableMediaRoots to backfill.")
+        videos, _ = _folder_videos(path)
+        candidates = [
+            v for v in videos
+            if youtube_items.youtube_id_for_file(v) is not None and find_sidecar(v) is None
+        ]
+        if not candidates:
+            return {"job_id": None, "status": "done", "candidates": 0}
+
+        def _do(job) -> list:
+            fetched = failed = 0
+            total = len(candidates)
+            for i, v in enumerate(candidates):
+                if job.cancel_requested:
+                    break
+                job.progress = f"{i}/{total} · {fetched} fetched"
+                try:
+                    res = youtube_items.fetch_subs_for_file(v, settings.subtitle_langs)
+                    if res["status"] == "ok":
+                        fetched += 1
+                        sub_cache.clear(v)
+                except Exception:  # one bad video shouldn't abort the run
+                    failed += 1
+            done = "cancelled" if job.cancel_requested else "done"
+            job.progress = f"{done} · {fetched} fetched, {failed} failed of {total}"
+            return []
+
+        job = yt_jobs.submit(_do, label=f"backfill subtitles: {folder.name}")
+        return {"job_id": job.id, "status": job.status.value, "candidates": len(candidates)}
 
     # --- media streaming -------------------------------------------------------
 
@@ -1642,7 +1723,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # gif) hit the encoder. cut_clip falls back to libx264 if it fails.
             _hw_encode = (not req.lossless) and req.kind == "video" and _vaapi_h264_available()
 
-            def do_cut() -> list[Path]:
+            def do_cut(_job) -> list[Path]:
                 try:
                     if _split_channels:
                         return split_audio_channels(
@@ -1719,21 +1800,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.delete("/api/jobs/{job_id}")
     def cancel_job(job_id: str) -> dict:
-        """Cancel a not-yet-started job, or prune a finished one (R2).
+        """Cancel a job, or prune a finished one (R2).
 
         A queued job is pulled from the pool and marked cancelled; a finished job
-        (done/failed/cancelled) is dropped from the registry. A *running* job
-        can't be interrupted from here — its ffmpeg subprocess carries its own
-        timeout — so cancelling one returns 409.
+        (done/failed/cancelled) is dropped from the registry. A *running* job that
+        polls for cancellation (the folder subtitle backfill) is asked to stop at
+        its next checkpoint; a running clip job (its ffmpeg has its own timeout)
+        can't be interrupted, so that returns 409.
         """
         job, registry = _find_job(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="Job not found.")
-        if not registry.cancel(job_id):
-            raise HTTPException(
-                status_code=409, detail="Job is running and can't be cancelled."
-            )
-        return {"cancelled": job_id}
+        if registry.cancel(job_id):
+            return {"cancelled": job_id}
+        # Running: cooperative cancel for jobs that support it.
+        if job.status.value == "running":
+            registry.request_cancel(job_id)
+            return {"cancelling": job_id}
+        raise HTTPException(status_code=409, detail="Job can't be cancelled.")
 
     @app.get("/api/jobs/{job_id}/download/{filename}")
     def download_clip(job_id: str, filename: str) -> FileResponse:

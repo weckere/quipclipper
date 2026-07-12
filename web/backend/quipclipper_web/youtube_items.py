@@ -22,12 +22,13 @@ import re
 import shlex
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
 from pathlib import Path
 
 from quipclipper.models import Cue
-from quipclipper.subtitles import load_subtitles
+from quipclipper.subtitles import find_sidecar, load_subtitles
 
 # The pseudo-folder ref, and the prefix of every item ref ("yt:<video-id>").
 # A colon never appears in an absolute POSIX path under a media root, so these
@@ -236,6 +237,79 @@ def item_info(meta: dict) -> dict:
     }
 
 
+def _fetch_vtt(work_dir: Path, video_id: str, url: str,
+               langs: list[str]) -> tuple[Path | None, str | None, str | None]:
+    """yt-dlp-fetch a subtitle .vtt into *work_dir* — manual subs first, auto
+    captions as fallback. Returns ``(chosen_vtt_path, lang, source)`` (the file
+    is still named ``<id>.<lang>.vtt`` in work_dir — the caller moves it to its
+    final location), or ``(None, None, None)`` if the video has no captions."""
+    lang_spec = ",".join(_yt_lang_tags(langs)) if langs else "en"
+    prefs = [t.lower() for t in _yt_lang_tags(langs)]
+    for flag, source in (("--write-subs", "manual"), ("--write-auto-subs", "auto")):
+        _run_ytdlp([
+            "--no-playlist", "--skip-download", flag,
+            "--sub-langs", lang_spec, "--sub-format", "vtt/best",
+            "-o", str(work_dir / "%(id)s"), "--", url,
+        ])
+        vtts = sorted(work_dir.glob(f"{video_id}.*.vtt"))
+        if vtts:
+            def rank(p: Path) -> int:
+                tag = p.name[len(video_id) + 1:-len(".vtt")].lower()
+                for i, lang in enumerate(prefs):
+                    if tag == lang or tag.startswith(lang + "-"):
+                        return i
+                return len(prefs)
+            vtts.sort(key=rank)
+            chosen = vtts[0]
+            lang_tag = chosen.name[len(video_id) + 1:-len(".vtt")]
+            for extra in vtts[1:]:
+                extra.unlink(missing_ok=True)
+            return chosen, lang_tag, source
+    return None, None, None
+
+
+def youtube_id_for_file(video_path: Path) -> str | None:
+    """The YouTube video id for a *library* file, if detectable — from a
+    ``[<id>]`` in the name (the Pinchflat/yt-dlp convention) or a sibling
+    ``<stem>.info.json``. None when it isn't a recognisable YouTube download."""
+    brackets = re.findall(r"\[([A-Za-z0-9_-]{11})\]", video_path.stem)
+    if brackets:
+        return brackets[-1]  # the id is the last bracketed token before the ext
+    info = video_path.with_name(video_path.stem + ".info.json")
+    with contextlib.suppress(OSError, json.JSONDecodeError):
+        vid = json.loads(info.read_text(encoding="utf-8")).get("id")
+        if isinstance(vid, str) and _ID_RE.match(vid):
+            return vid
+    return None
+
+
+def fetch_subs_for_file(video_path: Path, langs: list[str], force: bool = False) -> dict:
+    """Backfill subtitles for a *library* video from YouTube: detect its id,
+    fetch a transcript, and write a ``.vtt`` sidecar next to it so it becomes
+    dialogue-searchable. Returns ``{status: skipped|none|ok, ...}``.
+
+    - ``skipped`` — it already has a sidecar (pass ``force`` to refetch).
+    - ``none`` — the video has no captions on YouTube.
+    Raises ValueError (no id) / PermissionError (read-only folder) / RuntimeError
+    (yt-dlp failure)."""
+    vid = youtube_id_for_file(video_path)
+    if vid is None:
+        raise ValueError("No YouTube id in the file name or a sibling .info.json.")
+    if not force and find_sidecar(video_path) is not None:
+        return {"status": "skipped", "id": vid}
+    if not os.access(video_path.parent, os.W_OK):
+        raise PermissionError(
+            "That folder is read-only — add it to writableMediaRoots to backfill subtitles.")
+    url = f"https://www.youtube.com/watch?v={vid}"
+    with tempfile.TemporaryDirectory() as td:
+        chosen, lang, source = _fetch_vtt(Path(td), vid, url, langs)
+        if chosen is None:
+            return {"status": "none", "id": vid}
+        sidecar = video_path.with_suffix(".vtt")  # <stem>.vtt — find_sidecar matches
+        shutil.move(str(chosen), str(sidecar))
+    return {"status": "ok", "id": vid, "lang": lang, "source": source, "sidecar": sidecar.name}
+
+
 def _fs_safe(name: str) -> str:
     """A path-component-safe rendition of a title/channel for the naming template."""
     return re.sub(r"[/\\\0]", "_", name).strip() or "YouTube"
@@ -337,33 +411,10 @@ class YouTubeStore:
         has no captions at all. An existing ``subs.vtt`` is only replaced when a
         fresh one actually lands, so a failed or caption-less refetch can't
         destroy a stored transcript."""
-        lang_spec = ",".join(_yt_lang_tags(langs)) if langs else "en"
-        for flag, source in (("--write-subs", "manual"), ("--write-auto-subs", "auto")):
-            _run_ytdlp([
-                "--no-playlist", "--skip-download", flag,
-                "--sub-langs", lang_spec, "--sub-format", "vtt/best",
-                "-o", str(item_dir / "%(id)s"), "--", url,
-            ])
-            vtts = sorted(item_dir.glob(f"{video_id}.*.vtt"))
-            if vtts:
-                # Prefer the configured language order (normalized like the
-                # fetch itself), then whatever came first.
-                prefs = [t.lower() for t in _yt_lang_tags(langs)]
-
-                def rank(p: Path) -> int:
-                    tag = p.name[len(video_id) + 1:-len(".vtt")].lower()
-                    for i, lang in enumerate(prefs):
-                        if tag == lang or tag.startswith(lang + "-"):
-                            return i
-                    return len(prefs)
-                vtts.sort(key=rank)
-                chosen = vtts[0]
-                lang_tag = chosen.name[len(video_id) + 1:-len(".vtt")]
-                chosen.replace(item_dir / "subs.vtt")
-                for extra in vtts[1:]:
-                    extra.unlink(missing_ok=True)
-                return lang_tag, source
-        return None, None
+        chosen, lang, source = _fetch_vtt(item_dir, video_id, url, langs)
+        if chosen is not None:
+            chosen.replace(item_dir / "subs.vtt")  # only replace on a fresh landing
+        return lang, source
 
     # -- public API -------------------------------------------------------------
 

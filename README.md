@@ -303,6 +303,28 @@ From there it works like any library item:
   sidecar — a browsable, dialogue-searchable library item, visible to Jellyfin
   and Samba too.
 
+### Backfilling subtitles for existing videos
+
+If your library already holds YouTube-sourced videos with **no subtitles** — a
+Pinchflat/yt-dlp archive that only saved `.info.json`, say — quipclipper can
+fetch their transcripts on demand so they become dialogue-searchable and
+clippable like anything else. It recognises a video's YouTube id from the
+`[<id>]` in its filename or a sibling `.info.json`, then downloads a `.vtt`
+sidecar next to it. This is **opt-in per video or per folder** — nothing is
+fetched automatically across your library:
+
+- **One video** — open it; if it's YouTube-sourced and has no subtitles, a
+  **⬇ Fetch subtitles from YouTube** link appears in the stream selector.
+- **A whole folder** — **⬇ Fetch missing YouTube subtitles** in the folder
+  toolbar backfills every id'd, subtitle-less video in that folder as a
+  background job (with progress and a Cancel button), skipping any that already
+  have subtitles, so it's safe to re-run.
+
+Backfill writes sidecars *next to the videos*, so the folder must be
+writable by the app — a `writableMediaRoots` entry (NixOS) or a read-write
+mount (Docker). Read-only roots show a clear "add it to writableMediaRoots"
+message instead.
+
 Requires `yt-dlp` on the backend's PATH — the Docker image installs it via pip
 (rebuild the image to pick up a current release when YouTube changes something),
 and the Nix package wraps it in. `/api/health` reports whether it's present.

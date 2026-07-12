@@ -73,6 +73,12 @@ FastAPI publishes the live schema, served behind the same gate:
 | GET | `/api/items?path=&langs=` | Probe one media item: streams, duration, subtitle tracks. |
 | GET | `/api/items/subtitles?path=&track=&offset=&fmt=` | Subtitles as WebVTT (`fmt=vtt`, default) or JSON cues `{start, end, text, speaker}` (`fmt=json` — what the script view uses). |
 | POST | `/api/items/subtitles/reindex?path=` | Rebuild the subtitle cache for one file. |
+| POST | `/api/media/fetch-subs?path=` | Backfill one YouTube-sourced library video's subtitles (async job — poll `job_id`). The video's id is read from its `[<id>]` filename or a sibling `.info.json`; a `.vtt` sidecar is written next to it. 400 = no id found or the folder is read-only (needs `writableMediaRoots`). Job `progress` ends `ok`/`skipped`/`none`. |
+| POST | `/api/search/folder/fetch-subs?path=` | Backfill every id'd, subtitle-less YouTube video in a folder (async job with `progress`; cancellable via `DELETE /api/jobs/{id}`). Skips videos that already have subtitles. `{job_id: null, candidates: 0}` = nothing to do. 400 = read-only folder. |
+
+Both backfill endpoints appear in the UI only for YouTube-sourced videos in
+**writable** roots. `/api/items` flags such a file with `youtube_id` and
+`backfill_writable: true` so the frontend can offer the action.
 
 ### YouTube sources
 

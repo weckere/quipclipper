@@ -147,6 +147,12 @@ async function browse(path) {
   $("yt-add-bar").hidden = !isYtFolder;
   $("yt-add-status").hidden = true;
   document.querySelector(".reindex-row").hidden = isYtFolder;
+  // Reset the folder subtitle-backfill controls when entering a folder. A job
+  // already running keeps going server-side; we just stop mirroring it here.
+  if (fetchFolderPoll) { clearInterval(fetchFolderPoll); fetchFolderPoll = null; }
+  $("fetch-folder-subs-btn").classList.remove("disabled");
+  $("fetch-folder-cancel").hidden = true;
+  $("fetch-folder-status").hidden = true;
   let data;
   try {
     data = await getJSON("/api/library/browse" + (path ? qp(path) : ""));
@@ -614,6 +620,55 @@ $("reindex-folder-btn").addEventListener("click", async () => {
   btn.classList.remove("disabled");
 });
 
+// Backfill YouTube subtitles for every id'd, subtitle-less video in the folder.
+let fetchFolderJob = null;   // in-flight job id, for cancel
+let fetchFolderPoll = null;  // its poll interval (cleared when leaving the folder)
+$("fetch-folder-subs-btn").addEventListener("click", async () => {
+  if (!currentBrowsePath) return;
+  const btn = $("fetch-folder-subs-btn");
+  const cancel = $("fetch-folder-cancel");
+  const status = $("fetch-folder-status");
+  btn.classList.add("disabled");
+  status.hidden = false;
+  status.textContent = "Scanning folder…";
+  let resp;
+  try {
+    resp = await postJSON(`/api/search/folder/fetch-subs?path=${encodeURIComponent(currentBrowsePath)}`, {});
+  } catch (err) {
+    status.textContent = `Failed: ${err.message}`;
+    btn.classList.remove("disabled");
+    return;
+  }
+  if (!resp.job_id) {  // nothing to do
+    status.textContent = "No YouTube videos here need subtitles.";
+    btn.classList.remove("disabled");
+    return;
+  }
+  fetchFolderJob = resp.job_id;
+  cancel.hidden = false;
+  status.textContent = `Fetching subtitles for ${resp.candidates} video(s)…`;
+  fetchFolderPoll = setInterval(async () => {
+    const r = await apiFetch(`/api/jobs/${encodeURIComponent(resp.job_id)}`);
+    if (!r.ok) { if (r.status === 404) { clearInterval(fetchFolderPoll); fetchFolderPoll = null; fetchFolderJob = null; } return; }
+    const j = await r.json();
+    if (j.progress) status.textContent = j.progress;
+    if (["done", "failed", "cancelled"].includes(j.status)) {
+      clearInterval(fetchFolderPoll);
+      fetchFolderPoll = null;
+      fetchFolderJob = null;
+      cancel.hidden = true;
+      btn.classList.remove("disabled");
+      if (j.status === "failed") status.textContent = `Failed: ${j.error || "see server logs"}`;
+      else if (j.status === "cancelled") status.textContent = "Cancelled.";
+    }
+  }, 2000);
+});
+$("fetch-folder-cancel").addEventListener("click", async () => {
+  if (!fetchFolderJob) return;
+  $("fetch-folder-status").textContent = "Cancelling…";
+  try { await apiFetch(`/api/jobs/${encodeURIComponent(fetchFolderJob)}`, { method: "DELETE" }); } catch {}
+});
+
 // Force-reindex the current file's subtitles, then reload the script.
 $("ss-reindex").addEventListener("click", async () => {
   if (!currentItem) return;
@@ -636,6 +691,45 @@ $("ss-reindex").addEventListener("click", async () => {
   }
   btn.classList.remove("disabled");
 });
+
+/** Wire the per-item "Fetch subtitles from YouTube" action (backfill). Runs as
+ *  a server job; on success reload the script so the transcript appears. */
+function wireFetchSubs(path) {
+  const btn = $("ss-fetch-subs");
+  const status = $("ss-fetch-subs-status");
+  btn.onclick = async () => {
+    if (!currentItem || currentItem.path !== path) return;
+    btn.classList.add("disabled");
+    status.hidden = false;
+    status.textContent = "Fetching subtitles from YouTube…";
+    let job;
+    try {
+      job = await postJSON(`/api/media/fetch-subs?path=${encodeURIComponent(path)}`, {});
+    } catch (err) {
+      status.textContent = `Failed: ${err.message}`;
+      btn.classList.remove("disabled");
+      return;
+    }
+    const poll = setInterval(async () => {
+      const resp = await apiFetch(`/api/jobs/${encodeURIComponent(job.job_id)}`);
+      if (!resp.ok) { if (resp.status === 404) clearInterval(poll); return; }
+      const j = await resp.json();
+      if (j.status === "done") {
+        clearInterval(poll);
+        if (j.progress === "none") {
+          status.textContent = "YouTube has no subtitles for this video.";
+          btn.classList.remove("disabled");
+        } else if (currentItem && currentItem.path === path) {
+          openItem(currentItem.path, currentItem.name, {});  // reload so the script/search light up
+        }
+      } else if (j.status === "failed") {
+        clearInterval(poll);
+        status.textContent = `Failed: ${j.error || "see server logs"}`;
+        btn.classList.remove("disabled");
+      }
+    }, 1500);
+  };
+}
 
 function renderBreadcrumb(path) {
   const bc = $("breadcrumb");
@@ -1288,6 +1382,12 @@ function renderStreamSelector(info, path, onStreamChange) {
   $("ss-no-subs").hidden = hasSubs;
   $("ss-reindex").hidden = !hasSubs;
   $("ss-reindex-status").hidden = true;
+  // A YouTube-sourced library video with no subtitles can have its transcript
+  // backfilled from YouTube (writable folders only) — offer it here.
+  const canBackfill = !hasSubs && info.youtube_id && info.backfill_writable;
+  $("ss-fetch-subs").hidden = !canBackfill;
+  $("ss-fetch-subs-status").hidden = true;
+  if (canBackfill) wireFetchSubs(path);
 
   let initialTrack;  // undefined => nothing to load
   if (hasSubs) {

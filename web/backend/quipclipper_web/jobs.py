@@ -40,6 +40,10 @@ class Job:
     error: str | None = None
     # For the frontend: a human label summarising the request.
     label: str = ""
+    # A long job (e.g. folder subtitle backfill) can publish a progress string
+    # ("12/263 …") and honour a cooperative cancel by checking cancel_requested.
+    progress: str | None = None
+    cancel_requested: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -48,6 +52,8 @@ class Job:
             "label": self.label,
             "created": self.created,
         }
+        if self.progress is not None:
+            d["progress"] = self.progress
         if self.started is not None:
             d["started"] = self.started
         if self.finished is not None:
@@ -76,7 +82,7 @@ class JobRegistry:
         self._futures: dict[str, Future] = {}
         self._lock = threading.Lock()
 
-    def submit(self, fn: Callable[[], list[Path]], *, label: str = "") -> Job:
+    def submit(self, fn: Callable[[Job], list[Path]], *, label: str = "") -> Job:
         job = Job(id=uuid.uuid4().hex[:12], label=label)
         cutoff = time.time() - self.MAX_FINISHED_AGE
         with self._lock:
@@ -128,14 +134,24 @@ class JobRegistry:
     def shutdown(self) -> None:
         self._pool.shutdown(wait=False)
 
-    def _run(self, job: Job, fn: Callable[[], list[Path]]) -> None:
+    def request_cancel(self, job_id: str) -> bool:
+        """Ask a running job to stop at its next checkpoint (cooperative — the
+        job function must poll ``job.cancel_requested``). Returns True if found.
+        A queued/finished job is handled by :meth:`cancel` instead."""
+        job = self._jobs.get(job_id)
+        if job is None:
+            return False
+        job.cancel_requested = True
+        return True
+
+    def _run(self, job: Job, fn: Callable[[Job], list[Path]]) -> None:
         if job.status == Status.cancelled:  # cancelled after submit, before start
             return
         job.status = Status.running
         job.started = time.time()
         try:
-            job.result_paths = fn()
-            job.status = Status.done
+            job.result_paths = fn(job)
+            job.status = Status.cancelled if job.cancel_requested else Status.done
         except Exception as exc:
             job.error = str(exc)
             job.status = Status.failed
