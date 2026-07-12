@@ -87,9 +87,10 @@ re-fetches the transcript), `/api/search`, `/api/bookmarks`, and `POST
 /api/clip`. The pseudo-folder itself is `path=yt:` — browse it for the listing,
 or pass it to `/api/search/folder` to dialogue-search every added video.
 Preview streams via `/api/media/transcode?path=yt:<id>` (raw `/api/media` and
-HLS don't apply); clips cut straight from resolved stream URLs, so
-`split_channels` and `backend=mkvmerge` return 400 for `yt:` refs. Requires
-`yt-dlp` on the backend PATH (reported by `/api/health`).
+HLS don't apply); the web UI can alternatively embed the official YouTube
+player, which is purely client-side — no API involved. Clips cut straight from
+resolved stream URLs, so `split_channels` and `backend=mkvmerge` return 400 for
+`yt:` refs. Requires `yt-dlp` on the backend PATH (reported by `/api/health`).
 
 ### Dialogue search
 | Method | Path | Purpose |

@@ -123,6 +123,14 @@ video.audio-only {
   background: linear-gradient(180deg, #2a2a33, #16161c);
 }
 
+/* Official YouTube embed: same box as the <video> it stands in for. */
+.yt-embed iframe {
+  width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0;
+  border-radius: 10px; margin: 0.5rem 0; background: #000;
+}
+.yt-player-row { margin: 0.2rem 0 0.4rem; font-size: 0.85rem; }
+.yt-player-row select { margin-left: 0.4rem; }
+
 /* Clean title (folder name) on top, filename in smaller text beneath it. */
 #item-name { margin-bottom: 0.1rem; }
 .item-filename { font-size: 0.82rem; word-break: break-all; margin-bottom: 0.5rem; }

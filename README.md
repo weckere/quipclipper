@@ -265,10 +265,15 @@ From there it works like any library item:
   run on the fetched captions. Manual subtitles are preferred; YouTube's
   auto-captions are used as a fallback (with their rolling-duplicate lines
   cleaned up). ↻ Reindex re-fetches the transcript.
-- **Preview** — playback streams through the server: yt-dlp resolves the
-  direct stream URLs and ffmpeg remuxes them live to the player (same
-  transcode path as unplayable library codecs). Seeking works via the custom
-  seek bar. *(Not yet available on iOS; everything else works there.)*
+- **Preview** — a per-browser **Player** setting on each YouTube item picks
+  between two modes (both support the full marks/preview workflow):
+  - **Official YouTube player** (the default on iOS) — the standard embed via
+    the IFrame API: instant, reliable, plays anywhere, uses YouTube's own
+    captions. Your browser talks to YouTube directly in this mode.
+  - **Server stream** (the default on desktop) — yt-dlp resolves the direct
+    stream URLs and ffmpeg remuxes them live to the player (same transcode
+    path as unplayable library codecs); nothing in your browser ever loads
+    YouTube scripts. Seeking works via the custom seek bar.
 - **Bookmarks** — saved against the video like any file, and visible in the
   Bookmarks view.
 - **Clipping** — cuts run ffmpeg **directly against the stream URLs**, so

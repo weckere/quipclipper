@@ -132,6 +132,17 @@
         <div id="item-filename" class="item-filename muted"></div>
 
         <video id="player" controls playsinline webkit-playsinline preload="metadata" crossorigin="anonymous"></video>
+        <!-- Official YouTube embed (IFrame API) — used instead of #player when a
+             YouTube item's Player setting is "Official YouTube". -->
+        <div id="yt-embed" class="yt-embed" hidden></div>
+        <div id="yt-player-row" class="yt-player-row" hidden>
+          <label title="How to play this YouTube video: the official YouTube player (reliable, plays anywhere — including iOS), or a server stream via yt-dlp (no YouTube scripts in the browser). Marks, bookmarks, and clipping work with both. Remembered in this browser.">Player
+            <select id="yt-player-mode">
+              <option value="official">Official YouTube</option>
+              <option value="stream">Server stream</option>
+            </select>
+          </label>
+        </div>
         <p id="video-reencode-note" class="reencode-note" hidden></p>
         <p id="transcode-hint" class="transcode-hint muted" hidden>The player's built-in timeline cannot seek during audio transcoding — use the seek bar below.</p>
         <div id="transcode-seek-bar" class="transcode-seek-bar" hidden>

@@ -42,6 +42,7 @@ const qp = (path) => `?path=${encodeURIComponent(path)}`;
 /** Stop playback and release the source so audio doesn't keep playing
  *  after navigating away from the item view. */
 function stopPlayer() {
+  destroyYtEmbed();
   const player = $("player");
   if (!player) return;
   player.pause();
@@ -49,6 +50,47 @@ function stopPlayer() {
   // Drop any subtitle tracks too, then reset the media element.
   player.querySelectorAll("track").forEach((t) => t.remove());
   player.load();
+}
+
+// --- official YouTube embed (optional per-browser player for yt: items) ------
+// When active, `ytEmbed` supplants the <video id="player"> element: playerTime/
+// seekTo/updatePlaybackUI read the IFrame API instead, and a poller in openItem
+// stands in for the timeupdate events (script sync + range preview loop).
+let ytEmbed = null;      // { player: YT.Player, ready: bool } while an embed drives playback
+let ytApiPromise = null; // one-time IFrame API loader
+
+// "official" (default on iOS, where the server stream can't play) or "stream".
+function ytPlayerPref() {
+  return localStorage.getItem("qcYtPlayer") || (IS_IOS ? "official" : "stream");
+}
+
+function loadYtApi() {
+  if (ytApiPromise) return ytApiPromise;
+  ytApiPromise = new Promise((resolve) => {
+    if (window.YT && window.YT.Player) { resolve(); return; }
+    window.onYouTubeIframeAPIReady = () => resolve();
+    const s = document.createElement("script");
+    s.src = "https://www.youtube.com/iframe_api";
+    s.onerror = () => { ytApiPromise = null; };  // retry on next open if blocked
+    document.head.appendChild(s);
+  });
+  return ytApiPromise;
+}
+
+function ytEmbedPlaying() {
+  // YT.PlayerState.PLAYING === 1 (also treat 3 = buffering as "not paused").
+  if (!ytEmbed || !ytEmbed.ready) return false;
+  const st = ytEmbed.player.getPlayerState();
+  return st === 1 || st === 3;
+}
+
+function destroyYtEmbed() {
+  if (ytEmbed) {
+    try { ytEmbed.player.destroy(); } catch { /* already gone */ }
+    ytEmbed = null;
+  }
+  const holder = $("yt-embed");
+  if (holder) { holder.hidden = true; holder.innerHTML = ""; }
 }
 
 function showBrowser() {
@@ -602,7 +644,8 @@ let pb = null;
 /** Reflect the player's play/pause state on the custom control + range note. */
 function updatePlaybackUI() {
   const player = $("player");
-  $("pb-playpause").textContent = player.paused ? "▶" : "⏸";
+  const paused = ytEmbed ? !ytEmbedPlaying() : player.paused;
+  $("pb-playpause").textContent = paused ? "▶" : "⏸";
   const note = $("pb-range-note");
   if (hasClipRange()) {
     note.hidden = false;
@@ -624,11 +667,19 @@ $("player").addEventListener("loadedmetadata", () => {
 
 /** Absolute playback position in the source file. */
 function playerTime() {
+  if (ytEmbed) return ytEmbed.ready ? ytEmbed.player.getCurrentTime() : 0;
   return $("player").currentTime + transcodeOffset;
 }
 
 /** Seek to an absolute position in the source file. */
 function seekTo(seconds) {
+  if (ytEmbed) {
+    if (ytEmbed.ready) {
+      ytEmbed.player.seekTo(seconds, true);
+      ytEmbed.player.playVideo();
+    }
+    return;
+  }
   const player = $("player");
   if (transcodeOffset > 0 || player.src.includes("/api/media/transcode")) {
     // For transcoded streams, request a new segment from the server
@@ -682,6 +733,11 @@ async function openItem(path, name, opts) {
   loadedBookmarkCue = null;
   clipFirst = -1;
   clipLast = -1;
+  // Tear down a previous item's YouTube embed and restore the <video> element
+  // (the embed branch below re-hides it when this item uses the official player).
+  destroyYtEmbed();
+  $("player").hidden = false;
+  $("yt-player-row").hidden = true;
   updatePlaybackUI();  // clear any stale range note / reset the play icon
   $("mark-range-display").innerHTML = "";
   $("mark-save").disabled = true;
@@ -740,14 +796,26 @@ async function openItem(path, name, opts) {
   // (it needs HTTP range support). It plays HLS natively, so iOS uses the HLS
   // endpoint with the browser's own controls/seeking instead of our transcode.
   const hlsUrl = "/api/media/hls" + qp(path) + (iosVideoReencode ? "&venc=1" : "");
-  // A YouTube item has no local file: it always streams through the transcode
-  // endpoint (the backend feeds ffmpeg resolved googlevideo URLs).
+  // A YouTube item has no local file: it plays either through the official
+  // YouTube embed (per-browser Player setting; the default on iOS) or the
+  // server transcode stream (ffmpeg reading resolved googlevideo URLs).
   const isYouTube = !!info.is_youtube;
+  const useEmbed = isYouTube && ytPlayerPref() === "official";
+  if (isYouTube) {
+    const row = $("yt-player-row");
+    const sel = $("yt-player-mode");
+    row.hidden = false;
+    sel.value = ytPlayerPref();
+    sel.onchange = () => {
+      localStorage.setItem("qcYtPlayer", sel.value);
+      openItem(path, name, {});  // rewire playback with the new player
+    };
+  }
   // Does the primary video codec need re-encoding to H.264 for this (desktop)
   // browser? (HEVC on Firefox, MPEG-4 ASP/XviD, MPEG-2, VC1, …) — B20/B22.
   const videoReencode = !IS_IOS && primaryVideo && needsVideoReencode(primaryVideo.codec);
   const transcodeUrl = "/api/media/transcode" + qp(path) + (videoReencode ? "&venc=1" : "");
-  const needsTranscode = !IS_IOS &&
+  const needsTranscode = !IS_IOS && !useEmbed &&
     (isYouTube || (primaryAudio && !BROWSER_AUDIO.has(primaryAudio.codec)) || videoReencode);
   // Show/refresh the video-re-encode indicator (loading/seeking may be slower).
   setVideoReencodeNote(videoReencode || iosVideoReencode);
@@ -917,20 +985,80 @@ async function openItem(path, name, opts) {
 
   const seekHint = $("transcode-hint");
 
-  if (needsTranscode) {
+  if (useEmbed) {
+    // Official YouTube player: the IFrame API supplants the <video> element.
+    // A poller stands in for timeupdate (script sync, range preview loop,
+    // play/pause icon); marks/bookmarks/clipping are cue-driven and unchanged.
+    seekBar.hidden = true;
+    seekHint.hidden = true;
+    transcodeOffset = 0;
+    player.hidden = true;
+    const holder = $("yt-embed");
+    holder.hidden = false;
+    const videoId = path.slice("yt:".length);
+    loadYtApi().then(() => {
+      if (signal.aborted) return;
+      const mount = holder.appendChild(document.createElement("div"));
+      const p = new YT.Player(mount, {
+        videoId,
+        playerVars: { playsinline: 1, rel: 0 },
+        events: {
+          onReady: () => {
+            if (!ytEmbed || ytEmbed.player !== p) return;  // superseded
+            ytEmbed.ready = true;
+            if (seekTarget != null) p.seekTo(seekTarget, true);
+          },
+          onStateChange: () => updatePlaybackUI(),
+        },
+      });
+      ytEmbed = { player: p, ready: false };
+    });
+    const poll = setInterval(() => {
+      if (!ytEmbed || !ytEmbed.ready) return;
+      updateScript();
+      updatePlaybackUI();
+      // Range preview loop: pause (or loop) at the end of the selection.
+      if (!hasClipRange()) return;
+      if (playerTime() >= bufEnd() - 0.1 && ytEmbedPlaying()) {
+        if ($("pb-loop").checked) {
+          ytEmbed.player.seekTo(bufStart(), true);
+        } else {
+          ytEmbed.player.pauseVideo();
+          ytEmbed.player.seekTo(bufStart(), true);
+          updatePlaybackUI();
+        }
+      }
+    }, 250);
+    signal.addEventListener("abort", () => clearInterval(poll));
+    // Range-aware controls on the embed (replaces the <video>-backed pb above).
+    pb = {
+      restart() { seekTo(hasClipRange() ? bufStart() : 0); },
+      toggle() {
+        if (!ytEmbed || !ytEmbed.ready) return;
+        if (ytEmbedPlaying()) { ytEmbed.player.pauseVideo(); return; }
+        if (hasClipRange()) {
+          const t = playerTime();
+          if (t < bufStart() - 0.1 || t >= bufEnd() - 0.05) { seekTo(bufStart()); return; }
+        }
+        ytEmbed.player.playVideo();
+      },
+      pause() { if (ytEmbed && ytEmbed.ready) ytEmbed.player.pauseVideo(); },
+      refreshSeekBar() {},
+    };
+  } else if (needsTranscode) {
     seekBar.hidden = false;
     seekHint.hidden = false;
     seekDurLabel.textContent = formatTime(probedDuration);
     seekSlider.max = 100;
     loadTranscode(seekTarget || 0);
   } else if (IS_IOS && isYouTube) {
-    // No YouTube preview on iOS yet (it would need the HLS path fed with
-    // stream URLs). The transcript, search, bookmarks, and clipping all work.
+    // The user explicitly chose the server stream on iOS — that path can't
+    // play there (no Matroska/Opus). The official player (the default) can.
     seekBar.hidden = true;
     seekHint.hidden = true;
     transcodeOffset = 0;
     $("preview-note").textContent =
-      "YouTube preview isn't supported on iOS yet — the script, search, and clipping still work.";
+      "The server stream can't play on iOS — switch Player to “Official YouTube”.";
   } else {
     // Native playback: raw source on desktop, HLS on iOS (Safari seeks both
     // natively, so the custom transcode seek bar stays hidden).
