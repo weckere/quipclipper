@@ -1347,6 +1347,26 @@ def test_hls_channel_subset_applies_pan(tmp_path: Path) -> None:
     assert "-ac" not in cmds[0]
 
 
+def test_hls_times_out_with_a_clean_504(tmp_path: Path) -> None:
+    """ffmpeg that never produces a segment gives up with a 504 naming the
+    limit, rather than hanging until a proxy cuts the connection."""
+    video = tmp_path / "movie.mkv"
+    video.write_bytes(b"")
+    client = _client(tmp_path)
+
+    async def _never_starts(*_cmd: str, **_kw) -> _FakeProc:
+        return _FakeProc()  # writes no playlist, no segments
+
+    with (
+        patch("asyncio.create_subprocess_exec", _never_starts),
+        patch("quipclipper_web.app._HLS_START_TIMEOUT", 0.3),
+    ):
+        resp = client.get("/api/media/hls", params={"path": str(video)})
+
+    assert resp.status_code == 504
+    assert "did not start within" in resp.json()["detail"]
+
+
 def test_hls_token_separates_audio_selections(tmp_path: Path) -> None:
     """Two selections must segment into different dirs — otherwise one would be
     served the other's segments, or overwrite them mid-stream."""

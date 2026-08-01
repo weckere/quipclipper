@@ -166,6 +166,17 @@ def _render_clip_template(template: str, ctx: dict[str, str]) -> str:
 # device the NixOS module / docker-compose passes in).
 _VAAPI_DEVICE = os.environ.get("QC_VAAPI_DEVICE") or "/dev/dri/renderD128"
 
+# How long an /api/media/hls playlist request waits for ffmpeg to produce the
+# first segment before giving up with a 504. A stream-copied source manages it
+# almost immediately, but a software H.264 re-encode (venc=1, no VAAPI) of a
+# long high-resolution source has to encode a whole 6s segment first and can
+# take far longer than the 15s this used to allow — timing out on exactly the
+# files that need the re-encode most. The proxies in front of this
+# (nix/nixos-module.nix, web/nginx/nginx.conf) allow longer still, so a caller
+# sees this clean 504 rather than a gateway timeout.
+_HLS_START_TIMEOUT = 120.0
+_HLS_START_POLL = 0.1
+
 
 def _vaapi_h264_available() -> bool:
     """True if the host iGPU can hardware-encode H.264 via VAAPI / Quick Sync.
@@ -1451,12 +1462,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
                 )
 
-        for _ in range(150):  # wait up to ~15s for the playlist + first segment
+        deadline = time.monotonic() + _HLS_START_TIMEOUT
+        while True:
             if playlist.exists() and any(d.glob("seg*.m4s")):
                 break
-            await asyncio.sleep(0.1)
+            if time.monotonic() >= deadline:
+                break
+            await asyncio.sleep(_HLS_START_POLL)
         if not playlist.exists():
-            raise HTTPException(status_code=504, detail="HLS transcode did not start in time.")
+            raise HTTPException(
+                status_code=504,
+                detail=f"HLS transcode did not start within {_HLS_START_TIMEOUT:.0f}s.",
+            )
 
         _touch_hls(d)  # keep an actively-watched session from being pruned (C4)
         base = f"/api/media/hls/{token}/"

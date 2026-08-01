@@ -530,6 +530,18 @@ in
             proxy_read_timeout 300s;
           '';
         };
+        # HLS playlist — the first request blocks while ffmpeg produces the
+        # opening segment, which a software re-encode of a long source can drag
+        # out (see _HLS_START_TIMEOUT). Longest-prefix wins over /api/media
+        # above, whose 60s default would otherwise cut in first and turn the
+        # app's clean 504 into a gateway timeout.
+        locations."/api/media/hls" = {
+          proxyPass = proxyTarget;
+          extraConfig = ''
+            proxy_buffering off;
+            proxy_read_timeout 180s;
+          '';
+        };
         # Transcode stream — a long-running live ffmpeg StreamingResponse feeding
         # the <video> element. Disable buffering so output reaches the browser
         # immediately, and allow a long connection.
