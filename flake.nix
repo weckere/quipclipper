@@ -52,7 +52,11 @@
             };
           };
 
-          quipclipper-web-frontend = pkgs.callPackage ./nix/frontend.nix { };
+          hls-js = pkgs.callPackage ./nix/hls-js.nix { };
+
+          quipclipper-web-frontend = pkgs.callPackage ./nix/frontend.nix {
+            inherit hls-js;
+          };
 
           quipclipper-web = pkgs.callPackage ./nix/quipclipper-web.nix {
             inherit quipclipper;
@@ -62,7 +66,7 @@
         in {
           packages = {
             default = quipclipper;
-            inherit quipclipper quipclipper-web quipclipper-web-frontend;
+            inherit quipclipper quipclipper-web quipclipper-web-frontend hls-js;
           };
 
           devShells.default = pkgs.mkShell {
@@ -74,6 +78,18 @@
               python.pkgs.uvicorn
               yt-dlp-fresh   # YouTube subtitle/metadata fetch + stream-URL resolution
             ];
+
+            # The dev server serves web/frontend straight off disk, so the pinned
+            # hls.js has to exist there — the nix frontend derivation's copy is
+            # only in the store. Copied, not symlinked: StaticFiles resolves the
+            # path and 404s anything landing outside the served directory, so a
+            # link into /nix/store is not servable. `install` replaces the
+            # (read-only) store copy in place, so a new pin overwrites cleanly.
+            shellHook = ''
+              if [ -d web/frontend ]; then
+                install -Dm644 ${hls-js}/hls.min.js web/frontend/vendor/hls.min.js
+              fi
+            '';
           };
 
           # VM test for the NixOS module: enable the service, then assert nginx

@@ -29,6 +29,10 @@ web/backend/state/
 # Nix
 result
 
+# Third-party frontend assets, pinned in nix/hls-js.nix and symlinked here by
+# the devShell — not committed (see the comment in that file).
+/web/frontend/vendor/
+
 # OS
 .DS_Store
 

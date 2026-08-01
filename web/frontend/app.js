@@ -48,6 +48,7 @@ function stopPlayer() {
   if (itemListeners) { itemListeners.abort(); itemListeners = null; }
   currentItem = null;
   destroyYtEmbed();
+  destroyHls();
   const player = $("player");
   if (!player) return;
   player.pause();
@@ -99,6 +100,52 @@ function destroyYtEmbed() {
   }
   const holder = $("yt-embed");
   if (holder) { holder.hidden = true; holder.innerHTML = ""; }
+}
+
+// --- HLS playback (desktop) -------------------------------------------------
+// /api/media/transcode is an unbounded ffmpeg pipe — `Accept-Ranges: none`, no
+// Content-Length — so it is unseekable and a browser that drops the connection
+// can only re-open it from 0, restarting the encode. On a long source the
+// re-fetch lands before enough is buffered to start, and playback never
+// begins. The HLS path segments to disk instead: segments are individually
+// fetchable and range-served, so a dropped connection resumes, and seeking is
+// native (no custom seek bar). Safari plays HLS itself; everyone else needs
+// hls.js, loaded on demand — 543 KB is not worth paying on a page view that
+// never opens a transcoded item.
+let hls = null;           // the active Hls instance, if any
+let hlsLibPromise = null; // one-time hls.js loader
+
+/** True when the element claims it plays HLS without hls.js (Safari, iOS).
+ *
+ *  Only trustworthy *after* hls.js has ruled itself out: Chromium answers
+ *  "maybe" to this MIME and then cannot play the playlist at all (it reports
+ *  readyState 4 with duration Infinity and never decodes a frame), so checking
+ *  it first would hand every Chrome user a dead player. */
+function hlsNative() {
+  return !!$("player").canPlayType("application/vnd.apple.mpegurl");
+}
+
+function loadHlsLib() {
+  if (hlsLibPromise) return hlsLibPromise;
+  hlsLibPromise = new Promise((resolve, reject) => {
+    if (window.Hls) { resolve(); return; }
+    const s = document.createElement("script");
+    s.src = "vendor/hls.min.js";
+    s.onload = () => resolve();
+    s.onerror = () => {
+      hlsLibPromise = null;  // let a later open retry
+      reject(new Error("hls.js failed to load"));
+    };
+    document.head.appendChild(s);
+  });
+  return hlsLibPromise;
+}
+
+function destroyHls() {
+  if (hls) {
+    try { hls.destroy(); } catch { /* already gone */ }
+    hls = null;
+  }
 }
 
 function showBrowser() {
@@ -958,6 +1005,7 @@ async function openItem(path, name, opts) {
   // Tear down a previous item's YouTube embed and restore the <video> element
   // (the embed branch below re-hides it when this item uses the official player).
   destroyYtEmbed();
+  destroyHls();
   $("player").hidden = false;
   $("yt-player-row").hidden = true;
   updatePlaybackUI();  // clear any stale range note / reset the play icon
@@ -1044,6 +1092,11 @@ async function openItem(path, name, opts) {
   const needsTranscode = !IS_IOS && !useEmbed &&
     ((isYouTube && !ytDownloaded) ||
      (primaryAudio && !BROWSER_AUDIO.has(primaryAudio.codec)) || videoReencode);
+  // Desktop transcodes go through HLS rather than the pipe — see the hls block
+  // near the top for why. It segments a file on disk, so it needs one: an
+  // un-downloaded YouTube ref (ffmpeg reading resolved googlevideo URLs) has
+  // none and stays on the pipe. Falls back to the pipe if hls.js won't load.
+  const useHls = needsTranscode && (!isYouTube || ytDownloaded);
   // Show/refresh the video-re-encode indicator (loading/seeking may be slower).
   setVideoReencodeNote(videoReencode || iosVideoReencode);
 
@@ -1114,11 +1167,67 @@ async function openItem(path, name, opts) {
     return p;
   }
 
-  // Switching audio stream / channel subset requires the transcode path; reload
-  // the current segment at the same position with the new params.
+  // The desktop HLS playlist for the current stream selection. A different
+  // audio stream / channel subset is a different token server-side, so this
+  // starts (or reuses) its own set of segments.
+  function hlsDesktopUrl() {
+    return "/api/media/hls" + qp(path) + (videoReencode ? "&venc=1" : "") + streamParams();
+  }
+
+  /** Point the element at an HLS playlist, optionally seeking once it loads.
+   *  Falls back to the transcode pipe if hls.js is needed but unavailable. */
+  function startHls(url, at, autoplay) {
+    const applySeek = () => {
+      if (at) player.currentTime = at;
+      if (autoplay) player.play().catch(() => {});
+    };
+    destroyHls();
+    // hls.js first, native second — see hlsNative() for why the reverse order
+    // silently breaks Chrome.
+    loadHlsLib().then(() => {
+      if (signal.aborted) return;  // superseded while the library loaded
+      if (window.Hls && window.Hls.isSupported()) {
+        const inst = hls = new window.Hls();
+        inst.on(window.Hls.Events.MANIFEST_PARSED, applySeek);
+        inst.on(window.Hls.Events.ERROR, (_evt, data) => {
+          // Non-fatal errors are hls.js's own recoverable stalls — it retries.
+          if (data && data.fatal && hls === inst) fallbackToPipe(playerTime());
+        });
+        inst.loadSource(url);
+        inst.attachMedia(player);
+        return;
+      }
+      if (hlsNative()) {  // Safari: the element plays the playlist itself
+        player.src = url;
+        player.addEventListener("loadedmetadata", applySeek, { once: true, signal });
+        return;
+      }
+      fallbackToPipe(at);
+    }).catch(() => {
+      if (!signal.aborted) fallbackToPipe(at);
+    });
+  }
+
+  /** Last resort when HLS can't run: the original unseekable pipe, with the
+   *  custom seek bar it needs. */
+  function fallbackToPipe(at) {
+    destroyHls();
+    isTranscoding = true;
+    seekBar.hidden = false;
+    seekHint.hidden = false;
+    seekDurLabel.textContent = formatTime(probedDuration);
+    loadTranscode(at || 0);
+  }
+
+  // Switching audio stream / channel subset re-encodes; reload at the same
+  // position with the new params (a new HLS playlist, or a new pipe segment).
   function reloadStreams() {
     const pos = isTranscoding ? (player.currentTime + transcodeOffset) : player.currentTime;
     const wasPlaying = !player.paused;
+    if (useHls && !isTranscoding) {
+      startHls(hlsDesktopUrl(), pos || 0, wasPlaying);
+      return;
+    }
     isTranscoding = true;
     seekBar.hidden = false;
     seekHint.hidden = false;
@@ -1291,6 +1400,15 @@ async function openItem(path, name, opts) {
       pause() { if (ytEmbed && ytEmbed.ready) ytEmbed.player.pauseVideo(); },
       refreshSeekBar() {},
     };
+  } else if (useHls) {
+    // Segments are range-served and seeking is native, so the custom seek bar
+    // and its offset bookkeeping stay out of it — `transcodeOffset` is 0 and
+    // playerTime() is just currentTime.
+    seekBar.hidden = true;
+    seekHint.hidden = true;
+    transcodeOffset = 0;
+    player.preload = "metadata";
+    startHls(hlsDesktopUrl(), seekTarget, false);
   } else if (needsTranscode) {
     seekBar.hidden = false;
     seekHint.hidden = false;
@@ -1319,6 +1437,9 @@ async function openItem(path, name, opts) {
   }
 
   player.onerror = () => {
+    // hls.js owns its own errors (it retries recoverable ones and calls
+    // fallbackToPipe on a fatal), so don't race it with a second fallback.
+    if (hls) return;
     // On iOS (HLS) there's no further fallback; the desktop transcode path is
     // unplayable there, so just surface the message.
     if (IS_IOS || isTranscoding || player.src.includes("/api/media/transcode")) {
