@@ -172,18 +172,15 @@ select {
 }
 
 /* Unified stream selector under the seek bar (B17). */
-.stream-selector[hidden] { display: none; }
 .stream-selector {
   display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.9rem;
   margin: 0.1rem 0 0.4rem;
 }
-.ss-field[hidden] { display: none; }
 .ss-field {
   display: inline-flex; align-items: center; gap: 0.35rem;
   font-size: 0.8rem; color: var(--muted);
 }
 .ss-field select { margin-top: 0; max-width: 22rem; font-size: 0.82rem; }
-.ss-field select[hidden] { display: none; }
 .ss-langs-field input {
   width: 5.5rem; font-size: 0.82rem; padding: 0.25rem 0.4rem;
   background: var(--bg); color: var(--fg);
@@ -245,7 +242,6 @@ code {
 .clip-btn[disabled] { opacity: 0.45; cursor: default; }
 
 /* Clip name row (range + B9 name template), under the Marks header. */
-.clip-name-row[hidden] { display: none; }
 .clip-name-row { margin: 0.5rem 0 0.2rem; }
 .clip-name-row .clip-range {
   font-size: 0.85rem; color: var(--muted); margin-bottom: 0.5rem;
@@ -265,7 +261,6 @@ code {
 }
 
 /* Batch export bar (clips & bookmarks browsers) */
-.batch-bar[hidden] { display: none; }
 .batch-bar {
   display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1.1rem;
   background: var(--card); border-radius: 10px;
@@ -274,7 +269,6 @@ code {
 }
 .batch-bar label { display: flex; align-items: center; gap: 0.35rem; color: var(--muted); }
 /* Channel-group picker (which channels to export when splitting). */
-.chan-groups[hidden] { display: none; }
 .chan-groups {
   display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 0.6rem;
   padding: 0.2rem 0.55rem; border-radius: 6px;
@@ -350,7 +344,6 @@ code {
 .make-clip-btn:disabled { background: var(--badge); border-color: var(--badge); }
 /* Inline clip status, left of the ★/✂ buttons. */
 .mark-clip-indicator { display: inline-flex; align-items: center; }
-.mark-clip-indicator[hidden] { display: none; }
 .clip-spinner {
   width: 1.2rem; height: 1.2rem; border-radius: 50%;
   border: 2px solid var(--badge); border-top-color: var(--accent);
@@ -459,14 +452,12 @@ code {
 footer { padding: 2rem 1.25rem; font-size: 0.8rem; }
 
 /* Transcode seek bar */
-.transcode-seek-bar[hidden] { display: none; }
 .transcode-seek-bar {
   display: flex; align-items: center; gap: 0.5rem;
   padding: 0.4rem 0; margin-top: -0.25rem;
 }
 .transcode-hint { font-size: 0.8rem; margin-top: 0; text-align: center; }
 /* Video re-encode indicator (B20/B22) — more prominent than the seek hint. */
-.reencode-note[hidden] { display: none; }
 .reencode-note {
   font-size: 0.82rem; margin: 0.3rem 0; padding: 0.4rem 0.7rem;
   border-radius: 6px; text-align: center;
@@ -484,7 +475,6 @@ footer { padding: 2rem 1.25rem; font-size: 0.8rem; }
 .transcode-time:last-child { text-align: right; }
 
 /* Subtitle index banner */
-.index-banner[hidden] { display: none; }
 .index-banner {
   display: flex; align-items: center; gap: 0.75rem;
   padding: 0.5rem 0.75rem; margin-top: 0.5rem;
@@ -514,7 +504,6 @@ footer { padding: 2rem 1.25rem; font-size: 0.8rem; }
 
 /* Subtitle script view */
 .script-wrap { margin-top: 0.75rem; }
-.script-wrap[hidden] { display: none; }
 .script-hint {
   font-size: 0.8rem; color: var(--muted); margin-bottom: 0.4rem;
 }
