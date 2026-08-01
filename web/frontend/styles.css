@@ -12,6 +12,12 @@
 
 * { box-sizing: border-box; }
 
+/* The UA's `[hidden] { display: none }` loses to any class rule that sets
+   `display` (author sheet beats UA sheet at equal specificity), so a class like
+   .yt-player-row { display: flex } silently defeats `el.hidden = true`. Make the
+   attribute win everywhere instead of guarding each class one at a time. */
+[hidden] { display: none !important; }
+
 body {
   margin: 0;
   font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
