@@ -1070,6 +1070,13 @@ async function openItem(path, name, opts) {
     let url = transcodeUrl;
     if (startTime > 0) url += `&start=${startTime}`;
     url += streamParams();  // selected audio stream / channel subset (B17)
+    // The transcode is an unbounded ffmpeg pipe: `Accept-Ranges: none`, no
+    // Content-Length, so `seekable` is empty. A browser that drops the fetch
+    // can't resume with a Range request — it re-opens the URL, restarting the
+    // encode from 0. `preload="metadata"` guarantees one such round trip (load
+    // metadata, close, re-open on play); "auto" keeps a single connection open
+    // and buffering instead. The native path below stays on "metadata".
+    player.preload = "auto";
     player.src = url;
     player.load();
     player.addEventListener("loadedmetadata", function onMeta() {
@@ -1305,6 +1312,9 @@ async function openItem(path, name, opts) {
     seekBar.hidden = true;
     seekHint.hidden = true;
     transcodeOffset = 0;
+    // Range-served (or segmented, on iOS) — cheap to open lazily, and the
+    // element is shared across items, so undo any "auto" a transcode set.
+    player.preload = "metadata";
     player.src = (IS_IOS && !isAudioOnly) ? hlsUrl : mediaUrl;
   }
 
