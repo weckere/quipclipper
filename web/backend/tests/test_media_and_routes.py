@@ -1266,6 +1266,104 @@ def test_transcode_not_found(tmp_path: Path) -> None:
     assert resp.status_code == 404
 
 
+# --- HLS ---
+#
+# Desktop plays through this path too (via hls.js), so the stream-selector
+# options the transcode endpoint accepts have to work here as well. ffmpeg is
+# never launched: the fake below records the command and writes the playlist +
+# first segment the route waits for.
+
+
+class _FakeProc:
+    """Stands in for the ffmpeg subprocess — never exits, so the route treats
+    the transcode as still running."""
+
+    returncode = None
+
+    def kill(self) -> None:  # pragma: no cover - registry cleanup only
+        pass
+
+
+def _fake_ffmpeg(recorded: list[list[str]]):
+    async def _spawn(*cmd: str, **_kw) -> _FakeProc:
+        recorded.append(list(cmd))
+        seg = Path(cmd[cmd.index("-hls_segment_filename") + 1])
+        d = seg.parent
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "seg00000.m4s").write_bytes(b"")
+        (d / "index.m3u8").write_text(
+            "#EXTM3U\n#EXT-X-MAP:URI=\"init.mp4\"\n"
+            "#EXTINF:6.0,\nseg00000.m4s\n#EXT-X-ENDLIST\n"
+        )
+        return _FakeProc()
+
+    return _spawn
+
+
+def test_hls_forbids_outside(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    resp = client.get("/api/media/hls", params={"path": "/etc/passwd"})
+    assert resp.status_code == 403
+
+
+def test_hls_not_found(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    resp = client.get("/api/media/hls", params={"path": str(tmp_path / "nope.mkv")})
+    assert resp.status_code == 404
+
+
+def test_hls_maps_selected_audio_stream(tmp_path: Path) -> None:
+    """`audio=N` segments that stream instead of ffmpeg's default pick (B17)."""
+    video = tmp_path / "movie.mkv"
+    video.write_bytes(b"")
+    client = _client(tmp_path)
+    cmds: list[list[str]] = []
+
+    with patch("asyncio.create_subprocess_exec", _fake_ffmpeg(cmds)):
+        resp = client.get("/api/media/hls", params={"path": str(video), "audio": 1})
+
+    assert resp.status_code == 200
+    assert "-map" in cmds[0] and "0:a:1" in cmds[0]
+
+
+def test_hls_channel_subset_applies_pan(tmp_path: Path) -> None:
+    """`chan` downmixes one channel group, and leaves the layout to the pan
+    filter rather than forcing -ac 2 on top of it."""
+    video = tmp_path / "movie.mkv"
+    video.write_bytes(b"")
+    client = _client(tmp_path)
+    cmds: list[list[str]] = []
+
+    with (
+        patch("asyncio.create_subprocess_exec", _fake_ffmpeg(cmds)),
+        patch("quipclipper_web.app._live_pan_filter", return_value="pan=mono|c0=c2"),
+    ):
+        resp = client.get(
+            "/api/media/hls", params={"path": str(video), "chan": "center"}
+        )
+
+    assert resp.status_code == 200
+    assert cmds[0][cmds[0].index("-filter:a") + 1] == "pan=mono|c0=c2"
+    assert "-ac" not in cmds[0]
+
+
+def test_hls_token_separates_audio_selections(tmp_path: Path) -> None:
+    """Two selections must segment into different dirs — otherwise one would be
+    served the other's segments, or overwrite them mid-stream."""
+    video = tmp_path / "movie.mkv"
+    video.write_bytes(b"")
+    client = _client(tmp_path)
+    cmds: list[list[str]] = []
+
+    with patch("asyncio.create_subprocess_exec", _fake_ffmpeg(cmds)):
+        first = client.get("/api/media/hls", params={"path": str(video), "audio": 0})
+        second = client.get("/api/media/hls", params={"path": str(video), "audio": 1})
+
+    assert first.status_code == second.status_code == 200
+    assert len(cmds) == 2  # the second didn't reuse the first's transcode
+    assert first.text != second.text  # different token in the rewritten URIs
+
+
 # --- folder dialogue search ---
 
 

@@ -1305,14 +1305,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     _hls_lock = asyncio.Lock()
     _HLS_FILE_RE = re.compile(r"^(init\.mp4|seg\d+\.m4s)$")
 
-    def _hls_token(p: Path, venc: int = 0) -> str:
+    def _hls_token(
+        p: Path, venc: int = 0, audio: int | None = None, chan: str | None = None
+    ) -> str:
         # Include the source mtime so replacing the file (same path) yields a new
         # token and fresh segments — otherwise stale segments are served (C3).
+        # `audio`/`chan` are part of the key too: picking a different audio stream
+        # or channel subset (B17) produces different segments, so it must not
+        # reuse — or overwrite — the dir another selection is streaming from.
         try:
             mtime = p.stat().st_mtime
         except OSError:
             mtime = 0.0
-        return hashlib.sha256(f"{p}:{mtime}:{venc}".encode()).hexdigest()[:16]
+        key = f"{p}:{mtime}:{venc}:{audio}:{chan}"
+        return hashlib.sha256(key.encode()).hexdigest()[:16]
 
     def _hls_complete(playlist: Path) -> bool:
         """True only if the transcode finished — the playlist has EXT-X-ENDLIST.
@@ -1351,7 +1357,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     shutil.rmtree(d, ignore_errors=True)
 
     @app.get("/api/media/hls")
-    async def hls_playlist(path: str = Query(...), venc: int = Query(0)) -> Response:
+    async def hls_playlist(
+        path: str = Query(...),
+        venc: int = Query(0),
+        audio: int | None = Query(None, ge=0),
+        chan: str | None = Query(None),
+    ) -> Response:
         """Start (or reuse) an on-the-fly HLS transcode; return its playlist.
 
         Segment/init URIs are rewritten to absolute API paths so the playlist's
@@ -1359,8 +1370,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         this URL to pick up new segments; ffmpeg races ahead of real time and
         appends EXT-X-ENDLIST when done, enabling full seeking. Video is
         stream-copied (iOS decodes H.264/HEVC); ``venc=1`` re-encodes it to H.264
-        for codecs iOS can't decode (XviD/MPEG-4 ASP, MPEG-2, VC1, …) — the iOS
-        side of B20/B22, hardware via Quick Sync when available.
+        for codecs the browser can't decode (XviD/MPEG-4 ASP, MPEG-2, VC1, …) —
+        B20/B22, hardware via Quick Sync when available.
+
+        Desktop uses this path too (via hls.js): segments are individually
+        fetchable and range-served, so a browser that drops its connection
+        resumes instead of re-opening — which is what /api/media/transcode, an
+        unbounded unseekable pipe, cannot do.
+
+        ``audio`` selects a specific audio stream (a:N); ``chan`` plays only one
+        channel group (front/center/lfe/side/back/surround) via a ``pan`` filter
+        — the same stream-selector options the transcode path takes (B17). Both
+        are part of the token, so each selection segments into its own dir.
         """
         # A downloaded YouTube video segments like any local file (its state-dir
         # location is handed over directly); un-downloaded yt refs have no file
@@ -1377,10 +1398,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             p = _resolve_any(path)
         if not p.is_file():
             raise HTTPException(status_code=404, detail=f"Not found: {path}")
-        token = _hls_token(p, venc)
+        token = _hls_token(p, venc, audio, chan)
         d = _hls_root / token
         playlist = d / "index.m3u8"
         hw = bool(venc) and _vaapi_h264_available()
+        # Which audio stream the pan (if any) operates on; default a:0 — mirrors
+        # the transcode endpoint so both paths resolve a selection the same way.
+        aidx = audio if audio is not None else (0 if chan and chan != "whole" else None)
+        pan = _live_pan_filter(p, aidx or 0, chan) if chan and chan != "whole" else None
 
         # Serialize the check→rebuild→register sequence: the registry write used
         # to happen after an await, so two concurrent requests both passed the
@@ -1403,13 +1428,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 if hw:
                     cmd += ["-vaapi_device", _VAAPI_DEVICE]
                 cmd += ["-i", str(p)]
+                if aidx is not None:
+                    cmd += ["-map", "0:v:0?", "-map", f"0:a:{aidx}"]
                 if venc:
                     cmd += (["-vf", "format=nv12,hwupload", "-c:v", "h264_vaapi", "-qp", "24"]
                             if hw else ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23"])
                 else:
                     cmd += ["-c:v", "copy"]
+                if pan:
+                    cmd += ["-filter:a", pan]
+                cmd += ["-c:a", "aac", "-b:a", "192k"]
+                if not pan:  # the pan filter already sets the output layout
+                    cmd += ["-ac", "2"]
                 cmd += [
-                    "-c:a", "aac", "-b:a", "192k", "-ac", "2",
                     "-f", "hls", "-hls_time", "6", "-hls_list_size", "0",
                     "-hls_playlist_type", "event", "-hls_flags", "independent_segments",
                     "-hls_segment_type", "fmp4", "-hls_fmp4_init_filename", "init.mp4",
