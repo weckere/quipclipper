@@ -1323,7 +1323,58 @@ def test_hls_maps_selected_audio_stream(tmp_path: Path) -> None:
         resp = client.get("/api/media/hls", params={"path": str(video), "audio": 1})
 
     assert resp.status_code == 200
-    assert "-map" in cmds[0] and "0:a:1" in cmds[0]
+    assert "-map" in cmds[0] and "0:a:1?" in cmds[0]
+
+
+def test_hls_stream_selectors_are_optional(tmp_path: Path) -> None:
+    """Both -map selectors carry a trailing `?`. A source with no audio (or a
+    stale selection past the streams it has) must segment as video-only — the
+    bare form aborts the whole transcode, which surfaced only as a timeout."""
+    video = tmp_path / "movie.mkv"
+    video.write_bytes(b"")
+    client = _client(tmp_path)
+    cmds: list[list[str]] = []
+
+    with patch("asyncio.create_subprocess_exec", _fake_ffmpeg(cmds)):
+        resp = client.get("/api/media/hls", params={"path": str(video), "audio": 3})
+
+    assert resp.status_code == 200
+    maps = [cmds[0][i + 1] for i, a in enumerate(cmds[0]) if a == "-map"]
+    assert maps == ["0:v:0?", "0:a:3?"]
+
+
+def test_hls_fails_fast_when_ffmpeg_exits(tmp_path: Path) -> None:
+    """ffmpeg rejecting the command is reported immediately, with its own error
+    — it used to be indistinguishable from a slow encode and cost the full
+    start timeout before failing."""
+    video = tmp_path / "movie.mkv"
+    video.write_bytes(b"")
+    client = _client(tmp_path)
+
+    class _Died:
+        returncode = 1
+
+        def kill(self) -> None:  # pragma: no cover - registry cleanup only
+            pass
+
+    async def _dies(*cmd: str, **_kw) -> _Died:
+        seg = Path(cmd[cmd.index("-hls_segment_filename") + 1])
+        (seg.parent / "ffmpeg.log").write_text(
+            "Stream map '0:a:9' matches no streams.\n"
+        )
+        return _Died()  # exits without ever writing a playlist
+
+    with (
+        patch("asyncio.create_subprocess_exec", _dies),
+        patch("quipclipper_web.app._HLS_START_TIMEOUT", 30.0),
+    ):
+        started = time.monotonic()
+        resp = client.get("/api/media/hls", params={"path": str(video), "audio": 9})
+        elapsed = time.monotonic() - started
+
+    assert resp.status_code == 502
+    assert elapsed < 5  # did not sit out the 30s start timeout
+    assert "matches no streams" in resp.json()["detail"]
 
 
 def test_hls_channel_subset_applies_pan(tmp_path: Path) -> None:

@@ -1281,7 +1281,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if end is not None:
             cmd += ["-to", str(end - (start or 0))]
         if aidx is not None:
-            cmd += ["-map", "0:v:0?", "-map", f"0:a:{aidx}"]
+            # Optional selectors (trailing `?`) — same reasoning as the HLS path:
+            # a source with no audio, or a selection past the streams it has,
+            # plays as video-only instead of failing the whole stream.
+            cmd += ["-map", "0:v:0?", "-map", f"0:a:{aidx}?"]
         # Video: stream-copy by default; re-encode to H.264 when the browser
         # can't decode the source codec (B20/B22). HW (VAAPI) when available.
         if venc:
@@ -1340,6 +1343,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return "#EXT-X-ENDLIST" in playlist.read_text(encoding="utf-8")
         except OSError:
             return False
+
+    def _hls_error(d: Path, limit: int = 300) -> str:
+        """ffmpeg's last stderr line for this token — the actual reason a
+        transcode refused to start, rather than a bare timeout. Empty when the
+        log is missing or says nothing useful."""
+        try:
+            text = (d / "ffmpeg.log").read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return ""
+        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+        return lines[-1][:limit] if lines else ""
 
     def _touch_hls(d: Path) -> None:
         """Bump a token dir's mtime so an actively-watched session isn't pruned.
@@ -1440,7 +1454,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     cmd += ["-vaapi_device", _VAAPI_DEVICE]
                 cmd += ["-i", str(p)]
                 if aidx is not None:
-                    cmd += ["-map", "0:v:0?", "-map", f"0:a:{aidx}"]
+                    # Both selectors are optional (trailing `?`): a source with no
+                    # audio — or a stale selection pointing past the streams it
+                    # has — segments as video-only instead of failing the whole
+                    # transcode, which used to surface as a bare timeout.
+                    cmd += ["-map", "0:v:0?", "-map", f"0:a:{aidx}?"]
                 if venc:
                     cmd += (["-vf", "format=nv12,hwupload", "-c:v", "h264_vaapi", "-qp", "24"]
                             if hw else ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23"])
@@ -1458,18 +1476,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "-hls_segment_filename", str(d / "seg%05d.m4s"),
                     str(playlist),
                 ]
-                _hls_procs[token] = await asyncio.create_subprocess_exec(
-                    *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
-                )
+                # Keep stderr: when ffmpeg refuses the command it is the only
+                # record of why, and the fail-fast branch below reports it.
+                with open(d / "ffmpeg.log", "wb") as log:
+                    _hls_procs[token] = await asyncio.create_subprocess_exec(
+                        *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=log,
+                    )
+
+        def _ready() -> bool:
+            return playlist.exists() and any(d.glob("seg*.m4s"))
 
         deadline = time.monotonic() + _HLS_START_TIMEOUT
         while True:
-            if playlist.exists() and any(d.glob("seg*.m4s")):
+            if _ready():
                 break
+            # Fail fast: ffmpeg exiting before it wrote a playlist means the
+            # command was rejected outright (unreadable source, a selection it
+            # can't satisfy). Nothing will appear later, so don't sit out the
+            # whole timeout — that turned an instant error into a 120s stall.
+            pr = _hls_procs.get(token)
+            if pr is not None and pr.returncode is not None:
+                if _ready():
+                    break  # it finished between the two checks
+                why = _hls_error(d)
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"HLS transcode failed to start (ffmpeg exited "
+                           f"{pr.returncode})." + (f" {why}" if why else ""),
+                )
             if time.monotonic() >= deadline:
                 break
             await asyncio.sleep(_HLS_START_POLL)
-        if not playlist.exists():
+        if not _ready():
             raise HTTPException(
                 status_code=504,
                 detail=f"HLS transcode did not start within {_HLS_START_TIMEOUT:.0f}s.",
