@@ -71,6 +71,9 @@ engine for scripting and quick one-off cuts.
 - **Scrolling script view** — the full subtitle script scrolls with playback;
   click a line to seek, hover (or tap, on touch) for Start/End buttons to select
   a clip range by dialogue lines (timestamps are derived from the selected cues).
+  Every script opens with a synthetic **Start of video** line (0:00 up to the
+  first cue), so a clip can begin at the very start of the file — before any
+  dialogue — or capture just the cold open.
   A **Before/After buffer** in the Marks header expands the selection live.
 - **Stream selector** — one menu under the seek bar picks the subtitle track,
   the audio stream, and (for multichannel audio) a channel subset — affecting

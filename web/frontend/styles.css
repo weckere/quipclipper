@@ -548,6 +548,10 @@ footer { padding: 2rem 1.25rem; font-size: 0.8rem; }
   flex-shrink: 0;
 }
 .script-text { flex: 1; }
+/* Synthetic "Start of video" line that opens every script (clip from 0:00). */
+.script-line.script-synthetic .script-text { font-style: italic; color: var(--muted); }
+.script-line.script-synthetic.in-range .script-text,
+.script-line.script-synthetic.active .script-text { color: var(--fg); }
 /* Speaker attribution (WebVTT <v Name> / transcript speaker field). */
 .script-speaker {
   color: var(--accent); font-weight: 600; margin-right: 0.4em;

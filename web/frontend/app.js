@@ -1716,6 +1716,22 @@ function clipEnd() {
 function hasClipRange() {
   return clipFirst >= 0 && clipLast >= 0 && clipLast >= clipFirst;
 }
+/** Dialogue of the first *real* selected cue ("" if only the synthetic start line). */
+function selectedCueText() {
+  if (!hasClipRange()) return "";
+  for (let i = clipFirst; i <= clipLast; i++) {
+    const c = scriptCues[i];
+    if (c && !c.synthetic) return c.text;
+  }
+  return "";
+}
+/** Number of real dialogue lines in the selection (excludes the synthetic start line). */
+function selectedLineCount() {
+  if (!hasClipRange()) return 0;
+  let n = 0;
+  for (let i = clipFirst; i <= clipLast; i++) if (scriptCues[i] && !scriptCues[i].synthetic) n++;
+  return n;
+}
 
 // Buffer (before/after padding) — part of the selection (B16). The previewed /
 // looped range is the cue range expanded by the buffer (clamped to the file).
@@ -1766,10 +1782,11 @@ function updateClipUI() {
     const s = clipStart(), e = clipEnd();
     const bs = bufStart(), be = bufEnd();
     const dur = be - bs;
-    const nLines = clipLast - clipFirst + 1;
+    const nLines = selectedLineCount();
+    const lines = nLines === 0 ? "before the first line" : `${nLines} line${nLines > 1 ? "s" : ""}`;
     el.innerHTML =
       `<span class="range-times">${formatTime(bs)} – ${formatTime(be)}</span> ` +
-      `<span>(${dur.toFixed(1)}s, ${nLines} line${nLines > 1 ? "s" : ""})</span>` +
+      `<span>(${dur.toFixed(1)}s, ${lines})</span>` +
       ` <button class="mark-clear-inline" title="Clear selection">×</button>`;
     el.querySelector(".mark-clear-inline").onclick = clearClip;
     $("mark-save").disabled = false;
@@ -1812,10 +1829,8 @@ async function saveBookmark() {
   const s = clipStart(), e = clipEnd();
   // Build default label: time range (whole seconds) + first dialogue line
   let defaultLabel = `${formatTimeWhole(s)} – ${formatTimeWhole(e)}`;
-  if (clipFirst >= 0 && scriptCues[clipFirst]) {
-    const firstLine = scriptCues[clipFirst].text.slice(0, 60);
-    defaultLabel += ` — ${firstLine}`;
-  }
+  const firstLine = selectedCueText().slice(0, 60);
+  if (firstLine) defaultLabel += ` — ${firstLine}`;
   const label = prompt("Bookmark label:", defaultLabel);
   if (label === null) return;
   try {
@@ -1831,7 +1846,7 @@ async function saveBookmark() {
       audio_track: getSelectedAudio(),
       channel_subset: getSelectedChan(),
       // Keep the matched dialogue so exporting the bookmark fills the {cue} token.
-      cue: (clipFirst >= 0 && scriptCues[clipFirst]) ? scriptCues[clipFirst].text : "",
+      cue: selectedCueText(),
     });
     loadBookmarks();
   } catch (err) {
@@ -1887,23 +1902,34 @@ async function loadScript(path, track) {
     return;
   }
   if (myId !== scriptLoadId) return;  // a newer load superseded us
-  scriptCues = cues;
-  if (!scriptCues.length) {
+  if (!cues.length) {
     list.innerHTML = '<div class="script-loading muted">No subtitle cues found.</div>';
     return;
   }
+  // Every script opens with a synthetic "start of video" line so a clip can
+  // begin at 0:00 — before any dialogue is shown. It runs from the very start
+  // up to the first real cue, so selecting it alone clips the cold open.
+  // `synthetic: true` keeps it out of {cue} naming, line counts and search
+  // matching; everything else (seek, Start/End, highlight) treats it as a cue.
+  scriptCues = [
+    { start: 0, end: Math.max(0, cues[0].start), text: "Start of video", synthetic: true },
+    ...cues,
+  ];
 
   list.innerHTML = "";
   const frag = document.createDocumentFragment();
   scriptCues.forEach((cue, i) => {
     const row = document.createElement("div");
-    row.className = "script-line";
+    row.className = cue.synthetic ? "script-line script-synthetic" : "script-line";
     row.dataset.idx = i;
     const speaker = cue.speaker
       ? `<span class="script-speaker">${escapeHtml(cue.speaker)}</span>` : "";
+    const text = cue.synthetic
+      ? `${escapeHtml(cue.text)} <span class="muted">(before the first line)</span>`
+      : escapeHtml(cue.text);
     row.innerHTML =
       `<span class="script-ts">${formatTime(cue.start)}</span>` +
-      `<span class="script-text">${speaker}${escapeHtml(cue.text)}</span>` +
+      `<span class="script-text">${speaker}${text}</span>` +
       `<span class="script-actions">` +
         `<button class="script-mark-btn script-start-btn" title="Set clip start">Start</button>` +
         `<button class="script-mark-btn script-end-btn" title="Set clip end">End</button>` +
@@ -1931,6 +1957,7 @@ async function loadScript(path, track) {
 function nearestCueIndex(t, edge) {
   let best = -1, bestDelta = Infinity;
   for (let i = 0; i < scriptCues.length; i++) {
+    if (scriptCues[i].synthetic) continue;  // never match the "start of video" line
     const delta = Math.abs((edge === "end" ? scriptCues[i].end : scriptCues[i].start) - t);
     if (delta < bestDelta) { bestDelta = delta; best = i; }
   }
@@ -2244,8 +2271,9 @@ async function makeClip() {
   // The first selected cue's dialogue drives the {cue} naming token.
   // The {cue} naming token: the selected cue's dialogue, or — when a bookmark
   // range is loaded (no cue selected in the script) — the bookmark's saved cue.
-  if (clipFirst >= 0 && scriptCues[clipFirst]) body.cue_text = scriptCues[clipFirst].text;
-  else if (loadedBookmarkCue) body.cue_text = loadedBookmarkCue;
+  const selCue = selectedCueText();
+  if (selCue) body.cue_text = selCue;
+  else if (clipFirst < 0 && loadedBookmarkCue) body.cue_text = loadedBookmarkCue;
 
   // A label for the Clips list: the matched dialogue, else the time range.
   const label = body.cue_text
