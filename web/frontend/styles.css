@@ -25,7 +25,7 @@ input[type="checkbox"], input[type="range"] { accent-color: var(--accent); }
 main, footer { max-width: 1360px; margin: 0 auto; padding: 0 1.25rem; }
 /* Until their own redesign steps, these pages keep a narrower column. */
 #browser { max-width: 1100px; margin-left: auto; margin-right: auto; }
-#clips-browser, #bookmarks-browser { max-width: 860px; margin-left: auto; margin-right: auto; }
+#clips-browser, #bookmarks-browser { max-width: 1100px; margin-left: auto; margin-right: auto; }
 
 .sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
 svg.icon {
@@ -858,4 +858,60 @@ footer { padding: 2rem 1.25rem; font-size: 0.8rem; }
   .dialogue-hit .hit-score { grid-column: 2; justify-self: start; }
   .dialogue-hit .hit-actions { grid-column: 3; grid-row: 2; }
   .dialogue-hit .hit-time { font-size: 0.75rem; white-space: nowrap; }
+}
+
+/* ---- bookmarks and clips pages, settings ------------------------------------------------- */
+.page-head { display: flex; align-items: baseline; gap: 0.8rem; margin: 0.4rem 0 1rem; }
+.page-title { margin: 0; font-size: 1.5rem; font-weight: 600; letter-spacing: -0.01em; }
+.bm-browser-list, #clips-entries {
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); overflow: hidden;
+}
+#clips-entries { padding: 0.25rem; }
+#clips-entries .entry + .entry { border-top: 1px solid var(--line); border-radius: 0; }
+.bm-browser-group { margin: 0; border: none; border-radius: 0; background: var(--raised); padding: 0.6rem 0.9rem; }
+.bm-browser-icon { display: inline-flex; color: var(--dim); }
+.bm-browser-count { font-size: 0.8rem; }
+.bm-browser-item { padding: 0.55rem 0.9rem; gap: 0.7rem; }
+.bm-browser-item + .bm-browser-item, .bm-browser-group + .bm-browser-item { border-top: 1px solid var(--line); border-radius: 0; }
+.bm-browser-group + .bm-browser-item { border-top: none; }
+.bm-browser-item .bm-buffer input { width: 3.4rem; }
+.clip-name { font-family: var(--font-mono); font-size: 0.88rem; }
+.entry .clip-dl {
+  margin: 0; padding: 0.3rem 0.8rem; font-size: 0.82rem;
+  background: var(--raised); color: var(--text); border: 1px solid var(--line-strong);
+}
+.entry .clip-dl:hover { border-color: var(--accent-text); filter: none; }
+
+.icon-btn {
+  display: inline-flex; align-items: center; justify-content: center; width: 2.1rem; height: 2.1rem;
+  background: none; border: none; border-radius: var(--radius); color: var(--dim); cursor: pointer;
+}
+.icon-btn:hover, .icon-btn[aria-expanded="true"] { background: var(--raised); color: var(--text); }
+.settings-popover { width: min(24rem, calc(100vw - 2rem)); }
+.settings-saved { font-size: 0.8rem; }
+.settings-body { padding: 0.9rem 1rem 1rem; }
+.set-row { margin-bottom: 1rem; }
+.set-label { display: block; font-size: 0.9rem; font-weight: 600; margin-bottom: 0.3rem; }
+.set-help { margin: 0.1rem 0 0.5rem; font-size: 0.8rem; }
+.settings-body > .set-help:last-child { margin: 0; }
+.settings-body input[type="text"] { width: 100%; padding: 0.45rem 0.7rem; }
+.segmented {
+  display: flex; background: var(--sunken); border: 1px solid var(--line-strong);
+  border-radius: var(--radius); padding: 2px; gap: 2px;
+}
+.segmented button {
+  flex: 1; border: none; background: none; border-radius: 6px; padding: 0.35rem 0.6rem;
+  color: var(--dim); font: inherit; font-size: 0.85rem; cursor: pointer;
+}
+.segmented button[aria-checked="true"] { background: var(--raised); color: var(--text); font-weight: 600; box-shadow: 0 0 0 1px var(--line); }
+@media (max-width: 720px) { .settings-popover { right: 1rem; } }
+
+@media (max-width: 600px) {
+  .bm-browser-item { flex-wrap: wrap; row-gap: 0.3rem; }
+  .bm-browser-item .bookmark-label { flex: 1 1 calc(100% - 2.2rem); white-space: normal; }
+  .bm-browser-item .bookmark-range { margin-left: 1.8rem; }
+  .bm-browser-group .bm-browser-count { display: none; }
+  .entry .clip-name { font-size: 0.78rem; }
+  .entry .clip-dl { margin-left: 0; }
+  #clips-entries .entry { flex-wrap: wrap; }
 }

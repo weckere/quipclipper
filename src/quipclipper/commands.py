@@ -422,6 +422,7 @@ EXEMPT_ROUTES: dict[tuple[str, str], str] = {
 # Web UI preferences with no CLI meaning.
 EXEMPT_UI_SETTINGS: dict[str, str] = {
     "qcYtPlayer": "playback: chooses the YouTube player in the browser",
+    "qc_theme": "presentation: light or dark appearance in the browser",
 }
 
 

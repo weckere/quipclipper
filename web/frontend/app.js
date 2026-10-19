@@ -2712,6 +2712,8 @@ async function browseClips(folder) {
   list.innerHTML = "";
   empty.hidden = true;
   $("clips-folder-crumb").textContent = folder ? ` / ${folder}` : "";
+  $("clips-title").textContent = folder || "Clips";
+  $("clips-count").textContent = "";
   $("clips-batch").hidden = true;
   $("clips-select-all").checked = false;
   $("clips-batch-status").textContent = "";
@@ -2730,10 +2732,16 @@ async function browseClips(folder) {
     return;
   }
 
+  if (data.clips.length) {
+    const bytes = data.clips.reduce((n, c) => n + c.size, 0);
+    $("clips-count").textContent = `${plural(data.clips.length, "clip")} · ${fmtSize(bytes)}`;
+  }
   for (const f of data.folders) {
     const li = document.createElement("li");
     li.className = "entry dir";
-    li.innerHTML = `<span class="icon">📁</span><span class="label">${escapeHtml(f)}</span>`;
+    li.dataset.action = "clips.list";
+    li.innerHTML = `<span class="icon-wrap">${iconSvg("folder")}</span><span class="label">${escapeHtml(f)}</span>` +
+      `<span class="chips"></span><span class="go">${iconSvg("chevron-r")}</span>`;
     li.onclick = () => browseClips(f);
     list.appendChild(li);
   }
@@ -2746,9 +2754,9 @@ async function browseClips(folder) {
       : (c.size / 1024).toFixed(0) + " KB";
     li.innerHTML =
       `<input type="checkbox" class="entry-select clip-select" title="Select for batch export" />` +
-      `<span class="icon">🎬</span>` +
-      `<span class="label">${escapeHtml(c.name)}</span>` +
-      `<span class="badge">${size}</span>` +
+      `<span class="icon-wrap">${iconSvg(/\.(flac|wav|mp3|m4a|opus|ogg|aac)$/i.test(c.name) ? "music" : "film")}</span>` +
+      `<span class="label clip-name">${escapeHtml(c.name)}</span>` +
+      `<span class="chips"><span class="badge">${size}</span></span>` +
       `<a class="download-link clip-dl" data-action="clips.download" href="${escapeHtml(c.download_url)}" download>Download</a>`;
     const cb = li.querySelector(".clip-select");
     cb.dataset.path = c.path;
@@ -2787,6 +2795,7 @@ async function browseBookmarks() {
   empty.hidden = true;
   $("bm-batch").hidden = true;
   $("bm-select-all").checked = false;
+  $("bm-count").textContent = "";
   $("bm-batch-status").textContent = "";
 
   let data;
@@ -2802,6 +2811,8 @@ async function browseBookmarks() {
     return;
   }
   $("bm-batch").hidden = false;
+  const nSources = new Set(data.bookmarks.map((b) => b.path)).size;
+  $("bm-count").textContent = `${plural(data.bookmarks.length, "bookmark")} in ${plural(nSources, "source")}`;
 
   // Group by source path
   const groups = new Map();
@@ -2817,9 +2828,13 @@ async function browseBookmarks() {
     const header = document.createElement("li");
     header.className = "bm-browser-group";
     header.innerHTML =
-      `<span class="bm-browser-file clickable" title="Open this video">${escapeHtml(fileName)}</span>`;
-    // Clicking the filename opens the source video.
+      `<span class="bm-browser-icon">${iconSvg(path.startsWith("yt:") ? "youtube" : "film")}</span>` +
+      `<span class="bm-browser-file clickable" title="Open this video">${escapeHtml(fileName)}</span>` +
+      `<span class="muted bm-browser-count">${plural(bookmarks.length, "bookmark")}</span>` +
+      `<button type="button" class="bm-browser-open" title="Open this video">Open video</button>`;
+    // Clicking the filename (or the button) opens the source video.
     header.querySelector(".bm-browser-file").onclick = () => openItem(path, fileName);
+    header.querySelector(".bm-browser-open").onclick = () => openItem(path, fileName);
     list.appendChild(header);
 
     for (const bm of bookmarks) {
@@ -3229,7 +3244,7 @@ $("global-search").addEventListener("submit", (e) => { e.preventDefault(); runGl
 
 // "/" jumps to the search box from anywhere that isn't a text field.
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") { toggleScopeMenu(false); toggleJobs(false); return; }
+  if (e.key === "Escape") { toggleScopeMenu(false); toggleJobs(false); toggleSettings(false); return; }
   if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey) return;
   const t = e.target;
   if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
@@ -3239,6 +3254,7 @@ document.addEventListener("keydown", (e) => {
 document.addEventListener("click", (e) => {
   if (!e.target.closest("#global-search")) toggleScopeMenu(false);
   if (!e.target.closest("#jobs-popover") && !e.target.closest("#jobs-pill")) toggleJobs(false);
+  if (!e.target.closest("#settings-popover") && !e.target.closest("#settings-btn")) toggleSettings(false);
 });
 
 // --- Jobs: the pill counts running jobs, the popover lists them -------------
@@ -3312,10 +3328,53 @@ function toggleJobs(open) {
   jobsOpen = show;
   pop.hidden = !show;
   $("jobs-pill").setAttribute("aria-expanded", String(show));
-  if (show) { toggleScopeMenu(false); renderJobsList(); refreshJobs(); }
+  if (show) { toggleScopeMenu(false); toggleSettings(false); renderJobsList(); refreshJobs(); }
   scheduleJobs();
 }
 $("jobs-pill").onclick = (e) => { e.stopPropagation(); toggleJobs(); };
+
+// --- Settings popover: appearance and subtitle languages ----------------------
+//
+// Per-browser preferences. The theme follows the OS until you pick Dark or Light;
+// the choice is applied before first paint by a small script in index.html's head.
+// Subtitle languages is the #ss-langs field, wired where the stream selector is.
+
+const THEME_KEY = "qc_theme";
+
+function currentThemeChoice() {
+  let t = null;
+  try { t = localStorage.getItem(THEME_KEY); } catch {}
+  return t === "light" || t === "dark" ? t : "system";
+}
+
+function applyTheme(choice) {
+  if (choice === "light" || choice === "dark") document.documentElement.dataset.theme = choice;
+  else delete document.documentElement.dataset.theme;
+  for (const b of $("theme-seg").querySelectorAll("button")) {
+    b.setAttribute("aria-checked", String(b.dataset.themeChoice === choice));
+  }
+}
+
+$("theme-seg").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-theme-choice]");
+  if (!b) return;
+  const choice = b.dataset.themeChoice;
+  try {
+    if (choice === "system") localStorage.removeItem(THEME_KEY);
+    else localStorage.setItem(THEME_KEY, choice);
+  } catch {}
+  applyTheme(choice);
+});
+applyTheme(currentThemeChoice());
+
+function toggleSettings(open) {
+  const pop = $("settings-popover");
+  const show = open === undefined ? pop.hidden : open;
+  pop.hidden = !show;
+  $("settings-btn").setAttribute("aria-expanded", String(show));
+  if (show) { toggleScopeMenu(false); toggleJobs(false); }
+}
+$("settings-btn").onclick = (e) => { e.stopPropagation(); toggleSettings(); };
 $("jobs-clear").onclick = async () => {
   await Promise.all(lastJobs.filter((j) => !jobActive(j)).map((j) =>
     apiFetch(`/api/jobs/${encodeURIComponent(j.id)}`, { method: "DELETE" }).catch(() => null)));

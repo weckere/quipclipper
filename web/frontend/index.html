@@ -5,6 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>quipclipper</title>
     <meta name="color-scheme" content="dark light" />
+    <script>
+      /* Apply a saved light/dark override before first paint (no flash). */
+      try { var t = localStorage.getItem("qc_theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) {}
+    </script>
     <link rel="stylesheet" href="tokens.css" />
     <link rel="stylesheet" href="styles.css" />
   </head>
@@ -19,6 +23,7 @@
       <symbol id="i-youtube" viewBox="0 0 24 24"><path d="M3 8 Q3 5.5 5.5 5.5 L18.5 5.5 Q21 5.5 21 8 L21 16 Q21 18.5 18.5 18.5 L5.5 18.5 Q3 18.5 3 16 Z M10 9 L15 12 L10 15 Z"/></symbol>
       <symbol id="i-chevron-r" viewBox="0 0 24 24"><path d="M9 6 L15 12 L9 18"/></symbol>
       <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M19 12 A7 7 0 1 1 16.5 6.8 M17 3 L17 7.5 L12.5 7.5"/></symbol>
+      <symbol id="i-gear" viewBox="0 0 24 24"><path d="M11.5 8 A2.5 2.5 0 1 1 6.5 8 A2.5 2.5 0 1 1 11.5 8 Z M17.5 16 A2.5 2.5 0 1 1 12.5 16 A2.5 2.5 0 1 1 17.5 16 Z M4 8 L6.5 8 M11.5 8 L20 8 M4 16 L12.5 16 M17.5 16 L20 16"/></symbol>
       <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4 L12 15 M7 10.5 L12 15.5 L17 10.5 M5 19.5 L19 19.5"/></symbol>
     </svg>
     <header class="app-header">
@@ -44,7 +49,27 @@
         <button type="button" id="jobs-pill" class="jobs-pill" aria-haspopup="dialog" aria-expanded="false" title="Clips, downloads and subtitle jobs">
           <span class="jobs-dot" aria-hidden="true"></span><span id="jobs-pill-label">Jobs</span>
         </button>
+        <button type="button" id="settings-btn" class="icon-btn" aria-haspopup="dialog" aria-expanded="false" aria-label="Settings" title="Settings"><svg class="icon"><use href="#i-gear"/></svg></button>
       </nav>
+      <div id="settings-popover" class="jobs-popover settings-popover" role="dialog" aria-label="Settings" hidden>
+        <div class="jobs-head"><h3>Settings</h3><span class="muted settings-saved">Saved in this browser</span></div>
+        <div class="settings-body">
+          <div class="set-row">
+            <div class="set-label" id="theme-label">Appearance</div>
+            <div id="theme-seg" class="segmented" role="radiogroup" aria-labelledby="theme-label" data-action="settings.set">
+              <button type="button" role="radio" data-theme-choice="system" aria-checked="true">System</button>
+              <button type="button" role="radio" data-theme-choice="dark" aria-checked="false">Dark</button>
+              <button type="button" role="radio" data-theme-choice="light" aria-checked="false">Light</button>
+            </div>
+          </div>
+          <div class="set-row">
+            <label class="set-label" for="ss-langs">Subtitle languages</label>
+            <p class="muted set-help">The order to prefer when a file has several subtitle tracks, e.g. <code>eng,spa</code>. Empty uses the server default.</p>
+            <input id="ss-langs" data-action="settings.set" type="text" autocomplete="off" spellcheck="false" title="Preferred subtitle language(s) to auto-select, in order — e.g. eng or eng,spa. Remembered in this browser." />
+          </div>
+          <p class="muted set-help">The clip name template is the Name field in the clip bar. The YouTube player choice is on a YouTube video.</p>
+        </div>
+      </div>
       <div id="jobs-popover" class="jobs-popover" role="dialog" aria-label="Jobs" hidden>
         <div class="jobs-head"><h3>Jobs</h3><button type="button" id="jobs-clear" class="link-btn" data-action="job.cancel">Clear finished</button></div>
         <ul id="jobs-list" class="jobs-list" data-action="job.list"></ul>
@@ -142,7 +167,10 @@
           <a id="clips-home">Clips</a>
           <span id="clips-folder-crumb" class="muted"></span>
         </nav>
-        <div id="clips-batch" class="batch-bar" hidden>
+        <div class="page-head"><h2 id="clips-title" class="page-title">Clips</h2><span id="clips-count" class="muted"></span></div>
+        <ul id="clips-entries" class="entries"></ul>
+        <p id="clips-empty" class="muted" hidden>No clips yet.</p>
+        <div id="clips-batch" class="batch-bar sticky" hidden>
         <div class="batch-row">
           <label class="checkbox-label"><input id="clips-select-all" type="checkbox" /> Select all</label>
           <span id="clips-batch-summary" class="batch-summary"></span>
@@ -165,8 +193,6 @@
           <label class="batch-template-label" title="Output path for each clip. A leading folder (e.g. MyBatch/...) puts them all in one folder. Tokens: {source} {timestamp} {end} {duration} {cue} {title} {year} {season} {episode} {date}">Name <input id="clips-batch-template" class="clip-template-input" type="text" autocomplete="off" spellcheck="false" placeholder="{source}/{timestamp}_{cue}_{title}" /></label>
         </div>
       </div>
-        <ul id="clips-entries" class="entries"></ul>
-        <p id="clips-empty" class="muted" hidden>No clips yet.</p>
       </section>
 
       <!-- Bookmarks browser -->
@@ -175,7 +201,10 @@
           <a id="all-bm-back-lib">Library</a>
           <span class="muted"> / Bookmarks</span>
         </nav>
-        <div id="bm-batch" class="batch-bar" hidden>
+        <div class="page-head"><h2 class="page-title">Bookmarks</h2><span id="bm-count" class="muted"></span></div>
+        <ul id="all-bookmarks-list" class="bookmarks-list bm-browser-list"></ul>
+        <p id="all-bookmarks-empty" class="muted" hidden>No bookmarks saved yet.</p>
+        <div id="bm-batch" class="batch-bar sticky" hidden>
         <div class="batch-row">
           <label class="checkbox-label"><input id="bm-select-all" type="checkbox" /> Select all</label>
           <span id="bm-batch-summary" class="batch-summary"></span>
@@ -200,8 +229,6 @@
           <label class="batch-template-label" title="Output path for each clip. A leading folder (e.g. MyBatch/...) puts them all in one folder. Tokens: {source} {timestamp} {end} {duration} {cue} {title} {year} {season} {episode} {date}">Name <input id="bm-batch-template" class="clip-template-input" type="text" autocomplete="off" spellcheck="false" placeholder="{source}/{timestamp}_{cue}_{title}" /></label>
         </div>
       </div>
-        <ul id="all-bookmarks-list" class="bookmarks-list bm-browser-list"></ul>
-        <p id="all-bookmarks-empty" class="muted" hidden>No bookmarks saved yet.</p>
       </section>
 
       <!-- Item / inspection view -->
@@ -222,10 +249,6 @@
             </label>
             <label class="ss-field" id="ss-chan-field" hidden>Channels
               <select id="ss-chan"></select>
-            </label>
-            <label class="ss-field ss-langs-field" title="Preferred subtitle language(s) to auto-select, in order — e.g. eng or eng,spa. Remembered in this browser.">
-              Auto-lang
-              <input id="ss-langs" data-action="settings.set" type="text" autocomplete="off" spellcheck="false" />
             </label>
             <a id="ss-reindex" data-action="item.reindex" class="reindex-link" title="Clear and re-extract subtitles for this file (use if subtitles changed)" hidden>↻ Reindex subtitles</a>
             <span id="ss-reindex-status" class="muted reindex-status" hidden></span>
