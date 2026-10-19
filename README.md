@@ -36,8 +36,10 @@ always cut audio clips. **Speaker attribution** is picked up from WebVTT `<v Nam
 voice tags, a transcript `speaker` field, or a recurring `Name:` prefix, and shown
 in the script, the search results, and the player captions.
 
-A **command-line tool** ([`quipclipper-cli`](#quipclipper-cli)) wraps the same
-engine for scripting and quick one-off cuts.
+A **command-line tool** ([`quipclipper`](#the-quipclipper-command)) does
+everything the web app does: every action in the web UI is a command, run against
+a quipclipper server or, for search and clip, on local files. See
+[`docs/CLI.md`](docs/CLI.md) for the full command reference.
 
 ![quipclipper web app — searching dialogue and selecting a line to clip](docs/screenshot.png)
 
@@ -509,11 +511,31 @@ re-encode with `--no-lossless`.
 
 ---
 
-# quipclipper-cli
+# The quipclipper command
 
 The same search-and-clip engine as a **command-line tool**, for scripting and
 quick one-off cuts. Point it at a video plus a subtitle file (or let it find a
 sidecar `.srt` / extract an embedded track), type the dialogue, and get a clip.
+
+## Driving a server
+
+Every action in the web app is also a command (`quipclipper commands` lists
+them; [`docs/CLI.md`](docs/CLI.md) is the full reference). Point the CLI at a
+running quipclipper and it works on the server's library over the HTTP API:
+
+```sh
+export QC_URL=https://quipclipper.example.net   # or --server URL
+export QC_API_TOKEN=...                          # or QC_API_TOKEN_FILE
+quipclipper ls /movies
+quipclipper search.folder "you're killing me" --path /movies
+quipclipper clip "you're killing me" -v "/movies/The Sandlot (1993)/The.Sandlot.mkv" \
+    -t audio --out-dir ~/clips
+quipclipper --json bookmark.list | quipclipper clip.batch --kind audio
+```
+
+Add `--json` for machine-readable output and `--safe` to refuse anything that
+deletes data (for agents). New web UI actions must get a command in
+`src/quipclipper/commands.py`: a parity test fails until they do.
 
 ## CLI features
 

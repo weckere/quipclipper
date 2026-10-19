@@ -84,7 +84,7 @@ Both backfill endpoints appear in the UI only for YouTube-sourced videos in
 
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/api/youtube` | Add a video: `{"url": "<watch URL>"}` → yt-dlp fetches subtitles + metadata (no video download). Idempotent. Returns `{entry, meta}`. 400 = not a YouTube URL, 502 = yt-dlp failure. |
+| POST | `/api/youtube` | Add a video: `{"url": "<watch URL>"}` → yt-dlp fetches subtitles + metadata (no video download). Asynchronous: returns `{job_id, status}`; poll the job like a clip job (a yt-dlp failure shows up as the job's `error`). Already added: `{job_id: null, status: "done", entry}`. 400 = not a YouTube URL. |
 | DELETE | `/api/youtube/{video_id}` | Remove an added video (metadata + transcript + any download). |
 | POST | `/api/youtube/{video_id}/download` | Download the full video to the server (async — poll the returned `job_id` like a clip job; `job_id: null` = already downloaded). Once present, playback/keyframe/clipping all use the local file, and the stream-source restrictions below no longer apply. |
 | DELETE | `/api/youtube/{video_id}/download` | Delete the local video file; the transcript and metadata stay. |
@@ -127,10 +127,10 @@ start, end, start_ts, end_ts, cue_count}]}`. The `index` is what you pass back a
 | POST | `/api/clip` | Start a clip job (JSON body, see below). Returns `{job_id, status}`. |
 | GET | `/api/jobs` | Recent jobs. |
 | GET | `/api/jobs/{id}` | One job's status/result. |
-| DELETE | `/api/jobs/{id}` | Cancel a queued job / prune a finished one. |
+| DELETE | `/api/jobs/{id}` | Cancel a queued job / prune a finished one → `{cancelled}`; a running job that can stop (folder subtitle backfill) → `{cancelling}`; any other running job → 409. |
 | GET | `/api/jobs/{id}/download/{filename}` | Download a finished clip by name. |
 
-A job is `{id, status, label, created[, started, finished, elapsed, files, error]}`
+A job is `{id, status, label, created[, progress, started, finished, elapsed, files, error]}`
 where `status` is `queued|running|done|failed|cancelled`, `files` is
 `[{name, size}]` once done, and `error` is the failure message on a failed job.
 
