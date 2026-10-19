@@ -9,6 +9,18 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
+    <!-- Icon sprite (stroke icons, 24px grid; draw with <svg class="icon"><use href="#i-name"/></svg>).
+         Paths come from the FigCraft mockups. -->
+    <svg class="sprite" width="0" height="0" aria-hidden="true" focusable="false">
+      <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7 Q3 5.5 4.5 5.5 L9.5 5.5 L11.5 8 L19.5 8 Q21 8 21 9.5 L21 17.5 Q21 19 19.5 19 L4.5 19 Q3 19 3 17.5 Z"/></symbol>
+      <symbol id="i-film" viewBox="0 0 24 24"><path d="M4 5 L20 5 L20 19 L4 19 Z M8 5 L8 19 M16 5 L16 19 M4 9.5 L8 9.5 M4 14.5 L8 14.5 M16 9.5 L20 9.5 M16 14.5 L20 14.5"/></symbol>
+      <symbol id="i-music" viewBox="0 0 24 24"><path d="M9 17.5 L9 6 L19 4 L19 15.5 M9 17.5 A2.5 2.5 0 1 1 4 17.5 A2.5 2.5 0 1 1 9 17.5 Z M19 15.5 A2.5 2.5 0 1 1 14 15.5 A2.5 2.5 0 1 1 19 15.5 Z"/></symbol>
+      <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 5.5 L11 5.5 Q12 5.5 12 6.5 L12 19 Q11 18 9 18 L4 18 Z M20 5.5 L13 5.5 Q12 5.5 12 6.5 L12 19 Q13 18 15 18 L20 18 Z"/></symbol>
+      <symbol id="i-youtube" viewBox="0 0 24 24"><path d="M3 8 Q3 5.5 5.5 5.5 L18.5 5.5 Q21 5.5 21 8 L21 16 Q21 18.5 18.5 18.5 L5.5 18.5 Q3 18.5 3 16 Z M10 9 L15 12 L10 15 Z"/></symbol>
+      <symbol id="i-chevron-r" viewBox="0 0 24 24"><path d="M9 6 L15 12 L9 18"/></symbol>
+      <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M19 12 A7 7 0 1 1 16.5 6.8 M17 3 L17 7.5 L12.5 7.5"/></symbol>
+      <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4 L12 15 M7 10.5 L12 15.5 L17 10.5 M5 19.5 L19 19.5"/></symbol>
+    </svg>
     <header class="app-header">
       <h1 id="home-link" data-action="library.roots"><span class="logo-box"><svg class="logo-mark" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M8.5 6A2.5 2.5 0 1 1 3.5 6A2.5 2.5 0 1 1 8.5 6ZM8.5 18A2.5 2.5 0 1 1 3.5 18A2.5 2.5 0 1 1 8.5 18ZM8 7.6L20 18.5M8 16.4L20 5.5" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg></span>quipclipper</h1>
       <!-- One search box. The chip picks where it looks: this video (/api/search), this folder
@@ -42,7 +54,12 @@
 
     <main>
       <!-- Library browser -->
-      <section id="browser">
+      <section id="browser" class="library-layout">
+        <aside class="roots-rail" aria-label="Library roots">
+          <h2 class="rail-title">Library</h2>
+          <ul id="roots-list" class="roots-list"></ul>
+        </aside>
+        <div class="library-main">
         <nav id="breadcrumb" class="breadcrumb"></nav>
         <div class="library-search-bar">
           <input id="library-search" data-action="library.find" type="text" placeholder="Search library…" autocomplete="off" />
@@ -57,17 +74,23 @@
         </div>
         <p id="dialogue-search-status" class="muted" hidden></p>
         <div id="dialogue-search-bar" class="library-search-bar dialogue-search-bar" hidden>
-          <div id="index-banner" data-action="index.status" class="index-banner" hidden>
-            <span id="index-banner-text">Subtitles in this folder haven't been indexed yet. Indexing speeds up dialogue search.</span>
-            <button id="index-btn" data-action="index.build" class="index-btn">Index now</button>
-          </div>
-          <div class="reindex-row">
-            <a id="reindex-folder-btn" data-action="index.build" class="reindex-link" title="Clear and re-extract subtitles for every file in this folder (use if subtitles changed)">↻ Reindex subtitles</a>
-            <span id="reindex-folder-status" class="muted reindex-status" hidden></span>
-            <a id="fetch-folder-subs-btn" data-action="index.fetch-subs" class="reindex-link" title="Fetch YouTube transcripts for every video in this folder that came from YouTube but has no subtitles, so they become dialogue-searchable. Runs in the background.">⬇ Fetch missing YouTube subtitles</a>
-            <a id="fetch-folder-cancel" data-action="job.cancel" class="reindex-link" hidden>✕ Cancel</a>
-            <span id="fetch-folder-status" class="muted reindex-status" hidden></span>
-          </div>
+          <!-- Dialogue index: how much of this folder dialogue search can see, and the tools
+               that change it (index, re-index, fetch YouTube transcripts). -->
+          <section id="index-card" class="index-card" data-action="index.status" aria-label="Dialogue index">
+            <div class="index-main">
+              <h3>Dialogue index</h3>
+              <p id="index-card-text" class="muted">Checking subtitles…</p>
+              <div id="index-bar" class="index-bar" role="progressbar" aria-label="Files indexed" aria-valuemin="0" aria-valuemax="100" hidden><span id="index-bar-fill"></span></div>
+              <p id="reindex-folder-status" class="muted reindex-status" hidden></p>
+              <p id="fetch-folder-status" class="muted reindex-status" hidden></p>
+            </div>
+            <div class="index-actions">
+              <button type="button" id="fetch-folder-subs-btn" data-action="index.fetch-subs" class="btn ghost" title="Fetch YouTube transcripts for every video in this folder that came from YouTube but has no subtitles, so they become dialogue-searchable. Runs in the background."><svg class="icon"><use href="#i-download"/></svg>Fetch missing YouTube subtitles</button>
+              <button type="button" id="fetch-folder-cancel" data-action="job.cancel" class="btn ghost" hidden>✕ Cancel</button>
+              <button type="button" id="reindex-folder-btn" data-action="index.build" class="btn" title="Clear and re-extract subtitles for every file in this folder (use if subtitles changed)"><svg class="icon"><use href="#i-refresh"/></svg>Re-index all</button>
+              <button type="button" id="index-btn" data-action="index.build" class="btn primary" hidden>Index now</button>
+            </div>
+          </section>
         </div>
         <!-- Batch actions for dialogue-search hits (clip/bookmark from results). -->
         <div id="search-batch" class="batch-bar" hidden>
@@ -90,6 +113,7 @@
         </div>
         <ul id="entries" class="entries"></ul>
         <p id="browser-empty" class="muted" hidden>Nothing here.</p>
+        </div>
       </section>
 
       <!-- Clips library -->

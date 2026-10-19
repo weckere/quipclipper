@@ -198,20 +198,20 @@ async function browse(path) {
   $("library-search").value = "";
   $("global-search-input").value = "";
   $("dialogue-search-status").hidden = true;
-  $("index-banner").hidden = true;
   $("reindex-folder-status").hidden = true;
+  resetIndexCard();
   // Show dialogue search bar only when inside a folder (not at root)
   $("dialogue-search-bar").hidden = !path;
   const isYtFolder = path === "yt:";
-  // The add-URL bar lives in the ▶ YouTube pseudo-folder; the folder-reindex
-  // link doesn't apply there (each item has its own ↻ in the item view).
+  // The add-URL bar lives in the ▶ YouTube pseudo-folder; the Dialogue index card
+  // doesn't apply there (each item has its own ↻ in the item view).
   $("yt-add-bar").hidden = !isYtFolder;
   $("yt-add-status").hidden = true;
-  document.querySelector(".reindex-row").hidden = isYtFolder;
+  $("index-card").hidden = isYtFolder;
   // Reset the folder subtitle-backfill controls when entering a folder. A job
   // already running keeps going server-side; we just stop mirroring it here.
   if (fetchFolderPoll) { clearInterval(fetchFolderPoll); fetchFolderPoll = null; }
-  $("fetch-folder-subs-btn").classList.remove("disabled");
+  $("fetch-folder-subs-btn").disabled = false;
   $("fetch-folder-cancel").hidden = true;
   $("fetch-folder-status").hidden = true;
   let data;
@@ -223,10 +223,14 @@ async function browse(path) {
   }
 
   renderBreadcrumb(path);
+  renderRootsRail(path);
   renderEntries(data.entries);
   autoScope();
   if (!isYtFolder) checkFolderIndex(path);  // index-status is for real folders
 }
+
+/** An icon from the sprite in index.html. */
+const iconSvg = (name) => `<svg class="icon" aria-hidden="true"><use href="#i-${name}"/></svg>`;
 
 function renderEntries(entries) {
   const list = $("entries");
@@ -244,11 +248,12 @@ function renderEntries(entries) {
     const intoFolder = e.is_dir || e.is_book;
     li.className = "entry " + (intoFolder ? "dir" : "video");
     if (intoFolder) li.dataset.action = "library.browse";
-    const icon = e.is_dir ? "📁" : e.is_book ? "📚" : e.is_youtube ? "▶️" : e.is_audio ? "🎵" : "🎬";
-    let tag = (!intoFolder && e.has_sidecar) ? ' <span class="badge">sub</span>' : "";
+    const icon = e.is_dir ? "folder" : e.is_book ? "book" : e.is_youtube ? "youtube" : e.is_audio ? "music" : "film";
+    let chips = (!intoFolder && e.has_sidecar) ? '<span class="badge">sub</span>' : "";
     // A locally downloaded YouTube video plays/cuts from the server's own copy.
-    if (e.is_youtube && e.downloaded) tag += ' <span class="badge" title="Downloaded to the server">💾</span>';
-    li.innerHTML = `<span class="icon">${icon}</span><span class="label">${escapeHtml(e.name)}</span>${tag}`;
+    if (e.is_youtube && e.downloaded) chips += '<span class="badge" title="Downloaded to the server">on server</span>';
+    li.innerHTML = `<span class="icon-wrap">${iconSvg(icon)}</span><span class="label">${escapeHtml(e.name)}</span>` +
+      `<span class="chips">${chips}</span>` + (intoFolder ? `<span class="go">${iconSvg("chevron-r")}</span>` : "");
     li.onclick = () => (intoFolder ? browse(e.path) : openItem(e.path, e.name));
     // A YouTube item row gets a remove button (forgets the video + transcript).
     if (e.is_youtube && !e.is_dir) {
@@ -256,6 +261,7 @@ function renderEntries(entries) {
       del.className = "yt-remove";
       del.dataset.action = "youtube.remove";
       del.title = "Remove this video from the YouTube list";
+      del.setAttribute("aria-label", "Remove this video from the YouTube list");
       del.textContent = "✕";
       del.onclick = async (ev) => {
         ev.stopPropagation();
@@ -271,6 +277,27 @@ function renderEntries(entries) {
   }
 }
 
+/** The roots rail: each media root and the YouTube pseudo-folder, current one marked. */
+function renderRootsRail(path) {
+  const list = $("roots-list");
+  list.innerHTML = "";
+  const items = mediaRoots.map((r) => ({ path: r, name: r.split("/").filter(Boolean).pop() || r, icon: "folder" }));
+  items.push({ path: "yt:", name: "YouTube", icon: "youtube" });
+  for (const it of items) {
+    const on = path === it.path || (!!path && it.path !== "yt:" && path.startsWith(it.path + "/"));
+    const li = document.createElement("li");
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "root-link" + (on ? " active" : "");
+    b.dataset.action = "library.browse";
+    if (on) b.setAttribute("aria-current", "true");
+    b.innerHTML = `${iconSvg(it.icon)}<span>${escapeHtml(it.name)}</span>`;
+    b.onclick = () => browse(it.path);
+    li.appendChild(b);
+    list.appendChild(li);
+  }
+}
+
 async function librarySearch(query) {
   if (!query.trim()) {
     browse(currentBrowsePath);
@@ -279,7 +306,7 @@ async function librarySearch(query) {
   const list = $("entries");
   list.innerHTML = "";
   $("browser-empty").hidden = true;
-  $("index-banner").hidden = true;
+  resetIndexCard();
   ++indexCheckId;
   const myId = ++librarySearchId;
 
@@ -305,6 +332,7 @@ async function librarySearch(query) {
   if (folderPaths.length) {
     dialogueSearchScope = folderPaths;
     $("dialogue-search-bar").hidden = false;
+    showIndexScope(folderPaths.length);
   } else {
     dialogueSearchScope = null;
     $("dialogue-search-bar").hidden = !currentBrowsePath;
@@ -583,54 +611,80 @@ async function bookmarkSearchHit(hit, statusEl) {
   }
 }
 
-// --- folder subtitle index --------------------------------------------------
+// --- folder subtitle index: the "Dialogue index" card -------------------------
+//
+// GET /api/search/folder/index-status counts the media files under the folder and
+// how many have cached subtitles; POST /api/search/folder/index (re)builds them.
 
 let indexCheckId = 0;
+let indexBusy = false;
+const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+function setIndexBar(frac) {
+  const bar = $("index-bar");
+  bar.hidden = frac == null;
+  if (frac == null) return;
+  const pct = Math.round(Math.max(0, Math.min(1, frac)) * 100);
+  $("index-bar-fill").style.width = pct + "%";
+  bar.setAttribute("aria-valuenow", String(pct));
+}
+
+function resetIndexCard() {
+  $("index-card-text").textContent = "Checking subtitles…";
+  setIndexBar(null);
+  $("index-btn").hidden = true;
+  $("reindex-folder-btn").hidden = false;
+}
+
+/** A name search found folders: no status to show, but Re-index covers them. */
+function showIndexScope(n) {
+  $("index-card-text").textContent = `${plural(n, "matching folder")}. Re-index covers all of them.`;
+  setIndexBar(null);
+  $("index-btn").hidden = true;
+}
+
+function renderIndexStatus(data) {
+  const text = $("index-card-text");
+  const index = $("index-btn");
+  index.hidden = true;
+  if (data.skipped) {
+    text.textContent = `Too many files here to index at once (over ${data.total}). Open a subfolder to index it.`;
+    setIndexBar(null);
+    $("reindex-folder-btn").hidden = true;
+    return;
+  }
+  if (data.total === 0) {
+    text.textContent = "No video or audio files under this folder.";
+    setIndexBar(null);
+    $("reindex-folder-btn").hidden = true;
+    return;
+  }
+  $("reindex-folder-btn").hidden = false;
+  setIndexBar(data.indexed / data.total);
+  const missing = data.total - data.indexed;
+  if (missing <= 0) {
+    text.textContent = `All ${plural(data.total, "file")} indexed. Dialogue search sees every subtitle here.`;
+  } else {
+    text.textContent = data.indexed === 0
+      ? `None of the ${plural(data.total, "file")} are indexed yet. Indexing makes dialogue search fast.`
+      : `${data.indexed} of ${plural(data.total, "file")} have searchable subtitles.`;
+    index.textContent = `Index ${plural(missing, "file")}`;
+    index.hidden = false;
+  }
+}
 
 async function checkFolderIndex(path) {
-  const banner = $("index-banner");
-  banner.hidden = true;
+  resetIndexCard();
   if (!path) return;
   const myId = ++indexCheckId;
   try {
     const data = await getJSON(`/api/search/folder/index-status?path=${encodeURIComponent(path)}`);
     if (myId !== indexCheckId) return;
-    if (data.total === 0 || data.skipped) return;
-    if (data.indexed >= data.total) return;
-    $("index-banner-text").textContent = data.indexed === 0
-      ? `Subtitles in this folder haven't been indexed yet (${data.total} files). Indexing speeds up dialogue search.`
-      : `${data.indexed} of ${data.total} files in this folder indexed. Index the rest to speed up dialogue search.`;
-    banner.hidden = false;
+    renderIndexStatus(data);
   } catch {
-    // silent — non-critical
+    if (myId === indexCheckId) $("index-card-text").textContent = "Couldn't read the index status.";
   }
 }
-
-$("index-btn").addEventListener("click", async () => {
-  if (!currentBrowsePath) return;
-  const btn = $("index-btn");
-  const text = $("index-banner-text");
-  btn.disabled = true;
-  text.textContent = "Indexing…";
-
-  try {
-    const resp = await apiFetch(`/api/search/folder/index?path=${encodeURIComponent(currentBrowsePath)}`, { method: "POST" });
-    const reader = resp.body.getReader();
-    const decoder = new TextDecoder();
-    let last = "";
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      last = decoder.decode(value, { stream: true }).trim().split("\n").pop();
-      const m = last.match(/^(\d+)\/(\d+) (.+)/);
-      if (m) text.textContent = `Indexing ${m[1]}/${m[2]}: ${m[3]}`;
-    }
-    $("index-banner").hidden = true;
-  } catch {
-    text.textContent = "Indexing failed.";
-  }
-  btn.disabled = false;
-});
 
 /** Stream a (re)index of one folder, reporting progress via a callback. */
 async function streamFolderIndex(folder, force, onProgress) {
@@ -648,27 +702,55 @@ async function streamFolderIndex(folder, force, onProgress) {
   }
 }
 
+function setIndexBusy(on) {
+  indexBusy = on;
+  $("index-btn").disabled = on;
+  $("reindex-folder-btn").disabled = on;
+}
+
+// Index the files in this folder that aren't cached yet.
+$("index-btn").addEventListener("click", async () => {
+  const folder = currentBrowsePath;
+  if (!folder || indexBusy) return;
+  const text = $("index-card-text");
+  setIndexBusy(true);
+  text.textContent = "Indexing…";
+  try {
+    await streamFolderIndex(folder, false, (d, t, name) => {
+      if (currentBrowsePath !== folder) return;  // user moved on; the work continues server-side
+      text.textContent = `Indexing ${d}/${t}: ${name}`;
+      setIndexBar(d / t);
+    });
+  } catch {
+    if (currentBrowsePath === folder) text.textContent = "Indexing failed.";
+    setIndexBusy(false);
+    return;
+  }
+  setIndexBusy(false);
+  if (currentBrowsePath === folder) checkFolderIndex(folder);
+});
+
 // Force-reindex the current folder(s) — clears cache then re-extracts.
 $("reindex-folder-btn").addEventListener("click", async () => {
   const folders = dialogueSearchScope || (currentBrowsePath ? [currentBrowsePath] : []);
-  if (!folders.length) return;
-  const btn = $("reindex-folder-btn");
+  if (!folders.length || indexBusy) return;
   const status = $("reindex-folder-status");
-  btn.classList.add("disabled");
+  setIndexBusy(true);
   status.hidden = false;
   try {
     for (let i = 0; i < folders.length; i++) {
       const prefix = folders.length > 1 ? `Folder ${i + 1}/${folders.length} — ` : "";
       await streamFolderIndex(folders[i], true, (d, t, name) => {
         status.textContent = `${prefix}Reindexing ${d}/${t}: ${name}`;
+        setIndexBar(d / t);
       });
     }
     status.textContent = "Reindexed.";
-    if (currentBrowsePath) checkFolderIndex(currentBrowsePath);
+    if (currentBrowsePath && !dialogueSearchScope) checkFolderIndex(currentBrowsePath);
   } catch {
     status.textContent = "Reindex failed.";
   }
-  btn.classList.remove("disabled");
+  setIndexBusy(false);
 });
 
 // Backfill YouTube subtitles for every id'd, subtitle-less video in the folder.
@@ -679,7 +761,7 @@ $("fetch-folder-subs-btn").addEventListener("click", async () => {
   const btn = $("fetch-folder-subs-btn");
   const cancel = $("fetch-folder-cancel");
   const status = $("fetch-folder-status");
-  btn.classList.add("disabled");
+  btn.disabled = true;
   status.hidden = false;
   status.textContent = "Scanning folder…";
   let resp;
@@ -687,12 +769,12 @@ $("fetch-folder-subs-btn").addEventListener("click", async () => {
     resp = await postJSON(`/api/search/folder/fetch-subs?path=${encodeURIComponent(currentBrowsePath)}`, {});
   } catch (err) {
     status.textContent = `Failed: ${err.message}`;
-    btn.classList.remove("disabled");
+    btn.disabled = false;
     return;
   }
   if (!resp.job_id) {  // nothing to do
     status.textContent = "No YouTube videos here need subtitles.";
-    btn.classList.remove("disabled");
+    btn.disabled = false;
     return;
   }
   fetchFolderJob = resp.job_id;
@@ -708,7 +790,7 @@ $("fetch-folder-subs-btn").addEventListener("click", async () => {
       fetchFolderPoll = null;
       fetchFolderJob = null;
       cancel.hidden = true;
-      btn.classList.remove("disabled");
+      btn.disabled = false;
       if (j.status === "failed") status.textContent = `Failed: ${j.error || "see server logs"}`;
       else if (j.status === "cancelled") status.textContent = "Cancelled.";
     }
@@ -2933,6 +3015,7 @@ document.addEventListener("click", (e) => {
 let jobsOpen = false;
 let jobsTimer = null;
 let lastJobs = [];
+let jobsFailures = 0;  // consecutive failed polls: back off while the server is away
 const jobActive = (j) => j.status === "queued" || j.status === "running";
 
 function fmtSize(n) {
@@ -2942,7 +3025,8 @@ function fmtSize(n) {
 async function refreshJobs() {
   try {
     lastJobs = (await getJSON("/api/jobs")).jobs || [];
-  } catch { return; }
+    jobsFailures = 0;
+  } catch { jobsFailures++; return; }
   renderJobsPill();
   if (jobsOpen) renderJobsList();
 }
@@ -3005,7 +3089,8 @@ $("jobs-clear").onclick = async () => {
 
 function scheduleJobs() {
   clearTimeout(jobsTimer);
-  const delay = document.hidden ? 15000 : (jobsOpen || lastJobs.some(jobActive)) ? 1500 : 5000;
+  let delay = document.hidden ? 15000 : (jobsOpen || lastJobs.some(jobActive)) ? 1500 : 5000;
+  if (jobsFailures) delay = Math.min(60000, delay * 2 ** jobsFailures);
   jobsTimer = setTimeout(async () => { await refreshJobs(); scheduleJobs(); }, delay);
 }
 /** Called after a request that starts a job, so the pill doesn't wait for the next poll. */
@@ -3039,6 +3124,7 @@ async function loadStatus() {
   try {
     const r = await getJSON("/api/library/roots");
     mediaRoots = r.roots || [];
+    renderRootsRail(currentBrowsePath);
   } catch {}
 }
 
