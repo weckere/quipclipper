@@ -24,6 +24,9 @@ from quipclipper_web.app import BookmarkCreate, BookmarkUpdate, ClipRequest, cre
 from quipclipper_web.config import Settings
 
 FRONTEND = Path(__file__).resolve().parents[2] / "frontend" / "app.js"
+# The Nix build packages web/backend alone, so the frontend isn't next to the tests there.
+needs_frontend = pytest.mark.skipif(not FRONTEND.exists(),
+                                    reason="web/frontend is not part of this source tree")
 TOKEN = "parity-token"
 
 # Request-model fields the CLI deliberately doesn't expose, and why.
@@ -151,6 +154,7 @@ def test_frontend_api_calls_normaliser():
                                         "/api/clips", "/api/search"}
 
 
+@needs_frontend
 def test_every_frontend_api_call_has_a_command_or_an_exemption():
     paths = [c.path for c in reg.COMMANDS if c.path] + [k[1] for k in reg.EXEMPT_ROUTES]
     patterns = [_template_regex(p) for p in paths]
@@ -164,6 +168,7 @@ def test_every_frontend_api_call_has_a_command_or_an_exemption():
     assert not missing, f"frontend API calls with no CLI command: {missing}"
 
 
+@needs_frontend
 def test_every_frontend_setting_maps_to_a_cli_setting_or_an_exemption():
     keys = set(re.findall(r"""localStorage\.(?:setItem|getItem)\(\s*["'`](\w+)""",
                           FRONTEND.read_text()))
