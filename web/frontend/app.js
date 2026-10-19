@@ -32,6 +32,7 @@ async function postJSON(url, body) {
     try { detail = (await resp.json()).detail || detail; } catch {}
     throw new Error(detail);
   }
+  if (/^\/api\/(clip|youtube|media|search\/folder\/(index|fetch-subs))/.test(url)) nudgeJobs();
   return resp.json();
 }
 
@@ -148,7 +149,20 @@ function destroyHls() {
   }
 }
 
+let currentView = "browser";  // browser | item | clips | bookmarks
+const NAV_FOR_VIEW = { browser: "library-link", item: "library-link", clips: "clips-link", bookmarks: "bookmarks-link" };
+function setView(view) {
+  currentView = view;
+  for (const id of new Set(Object.values(NAV_FOR_VIEW))) {
+    const on = NAV_FOR_VIEW[view] === id;
+    $(id).classList.toggle("active", on);
+    if (on) $(id).setAttribute("aria-current", "page"); else $(id).removeAttribute("aria-current");
+  }
+  autoScope();
+}
+
 function showBrowser() {
+  setView("browser");
   stopPlayer();
   $("item").hidden = true;
   $("clips-browser").hidden = true;
@@ -157,6 +171,7 @@ function showBrowser() {
 }
 
 function showItem() {
+  setView("item");
   $("browser").hidden = true;
   $("clips-browser").hidden = true;
   $("bookmarks-browser").hidden = true;
@@ -181,8 +196,7 @@ async function browse(path) {
   $("search-batch").hidden = true;
   $("browser-empty").hidden = true;
   $("library-search").value = "";
-  $("dialogue-search").value = "";
-  $("dialogue-search").placeholder = "Search dialogue in this folder…";
+  $("global-search-input").value = "";
   $("dialogue-search-status").hidden = true;
   $("index-banner").hidden = true;
   $("reindex-folder-status").hidden = true;
@@ -210,6 +224,7 @@ async function browse(path) {
 
   renderBreadcrumb(path);
   renderEntries(data.entries);
+  autoScope();
   if (!isYtFolder) checkFolderIndex(path);  // index-status is for real folders
 }
 
@@ -289,14 +304,12 @@ async function librarySearch(query) {
   const folderPaths = data.entries.filter((e) => e.is_dir).map((e) => e.path);
   if (folderPaths.length) {
     dialogueSearchScope = folderPaths;
-    $("dialogue-search").placeholder =
-      `Search dialogue across ${folderPaths.length} folder${folderPaths.length > 1 ? "s" : ""}…`;
     $("dialogue-search-bar").hidden = false;
   } else {
     dialogueSearchScope = null;
-    $("dialogue-search").placeholder = "Search dialogue in this folder…";
     $("dialogue-search-bar").hidden = !currentBrowsePath;
   }
+  autoScope();  // a name search that found folders makes "folders" the scope
 }
 
 $("library-search").addEventListener("input", (e) => {
@@ -449,11 +462,7 @@ function wireYtDownload(path, name, info, signal) {
 
 // --- folder dialogue search ------------------------------------------------
 
-async function dialogueSearch() {
-  const query = $("dialogue-search").value.trim();
-  // Search either the explicit multi-folder scope (from a library search) or
-  // the current folder we're browsing.
-  const folders = dialogueSearchScope || (currentBrowsePath ? [currentBrowsePath] : []);
+async function dialogueSearch(query, folders) {
   if (!query || !folders.length) return;
 
   const list = $("entries");
@@ -463,7 +472,6 @@ async function dialogueSearch() {
   const status = $("dialogue-search-status");
   status.textContent = "Searching subtitles…";
   status.hidden = false;
-  $("dialogue-search-btn").disabled = true;
 
   const pathParams = folders.map((f) => `path=${encodeURIComponent(f)}`).join("&");
   const url = `/api/search/folder?${pathParams}&query=${encodeURIComponent(query)}`;
@@ -473,11 +481,9 @@ async function dialogueSearch() {
   } catch (err) {
     list.innerHTML = `<li class="error">Dialogue search failed: ${escapeHtml(err.message)}</li>`;
     status.hidden = true;
-    $("dialogue-search-btn").disabled = false;
     return;
   }
 
-  $("dialogue-search-btn").disabled = false;
   status.textContent = `${data.count} match${data.count !== 1 ? "es" : ""} across ${data.files_scanned} file${data.files_scanned !== 1 ? "s" : ""}`;
 
   if (!data.matches.length) {
@@ -576,12 +582,6 @@ async function bookmarkSearchHit(hit, statusEl) {
     statusEl.innerHTML = `<span class="job-failed" title="${escapeHtml(err.message)}">✗</span>`;
   }
 }
-
-$("dialogue-search-btn").addEventListener("click", dialogueSearch);
-$("dialogue-search").addEventListener("keydown", (e) => {
-  // Ignore Enter while a search is in flight (button disabled) to avoid double-submit.
-  if (e.key === "Enter" && !$("dialogue-search-btn").disabled) dialogueSearch();
-});
 
 // --- folder subtitle index --------------------------------------------------
 
@@ -993,7 +993,8 @@ async function openItem(path, name, opts) {
   $("item-filename").textContent = name;
   $("stream-selector").hidden = true;
   $("preview-note").textContent = "";
-  $("search-input").value = searchQuery || "";
+  $("global-search-input").value = searchQuery || "";
+  $("item-search-panel").hidden = true;
   $("search-results").innerHTML = "";
   $("search-empty").hidden = true;
   showClipTarget(false);
@@ -1463,7 +1464,8 @@ async function openItem(path, name, opts) {
   renderStreamSelector(info, path, reloadStreams);
   loadBookmarks();
 
-  if (searchQuery) doSearch();
+  autoScope();
+  if (searchQuery) doSearch(searchQuery);
   if (seekTarget != null && !needsTranscode) {
     player.addEventListener("loadedmetadata", () => {
       player.currentTime = seekTarget;
@@ -1628,16 +1630,14 @@ function getSelectedChan() {
   return sel.value;
 }
 
-async function doSearch() {
-  if (!currentItem) return;
-  const query = $("search-input").value.trim();
-  if (!query) return;
+async function doSearch(query) {
+  if (!currentItem || !query) return;
 
   const results = $("search-results");
   const empty = $("search-empty");
   results.innerHTML = "";
   empty.hidden = true;
-  $("search-btn").disabled = true;
+  $("item-search-panel").hidden = false;
 
   let url = `/api/search${qp(currentItem.path)}&query=${encodeURIComponent(query)}`;
   const track = getSelectedTrack();
@@ -1648,10 +1648,8 @@ async function doSearch() {
     data = await getJSON(url);
   } catch (err) {
     results.innerHTML = `<li class="error">Search failed: ${escapeHtml(err.message)}</li>`;
-    $("search-btn").disabled = false;
     return;
   }
-  $("search-btn").disabled = false;
 
   if (!data.matches.length) {
     empty.hidden = false;
@@ -1690,11 +1688,6 @@ function escapeHtml(s) {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
 }
-
-$("search-btn").onclick = doSearch;
-$("search-input").addEventListener("keydown", (e) => {
-  if (e.key === "Enter") doSearch();
-});
 
 // --- marks (in/out) ---------------------------------------------------------
 
@@ -2410,6 +2403,7 @@ function setPassthroughAllowed(sel, allowed) {
 // --- clips library ----------------------------------------------------------
 
 function showClips() {
+  setView("clips");
   stopPlayer();
   $("browser").hidden = true;
   $("item").hidden = true;
@@ -2486,6 +2480,7 @@ $("clips-back-lib").onclick = () => browse(null);
 // --- bookmarks browser ------------------------------------------------------
 
 function showBookmarksBrowser() {
+  setView("bookmarks");
   stopPlayer();
   $("browser").hidden = true;
   $("item").hidden = true;
@@ -2821,6 +2816,202 @@ $("search-batch-bookmark").onclick = async () => {
   btn.disabled = false;
 };
 
+// --- top bar: one search box with a scope chip, nav state, Jobs pill --------
+//
+// The chip decides where the box looks: this video (GET /api/search), this
+// folder or the whole library (GET /api/search/folder, results in the library
+// list). It follows the page you are on until you pick a scope yourself.
+
+let searchScope = "library";  // item | folder | library
+const SCOPE_LABEL = { item: "This video", folder: "This folder", library: "Whole library" };
+const SCOPE_HINT = {
+  item: "Search this video's dialogue…",
+  folder: "Search dialogue in this folder…",
+  library: "Search the dialogue: type a line you remember",
+};
+
+/** The folder a "this folder" search means: the one on screen, or the item's. */
+function folderForSearch() {
+  if (currentView === "item" && currentItem) return currentParent();
+  if (currentView === "browser") return currentBrowsePath;
+  return null;
+}
+
+function autoScope() {
+  if (currentView === "item" && currentItem) searchScope = "item";
+  else if (currentView === "browser" && (currentBrowsePath || dialogueSearchScope)) searchScope = "folder";
+  else searchScope = "library";
+  updateScopeUI();
+}
+
+function updateScopeUI() {
+  let label = SCOPE_LABEL[searchScope];
+  if (searchScope === "folder" && dialogueSearchScope && currentView === "browser") {
+    label = `${dialogueSearchScope.length} folder${dialogueSearchScope.length > 1 ? "s" : ""}`;
+  }
+  $("search-scope-label").textContent = label;
+  $("global-search-input").placeholder = SCOPE_HINT[searchScope];
+  const inItem = currentView === "item" && !!currentItem;
+  for (const b of $("scope-menu").querySelectorAll("button")) {
+    const s = b.dataset.scope;
+    b.disabled = (s === "item" && !inItem) || (s === "folder" && !folderForSearch() && !dialogueSearchScope);
+    b.setAttribute("aria-checked", String(s === searchScope));
+  }
+}
+
+function toggleScopeMenu(open) {
+  const menu = $("scope-menu");
+  const show = open === undefined ? menu.hidden : open;
+  menu.hidden = !show;
+  $("search-scope").setAttribute("aria-expanded", String(show));
+}
+
+$("search-scope").onclick = (e) => { e.stopPropagation(); toggleJobs(false); toggleScopeMenu(); };
+$("scope-menu").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-scope]");
+  if (!b || b.disabled) return;
+  searchScope = b.dataset.scope;
+  updateScopeUI();
+  toggleScopeMenu(false);
+  $("global-search-input").focus();
+});
+
+let searching = false;
+async function runGlobalSearch() {
+  const query = $("global-search-input").value.trim();
+  if (!query || searching) return;
+  searching = true;
+  $("global-search").classList.add("busy");
+  try {
+    if (searchScope === "item" && currentItem) {
+      await doSearch(query);
+      return;
+    }
+    // Folder and library hits render in the library list, so bring it up first.
+    const wholeLibrary = searchScope === "library";
+    const wantedFolders = dialogueSearchScope;  // a name search's folders, if any
+    const goTo = wholeLibrary ? null : folderForSearch();
+    if (currentView !== "browser" || (wholeLibrary && currentBrowsePath !== null)) {
+      if (!wholeLibrary && !goTo && !wantedFolders) return;
+      await browse(goTo);
+      searchScope = wholeLibrary ? "library" : "folder";
+      updateScopeUI();
+    }
+    $("global-search-input").value = query;  // browse() clears the box
+    const folders = wholeLibrary ? mediaRoots.slice()
+      : (currentView === "browser" && dialogueSearchScope) || [currentBrowsePath].filter(Boolean);
+    if (!folders.length) return;
+    await dialogueSearch(query, folders);
+  } finally {
+    searching = false;
+    $("global-search").classList.remove("busy");
+  }
+}
+
+$("global-search").addEventListener("submit", (e) => { e.preventDefault(); runGlobalSearch(); });
+
+// "/" jumps to the search box from anywhere that isn't a text field.
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") { toggleScopeMenu(false); toggleJobs(false); return; }
+  if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey) return;
+  const t = e.target;
+  if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+  e.preventDefault();
+  $("global-search-input").focus();
+});
+document.addEventListener("click", (e) => {
+  if (!e.target.closest("#global-search")) toggleScopeMenu(false);
+  if (!e.target.closest("#jobs-popover") && !e.target.closest("#jobs-pill")) toggleJobs(false);
+});
+
+// --- Jobs: the pill counts running jobs, the popover lists them -------------
+//
+// GET /api/jobs (job.list) returns the 20 most recent jobs of every kind: clips,
+// downloads, YouTube adds and subtitle backfills. Each row can be cancelled or
+// dismissed (DELETE /api/jobs/{id}, job.cancel) and a finished clip downloaded.
+
+let jobsOpen = false;
+let jobsTimer = null;
+let lastJobs = [];
+const jobActive = (j) => j.status === "queued" || j.status === "running";
+
+function fmtSize(n) {
+  return n > 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB";
+}
+
+async function refreshJobs() {
+  try {
+    lastJobs = (await getJSON("/api/jobs")).jobs || [];
+  } catch { return; }
+  renderJobsPill();
+  if (jobsOpen) renderJobsList();
+}
+
+function renderJobsPill() {
+  const n = lastJobs.filter(jobActive).length;
+  $("jobs-pill-label").textContent = n ? `${n} running` : "Jobs";
+  $("jobs-pill").classList.toggle("running", n > 0);
+}
+
+function renderJobsList() {
+  const list = $("jobs-list");
+  list.innerHTML = "";
+  $("jobs-empty").hidden = lastJobs.length > 0;
+  $("jobs-clear").hidden = !lastJobs.some((j) => !jobActive(j));
+  for (const j of lastJobs) {
+    const li = document.createElement("li");
+    li.className = `job-row job-state-${j.status}`;
+    let sub;
+    if (j.status === "queued") sub = "Queued";
+    else if (j.status === "running") {
+      const secs = j.started ? Math.round(Date.now() / 1000 - j.started) : 0;
+      sub = `Working… ${secs}s` + (j.progress ? ` · ${escapeHtml(j.progress)}` : "");
+    } else if (j.status === "done") {
+      sub = (j.files || []).map((f) =>
+        `<a class="job-file" data-action="job.download" href="/api/jobs/${encodeURIComponent(j.id)}/download/${encodeURIComponent(f.name)}" download>⤓ ${escapeHtml(f.name)} (${fmtSize(f.size)})</a>`
+      ).join(" ") || "Done";
+    } else if (j.status === "failed") sub = `<span class="job-failed">${escapeHtml(j.error || "Failed")}</span>`;
+    else sub = "Cancelled";
+    li.innerHTML =
+      `<span class="job-mark" aria-hidden="true"></span>` +
+      `<div class="job-main"><div class="job-title">${escapeHtml(j.label || j.id)}</div><div class="job-sub muted">${sub}</div></div>` +
+      `<button type="button" class="link-btn job-act" data-action="job.cancel">${jobActive(j) ? "Cancel" : "Dismiss"}</button>`;
+    li.querySelector(".job-act").onclick = async (e) => {
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      const resp = await apiFetch(`/api/jobs/${encodeURIComponent(j.id)}`, { method: "DELETE" }).catch(() => null);
+      if (resp && resp.status === 409) li.querySelector(".job-sub").textContent = "Can't be stopped while it runs; it will finish.";
+      refreshJobs();
+    };
+    list.appendChild(li);
+  }
+}
+
+function toggleJobs(open) {
+  const pop = $("jobs-popover");
+  const show = open === undefined ? pop.hidden : open;
+  jobsOpen = show;
+  pop.hidden = !show;
+  $("jobs-pill").setAttribute("aria-expanded", String(show));
+  if (show) { toggleScopeMenu(false); renderJobsList(); refreshJobs(); }
+  scheduleJobs();
+}
+$("jobs-pill").onclick = (e) => { e.stopPropagation(); toggleJobs(); };
+$("jobs-clear").onclick = async () => {
+  await Promise.all(lastJobs.filter((j) => !jobActive(j)).map((j) =>
+    apiFetch(`/api/jobs/${encodeURIComponent(j.id)}`, { method: "DELETE" }).catch(() => null)));
+  refreshJobs();
+};
+
+function scheduleJobs() {
+  clearTimeout(jobsTimer);
+  const delay = document.hidden ? 15000 : (jobsOpen || lastJobs.some(jobActive)) ? 1500 : 5000;
+  jobsTimer = setTimeout(async () => { await refreshJobs(); scheduleJobs(); }, delay);
+}
+/** Called after a request that starts a job, so the pill doesn't wait for the next poll. */
+function nudgeJobs() { setTimeout(async () => { await refreshJobs(); scheduleJobs(); }, 400); }
+document.addEventListener("visibilitychange", () => { if (!document.hidden) { refreshJobs(); scheduleJobs(); } });
+
 // --- boot -------------------------------------------------------------------
 
 let appConfig = {};
@@ -2853,6 +3044,7 @@ async function loadStatus() {
 
 $("back").onclick = () => browse(currentParent());
 $("home-link").onclick = () => browse(null);
+$("library-link").onclick = () => browse(null);
 
 // Derive the parent directory of the current item for the Back button.
 function currentParent() {
@@ -2864,3 +3056,4 @@ function currentParent() {
 
 loadStatus();
 browse(null);
+refreshJobs().then(scheduleJobs);

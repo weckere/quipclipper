@@ -30,7 +30,6 @@ needs_frontend = pytest.mark.skipif(not (FRONTEND / "app.js").exists(),
 # Commands with a Web UI entry that no single control carries, and why.
 NOT_A_CONTROL: dict[str, str] = {
     "server.config": "read once on start (loadStatus); nothing on screen to click",
-    "job.list": "the UI follows jobs one at a time; a Jobs list arrives with the M12 redesign",
     "job.wait": "CLI-side composition of job.get; the UI polls job.get",
 }
 
@@ -45,6 +44,7 @@ MARKED_CONTROLS: dict[str, int] = {
     "job.download": 2,        # inline download after a clip, and the clip row's link
     "library.browse": 3,      # folder rows, breadcrumbs, Back
     "settings.set": 2,        # Name template and Auto-lang
+    "job.cancel": 3,          # folder backfill Cancel, the Jobs popover's Cancel/Dismiss and Clear finished
     "youtube.download": 1,
     "youtube.delete-download": 1,
 }

@@ -10,12 +10,34 @@
   </head>
   <body>
     <header class="app-header">
-      <h1 id="home-link" data-action="library.roots">quipclipper</h1>
-      <p class="tagline">Find and cut clips by searching the dialogue.</p>
-      <nav class="app-nav">
-        <a id="clips-link" data-action="clips.list" class="clips-nav-link">Clips</a>
-        <a id="bookmarks-link" data-action="bookmark.list" class="clips-nav-link">Bookmarks</a>
+      <h1 id="home-link" data-action="library.roots"><span class="logo-box"><svg class="logo-mark" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M8.5 6A2.5 2.5 0 1 1 3.5 6A2.5 2.5 0 1 1 8.5 6ZM8.5 18A2.5 2.5 0 1 1 3.5 18A2.5 2.5 0 1 1 8.5 18ZM8 7.6L20 18.5M8 16.4L20 5.5" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg></span>quipclipper</h1>
+      <!-- One search box. The chip picks where it looks: this video (/api/search), this folder
+           or the whole library (/api/search/folder). -->
+      <form id="global-search" class="global-search" role="search" autocomplete="off" data-action="search.item search.folder">
+        <button type="button" id="search-scope" class="scope-chip" aria-haspopup="menu" aria-expanded="false" title="Where to search">
+          <span id="search-scope-label">Library</span><span class="chev" aria-hidden="true">▾</span>
+        </button>
+        <ul id="scope-menu" class="scope-menu" role="menu" hidden>
+          <li role="none"><button type="button" role="menuitem" data-scope="item">This video</button></li>
+          <li role="none"><button type="button" role="menuitem" data-scope="folder">This folder</button></li>
+          <li role="none"><button type="button" role="menuitem" data-scope="library">Whole library</button></li>
+        </ul>
+        <input id="global-search-input" type="text" aria-label="Search the dialogue" placeholder="Search the dialogue: type a line you remember" />
+        <kbd class="key-hint" aria-hidden="true">/</kbd>
+      </form>
+      <nav class="app-nav" aria-label="Main">
+        <button type="button" id="library-link" class="clips-nav-link" data-action="library.roots">Library</button>
+        <button type="button" id="bookmarks-link" class="clips-nav-link" data-action="bookmark.list">Bookmarks</button>
+        <button type="button" id="clips-link" class="clips-nav-link" data-action="clips.list">Clips</button>
+        <button type="button" id="jobs-pill" class="jobs-pill" aria-haspopup="dialog" aria-expanded="false" title="Clips, downloads and subtitle jobs">
+          <span class="jobs-dot" aria-hidden="true"></span><span id="jobs-pill-label">Jobs</span>
+        </button>
       </nav>
+      <div id="jobs-popover" class="jobs-popover" role="dialog" aria-label="Jobs" hidden>
+        <div class="jobs-head"><h3>Jobs</h3><button type="button" id="jobs-clear" class="link-btn" data-action="job.cancel">Clear finished</button></div>
+        <ul id="jobs-list" class="jobs-list" data-action="job.list"></ul>
+        <p id="jobs-empty" class="muted jobs-empty">No recent jobs.</p>
+      </div>
     </header>
 
     <main>
@@ -33,12 +55,8 @@
           </div>
           <p id="yt-add-status" class="muted" hidden></p>
         </div>
+        <p id="dialogue-search-status" class="muted" hidden></p>
         <div id="dialogue-search-bar" class="library-search-bar dialogue-search-bar" hidden>
-          <div class="dialogue-search-row">
-            <input id="dialogue-search" type="text" placeholder="Search dialogue in this folder…" autocomplete="off" />
-            <button id="dialogue-search-btn" data-action="search.folder">Search</button>
-          </div>
-          <p id="dialogue-search-status" class="muted" hidden></p>
           <div id="index-banner" data-action="index.status" class="index-banner" hidden>
             <span id="index-banner-text">Subtitles in this folder haven't been indexed yet. Indexing speeds up dialogue search.</span>
             <button id="index-btn" data-action="index.build" class="index-btn">Index now</button>
@@ -237,12 +255,8 @@
           </div>
         </div>
 
-        <div class="panel">
-          <h3>Search dialogue</h3>
-          <div class="search-bar">
-            <input id="search-input" type="text" placeholder="Type a line you remember…" autocomplete="off" />
-            <button id="search-btn" data-action="search.item">Search</button>
-          </div>
+        <div class="panel" id="item-search-panel" hidden>
+          <h3>Matches in this video</h3>
           <ul id="search-results" class="search-results"></ul>
           <p id="search-empty" class="muted" hidden>No matches found.</p>
         </div>
