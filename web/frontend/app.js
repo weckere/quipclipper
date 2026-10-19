@@ -228,6 +228,7 @@ function renderEntries(entries) {
     // A book (EPUB audiobook) browses into its chapters like a folder.
     const intoFolder = e.is_dir || e.is_book;
     li.className = "entry " + (intoFolder ? "dir" : "video");
+    if (intoFolder) li.dataset.action = "library.browse";
     const icon = e.is_dir ? "📁" : e.is_book ? "📚" : e.is_youtube ? "▶️" : e.is_audio ? "🎵" : "🎬";
     let tag = (!intoFolder && e.has_sidecar) ? ' <span class="badge">sub</span>' : "";
     // A locally downloaded YouTube video plays/cuts from the server's own copy.
@@ -238,6 +239,7 @@ function renderEntries(entries) {
     if (e.is_youtube && !e.is_dir) {
       const del = document.createElement("button");
       del.className = "yt-remove";
+      del.dataset.action = "youtube.remove";
       del.title = "Remove this video from the YouTube list";
       del.textContent = "✕";
       del.onclick = async (ev) => {
@@ -377,6 +379,7 @@ function wireYtDownload(path, name, info, signal) {
     delete ytDownloadJobs[path];
     const mb = info.download_size ? ` (${(info.download_size / 1048576).toFixed(1)} MB)` : "";
     btn.textContent = `💾 Remove download${mb}`;
+    btn.dataset.action = "youtube.delete-download";
     btn.onclick = async () => {
       btn.disabled = true;
       try {
@@ -388,6 +391,7 @@ function wireYtDownload(path, name, info, signal) {
   }
 
   btn.textContent = "⬇ Download video";
+  btn.dataset.action = "youtube.download";
 
   // Follow a download job to completion: reload the item on success (native
   // playback from the local file), surface failures, and stop cleanly when the
@@ -499,9 +503,9 @@ async function dialogueSearch() {
         `<span class="hit-time">${hit.start_ts} – ${hit.end_ts}  <span class="hit-score">${hit.score}%</span></span>` +
       `</div>` +
       `<div class="hit-actions">` +
-        `<button class="mark-icon-btn hit-bookmark" title="Save as bookmark"><span class="star">★</span></button>` +
-        `<button class="mark-icon-btn make-clip-btn hit-clip" title="Clip this line"><span class="scissors">✂</span></button>` +
-        `<span class="hit-status"></span>` +
+        `<button class="mark-icon-btn hit-bookmark" data-action="bookmark.add" title="Save as bookmark"><span class="star">★</span></button>` +
+        `<button class="mark-icon-btn make-clip-btn hit-clip" data-action="clip.create" title="Clip this line"><span class="scissors">✂</span></button>` +
+        `<span class="hit-status" data-action="job.get"></span>` +
       `</div>`;
     // Checkbox drives the batch bar (and carries the data the batch bodies need).
     const cb = li.querySelector(".search-select");
@@ -551,7 +555,7 @@ function pollHitClip(jobId, statusEl) {
       } else if (job.status === "done") {
         const f = job.files && job.files[0];
         statusEl.innerHTML = f
-          ? `<a class="clip-dl-mini" href="/api/jobs/${jobId}/download/${encodeURIComponent(f.name)}" download title="Download ${escapeHtml(f.name)}" aria-label="Download clip">⤓</a>`
+          ? `<a class="clip-dl-mini" data-action="job.download" href="/api/jobs/${jobId}/download/${encodeURIComponent(f.name)}" download title="Download ${escapeHtml(f.name)}" aria-label="Download clip">⤓</a>`
           : '<span class="job-done">✓</span>';
       } else {
         statusEl.innerHTML = `<span class="job-failed" title="${escapeHtml(job.error || "failed")}">✗</span>`;
@@ -785,6 +789,7 @@ function renderBreadcrumb(path) {
   const addLink = (label, target) => {
     const a = document.createElement("a");
     a.textContent = label;
+    a.dataset.action = "library.browse";
     a.onclick = () => browse(target);
     bc.appendChild(a);
   };
@@ -2091,7 +2096,7 @@ async function loadBookmarks() {
       bmBufferControls(bm) +
       `<button class="bookmark-use" title="Load as clip range">Clip</button>` +
       `<button class="bookmark-seek" title="Seek to start">▶</button>` +
-      `<button class="bookmark-del" title="Delete">✕</button>`;
+      `<button class="bookmark-del" data-action="bookmark.delete" title="Delete">✕</button>`;
     wireBmBufferControls(li, bm, () => loadBookmarks());
     li.querySelector(".bookmark-use").onclick = (e) => {
       e.stopPropagation();
@@ -2117,7 +2122,7 @@ function bmBuffered(bm) {
 /** Inline before/after editors for a bookmark row (PATCH on change). */
 function bmBufferControls(bm) {
   return (
-    `<span class="bm-buffer" title="Padding around the bookmark (seconds)">` +
+    `<span class="bm-buffer" data-action="bookmark.update" title="Padding around the bookmark (seconds)">` +
     `<label>−<input class="bm-before" type="number" min="0" max="60" step="0.5" value="${bm.before || 0}" /></label>` +
     `<label>+<input class="bm-after" type="number" min="0" max="60" step="0.5" value="${bm.after || 0}" /></label>` +
     `</span>`
@@ -2217,7 +2222,7 @@ function setClipIndicator(state, opts = {}) {
   if (state === "processing") {
     el.innerHTML = '<span class="clip-spinner" title="Cutting clip…"></span>';
   } else if (state === "done") {
-    el.innerHTML = `<a class="clip-dl-mini" href="${opts.href}" download ` +
+    el.innerHTML = `<a class="clip-dl-mini" data-action="job.download" href="${opts.href}" download ` +
       `title="Download ${escapeHtml(opts.name || "clip")}" aria-label="Download clip">⤓</a>`;
   } else if (state === "failed") {
     el.innerHTML = `<span class="clip-fail-mini" title="${escapeHtml(opts.error || "Clip failed")}">✕</span>`;
@@ -2324,7 +2329,7 @@ function pollClipJob(jobId, row) {
           const size = f.size > 1048576
             ? (f.size / 1048576).toFixed(1) + " MB"
             : (f.size / 1024).toFixed(0) + " KB";
-          html += ` <a class="download-link" href="/api/jobs/${jobId}/download/${encodeURIComponent(f.name)}" download>${escapeHtml(f.name)} (${size})</a>`;
+          html += ` <a class="download-link" data-action="job.download" href="/api/jobs/${jobId}/download/${encodeURIComponent(f.name)}" download>${escapeHtml(f.name)} (${size})</a>`;
         }
         statusEl.innerHTML = html;
         const first = job.files && job.files[0];
@@ -2459,7 +2464,7 @@ async function browseClips(folder) {
       `<span class="icon">🎬</span>` +
       `<span class="label">${escapeHtml(c.name)}</span>` +
       `<span class="badge">${size}</span>` +
-      `<a class="download-link clip-dl" href="${escapeHtml(c.download_url)}" download>Download</a>`;
+      `<a class="download-link clip-dl" data-action="clips.download" href="${escapeHtml(c.download_url)}" download>Download</a>`;
     const cb = li.querySelector(".clip-select");
     cb.dataset.path = c.path;
     cb.onclick = (e) => { e.stopPropagation(); updateBatchState("clips"); };
@@ -2541,7 +2546,7 @@ async function browseBookmarks() {
         `<span class="bookmark-range">${formatTime(bs)} – ${formatTime(be)}</span>` +
         bmBufferControls(bm) +
         `<button class="bookmark-seek" title="Open & seek">▶</button>` +
-        `<button class="bookmark-del" title="Delete">✕</button>`;
+        `<button class="bookmark-del" data-action="bookmark.delete" title="Delete">✕</button>`;
       const cb = li.querySelector(".bm-select");
       cb.dataset.path = bm.path;
       cb.dataset.start = bm.start;

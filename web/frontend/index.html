@@ -8,11 +8,11 @@
   </head>
   <body>
     <header class="app-header">
-      <h1 id="home-link">quipclipper</h1>
+      <h1 id="home-link" data-action="library.roots">quipclipper</h1>
       <p class="tagline">Find and cut clips by searching the dialogue.</p>
       <nav class="app-nav">
-        <a id="clips-link" class="clips-nav-link">Clips</a>
-        <a id="bookmarks-link" class="clips-nav-link">Bookmarks</a>
+        <a id="clips-link" data-action="clips.list" class="clips-nav-link">Clips</a>
+        <a id="bookmarks-link" data-action="bookmark.list" class="clips-nav-link">Bookmarks</a>
       </nav>
     </header>
 
@@ -21,31 +21,31 @@
       <section id="browser">
         <nav id="breadcrumb" class="breadcrumb"></nav>
         <div class="library-search-bar">
-          <input id="library-search" type="text" placeholder="Search library…" autocomplete="off" />
+          <input id="library-search" data-action="library.find" type="text" placeholder="Search library…" autocomplete="off" />
         </div>
         <!-- Add-a-YouTube-URL bar, shown only inside the ▶ YouTube pseudo-folder. -->
         <div id="yt-add-bar" class="library-search-bar yt-add-bar" hidden>
           <div class="dialogue-search-row">
             <input id="yt-url" type="text" placeholder="Paste a YouTube URL to add it…" autocomplete="off" spellcheck="false" />
-            <button id="yt-add-btn">Add</button>
+            <button id="yt-add-btn" data-action="youtube.add">Add</button>
           </div>
           <p id="yt-add-status" class="muted" hidden></p>
         </div>
         <div id="dialogue-search-bar" class="library-search-bar dialogue-search-bar" hidden>
           <div class="dialogue-search-row">
             <input id="dialogue-search" type="text" placeholder="Search dialogue in this folder…" autocomplete="off" />
-            <button id="dialogue-search-btn">Search</button>
+            <button id="dialogue-search-btn" data-action="search.folder">Search</button>
           </div>
           <p id="dialogue-search-status" class="muted" hidden></p>
-          <div id="index-banner" class="index-banner" hidden>
+          <div id="index-banner" data-action="index.status" class="index-banner" hidden>
             <span id="index-banner-text">Subtitles in this folder haven't been indexed yet. Indexing speeds up dialogue search.</span>
-            <button id="index-btn" class="index-btn">Index now</button>
+            <button id="index-btn" data-action="index.build" class="index-btn">Index now</button>
           </div>
           <div class="reindex-row">
-            <a id="reindex-folder-btn" class="reindex-link" title="Clear and re-extract subtitles for every file in this folder (use if subtitles changed)">↻ Reindex subtitles</a>
+            <a id="reindex-folder-btn" data-action="index.build" class="reindex-link" title="Clear and re-extract subtitles for every file in this folder (use if subtitles changed)">↻ Reindex subtitles</a>
             <span id="reindex-folder-status" class="muted reindex-status" hidden></span>
-            <a id="fetch-folder-subs-btn" class="reindex-link" title="Fetch YouTube transcripts for every video in this folder that came from YouTube but has no subtitles, so they become dialogue-searchable. Runs in the background.">⬇ Fetch missing YouTube subtitles</a>
-            <a id="fetch-folder-cancel" class="reindex-link" hidden>✕ Cancel</a>
+            <a id="fetch-folder-subs-btn" data-action="index.fetch-subs" class="reindex-link" title="Fetch YouTube transcripts for every video in this folder that came from YouTube but has no subtitles, so they become dialogue-searchable. Runs in the background.">⬇ Fetch missing YouTube subtitles</a>
+            <a id="fetch-folder-cancel" data-action="job.cancel" class="reindex-link" hidden>✕ Cancel</a>
             <span id="fetch-folder-status" class="muted reindex-status" hidden></span>
           </div>
         </div>
@@ -64,8 +64,8 @@
             </select>
           </label>
           <label class="batch-template-label" title="Output path for each clip. A leading folder (e.g. MyBatch/...) puts them all in one folder. Tokens: {source} {timestamp} {end} {duration} {cue} {title} {year} {season} {episode} {date}">Name <input id="search-batch-template" class="clip-template-input" type="text" autocomplete="off" spellcheck="false" placeholder="{source}/{timestamp}_{cue}_{title}" /></label>
-          <button id="search-batch-export" class="clip-btn batch-export-btn" disabled>Clip selected</button>
-          <button id="search-batch-bookmark" class="clip-btn batch-bookmark-btn" disabled>Bookmark selected</button>
+          <button id="search-batch-export" data-action="clip.batch" class="clip-btn batch-export-btn" disabled>Clip selected</button>
+          <button id="search-batch-bookmark" data-action="bookmark.batch" class="clip-btn batch-bookmark-btn" disabled>Bookmark selected</button>
           <span id="search-batch-status" class="muted"></span>
         </div>
         <ul id="entries" class="entries"></ul>
@@ -93,7 +93,7 @@
             </select>
           </label>
           <label class="batch-template-label" title="Output path for each clip. A leading folder (e.g. MyBatch/...) puts them all in one folder. Tokens: {source} {timestamp} {end} {duration} {cue} {title} {year} {season} {episode} {date}">Name <input id="clips-batch-template" class="clip-template-input" type="text" autocomplete="off" spellcheck="false" placeholder="{source}/{timestamp}_{cue}_{title}" /></label>
-          <button id="clips-batch-export" class="clip-btn batch-export-btn" disabled>Export selected</button>
+          <button id="clips-batch-export" data-action="clip.batch" class="clip-btn batch-export-btn" disabled>Export selected</button>
           <span id="clips-batch-status" class="muted"></span>
         </div>
         <ul id="clips-entries" class="entries"></ul>
@@ -120,8 +120,8 @@
             </select>
           </label>
           <label class="batch-template-label" title="Output path for each clip. A leading folder (e.g. MyBatch/...) puts them all in one folder. Tokens: {source} {timestamp} {end} {duration} {cue} {title} {year} {season} {episode} {date}">Name <input id="bm-batch-template" class="clip-template-input" type="text" autocomplete="off" spellcheck="false" placeholder="{source}/{timestamp}_{cue}_{title}" /></label>
-          <button id="bm-batch-export" class="clip-btn batch-export-btn" disabled>Export selected</button>
-          <button id="bm-clear-all" class="clip-btn bm-clear-all-btn">Clear all</button>
+          <button id="bm-batch-export" data-action="clip.batch" class="clip-btn batch-export-btn" disabled>Export selected</button>
+          <button id="bm-clear-all" data-action="bookmark.clear" class="clip-btn bm-clear-all-btn">Clear all</button>
           <span id="bm-batch-status" class="muted"></span>
         </div>
         <ul id="all-bookmarks-list" class="bookmarks-list bm-browser-list"></ul>
@@ -130,7 +130,7 @@
 
       <!-- Item / inspection view -->
       <section id="item" hidden>
-        <button id="back" class="back">← Back</button>
+        <button id="back" data-action="library.browse" class="back">← Back</button>
         <h2 id="item-name"></h2>
         <div id="item-filename" class="item-filename muted"></div>
 
@@ -161,9 +161,9 @@
           <label class="checkbox-label pb-loop-label" title="Keep the selection playing on a loop"><input id="pb-loop" type="checkbox" /> Loop playback</label>
           <span id="pb-range-note" class="muted pb-range-note" hidden></span>
         </div>
-        <div id="stream-selector" class="stream-selector" hidden>
+        <div id="stream-selector" data-action="item.info" class="stream-selector" hidden>
           <label class="ss-field" id="ss-subs-field">Subtitles
-            <select id="ss-subs"></select>
+            <select id="ss-subs" data-action="item.script"></select>
             <span id="ss-no-subs" class="ss-none muted" hidden>No subtitle stream available</span>
           </label>
           <label class="ss-field" id="ss-audio-field" hidden>Audio
@@ -175,11 +175,11 @@
           <span class="ss-spacer"></span>
           <label class="ss-field ss-langs-field" title="Preferred subtitle language(s) to auto-select, in order — e.g. eng or eng,spa. Remembered in this browser.">
             Auto-lang
-            <input id="ss-langs" type="text" autocomplete="off" spellcheck="false" />
+            <input id="ss-langs" data-action="settings.set" type="text" autocomplete="off" spellcheck="false" />
           </label>
-          <a id="ss-reindex" class="reindex-link" title="Clear and re-extract subtitles for this file (use if subtitles changed)" hidden>↻ Reindex subtitles</a>
+          <a id="ss-reindex" data-action="item.reindex" class="reindex-link" title="Clear and re-extract subtitles for this file (use if subtitles changed)" hidden>↻ Reindex subtitles</a>
           <span id="ss-reindex-status" class="muted reindex-status" hidden></span>
-          <a id="ss-fetch-subs" class="reindex-link" title="This video is from YouTube but has no subtitles — fetch its transcript from YouTube so you can search and clip it" hidden>⬇ Fetch subtitles from YouTube</a>
+          <a id="ss-fetch-subs" data-action="item.fetch-subs" class="reindex-link" title="This video is from YouTube but has no subtitles — fetch its transcript from YouTube so you can search and clip it" hidden>⬇ Fetch subtitles from YouTube</a>
           <span id="ss-fetch-subs-status" class="muted reindex-status" hidden></span>
         </div>
         <p id="preview-note" class="muted"></p>
@@ -193,9 +193,9 @@
             </div>
             <div class="marks-actions">
               <!-- Inline clip status: spinner while cutting → download (or ✕). -->
-              <span id="mark-clip-indicator" class="mark-clip-indicator" hidden></span>
-              <button id="mark-save" class="mark-icon-btn" disabled title="Save as bookmark" aria-label="Save as bookmark"><span class="star">★</span></button>
-              <button id="clip-btn" class="mark-icon-btn make-clip-btn" disabled title="Make clip" aria-label="Make clip"><span class="scissors">✂</span></button>
+              <span id="mark-clip-indicator" data-action="job.get" class="mark-clip-indicator" hidden></span>
+              <button id="mark-save" data-action="bookmark.add" class="mark-icon-btn" disabled title="Save as bookmark" aria-label="Save as bookmark"><span class="star">★</span></button>
+              <button id="clip-btn" data-action="clip.create" class="mark-icon-btn make-clip-btn" disabled title="Make clip" aria-label="Make clip"><span class="scissors">✂</span></button>
             </div>
           </div>
           <div id="marks-hint" class="script-hint" hidden>Click a line to seek. Hover to set <strong>Start</strong> / <strong>End</strong> of the clip range. The first line, <em>Start of video</em>, lets a clip begin at 0:00.</div>
@@ -221,7 +221,7 @@
             <div id="clip-name-row" class="clip-name-row" hidden>
               <div class="clip-range" id="clip-range-display"></div>
               <label class="clip-template-label">Name template
-                <input id="clip-template" class="clip-template-input" type="text" autocomplete="off" spellcheck="false"
+                <input id="clip-template" data-action="settings.set" class="clip-template-input" type="text" autocomplete="off" spellcheck="false"
                        placeholder="{source}/{timestamp}_{cue}_{title}" />
               </label>
               <p class="clip-template-help muted">
@@ -239,7 +239,7 @@
           <h3>Search dialogue</h3>
           <div class="search-bar">
             <input id="search-input" type="text" placeholder="Type a line you remember…" autocomplete="off" />
-            <button id="search-btn">Search</button>
+            <button id="search-btn" data-action="search.item">Search</button>
           </div>
           <ul id="search-results" class="search-results"></ul>
           <p id="search-empty" class="muted" hidden>No matches found.</p>
@@ -247,7 +247,7 @@
 
         <div class="panel" id="bookmarks-panel">
           <h3>Bookmarks</h3>
-          <ul id="bookmarks-list" class="bookmarks-list"></ul>
+          <ul id="bookmarks-list" data-action="bookmark.list" class="bookmarks-list"></ul>
           <p id="bookmarks-empty" class="muted">No bookmarks for this file.</p>
         </div>
 
@@ -259,7 +259,7 @@
     </main>
 
     <footer>
-      <span id="status" class="muted">…</span>
+      <span id="status" data-action="server.health" class="muted">…</span>
     </footer>
 
     <script src="app.js"></script>
