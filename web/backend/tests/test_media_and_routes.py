@@ -779,6 +779,22 @@ def test_clips_library_hides_empty_subfolders(tmp_path: Path) -> None:
     assert data["folders"] == ["full"]
 
 
+def test_clips_library_hides_appledouble_files(tmp_path: Path) -> None:
+    """macOS leaves "._name" AppleDouble files with the clip's own extension on the
+    SMB clips share; they are not clips, and a folder holding only them is empty."""
+    client, media, clips = _clips_client(tmp_path)
+    (clips / "._root.wav").write_bytes(b"x")
+    (clips / "real.wav").write_bytes(b"x")
+    ghost = clips / "ghost"
+    ghost.mkdir()
+    (ghost / "._a.mka").write_bytes(b"x")         # only metadata -> folder hidden
+    (clips / ".hidden").mkdir()
+    (clips / ".hidden" / "x.mka").write_bytes(b"x")
+    data = client.get("/api/clips").json()
+    assert [c["name"] for c in data["clips"]] == ["real.wav"]
+    assert data["folders"] == []
+
+
 def test_clips_browse_rejects_sibling_dir_traversal(tmp_path: Path) -> None:
     """A sibling like /clips-evil must not pass the clips-dir check — R3.
     (The old string-prefix test allowed it; is_relative_to does not.)"""

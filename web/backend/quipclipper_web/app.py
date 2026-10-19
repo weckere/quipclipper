@@ -1951,18 +1951,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         else:
             target = base
 
+        # Dot-files are never clips: macOS leaves "._name" AppleDouble files (a few KB of
+        # metadata, with the clip's own extension) on SMB shares, like the library hides.
+        def _is_clip(f: Path) -> bool:
+            return not f.name.startswith(".") and f.is_file() and f.suffix.lower() in _CLIP_EXTS
+
         def _has_clip(d: Path) -> bool:
             try:
-                return any(
-                    f.is_file() and f.suffix.lower() in _CLIP_EXTS for f in d.iterdir()
-                )
+                return any(_is_clip(f) for f in d.iterdir())
             except OSError:
                 return False
 
         # Only show subfolders that actually contain clips — empty folders left
         # behind after deleting their clips shouldn't clutter the library.
         folders = sorted(
-            d.name for d in target.iterdir() if d.is_dir() and _has_clip(d)
+            d.name for d in target.iterdir()
+            if not d.name.startswith(".") and d.is_dir() and _has_clip(d)
         )
         # When a front proxy serves the clips dir directly (QC_CLIPS_URL_PREFIX,
         # e.g. "/clips"), point downloads there so large files bypass uvicorn.
@@ -1978,7 +1982,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "stream_url": f"/api/clips/stream/{quote(((folder + '/') if folder else '') + f.name)}",
                 }
                 for f in target.iterdir()
-                if f.is_file() and f.suffix.lower() in _CLIP_EXTS
+                if _is_clip(f)
             ],
             key=lambda c: c["name"],
         )
