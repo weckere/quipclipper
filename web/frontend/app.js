@@ -1378,7 +1378,15 @@ async function openItem(path, name, opts) {
     loadHlsLib().then(() => {
       if (signal.aborted) return;  // superseded while the library loaded
       if (window.Hls && window.Hls.isSupported()) {
-        const inst = hls = new window.Hls();
+        // No hls.js text-track controllers: our playlists carry no subtitles,
+        // and they clear the cues of EVERY labelled text track on attach,
+        // manifest load and detach — wiping our own <track> whenever its VTT
+        // loaded before hls.js attached (a race Firefox kept losing).
+        const inst = hls = new window.Hls({
+          timelineController: null,
+          subtitleTrackController: null,
+          subtitleStreamController: null,
+        });
         inst.on(window.Hls.Events.MANIFEST_PARSED, applySeek);
         inst.on(window.Hls.Events.ERROR, (_evt, data) => {
           // Non-fatal errors are hls.js's own recoverable stalls — it retries.

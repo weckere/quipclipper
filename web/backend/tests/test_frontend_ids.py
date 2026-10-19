@@ -57,3 +57,16 @@ def test_every_looked_up_id_exists():
 def test_index_html_has_no_duplicate_ids():
     ids = Counter(_ID_ATTR.findall((FRONTEND / "index.html").read_text()))
     assert not [i for i, n in ids.items() if n > 1], f"duplicate ids: {[i for i, n in ids.items() if n > 1]}"
+
+
+@needs_frontend
+def test_hls_js_leaves_our_subtitle_track_alone():
+    """hls.js's text-track controllers clear the cues of every labelled text track on attach,
+    manifest load and detach, so a <track> whose VTT loaded before hls.js attached showed no
+    subtitles (Firefox on deckhand, 2026-10-19). The player must build hls.js without them."""
+    js = (FRONTEND / "app.js").read_text()
+    calls = re.findall(r"new window\.Hls\((.*?)\)", js, re.S)
+    assert calls, "app.js no longer constructs hls.js; move this guard with it"
+    for args in calls:
+        for key in ("timelineController", "subtitleTrackController", "subtitleStreamController"):
+            assert re.search(rf"\b{key}\s*:\s*null", args), f"new Hls(...) must set {key}: null"
