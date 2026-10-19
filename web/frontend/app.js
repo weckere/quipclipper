@@ -1076,13 +1076,13 @@ async function openItem(path, name, opts) {
   $("stream-selector").hidden = true;
   $("preview-note").textContent = "";
   $("global-search-input").value = searchQuery || "";
-  $("item-search-panel").hidden = true;
   $("search-results").innerHTML = "";
   $("search-empty").hidden = true;
   showClipTarget(false);
   // Reset the per-page Clips list (in-flight polls stop when their row is gone).
-  $("clips-made-panel").hidden = true;
   $("clips-made-list").innerHTML = "";
+  resetItemTabs();
+  $("dialogue-map").hidden = true;
   setClipIndicator("hidden");
   activeJobId = null;
   clipRangeStart = null;
@@ -1547,7 +1547,7 @@ async function openItem(path, name, opts) {
   loadBookmarks();
 
   autoScope();
-  if (searchQuery) doSearch(searchQuery);
+  if (searchQuery) doSearch(searchQuery, { focus: false });  // the hit's own cue is already selected
   if (seekTarget != null && !needsTranscode) {
     player.addEventListener("loadedmetadata", () => {
       player.currentTime = seekTarget;
@@ -1712,14 +1712,15 @@ function getSelectedChan() {
   return sel.value;
 }
 
-async function doSearch(query) {
+async function doSearch(query, { focus = true } = {}) {
   if (!currentItem || !query) return;
 
   const results = $("search-results");
   const empty = $("search-empty");
   results.innerHTML = "";
   empty.hidden = true;
-  $("item-search-panel").hidden = false;
+  $("tab-matches").hidden = false;
+  if (focus) showTab("matches");
 
   let url = `/api/search${qp(currentItem.path)}&query=${encodeURIComponent(query)}`;
   const track = getSelectedTrack();
@@ -1733,6 +1734,7 @@ async function doSearch(query) {
     return;
   }
 
+  setTabCount("matches", data.matches.length);
   if (!data.matches.length) {
     empty.hidden = false;
     return;
@@ -2020,6 +2022,7 @@ async function loadScript(path, track) {
     frag.appendChild(row);
   });
   list.appendChild(frag);
+  renderDialogueMap();
 
   // Pause auto-scroll when the user manually scrolls, resume after 5 s idle.
   list.addEventListener("scroll", onScriptManualScroll, { passive: true });
@@ -2090,6 +2093,7 @@ function scriptLineClick(idx) {
 /** Called on timeupdate — highlight the active cue and auto-scroll. */
 function updateScript() {
   if (!scriptCues.length) return;
+  updateMapPlayhead();
   const t = playerTime();
   let idx = -1;
   for (let i = scriptCues.length - 1; i >= 0; i--) {
@@ -2109,7 +2113,7 @@ function updateScript() {
     const row = list.children[idx];
     if (row) {
       row.classList.add("active");
-      if (scriptAutoScroll) {
+      if (scriptAutoScroll && $("script-follow").checked) {
         scriptProgScroll = true;
         const listRect = list.getBoundingClientRect();
         const rowRect = row.getBoundingClientRect();
@@ -2123,6 +2127,7 @@ function updateScript() {
 
 /** Highlight the selected clip range on the script. */
 function updateScriptHighlight() {
+  updateMapSelection();
   const list = $("script-list");
   if (!list || !scriptCues.length) return;
   for (let i = 0; i < scriptCues.length; i++) {
@@ -2136,6 +2141,119 @@ function updateScriptHighlight() {
 }
 
 $("player").addEventListener("timeupdate", updateScript);
+
+// --- workspace tabs: Script / Matches / Bookmarks / Clips ---------------------
+
+const TAB_PANES = { script: "pane-script", matches: "item-search-panel", bookmarks: "bookmarks-panel", clips: "clips-made-panel" };
+
+function showTab(name) {
+  for (const [tab, pane] of Object.entries(TAB_PANES)) {
+    const on = tab === name;
+    $(pane).hidden = !on;
+    $("tab-" + tab).setAttribute("aria-selected", String(on));
+  }
+  if (name === "script") keepSelectionInView();
+}
+
+/** A hidden pane loses its scroll position: bring the selection (or playing line) back. */
+function keepSelectionInView() {
+  const list = $("script-list");
+  const idx = hasClipRange() && clipFirst >= 0 ? clipFirst : scriptActiveIdx;
+  const row = idx >= 0 ? list.children[idx] : null;
+  if (!row || !list.clientHeight) return;
+  const listRect = list.getBoundingClientRect();
+  const rowRect = row.getBoundingClientRect();
+  list.scrollTop += (rowRect.top - listRect.top) - listRect.height / 3;
+}
+
+function setTabCount(tab, n) {
+  $("count-" + tab).textContent = n ? String(n) : "";
+}
+
+/** A new item starts on the Script tab with no matches and no clips made yet. */
+function resetItemTabs() {
+  $("tab-matches").hidden = true;
+  $("tab-clips").hidden = true;
+  for (const t of ["matches", "bookmarks", "clips"]) setTabCount(t, 0);
+  showTab("script");
+}
+
+document.querySelector(".tabs").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-tab]");
+  if (b) showTab(b.dataset.tab);
+});
+
+$("clip-options-toggle").onclick = () => {
+  const bar = document.querySelector(".ws-clip");
+  const open = bar.classList.toggle("opts-open");
+  $("clip-options-toggle").setAttribute("aria-expanded", String(open));
+};
+
+// --- dialogue map: where the dialogue is across the whole runtime ---------------
+//
+// One bar per slice of the runtime, as tall as the number of cues starting in it,
+// built from the script that is already loaded (no extra request). The selected
+// range is amber, the playhead blue; clicking seeks.
+
+const DM_BARS = 160;
+
+function mapDuration() {
+  if (currentDuration) return currentDuration;
+  return scriptCues.length ? scriptCues[scriptCues.length - 1].end : 0;
+}
+
+function renderDialogueMap() {
+  const map = $("dialogue-map");
+  const dur = mapDuration();
+  const real = scriptCues.filter((c) => !c.synthetic);
+  if (!dur || real.length < 2) { map.hidden = true; return; }
+  const counts = new Array(DM_BARS).fill(0);
+  for (const c of real) counts[Math.min(DM_BARS - 1, Math.floor((c.start / dur) * DM_BARS))]++;
+  const max = Math.max(...counts) || 1;
+  const frag = document.createDocumentFragment();
+  for (const n of counts) {
+    const bar = document.createElement("i");
+    if (n) bar.style.height = (14 + 86 * Math.sqrt(n / max)).toFixed(1) + "%";
+    else bar.className = "empty";
+    frag.appendChild(bar);
+  }
+  const holder = $("dialogue-map-bars");
+  holder.innerHTML = "";
+  holder.appendChild(frag);
+  $("dialogue-map-total").textContent = formatTimeWhole(dur);
+  map.hidden = false;
+  updateMapSelection();
+  updateMapPlayhead();
+}
+
+function updateMapSelection() {
+  const map = $("dialogue-map");
+  const sel = $("dialogue-map-sel");
+  const dur = mapDuration();
+  if (map.hidden || !dur || !hasClipRange()) { sel.hidden = true; return; }
+  const s = bufStart(), e = bufEnd();
+  sel.hidden = false;
+  sel.style.setProperty("--f", String(Math.min(1, s / dur)));
+  sel.style.setProperty("--w", String(Math.max(0.004, (e - s) / dur)));
+}
+
+function updateMapPlayhead() {
+  const dur = mapDuration();
+  if ($("dialogue-map").hidden || !dur) return;
+  $("dialogue-map-head").style.setProperty("--f", String(Math.max(0, Math.min(1, playerTime() / dur))));
+}
+
+$("dialogue-map").addEventListener("click", (e) => {
+  const dur = mapDuration();
+  const r = $("dialogue-map-bars").getBoundingClientRect();
+  if (!dur || !r.width) return;
+  seekTo(Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * dur);
+});
+$("dialogue-map").addEventListener("mousemove", (e) => {
+  const dur = mapDuration();
+  const r = $("dialogue-map-bars").getBoundingClientRect();
+  if (dur && r.width) $("dialogue-map").title = "Seek to " + formatTimeWhole(Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * dur);
+});
 
 // --- bookmarks --------------------------------------------------------------
 
@@ -2156,6 +2274,7 @@ async function loadBookmarks() {
   // loadBookmarks owns the list now; don't overwrite it with stale bookmarks.
   if (currentItem !== item) return;
 
+  setTabCount("bookmarks", data.bookmarks.length);
   if (!data.bookmarks.length) {
     empty.hidden = false;
     return;
@@ -2373,7 +2492,8 @@ async function makeClip() {
 
 // Append a row to the per-page Clips list (newest first) and return it.
 function addClipRow(jobId, label) {
-  $("clips-made-panel").hidden = false;
+  $("tab-clips").hidden = false;
+  setTabCount("clips", $("clips-made-list").children.length + 1);
   const li = document.createElement("li");
   li.className = "clip-made-row";
   if (jobId) li.dataset.jobId = jobId;

@@ -22,9 +22,10 @@ body {
 :focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
 input[type="checkbox"], input[type="range"] { accent-color: var(--accent); }
 
-main, footer { max-width: 1100px; margin: 0 auto; padding: 0 1.25rem; }
-/* Until their own redesign steps, the other pages keep the narrower column. */
-#item, #clips-browser, #bookmarks-browser { max-width: 860px; margin-left: auto; margin-right: auto; }
+main, footer { max-width: 1360px; margin: 0 auto; padding: 0 1.25rem; }
+/* Until their own redesign steps, these pages keep a narrower column. */
+#browser { max-width: 1100px; margin-left: auto; margin-right: auto; }
+#clips-browser, #bookmarks-browser { max-width: 860px; margin-left: auto; margin-right: auto; }
 
 .sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
 svg.icon {
@@ -675,3 +676,120 @@ footer { padding: 2rem 1.25rem; font-size: 0.8rem; }
 .script-start-btn:hover { border-color: var(--accent-text); }
 .script-end-btn { color: var(--danger); }
 .script-end-btn:hover { border-color: var(--danger); }
+
+/* ---- workspace: the item page --------------------------------------------------------------
+   Player, dialogue map and transport on the left, the clip bar under them, the script (with
+   Matches, Bookmarks and Clips tabs) full height on the right. On a phone: player, script,
+   then the clip bar pinned to the bottom of the screen. */
+.workspace { margin-top: 0.9rem; }
+.ws-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem; margin-bottom: 0.8rem; }
+.ws-head .back { margin: 0; }
+.ws-title { flex: 1 1 14rem; min-width: 0; }
+.ws-title h2 { margin: 0; font-size: 1.5rem; line-height: 1.25; }
+.workspace .item-filename { margin: 0; }
+.workspace .stream-selector { margin: 0; justify-content: flex-end; }
+.ws-grid {
+  display: grid; gap: 1rem 1.5rem; align-items: start;
+  grid-template-columns: minmax(0, 1fr) minmax(22rem, 28rem);
+  grid-template-rows: auto 1fr;  /* the tall side panel's extra height goes below the clip bar */
+  grid-template-areas: "player side" "clip side";
+}
+.ws-player { grid-area: player; min-width: 0; }
+.ws-clip { grid-area: clip; margin-top: 0; min-width: 0; }
+.ws-side {
+  grid-area: side; padding: 0; margin-top: 0;
+  position: sticky; top: 4.5rem; height: min(calc(100vh - 5.5rem), 54rem); min-height: 24rem;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.ws-player video { margin: 0; max-height: 46vh; }
+.ws-player .yt-embed iframe { margin: 0; }
+.ws-player .playback-controls { margin: 0.6rem 0 0.4rem; flex-wrap: wrap; }
+.ws-player .yt-player-row { margin: 0.4rem 0; }
+.ws-player #preview-note { margin: 0.2rem 0 0; font-size: 0.85rem; }
+.ws-player #preview-note:empty { display: none; }
+
+/* tabs */
+.tabs { display: flex; gap: 0.1rem; padding: 0.35rem 0.6rem 0; border-bottom: 1px solid var(--line); flex-shrink: 0; }
+.tab {
+  background: none; border: none; border-bottom: 3px solid transparent; margin-bottom: -1px;
+  color: var(--dim); font: inherit; font-size: 0.9rem; padding: 0.5rem 0.65rem; cursor: pointer;
+}
+.tab:hover { color: var(--text); }
+.tab[aria-selected="true"] { color: var(--text); font-weight: 600; border-bottom-color: var(--accent); }
+.tab-count {
+  display: inline-block; margin-left: 0.2rem; padding: 0 0.4rem; border-radius: var(--radius-pill);
+  background: var(--raised); color: var(--dim); font-size: 0.7rem; font-weight: 400; line-height: 1.5;
+}
+.tab-count:empty { display: none; }
+.tabpane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+#item-search-panel, #bookmarks-panel, #clips-made-panel { padding: 0.6rem 0.8rem; overflow-y: auto; display: block; }
+.script-bar { display: flex; align-items: center; gap: 0.75rem; padding: 0.55rem 1rem 0.35rem; flex-shrink: 0; }
+.script-bar .script-hint { flex: 1; margin: 0; font-size: 0.78rem; }
+.script-follow { white-space: nowrap; font-size: 0.8rem; color: var(--dim); }
+.ws-side .script-wrap { flex: 1; min-height: 0; margin-top: 0; }
+.ws-side .script-list { max-height: none; height: 100%; border: none; border-radius: 0; background: none; border-top: 1px solid var(--line); }
+.ws-side .script-line { padding: 0.5rem 1rem; }
+.ws-side .script-line.in-range.range-first { padding-top: calc(0.5rem - 2px); }
+.ws-side .script-line.in-range.range-last { padding-bottom: calc(0.5rem - 2px); }
+
+/* dialogue map */
+.dialogue-map {
+  position: relative; margin: 0.6rem 0 0; padding: 10px 12px 0; cursor: pointer;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg);
+}
+.dm-bars { display: flex; align-items: flex-end; gap: 1px; height: 44px; }
+.dm-bars i { flex: 1; min-width: 1px; background: var(--faint); opacity: 0.85; border-radius: 1px; }
+.dm-bars i.empty { height: 3px; opacity: 0.3; }
+.dm-sel {
+  position: absolute; top: 6px; bottom: 22px; min-width: 4px; pointer-events: none;
+  left: calc(12px + (100% - 24px) * var(--f, 0)); width: calc((100% - 24px) * var(--w, 0));
+  background: var(--accent-soft); border-left: 2px solid var(--accent); border-right: 2px solid var(--accent);
+}
+.dm-head {
+  position: absolute; top: 4px; bottom: 22px; width: 2px; pointer-events: none; background: var(--playhead);
+  left: calc(12px + (100% - 24px) * var(--f, 0));
+}
+.dm-scale {
+  display: flex; justify-content: space-between; padding: 4px 0;
+  font: 0.7rem var(--font-mono); color: var(--faint);
+}
+
+/* clip bar */
+.ws-clip .marks-header { flex-wrap: wrap; row-gap: 0.4rem; }
+.ws-clip .marks-titlerow h3 {
+  font-size: 0.7rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint);
+}
+.ws-clip .mark-range-display { overflow: visible; white-space: normal; }
+.ws-clip .mark-range-display .range-times { font-size: 1.05rem; font-weight: 600; }
+.marks-actions .mark-icon-btn { width: auto; height: 2.4rem; padding: 0 0.9rem; gap: 0.4rem; font-size: 0.9rem; font-weight: 600; }
+.marks-actions .mark-icon-btn .star, .marks-actions .mark-icon-btn .scissors { font-size: 1.05rem; }
+.ws-clip .clip-options { margin-top: 0.7rem; padding-top: 0.7rem; border-top: 1px solid var(--line); }
+.ws-clip .clip-name-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.8rem; margin: 0; }
+.ws-clip .clip-name-row .clip-range { display: none; }  /* the range is already the header */
+.ws-clip .clip-template-label { flex: 1 1 18rem; flex-direction: row; align-items: center; gap: 0.5rem; }
+.ws-clip .clip-template-label input { flex: 1; min-width: 0; }
+.ws-clip .clip-template-help { flex: 1 1 100%; margin: 0; font-size: 0.75rem; }
+.ws-clip .clip-template-help summary { cursor: pointer; color: var(--accent-text); width: max-content; }
+.opts-toggle { display: none; }
+
+@media (max-width: 900px) {
+  .ws-grid { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; grid-template-areas: "player" "side" "clip"; }
+  .ws-side { position: static; height: 60vh; min-height: 20rem; }
+  .ws-player video { max-height: 42vh; }
+  .ws-clip {
+    position: sticky; bottom: 0; z-index: 10; margin: 0 -1.25rem; border-radius: 0;
+    border-left: none; border-right: none; box-shadow: 0 -6px 18px #0005;
+  }
+  .opts-toggle { display: inline-flex; width: auto !important; padding: 0 0.8rem !important; }
+  .ws-clip:not(.opts-open) .clip-options { display: none; }
+  .marks-actions .mark-icon-btn .btn-label { display: none; }
+  .marks-actions .mark-icon-btn { padding: 0; width: 2.4rem; }
+  .make-clip-btn { width: auto !important; padding: 0 0.9rem !important; }
+  .make-clip-btn .btn-label { display: inline !important; }
+  .workspace .stream-selector { justify-content: flex-start; }
+  .ws-clip { padding: 0.6rem 1.25rem; }
+  .ws-clip .marks-header { flex-direction: column; align-items: stretch; gap: 0.4rem; }
+  .ws-clip .marks-titlerow { flex-wrap: wrap; gap: 0.2rem 0.6rem; }
+  .ws-clip .marks-actions { justify-content: stretch; }
+  .ws-clip .make-clip-btn { flex: 1; }
+}
