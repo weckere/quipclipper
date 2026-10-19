@@ -92,9 +92,30 @@
             </div>
           </section>
         </div>
-        <!-- Batch actions for dialogue-search hits (clip/bookmark from results). -->
-        <div id="search-batch" class="batch-bar" hidden>
+        <div id="entries-wrap" class="entries-wrap">
+          <ul id="entries" class="entries"></ul>
+          <!-- Context for the highlighted search hit (wide screens): the lines around it. -->
+          <aside id="hit-preview" class="hit-preview" aria-label="Context for the selected match" hidden>
+            <div class="preview-label">Preview</div>
+            <h3 id="hit-preview-title"></h3>
+            <div id="hit-preview-time" class="hit-preview-time"></div>
+            <ul id="hit-preview-lines" class="preview-lines"></ul>
+            <div class="preview-actions">
+              <button type="button" id="hit-preview-open" class="btn">Open in workspace</button>
+            </div>
+          </aside>
+        </div>
+        <div id="search-batch" class="batch-bar sticky" hidden>
+        <div class="batch-row">
           <label class="checkbox-label"><input id="search-select-all" type="checkbox" /> Select all</label>
+          <span id="search-batch-summary" class="batch-summary"></span>
+          <button type="button" class="link-btn batch-options-toggle" aria-expanded="false" aria-controls="search-batch-options">Options</button>
+          <span id="search-batch-status" class="muted batch-status"></span>
+          <span class="batch-spacer"></span>
+        <button id="search-batch-bookmark" data-action="bookmark.batch" class="clip-btn batch-bookmark-btn" disabled>Bookmark selected</button>
+          <button id="search-batch-export" data-action="clip.batch" class="clip-btn batch-export-btn" disabled>Clip selected</button>
+        </div>
+        <div id="search-batch-options" class="batch-options" hidden>
           <label class="checkbox-label"><input id="search-batch-audio" type="checkbox" /> Audio only</label>
           <label class="checkbox-label"><input id="search-batch-split" type="checkbox" /> Split channels</label>
           <span id="search-chan-groups" class="chan-groups" hidden></span>
@@ -107,11 +128,8 @@
             </select>
           </label>
           <label class="batch-template-label" title="Output path for each clip. A leading folder (e.g. MyBatch/...) puts them all in one folder. Tokens: {source} {timestamp} {end} {duration} {cue} {title} {year} {season} {episode} {date}">Name <input id="search-batch-template" class="clip-template-input" type="text" autocomplete="off" spellcheck="false" placeholder="{source}/{timestamp}_{cue}_{title}" /></label>
-          <button id="search-batch-export" data-action="clip.batch" class="clip-btn batch-export-btn" disabled>Clip selected</button>
-          <button id="search-batch-bookmark" data-action="bookmark.batch" class="clip-btn batch-bookmark-btn" disabled>Bookmark selected</button>
-          <span id="search-batch-status" class="muted"></span>
         </div>
-        <ul id="entries" class="entries"></ul>
+      </div>
         <p id="browser-empty" class="muted" hidden>Nothing here.</p>
         </div>
       </section>
@@ -125,7 +143,15 @@
           <span id="clips-folder-crumb" class="muted"></span>
         </nav>
         <div id="clips-batch" class="batch-bar" hidden>
+        <div class="batch-row">
           <label class="checkbox-label"><input id="clips-select-all" type="checkbox" /> Select all</label>
+          <span id="clips-batch-summary" class="batch-summary"></span>
+          <button type="button" class="link-btn batch-options-toggle" aria-expanded="false" aria-controls="clips-batch-options">Options</button>
+          <span id="clips-batch-status" class="muted batch-status"></span>
+          <span class="batch-spacer"></span>
+          <button id="clips-batch-export" data-action="clip.batch" class="clip-btn batch-export-btn" disabled>Export selected</button>
+        </div>
+        <div id="clips-batch-options" class="batch-options" hidden>
           <label class="checkbox-label"><input id="clips-batch-audio" type="checkbox" checked /> Audio only</label>
           <label class="checkbox-label"><input id="clips-batch-split" type="checkbox" /> Split channels</label>
           <span id="clips-chan-groups" class="chan-groups" hidden></span>
@@ -137,9 +163,8 @@
             </select>
           </label>
           <label class="batch-template-label" title="Output path for each clip. A leading folder (e.g. MyBatch/...) puts them all in one folder. Tokens: {source} {timestamp} {end} {duration} {cue} {title} {year} {season} {episode} {date}">Name <input id="clips-batch-template" class="clip-template-input" type="text" autocomplete="off" spellcheck="false" placeholder="{source}/{timestamp}_{cue}_{title}" /></label>
-          <button id="clips-batch-export" data-action="clip.batch" class="clip-btn batch-export-btn" disabled>Export selected</button>
-          <span id="clips-batch-status" class="muted"></span>
         </div>
+      </div>
         <ul id="clips-entries" class="entries"></ul>
         <p id="clips-empty" class="muted" hidden>No clips yet.</p>
       </section>
@@ -151,7 +176,16 @@
           <span class="muted"> / Bookmarks</span>
         </nav>
         <div id="bm-batch" class="batch-bar" hidden>
+        <div class="batch-row">
           <label class="checkbox-label"><input id="bm-select-all" type="checkbox" /> Select all</label>
+          <span id="bm-batch-summary" class="batch-summary"></span>
+          <button type="button" class="link-btn batch-options-toggle" aria-expanded="false" aria-controls="bm-batch-options">Options</button>
+          <span id="bm-batch-status" class="muted batch-status"></span>
+          <span class="batch-spacer"></span>
+        <button id="bm-clear-all" data-action="bookmark.clear" class="clip-btn bm-clear-all-btn">Clear all</button>
+          <button id="bm-batch-export" data-action="clip.batch" class="clip-btn batch-export-btn" disabled>Export selected</button>
+        </div>
+        <div id="bm-batch-options" class="batch-options" hidden>
           <label class="checkbox-label"><input id="bm-batch-audio" type="checkbox" checked /> Audio only</label>
           <label class="checkbox-label"><input id="bm-batch-split" type="checkbox" /> Split channels</label>
           <span id="bm-chan-groups" class="chan-groups" hidden></span>
@@ -164,10 +198,8 @@
             </select>
           </label>
           <label class="batch-template-label" title="Output path for each clip. A leading folder (e.g. MyBatch/...) puts them all in one folder. Tokens: {source} {timestamp} {end} {duration} {cue} {title} {year} {season} {episode} {date}">Name <input id="bm-batch-template" class="clip-template-input" type="text" autocomplete="off" spellcheck="false" placeholder="{source}/{timestamp}_{cue}_{title}" /></label>
-          <button id="bm-batch-export" data-action="clip.batch" class="clip-btn batch-export-btn" disabled>Export selected</button>
-          <button id="bm-clear-all" data-action="bookmark.clear" class="clip-btn bm-clear-all-btn">Clear all</button>
-          <span id="bm-batch-status" class="muted"></span>
         </div>
+      </div>
         <ul id="all-bookmarks-list" class="bookmarks-list bm-browser-list"></ul>
         <p id="all-bookmarks-empty" class="muted" hidden>No bookmarks saved yet.</p>
       </section>

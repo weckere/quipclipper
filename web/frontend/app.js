@@ -194,6 +194,8 @@ async function browse(path) {
   const list = $("entries");
   list.innerHTML = "";
   $("search-batch").hidden = true;
+  $("hit-preview").hidden = true;
+  $("browser").classList.remove("hits");
   $("browser-empty").hidden = true;
   $("library-search").value = "";
   $("global-search-input").value = "";
@@ -325,6 +327,8 @@ async function librarySearch(query) {
   // A prior dialogue search may have left the batch bar showing; a name search
   // has no selectable hits, so hide it.
   $("search-batch").hidden = true;
+  $("hit-preview").hidden = true;
+  $("browser").classList.remove("hits");
   renderEntries(data.entries);
 
   // Enable cross-folder dialogue search over the folders this search surfaced.
@@ -496,6 +500,8 @@ async function dialogueSearch(query, folders) {
   const list = $("entries");
   list.innerHTML = "";
   $("search-batch").hidden = true;
+  $("hit-preview").hidden = true;
+  $("browser").classList.remove("hits");
   $("browser-empty").hidden = true;
   const status = $("dialogue-search-status");
   status.textContent = "Searching subtitles…";
@@ -525,42 +531,125 @@ async function dialogueSearch(query, folders) {
   $("search-batch").hidden = false;
   $("search-select-all").checked = false;
   $("search-batch-status").textContent = "";
+  updateBatchState("search");
+  $("browser").classList.add("hits");
 
+  // Group the hits by file, in order of first appearance.
+  const groups = new Map();
   for (const hit of data.matches) {
-    const li = document.createElement("li");
-    li.className = "dialogue-hit";
-    li.innerHTML =
-      `<label class="hit-check"><input type="checkbox" class="search-select" /></label>` +
-      `<div class="hit-main">` +
-        `<span class="hit-file">${escapeHtml(hit.file)}</span>` +
-        `<span class="hit-text">${hit.speaker ? `<span class="hit-speaker">${escapeHtml(hit.speaker)}</span>` : ""}"${escapeHtml(hit.text)}"</span>` +
-        `<span class="hit-time">${hit.start_ts} – ${hit.end_ts}  <span class="hit-score">${hit.score}%</span></span>` +
-      `</div>` +
-      `<div class="hit-actions">` +
-        `<button class="mark-icon-btn hit-bookmark" data-action="bookmark.add" title="Save as bookmark"><span class="star">★</span></button>` +
-        `<button class="mark-icon-btn make-clip-btn hit-clip" data-action="clip.create" title="Clip this line"><span class="scissors">✂</span></button>` +
-        `<span class="hit-status" data-action="job.get"></span>` +
-      `</div>`;
-    // Checkbox drives the batch bar (and carries the data the batch bodies need).
-    const cb = li.querySelector(".search-select");
-    cb.dataset.path = hit.path;
-    cb.dataset.start = hit.start;
-    cb.dataset.end = hit.end;
-    cb.dataset.cue = hit.text;
-    cb.dataset.file = hit.file;
-    cb.onclick = (e) => e.stopPropagation();
-    cb.onchange = () => updateBatchState("search");
-    li.querySelector(".hit-check").onclick = (e) => e.stopPropagation();
-    const statusEl = li.querySelector(".hit-status");
-    li.querySelector(".hit-bookmark").onclick = (e) => { e.stopPropagation(); bookmarkSearchHit(hit, statusEl); };
-    li.querySelector(".hit-clip").onclick = (e) => { e.stopPropagation(); clipSearchHit(hit, statusEl); };
-    // Clicking the row still opens the file with the cue selected.
-    li.querySelector(".hit-main").onclick = () => openItem(hit.path, hit.file, {
-      searchQuery: query,
-      seekTo: hit.start,
-      markRange: { start: hit.start, end: hit.end },
-    });
-    list.appendChild(li);
+    if (!groups.has(hit.path)) groups.set(hit.path, { file: hit.file, hits: [] });
+    groups.get(hit.path).hits.push(hit);
+  }
+  let first = null;
+  let gi = 0;
+  for (const g of groups.values()) {
+    const gid = `g${gi++}`;
+    const head = document.createElement("li");
+    head.className = "hit-group";
+    head.innerHTML =
+      `<button type="button" class="hit-group-toggle" aria-expanded="true">${iconSvg("chevron-r")}` +
+      `<span class="hit-group-icon">${iconSvg("film")}</span><span class="hit-group-name">${escapeHtml(g.file)}</span>` +
+      `<span class="hit-group-count">${g.hits.length} ${g.hits.length === 1 ? "match" : "matches"}</span></button>`;
+    const rows = [];
+    head.querySelector("button").onclick = (e) => {
+      const open = e.currentTarget.getAttribute("aria-expanded") !== "true";
+      e.currentTarget.setAttribute("aria-expanded", String(open));
+      rows.forEach((r) => { r.hidden = !open; });
+    };
+    list.appendChild(head);
+    for (const hit of g.hits) {
+      const li = document.createElement("li");
+      li.className = "dialogue-hit";
+      li.dataset.group = gid;
+      li.innerHTML =
+        `<label class="hit-check"><input type="checkbox" class="search-select" aria-label="Select this match" /></label>` +
+        `<div class="hit-main" tabindex="0" role="button">` +
+          `<span class="hit-text">${hit.speaker ? `<span class="hit-speaker">${escapeHtml(hit.speaker)}</span>` : ""}${highlightMatch(hit.text, query)}</span>` +
+          `<span class="hit-time">${hit.start_ts} – ${hit.end_ts}</span>` +
+        `</div>` +
+        `<span class="hit-score" title="Match score">${hit.score}%</span>` +
+        `<div class="hit-actions">` +
+          `<button class="mark-icon-btn hit-bookmark" data-action="bookmark.add" title="Save as bookmark" aria-label="Save as bookmark"><span class="star">★</span></button>` +
+          `<button class="mark-icon-btn make-clip-btn hit-clip" data-action="clip.create" title="Clip this line" aria-label="Clip this line"><span class="scissors">✂</span></button>` +
+          `<span class="hit-status" data-action="job.get"></span>` +
+        `</div>`;
+      // Checkbox drives the batch bar (and carries the data the batch bodies need).
+      const cb = li.querySelector(".search-select");
+      cb.dataset.path = hit.path;
+      cb.dataset.start = hit.start;
+      cb.dataset.end = hit.end;
+      cb.dataset.cue = hit.text;
+      cb.dataset.file = hit.file;
+      cb.onclick = (e) => e.stopPropagation();
+      cb.onchange = () => updateBatchState("search");
+      li.querySelector(".hit-check").onclick = (e) => e.stopPropagation();
+      const statusEl = li.querySelector(".hit-status");
+      li.querySelector(".hit-bookmark").onclick = (e) => { e.stopPropagation(); bookmarkSearchHit(hit, statusEl); };
+      li.querySelector(".hit-clip").onclick = (e) => { e.stopPropagation(); clipSearchHit(hit, statusEl); };
+      const open = () => openItem(hit.path, hit.file, {
+        searchQuery: query,
+        seekTo: hit.start,
+        markRange: { start: hit.start, end: hit.end },
+      });
+      // Wide screens: a click previews the line in context; the preview's button opens it.
+      // Narrow screens (no preview panel): a click opens the file with the cue selected.
+      const main = li.querySelector(".hit-main");
+      const activate = () => (previewOn() ? focusHit(li, hit, open) : open());
+      main.onclick = activate;
+      main.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); activate(); } };
+      rows.push(li);
+      list.appendChild(li);
+      if (!first) first = [li, hit, open];
+    }
+  }
+  if (first && previewOn()) focusHit(first[0], first[1], first[2]);
+}
+
+/** Wrap each word of the query found in `text` in <mark>; the rest is escaped. */
+function highlightMatch(text, query) {
+  const words = [...new Set(query.toLowerCase().split(/\s+/)
+    .map((w) => w.replace(/[^\p{L}\p{N}']/gu, "")).filter((w) => w.length >= 2))];
+  if (!words.length) return escapeHtml(text);
+  const re = new RegExp("(" + words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|") + ")", "gi");
+  return text.split(re).map((part, i) => (i % 2 ? `<mark>${escapeHtml(part)}</mark>` : escapeHtml(part))).join("");
+}
+
+// The preview panel needs room beside the list.
+const previewMQ = window.matchMedia("(min-width: 1250px)");
+const previewOn = () => previewMQ.matches;
+const cueCache = new Map();  // path -> cues, so moving between hits of one file is instant
+let previewToken = 0;
+
+async function focusHit(li, hit, open) {
+  document.querySelectorAll("#entries .dialogue-hit.focus").forEach((e) => e.classList.remove("focus"));
+  li.classList.add("focus");
+  const panel = $("hit-preview");
+  panel.hidden = false;
+  $("hit-preview-title").textContent = hit.file;
+  $("hit-preview-time").textContent = `${hit.start_ts} – ${hit.end_ts}`;
+  $("hit-preview-open").onclick = open;
+  const list = $("hit-preview-lines");
+  const my = ++previewToken;
+  list.innerHTML = '<li class="muted">Loading the lines around it…</li>';
+  let cues = cueCache.get(hit.path);
+  if (!cues) {
+    try {
+      cues = await getJSON(`/api/items/subtitles?fmt=json&path=${encodeURIComponent(hit.path)}`);
+      cueCache.set(hit.path, cues);
+    } catch { cues = []; }
+  }
+  if (my !== previewToken) return;
+  let idx = cues.findIndex((c) => Math.abs(c.start - hit.start) < 0.6);
+  if (idx < 0) {
+    list.innerHTML = `<li class="preview-line hit"><span class="ts">${hit.start_ts}</span><span>${escapeHtml(hit.text)}</span></li>`;
+    return;
+  }
+  list.innerHTML = "";
+  for (let i = Math.max(0, idx - 3); i <= Math.min(cues.length - 1, idx + 3); i++) {
+    const row = document.createElement("li");
+    row.className = "preview-line" + (i === idx ? " hit" : "");
+    row.innerHTML = `<span class="ts">${formatTime(cues[i].start)}</span><span>${escapeHtml(cues[i].text)}</span>`;
+    list.appendChild(row);
   }
 }
 
@@ -2849,6 +2938,32 @@ function wireBatchBar(prefix) {
   $(`${prefix}-batch-audio`).onchange = applyGuard;
   $(`${prefix}-batch-split`).onchange = applyGuard;
   applyGuard();  // set initial disabled state
+
+  // Options live behind a toggle; their current values show as chips so the bar stays short.
+  const bar = $(`${prefix}-batch`);
+  const toggle = bar.querySelector(".batch-options-toggle");
+  const panel = $(`${prefix}-batch-options`);
+  toggle.onclick = () => {
+    panel.hidden = !panel.hidden;
+    toggle.setAttribute("aria-expanded", String(!panel.hidden));
+  };
+  panel.addEventListener("change", () => updateBatchSummary(prefix));
+  panel.addEventListener("input", () => updateBatchSummary(prefix));
+  updateBatchSummary(prefix);
+}
+
+/** The bar's chips: what a clip made from it will be. */
+function updateBatchSummary(prefix) {
+  const chips = [];
+  if ($(`${prefix}-batch-audio`).checked) chips.push("Audio only");
+  if ($(`${prefix}-batch-split`).checked) chips.push("Split channels");
+  const exact = $(`${prefix}-batch-exact`);
+  if (exact && !$(`${prefix}-batch-audio`).checked && exact.checked) chips.push("Exact");
+  const fmt = $(`${prefix}-batch-format`);
+  chips.push(fmt.options[fmt.selectedIndex].text);
+  const tpl = $(`${prefix}-batch-template`).value.trim();
+  if (tpl) chips.push(tpl.length > 18 ? tpl.slice(0, 17) + "…" : tpl);
+  $(`${prefix}-batch-summary`).innerHTML = chips.map((c) => `<span class="badge">${escapeHtml(c)}</span>`).join("");
 }
 wireBatchBar("clips");
 wireBatchBar("bm");
