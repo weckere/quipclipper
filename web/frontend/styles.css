@@ -152,8 +152,9 @@ h1 {
 }
 
 .breadcrumb { margin: 1.5rem 0 0.75rem; font-size: 0.95rem; }
-.breadcrumb a { color: var(--accent-text); cursor: pointer; }
-.breadcrumb a:hover { text-decoration: underline; }
+.breadcrumb a, .breadcrumb .crumb { color: var(--accent-text); cursor: pointer; }
+.breadcrumb a:hover, .breadcrumb .crumb:hover { text-decoration: underline; }
+.crumb { background: none; border: none; padding: 0; font: inherit; }
 
 /* ---- inputs, selects, buttons --------------------------------------------------------- */
 input[type="text"], input[type="number"], select {
@@ -195,7 +196,6 @@ select {
 .dialogue-hit .hit-main {
   flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.15rem; cursor: pointer;
 }
-.dialogue-hit .hit-file { font-size: var(--text-sm); color: var(--accent-text); }
 .dialogue-hit .hit-text { font-size: var(--text-base); }
 .dialogue-hit .hit-time {
   font-size: var(--text-sm); color: var(--dim);
@@ -347,9 +347,7 @@ video.audio-only {
   font-size: 0.8rem; color: var(--dim);
 }
 .ss-field select { margin-top: 0; max-width: 22rem; font-size: 0.82rem; }
-.ss-langs-field input { width: 5.5rem; font-size: 0.82rem; padding: 0.25rem 0.4rem; border-radius: 6px; }
 .ss-none { font-size: 0.82rem; font-style: italic; }
-.ss-spacer { flex: 1; }
 
 code {
   background: var(--raised);
@@ -613,6 +611,7 @@ footer { padding: 2rem 1.25rem; font-size: 0.8rem; }
 .reindex-link {
   color: var(--dim); cursor: pointer; font-size: 0.8rem;
   text-decoration: none; white-space: nowrap;
+  background: none; border: none; padding: 0; font-family: inherit;
 }
 .reindex-link:hover { color: var(--accent-text); text-decoration: underline; }
 .reindex-link.disabled { opacity: 0.5; cursor: default; pointer-events: none; }
@@ -915,3 +914,8 @@ footer { padding: 2rem 1.25rem; font-size: 0.8rem; }
   .entry .clip-dl { margin-left: 0; }
   #clips-entries .entry { flex-wrap: wrap; }
 }
+
+/* keyboard: the per-line Start / End buttons appear when a line has focus, not only on hover */
+.script-line:focus-within .script-actions { display: flex; }
+.hit-main:focus-visible, .entry:focus-visible, .script-line:focus-visible { outline-offset: -2px; }
+@media (prefers-reduced-motion: reduce) { .script-list { scroll-behavior: auto; } }

@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>quipclipper</title>
     <meta name="color-scheme" content="dark light" />
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2032%2032%22%3E%3Crect%20width=%2232%22%20height=%2232%22%20rx=%228%22%20fill=%22%23F2B544%22/%3E%3Cg%20transform=%22translate%285%205%29%20scale%28.9%29%22%20fill=%22none%22%20stroke=%22%231A1303%22%20stroke-width=%222.1%22%20stroke-linecap=%22round%22%20stroke-linejoin=%22round%22%3E%3Cpath%20d=%22M8.5%206A2.5%202.5%200%201%201%203.5%206A2.5%202.5%200%201%201%208.5%206ZM8.5%2018A2.5%202.5%200%201%201%203.5%2018A2.5%202.5%200%201%201%208.5%2018ZM8%207.6L20%2018.5M8%2016.4L20%205.5%22/%3E%3C/g%3E%3C/svg%3E" />
     <script>
       /* Apply a saved light/dark override before first paint (no flash). */
       try { var t = localStorage.getItem("qc_theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) {}
@@ -87,24 +88,24 @@
         <div class="library-main">
         <nav id="breadcrumb" class="breadcrumb"></nav>
         <div class="library-search-bar">
-          <input id="library-search" data-action="library.find" type="text" placeholder="Search library…" autocomplete="off" />
+          <input id="library-search" data-action="library.find" type="text" aria-label="Filter this folder by name" placeholder="Search library…" autocomplete="off" />
         </div>
         <!-- Add-a-YouTube-URL bar, shown only inside the ▶ YouTube pseudo-folder. -->
         <div id="yt-add-bar" class="library-search-bar yt-add-bar" hidden>
           <div class="dialogue-search-row">
-            <input id="yt-url" type="text" placeholder="Paste a YouTube URL to add it…" autocomplete="off" spellcheck="false" />
+            <input id="yt-url" type="text" aria-label="YouTube URL" placeholder="Paste a YouTube URL to add it…" autocomplete="off" spellcheck="false" />
             <button id="yt-add-btn" data-action="youtube.add">Add</button>
           </div>
           <p id="yt-add-status" class="muted" hidden></p>
         </div>
-        <p id="dialogue-search-status" class="muted" hidden></p>
+        <p id="dialogue-search-status" class="muted" role="status" hidden></p>
         <div id="dialogue-search-bar" class="library-search-bar dialogue-search-bar" hidden>
           <!-- Dialogue index: how much of this folder dialogue search can see, and the tools
                that change it (index, re-index, fetch YouTube transcripts). -->
           <section id="index-card" class="index-card" data-action="index.status" aria-label="Dialogue index">
             <div class="index-main">
               <h3>Dialogue index</h3>
-              <p id="index-card-text" class="muted">Checking subtitles…</p>
+              <p id="index-card-text" class="muted" role="status">Checking subtitles…</p>
               <div id="index-bar" class="index-bar" role="progressbar" aria-label="Files indexed" aria-valuemin="0" aria-valuemax="100" hidden><span id="index-bar-fill"></span></div>
               <p id="reindex-folder-status" class="muted reindex-status" hidden></p>
               <p id="fetch-folder-status" class="muted reindex-status" hidden></p>
@@ -162,9 +163,9 @@
       <!-- Clips library -->
       <section id="clips-browser" hidden>
         <nav class="breadcrumb">
-          <a id="clips-back-lib">Library</a>
+          <button type="button" id="clips-back-lib" class="crumb">Library</button>
           <span class="muted"> / </span>
-          <a id="clips-home">Clips</a>
+          <button type="button" id="clips-home" class="crumb">Clips</button>
           <span id="clips-folder-crumb" class="muted"></span>
         </nav>
         <div class="page-head"><h2 id="clips-title" class="page-title">Clips</h2><span id="clips-count" class="muted"></span></div>
@@ -198,7 +199,7 @@
       <!-- Bookmarks browser -->
       <section id="bookmarks-browser" hidden>
         <nav class="breadcrumb">
-          <a id="all-bm-back-lib">Library</a>
+          <button type="button" id="all-bm-back-lib" class="crumb">Library</button>
           <span class="muted"> / Bookmarks</span>
         </nav>
         <div class="page-head"><h2 class="page-title">Bookmarks</h2><span id="bm-count" class="muted"></span></div>
@@ -250,9 +251,9 @@
             <label class="ss-field" id="ss-chan-field" hidden>Channels
               <select id="ss-chan"></select>
             </label>
-            <a id="ss-reindex" data-action="item.reindex" class="reindex-link" title="Clear and re-extract subtitles for this file (use if subtitles changed)" hidden>↻ Reindex subtitles</a>
+            <button type="button" id="ss-reindex" data-action="item.reindex" class="reindex-link" title="Clear and re-extract subtitles for this file (use if subtitles changed)" hidden>↻ Reindex subtitles</button>
             <span id="ss-reindex-status" class="muted reindex-status" hidden></span>
-            <a id="ss-fetch-subs" data-action="item.fetch-subs" class="reindex-link" title="This video is from YouTube but has no subtitles — fetch its transcript from YouTube so you can search and clip it" hidden>⬇ Fetch subtitles from YouTube</a>
+            <button type="button" id="ss-fetch-subs" data-action="item.fetch-subs" class="reindex-link" title="This video is from YouTube but has no subtitles — fetch its transcript from YouTube so you can search and clip it" hidden>⬇ Fetch subtitles from YouTube</button>
             <span id="ss-fetch-subs-status" class="muted reindex-status" hidden></span>
           </div>
         </div>
@@ -268,7 +269,7 @@
             <p id="transcode-hint" class="transcode-hint muted" hidden>The player's built-in timeline cannot seek during audio transcoding — use the seek bar below.</p>
             <div id="transcode-seek-bar" class="transcode-seek-bar" hidden>
               <span id="transcode-time" class="transcode-time">0:00</span>
-              <input id="transcode-slider" type="range" min="0" max="100" step="0.1" value="0">
+              <input id="transcode-slider" type="range" aria-label="Seek" min="0" max="100" step="0.1" value="0">
               <span id="transcode-duration" class="transcode-time">0:00</span>
             </div>
             <!-- Cue density over the whole runtime: where the talking is. Selection in

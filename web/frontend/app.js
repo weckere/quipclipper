@@ -232,6 +232,17 @@ async function browse(path) {
 }
 
 /** An icon from the sprite in index.html. */
+/** Make a clickable non-button element reachable and operable from the keyboard. */
+function makeActivatable(el, role = "button") {
+  el.tabIndex = 0;
+  el.setAttribute("role", role);
+  el.addEventListener("keydown", (e) => {
+    if (e.target !== el) return;  // not a key aimed at a control inside the row
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); el.click(); }
+  });
+  return el;
+}
+
 const iconSvg = (name) => `<svg class="icon" aria-hidden="true"><use href="#i-${name}"/></svg>`;
 
 function renderEntries(entries) {
@@ -257,6 +268,7 @@ function renderEntries(entries) {
     li.innerHTML = `<span class="icon-wrap">${iconSvg(icon)}</span><span class="label">${escapeHtml(e.name)}</span>` +
       `<span class="chips">${chips}</span>` + (intoFolder ? `<span class="go">${iconSvg("chevron-r")}</span>` : "");
     li.onclick = () => (intoFolder ? browse(e.path) : openItem(e.path, e.name));
+    makeActivatable(li, "link");
     // A YouTube item row gets a remove button (forgets the video + transcript).
     if (e.is_youtube && !e.is_dir) {
       const del = document.createElement("button");
@@ -958,7 +970,9 @@ function renderBreadcrumb(path) {
   bc.innerHTML = "";
 
   const addLink = (label, target) => {
-    const a = document.createElement("a");
+    const a = document.createElement("button");
+    a.type = "button";
+    a.className = "crumb";
     a.textContent = label;
     a.dataset.action = "library.browse";
     a.onclick = () => browse(target);
@@ -1838,6 +1852,7 @@ async function doSearch(query, { focus = true } = {}) {
         `<span class="result-score">${m.score}</span>` +
         `<span>${m.start_ts} – ${m.end_ts}</span>` +
       `</span>`;
+    makeActivatable(li);
     li.onclick = () => {
       seekTo(m.start);
       // Select the matching cue(s) in Marks (highlighted yellow) — identical to
@@ -2106,6 +2121,7 @@ async function loadScript(path, track) {
         `<button class="script-mark-btn script-end-btn" title="Set clip end">End</button>` +
       `</span>`;
     row.onclick = () => scriptLineClick(i);
+    makeActivatable(row);
     row.querySelector(".script-start-btn").onclick = (e) => { e.stopPropagation(); setClipInAt(i); };
     row.querySelector(".script-end-btn").onclick = (e) => { e.stopPropagation(); setClipOutAt(i); };
     frag.appendChild(row);
@@ -2270,6 +2286,18 @@ function resetItemTabs() {
 document.querySelector(".tabs").addEventListener("click", (e) => {
   const b = e.target.closest("button[data-tab]");
   if (b) showTab(b.dataset.tab);
+});
+// Arrow keys move between the visible tabs (and select them), as in the ARIA tabs pattern.
+document.querySelector(".tabs").addEventListener("keydown", (e) => {
+  if (e.key !== "ArrowRight" && e.key !== "ArrowLeft" && e.key !== "Home" && e.key !== "End") return;
+  const tabs = [...document.querySelectorAll(".tabs .tab")].filter((t) => !t.hidden);
+  const i = tabs.indexOf(document.activeElement);
+  if (i < 0) return;
+  e.preventDefault();
+  const next = e.key === "Home" ? 0 : e.key === "End" ? tabs.length - 1
+    : (i + (e.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+  tabs[next].focus();
+  showTab(tabs[next].dataset.tab);
 });
 
 $("clip-options-toggle").onclick = () => {
@@ -2743,6 +2771,7 @@ async function browseClips(folder) {
     li.innerHTML = `<span class="icon-wrap">${iconSvg("folder")}</span><span class="label">${escapeHtml(f)}</span>` +
       `<span class="chips"></span><span class="go">${iconSvg("chevron-r")}</span>`;
     li.onclick = () => browseClips(f);
+    makeActivatable(li, "link");
     list.appendChild(li);
   }
 
@@ -2833,6 +2862,7 @@ async function browseBookmarks() {
       `<span class="muted bm-browser-count">${plural(bookmarks.length, "bookmark")}</span>` +
       `<button type="button" class="bm-browser-open" title="Open this video">Open video</button>`;
     // Clicking the filename (or the button) opens the source video.
+    makeActivatable(header.querySelector(".bm-browser-file"));
     header.querySelector(".bm-browser-file").onclick = () => openItem(path, fileName);
     header.querySelector(".bm-browser-open").onclick = () => openItem(path, fileName);
     list.appendChild(header);
@@ -3196,9 +3226,17 @@ function toggleScopeMenu(open) {
   const show = open === undefined ? menu.hidden : open;
   menu.hidden = !show;
   $("search-scope").setAttribute("aria-expanded", String(show));
+  if (show) (menu.querySelector('[aria-checked="true"]:not(:disabled)') || menu.querySelector("button:not(:disabled)"))?.focus();
 }
 
 $("search-scope").onclick = (e) => { e.stopPropagation(); toggleJobs(false); toggleScopeMenu(); };
+$("scope-menu").addEventListener("keydown", (e) => {
+  if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+  const items = [...$("scope-menu").querySelectorAll("button:not(:disabled)")];
+  const i = items.indexOf(document.activeElement);
+  e.preventDefault();
+  items[(i + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length].focus();
+});
 $("scope-menu").addEventListener("click", (e) => {
   const b = e.target.closest("button[data-scope]");
   if (!b || b.disabled) return;
