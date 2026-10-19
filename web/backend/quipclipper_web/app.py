@@ -1496,8 +1496,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # --- clipping & jobs -------------------------------------------------------
 
-    @app.post("/api/clip")
-    def create_clip(req: ClipRequest) -> dict:
+    def _plan_clip(req: ClipRequest, out_dir: Path | None = None):
+        """Validate a clip request and return ``(label, do_cut)`` without running it.
+
+        ``do_cut(job)`` performs the cut and returns the written paths. With
+        ``out_dir`` the clip is written there (flat, by the template's file name)
+        instead of the clips library: the LeadStinger set job cuts into a staging
+        folder and zips the result. Raises HTTPException for a bad request.
+        """
         # An EPUB segment clips from the extracted chapter audio (always audio);
         # `name_source` drives the naming template (book/chapter, not the cache
         # file), while `video` is the actual media handed to ffmpeg.
@@ -1706,7 +1712,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ctx = _clip_template_context(name_source or video, rng, cue_text)
             template = (req.template or "").strip() or DEFAULT_CLIP_TEMPLATE
             rel = _render_clip_template(template, ctx) or ctx["timestamp"] or "clip"
-            clips_root = settings.clips_dir.resolve()
+            clips_root = (out_dir or settings.clips_dir).resolve()
+            if out_dir is not None:
+                rel = Path(rel).name or "clip"
             out_path = (clips_root / (rel if req.split_channels else f"{rel}.{ext}")).resolve()
             if out_path != clips_root and not out_path.is_relative_to(clips_root):
                 raise HTTPException(
@@ -1806,12 +1814,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     if _epub_temp is not None:
                         _epub_temp.unlink(missing_ok=True)
 
-            job = jobs.submit(do_cut, label=label)
+            # From here the caller owns the EPUB temp: do_cut's finally removes it.
             _submitted = True
-            return {"job_id": job.id, "status": job.status.value}
+            return label, do_cut
         finally:
             if epub_temp is not None and not _submitted:
                 epub_temp.unlink(missing_ok=True)
+
+    @app.post("/api/clip")
+    def create_clip(req: ClipRequest) -> dict:
+        label, do_cut = _plan_clip(req)
+        job = jobs.submit(do_cut, label=label)
+        return {"job_id": job.id, "status": job.status.value}
 
     def _find_job(job_id: str):
         """A job from any pool (clips, downloads, or YouTube add/reindex), plus
