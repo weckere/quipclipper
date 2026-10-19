@@ -1216,6 +1216,7 @@ async function openItem(path, name, opts) {
   updatePlaybackUI();  // clear any stale range note / reset the play icon
   $("mark-range-display").innerHTML = "";
   $("mark-save").disabled = true;
+  closeBookmarkLabel();
   scriptCues = [];
   scriptActiveIdx = -1;
   $("script-wrap").hidden = true;
@@ -1982,6 +1983,7 @@ function updateClipUI() {
   if (!hasClipRange()) {
     el.innerHTML = "";
     $("mark-save").disabled = true;
+    closeBookmarkLabel();  // nothing left to bookmark
     showClipTarget(false);
   } else {
     // Display the buffered range (cue range ± before/after) — what actually
@@ -2032,15 +2034,39 @@ function formatTimeWhole(s) {
     : `${m}:${String(sec).padStart(2, "0")}`;
 }
 
+/** Default bookmark label: time range (whole seconds) + first dialogue line. */
+function defaultBookmarkLabel() {
+  let label = `${formatTimeWhole(clipStart())} – ${formatTimeWhole(clipEnd())}`;
+  const firstLine = selectedCueText().slice(0, 60);
+  if (firstLine) label += ` — ${firstLine}`;
+  return label;
+}
+
+/** ★ Bookmark: open the inline label field, filled with the default and selected,
+ *  so Enter saves it as is and typing replaces it. A second click closes it. */
+function openBookmarkLabel() {
+  if (!currentItem || !hasClipRange()) return;
+  const form = $("bookmark-label-form");
+  if (!form.hidden) { closeBookmarkLabel(); return; }
+  const input = $("bookmark-label-input");
+  input.value = defaultBookmarkLabel();
+  form.hidden = false;
+  $("mark-save").setAttribute("aria-expanded", "true");
+  input.focus();
+  input.select();
+}
+
+function closeBookmarkLabel() {
+  $("bookmark-label-form").hidden = true;
+  $("mark-save").setAttribute("aria-expanded", "false");
+}
+
 async function saveBookmark() {
   if (!currentItem || !hasClipRange()) return;
   const s = clipStart(), e = clipEnd();
-  // Build default label: time range (whole seconds) + first dialogue line
-  let defaultLabel = `${formatTimeWhole(s)} – ${formatTimeWhole(e)}`;
-  const firstLine = selectedCueText().slice(0, 60);
-  if (firstLine) defaultLabel += ` — ${firstLine}`;
-  const label = prompt("Bookmark label:", defaultLabel);
-  if (label === null) return;
+  const defaultLabel = defaultBookmarkLabel();
+  const label = $("bookmark-label-input").value.trim();
+  closeBookmarkLabel();
   try {
     const t = getSelectedTrack();
     await postJSON("/api/bookmarks", {
@@ -2062,7 +2088,12 @@ async function saveBookmark() {
   }
 }
 
-$("mark-save").onclick = saveBookmark;
+$("mark-save").onclick = openBookmarkLabel;
+$("bookmark-label-form").addEventListener("submit", (ev) => { ev.preventDefault(); saveBookmark(); });
+$("bookmark-label-cancel").onclick = () => { closeBookmarkLabel(); $("mark-save").focus(); };
+$("bookmark-label-input").addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape") { ev.preventDefault(); ev.stopPropagation(); closeBookmarkLabel(); $("mark-save").focus(); }
+});
 
 // Before/After buffer inputs (B16): re-render the previewed range live.
 ["clip-before", "clip-after"].forEach((id) =>

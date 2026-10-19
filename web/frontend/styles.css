@@ -755,6 +755,13 @@ footer { padding: 2rem 1.25rem; font-size: 0.8rem; }
 
 /* clip bar */
 .ws-clip .marks-header { flex-wrap: wrap; row-gap: 0.4rem; }
+.bookmark-label-form { display: flex; gap: 0.5rem; align-items: center; margin: 0.6rem 0 0.2rem; }
+.bookmark-label-form[hidden] { display: none; }
+.bookmark-label-input {
+  flex: 1; min-width: 0; background: var(--sunken); color: var(--text);
+  border: 1px solid var(--line-strong); border-radius: var(--radius); padding: 0.4rem 0.6rem; font: inherit;
+}
+.bookmark-label-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .ws-clip .marks-titlerow h3 {
   font-size: 0.7rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint);
 }

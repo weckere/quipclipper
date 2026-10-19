@@ -38,7 +38,7 @@ NOT_A_CONTROL: dict[str, str] = {
 MARKED_CONTROLS: dict[str, int] = {
     "index.build": 2,         # "Index now" and "Reindex subtitles" (folder)
     "clip.create": 2,         # the Marks-header clip button and the clip button on a search hit
-    "bookmark.add": 2,        # the Marks-header bookmark button and the one on a search hit
+    "bookmark.add": 3,        # the Marks-header bookmark button, its label form's Save, and a search hit's
     "clip.batch": 3,          # Clip selected (search) and Export selected (clips, bookmarks)
     "bookmark.delete": 2,     # item bookmark list and the Bookmarks view
     "job.download": 2,        # inline download after a clip, and the clip row's link

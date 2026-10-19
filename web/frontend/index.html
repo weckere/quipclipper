@@ -315,6 +315,14 @@
                 <button id="clip-btn" data-action="clip.create" class="mark-icon-btn make-clip-btn" disabled title="Make clip" aria-label="Make clip"><span class="scissors">✂</span><span class="btn-label">Make clip</span></button>
               </div>
             </div>
+            <!-- ★ Bookmark opens this inline label field (no window.prompt): Enter saves,
+                 Esc or Cancel closes it. -->
+            <form id="bookmark-label-form" class="bookmark-label-form" hidden>
+              <input id="bookmark-label-input" class="bookmark-label-input" type="text" maxlength="300"
+                     autocomplete="off" spellcheck="false" aria-label="Bookmark label" />
+              <button type="submit" id="bookmark-label-save" data-action="bookmark.add" class="btn primary">Save bookmark</button>
+              <button type="button" id="bookmark-label-cancel" class="btn ghost">Cancel</button>
+            </form>
             <div class="clip-options">
               <div class="marks-buffer" title="Padding added around the selection — applied to preview, bookmark and clip">
                 <label>Before <input id="clip-before" type="number" value="0" min="0" max="60" step="0.5" /></label>
