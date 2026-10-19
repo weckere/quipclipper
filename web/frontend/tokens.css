@@ -1,0 +1,78 @@
+/* quipclipper design tokens (M12).
+ *
+ * The colours are generated: FigCraft collection "qc", modes Dark and Light, exported with
+ * `variable.export format=css` and wrapped by export_tokens.py (kept with the mockup generators,
+ * not in this repo). Edit the colours in the FigCraft generator and re-export; don't hand-edit
+ * them here. Dark is the default; the Light block applies when the OS asks for light, and
+ * <html data-theme="light"> forces it (a future Settings override).
+ */
+:root {
+  color-scheme: dark;
+  --bg: #0F1115;
+  --surface: #171A20;
+  --raised: #202530;
+  --sunken: #0B0D10;
+  --line: #2B313C;
+  --line-strong: #6A7282;
+  --text: #E9EBEF;
+  --dim: #A6ACB8;
+  --faint: #8890A0;
+  --accent: #F2B544;
+  --accent-text: #F2B544;
+  --accent-ink: #1A1303;
+  --accent-soft: rgba(242, 181, 68, 0.16);
+  --playhead: #5BB5FF;
+  --playhead-soft: rgba(91, 181, 255, 0.10);
+  --ok: #4CCB7A;
+  --danger: #F2677A;
+  /* scale (hand-written; FigCraft's CSS export is colours only) */
+  --space-1: 4px;  --space-2: 8px;  --space-3: 12px;  --space-4: 16px;  --space-5: 24px;  --space-6: 32px;
+  --radius-sm: 5px;  --radius: 8px;  --radius-lg: 12px;  --radius-pill: 999px;
+  --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --text-xs: 0.75rem;  --text-sm: 0.8125rem;  --text-base: 0.9375rem;  --text-lg: 1.125rem;  --text-xl: 1.5rem;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    color-scheme: light;
+    --bg: #F3F1EC;
+    --surface: #FFFFFF;
+    --raised: #F0EDE6;
+    --sunken: #E9E5DC;
+    --line: #DCD7CB;
+    --line-strong: #7A8090;
+    --text: #1B1D22;
+    --dim: #555B69;
+    --faint: #646B7A;
+    --accent: #D98E04;
+    --accent-text: #7D4B00;
+    --accent-ink: #1A1303;
+    --accent-soft: rgba(217, 142, 4, 0.15);
+    --playhead: #1565B0;
+    --playhead-soft: rgba(21, 101, 176, 0.10);
+    --ok: #16793C;
+    --danger: #B52A40;
+  }
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #F3F1EC;
+  --surface: #FFFFFF;
+  --raised: #F0EDE6;
+  --sunken: #E9E5DC;
+  --line: #DCD7CB;
+  --line-strong: #7A8090;
+  --text: #1B1D22;
+  --dim: #555B69;
+  --faint: #646B7A;
+  --accent: #D98E04;
+  --accent-text: #7D4B00;
+  --accent-ink: #1A1303;
+  --accent-soft: rgba(217, 142, 4, 0.15);
+  --playhead: #1565B0;
+  --playhead-soft: rgba(21, 101, 176, 0.10);
+  --ok: #16793C;
+  --danger: #B52A40;
+}

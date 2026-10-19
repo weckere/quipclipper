@@ -1,14 +1,6 @@
-:root {
-  --bg: #14161a;
-  --card: #1e2127;
-  --hover: #272b33;
-  --fg: #e6e8eb;
-  --muted: #9aa0a6;
-  --accent: #6cc7ff;
-  --ok: #5fd07a;
-  --error: #ff6b6b;
-  --badge: #3a4150;
-}
+/* quipclipper web UI styles. Colours, spacing, radii and type come from tokens.css (M12):
+   no colour literals here except black for the video well. Sections: base, header, forms and
+   buttons, library, item (player, marks, script), batch bars, clips and bookmarks, banners. */
 
 * { box-sizing: border-box; }
 
@@ -20,11 +12,15 @@
 
 body {
   margin: 0;
-  font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  font-family: var(--font-ui);
   background: var(--bg);
-  color: var(--fg);
+  color: var(--text);
   line-height: 1.5;
 }
+
+/* One visible focus style for every interactive element (keyboard only). */
+:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
+input[type="checkbox"], input[type="range"] { accent-color: var(--accent); }
 
 header, main, footer { max-width: 860px; margin: 0 auto; padding: 0 1.25rem; }
 header { padding-top: 0.9rem; padding-bottom: 0.2rem; }
@@ -33,143 +29,157 @@ header { padding-top: 0.9rem; padding-bottom: 0.2rem; }
 .app-header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.2rem 0.9rem; }
 .app-nav { margin-left: auto; display: flex; gap: 0.2rem; }
 
-h1 { margin: 0; font-size: 1.45rem; letter-spacing: -0.02em; cursor: pointer; display: inline-block; }
-.tagline { color: var(--muted); margin: 0; font-size: 0.85rem; }
+h1 { margin: 0; font-size: 1.45rem; font-weight: 600; letter-spacing: -0.02em; cursor: pointer; display: inline-block; }
+.tagline { color: var(--dim); margin: 0; font-size: 0.85rem; }
 
 .breadcrumb { margin: 1.5rem 0 0.75rem; font-size: 0.95rem; }
-.breadcrumb a { color: var(--accent); cursor: pointer; }
+.breadcrumb a { color: var(--accent-text); cursor: pointer; }
 .breadcrumb a:hover { text-decoration: underline; }
 
-.library-search-bar { margin: 0.5rem 0 0.75rem; }
-.library-search-bar input {
-  width: 100%; padding: 0.5rem 0.75rem;
-  background: var(--card); color: var(--fg); border: 1px solid var(--badge);
-  border-radius: 6px; font-size: 0.95rem;
+/* ---- inputs, selects, buttons --------------------------------------------------------- */
+input[type="text"], input[type="number"], select {
+  background: var(--sunken); color: var(--text);
+  border: 1px solid var(--line-strong); border-radius: var(--radius);
+  font: inherit; font-size: var(--text-base);
 }
-.library-search-bar input:focus { outline: none; border-color: var(--accent); }
-.library-search-bar input::placeholder { color: var(--muted); }
+input::placeholder { color: var(--faint); }
+input[type="text"]:focus, input[type="number"]:focus, select:focus {
+  outline: none; border-color: var(--accent-text); box-shadow: 0 0 0 2px var(--accent-soft);
+}
 
-.dialogue-search-row {
-  display: flex; gap: 0.5rem;
+select {
+  background: var(--raised); border-radius: var(--radius);
+  padding: 0.3rem 0.5rem; margin-top: 0.4rem;
 }
+
+.library-search-bar { margin: 0.5rem 0 0.75rem; }
+.library-search-bar input { width: 100%; padding: 0.5rem 0.75rem; }
+
+.dialogue-search-row { display: flex; gap: 0.5rem; }
 .dialogue-search-row input { flex: 1; }
-.dialogue-search-row button {
-  padding: 0.5rem 1rem; background: var(--accent); color: var(--bg);
-  border: none; border-radius: 6px; cursor: pointer; font-weight: 600;
+/* Primary buttons: the amber of the clip range and the ✂ action. */
+.dialogue-search-row button, .search-bar button, .index-btn {
+  background: var(--accent); color: var(--accent-ink);
+  border: none; border-radius: var(--radius); cursor: pointer; font-weight: 600;
   white-space: nowrap;
 }
-.dialogue-search-row button:hover { opacity: 0.85; }
-.dialogue-search-row button:disabled { opacity: 0.5; cursor: default; }
+.dialogue-search-row button { padding: 0.5rem 1rem; }
+.dialogue-search-row button:hover, .search-bar button:hover, .index-btn:hover { filter: brightness(1.08); }
+.dialogue-search-row button:disabled, .search-bar button:disabled, .index-btn:disabled { opacity: 0.5; cursor: default; }
 
 .dialogue-hit {
   display: flex; flex-direction: row; align-items: center; gap: 0.6rem;
-  padding: 0.6rem 0.8rem; border-radius: 8px;
+  padding: 0.6rem 0.8rem; border-radius: var(--radius);
 }
-.dialogue-hit:hover { background: var(--hover); }
+.dialogue-hit:hover { background: var(--raised); }
 .dialogue-hit .hit-check { flex-shrink: 0; display: inline-flex; cursor: pointer; }
 .dialogue-hit .hit-main {
   flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.15rem; cursor: pointer;
 }
-.dialogue-hit .hit-file { font-size: 0.8rem; color: var(--accent); }
-.dialogue-hit .hit-text { font-size: 0.95rem; }
-.dialogue-hit .hit-time { font-size: 0.8rem; color: var(--muted); }
+.dialogue-hit .hit-file { font-size: var(--text-sm); color: var(--accent-text); }
+.dialogue-hit .hit-text { font-size: var(--text-base); }
+.dialogue-hit .hit-time {
+  font-size: var(--text-sm); color: var(--dim);
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+}
 .dialogue-hit .hit-score {
-  font-size: 0.75rem; color: var(--muted);
-  background: var(--badge); padding: 0.1rem 0.4rem; border-radius: 4px;
+  font-size: var(--text-xs); color: var(--dim);
+  background: var(--raised); padding: 0.1rem 0.45rem; border-radius: var(--radius-pill);
+  font-family: var(--font-ui);
 }
 .dialogue-hit .hit-actions { flex-shrink: 0; display: flex; align-items: center; gap: 0.4rem; }
 .dialogue-hit .hit-status {
-  display: inline-flex; align-items: center; min-width: 1.6rem; font-size: 0.8rem;
+  display: inline-flex; align-items: center; min-width: 1.6rem; font-size: var(--text-sm);
 }
-/* "Bookmark selected" — distinct from the green "Clip selected" (the extra
-   .batch-bar selector outranks .clip-btn's green background). */
-.batch-bar .batch-bookmark-btn { background: var(--badge); color: var(--fg); border: 1px solid var(--badge); }
-.batch-bar .batch-bookmark-btn:hover:not(:disabled) { border-color: var(--accent); }
+/* "Bookmark selected" is a secondary action next to the primary "Clip selected"
+   (the extra .batch-bar selector outranks .clip-btn's accent background). */
+.batch-bar .batch-bookmark-btn { background: var(--raised); color: var(--text); border: 1px solid var(--line-strong); }
+.batch-bar .batch-bookmark-btn:hover:not(:disabled) { border-color: var(--accent-text); }
 
+/* ---- library listing ---------------------------------------------------------------------- */
 .entries { list-style: none; margin: 0; padding: 0; }
 .entry {
   display: flex; align-items: center; gap: 0.6rem;
-  padding: 0.6rem 0.8rem; border-radius: 8px; cursor: pointer;
+  padding: 0.6rem 0.8rem; border-radius: var(--radius); cursor: pointer;
 }
-.entry:hover { background: var(--hover); }
+.entry:hover { background: var(--raised); }
 .entry .icon { width: 1.4rem; text-align: center; }
-.entry.dir .label { color: var(--accent); }
+.entry.dir .label { color: var(--accent-text); font-weight: 600; }
 .badge {
-  font-size: 0.7rem; background: var(--badge); color: var(--fg);
-  padding: 0.05rem 0.4rem; border-radius: 5px;
+  font-size: 0.7rem; background: var(--raised); color: var(--dim);
+  padding: 0.05rem 0.5rem; border-radius: var(--radius-pill);
 }
 
 /* YouTube: remove-button on a listing row + the add-URL bar. */
 .yt-remove {
   margin-left: auto; flex-shrink: 0;
-  background: none; border: none; color: var(--muted);
-  font-size: 0.9rem; cursor: pointer; padding: 0.2rem 0.5rem; border-radius: 6px;
+  background: none; border: none; color: var(--dim);
+  font-size: 0.9rem; cursor: pointer; padding: 0.2rem 0.5rem; border-radius: var(--radius);
 }
-.yt-remove:hover { color: var(--fg); background: var(--badge); }
+.yt-remove:hover { color: var(--text); background: var(--raised); }
 .yt-add-bar .dialogue-search-row { display: flex; gap: 0.5rem; }
 .yt-add-bar input { flex: 1; }
 
 .back {
-  background: none; border: 1px solid var(--badge); color: var(--fg);
-  padding: 0.35rem 0.8rem; border-radius: 8px; cursor: pointer; margin: 1.5rem 0 0.5rem;
+  background: none; border: 1px solid var(--line-strong); color: var(--text);
+  padding: 0.35rem 0.8rem; border-radius: var(--radius); cursor: pointer; margin: 1.5rem 0 0.5rem;
 }
-.back:hover { background: var(--hover); }
+.back:hover { background: var(--raised); }
 
+/* ---- item: player and playback ---------------------------------------------------------- */
 video {
   /* Fixed-aspect box (locked to the real video dimensions after load) so the
      player keeps a stable size — seeking/reloading a transcode segment no
      longer collapses the element and reflows the whole page. */
   width: 100%; aspect-ratio: 16 / 9; object-fit: contain; background: #000;
-  border-radius: 10px; margin: 0.5rem 0;
+  border-radius: var(--radius-lg); margin: 0.5rem 0;
 }
 /* Audio-only source (podcast/audiobook): no picture, so collapse the player to
    just its native control bar instead of a tall black box. */
 video.audio-only {
   aspect-ratio: auto; height: 54px; object-fit: fill;
-  background: linear-gradient(180deg, #2a2a33, #16161c);
+  background: linear-gradient(180deg, var(--surface), var(--sunken));
 }
 
 /* Official YouTube embed: same box as the <video> it stands in for. */
 .yt-embed iframe {
   width: 100%; aspect-ratio: 16 / 9; height: auto; border: 0;
-  border-radius: 10px; margin: 0.5rem 0; background: #000;
+  border-radius: var(--radius-lg); margin: 0.5rem 0; background: #000;
 }
 .yt-player-row {
-  margin: 0.2rem 0 0.4rem; font-size: 0.85rem;
+  margin: 0.2rem 0 0.4rem; font-size: 0.85rem; color: var(--dim);
   display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap;
 }
 .yt-player-row select { margin-left: 0.4rem; }
 .yt-download-btn {
-  background: none; border: 1px solid var(--badge); color: var(--fg);
-  padding: 0.25rem 0.7rem; border-radius: 8px; cursor: pointer; font-size: 0.85rem;
+  background: var(--raised); border: 1px solid var(--line-strong); color: var(--text);
+  padding: 0.25rem 0.7rem; border-radius: var(--radius); cursor: pointer; font-size: 0.85rem;
 }
-.yt-download-btn:hover:not(:disabled) { background: var(--hover); }
+.yt-download-btn:hover:not(:disabled) { border-color: var(--accent-text); }
 .yt-download-btn:disabled { opacity: 0.5; cursor: default; }
 
 /* Clean title (folder name) on top, filename in smaller text beneath it. */
-#item-name { margin-bottom: 0.1rem; }
-.item-filename { font-size: 0.82rem; word-break: break-all; margin-bottom: 0.5rem; }
+#item-name { margin-bottom: 0.1rem; font-weight: 600; letter-spacing: -0.01em; }
+.item-filename { font-size: 0.82rem; word-break: break-all; margin-bottom: 0.5rem; font-family: var(--font-mono); }
 
 /* Custom playback controls below the seek bar (range-aware play/restart). */
 .playback-controls {
   display: flex; align-items: center; gap: 0.5rem; margin: 0.1rem 0 0.25rem;
 }
 .pb-btn {
-  background: var(--badge); color: var(--fg); border: 1px solid var(--badge);
-  border-radius: 6px; padding: 0.2rem 0.7rem; cursor: pointer;
+  background: var(--raised); color: var(--text); border: 1px solid var(--line-strong);
+  border-radius: var(--radius); padding: 0.2rem 0.7rem; cursor: pointer;
   font-size: 1rem; line-height: 1.2; min-width: 2.4rem;
 }
-.pb-btn:hover { background: var(--hover); border-color: var(--accent); }
-.pb-range-note { font-size: 0.8rem; }
-.pb-loop-label { font-size: 0.82rem; color: var(--muted); }
+.pb-btn:hover { border-color: var(--accent-text); }
+.pb-range-note { font-size: 0.8rem; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.pb-loop-label { font-size: 0.82rem; color: var(--dim); }
 
-.panel { background: var(--card); border-radius: 12px; padding: 0.75rem 1.1rem; margin-top: 1rem; }
-.panel h3 { margin: 0.25rem 0 0.5rem; font-size: 0.95rem; color: var(--accent); }
-
-select {
-  background: var(--bg); color: var(--fg); border: 1px solid var(--badge);
-  border-radius: 6px; padding: 0.3rem 0.5rem; margin-top: 0.4rem;
+.panel {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius-lg); padding: 0.75rem 1.1rem; margin-top: 1rem;
 }
+.panel h3 { margin: 0.25rem 0 0.5rem; font-size: 0.95rem; font-weight: 600; color: var(--text); }
 
 /* Unified stream selector under the seek bar (B17). */
 .stream-selector {
@@ -178,55 +188,37 @@ select {
 }
 .ss-field {
   display: inline-flex; align-items: center; gap: 0.35rem;
-  font-size: 0.8rem; color: var(--muted);
+  font-size: 0.8rem; color: var(--dim);
 }
 .ss-field select { margin-top: 0; max-width: 22rem; font-size: 0.82rem; }
-.ss-langs-field input {
-  width: 5.5rem; font-size: 0.82rem; padding: 0.25rem 0.4rem;
-  background: var(--bg); color: var(--fg);
-  border: 1px solid var(--badge); border-radius: 5px;
-}
+.ss-langs-field input { width: 5.5rem; font-size: 0.82rem; padding: 0.25rem 0.4rem; border-radius: 6px; }
 .ss-none { font-size: 0.82rem; font-style: italic; }
 .ss-spacer { flex: 1; }
 
 code {
-  background: rgba(255, 255, 255, 0.07);
-  padding: 0.1rem 0.35rem; border-radius: 5px; font-size: 0.85em;
+  background: var(--raised);
+  padding: 0.1rem 0.35rem; border-radius: var(--radius-sm); font-size: 0.85em;
+  font-family: var(--font-mono);
 }
 
-.search-bar {
-  display: flex; gap: 0.5rem; margin-bottom: 0.75rem;
-}
-.search-bar input {
-  flex: 1; background: var(--bg); color: var(--fg); border: 1px solid var(--badge);
-  border-radius: 6px; padding: 0.45rem 0.7rem; font-size: 0.95rem;
-}
-.search-bar input:focus { outline: none; border-color: var(--accent); }
-.search-bar button {
-  background: var(--accent); color: var(--bg); border: none;
-  border-radius: 6px; padding: 0.45rem 1rem; font-weight: 600; cursor: pointer;
-}
-.search-bar button:hover { opacity: 0.85; }
-.search-bar button:disabled { opacity: 0.5; cursor: default; }
+.search-bar { display: flex; gap: 0.5rem; margin-bottom: 0.75rem; }
+.search-bar input { flex: 1; padding: 0.45rem 0.7rem; }
+.search-bar button { padding: 0.45rem 1rem; }
 
 .search-results { list-style: none; margin: 0; padding: 0; }
 .search-result {
   display: flex; flex-direction: column; gap: 0.15rem;
-  padding: 0.55rem 0.8rem; border-radius: 8px; cursor: pointer;
+  padding: 0.55rem 0.8rem; border-radius: var(--radius); cursor: pointer;
 }
-.search-result:hover { background: var(--hover); }
-.search-result .result-text { font-size: 0.95rem; }
+.search-result:hover { background: var(--raised); }
+.search-result .result-text { font-size: var(--text-base); }
 .search-result .result-meta {
-  font-size: 0.8rem; color: var(--muted);
-  display: flex; gap: 0.75rem;
+  font-size: var(--text-sm); color: var(--dim);
+  display: flex; gap: 0.75rem; font-variant-numeric: tabular-nums;
 }
-.search-result .result-score {
-  color: var(--ok); font-weight: 600;
-}
+.search-result .result-score { color: var(--ok); font-weight: 600; }
 
-.clip-range {
-  font-size: 0.9rem; color: var(--muted); margin-bottom: 0.6rem;
-}
+.clip-range { font-size: 0.9rem; color: var(--dim); margin-bottom: 0.6rem; }
 .checkbox-label {
   flex-direction: row !important; align-items: center; gap: 0.4rem !important;
 }
@@ -236,65 +228,55 @@ code {
 /* Clip controls now live in the Marks header (B17). */
 .clip-format-label {
   display: inline-flex; align-items: center; gap: 0.3rem;
-  font-size: 0.8rem; color: var(--muted);
+  font-size: 0.8rem; color: var(--dim);
 }
 .clip-format-label select { margin-top: 0; font-size: 0.82rem; }
 .clip-btn[disabled] { opacity: 0.45; cursor: default; }
 
 /* Clip name row (range + B9 name template), under the Marks header. */
 .clip-name-row { margin: 0.5rem 0 0.2rem; }
-.clip-name-row .clip-range {
-  font-size: 0.85rem; color: var(--muted); margin-bottom: 0.5rem;
-}
-.clip-template-label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.85rem; }
-.clip-template-label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.85rem; }
+.clip-name-row .clip-range { font-size: 0.85rem; color: var(--dim); margin-bottom: 0.5rem; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.clip-template-label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.85rem; color: var(--dim); }
 .clip-template-label input {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.85rem; padding: 0.35rem 0.5rem;
-  border: 1px solid var(--badge); border-radius: 6px;
-  background: var(--bg); color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 0.85rem; padding: 0.35rem 0.5rem; border-radius: var(--radius);
 }
 .clip-template-help { margin: 0.35rem 0 0; font-size: 0.75rem; line-height: 1.5; }
-.clip-template-help code {
-  font-size: 0.72rem; padding: 0.05rem 0.25rem;
-  background: var(--card); border-radius: 4px;
-}
+.clip-template-help code { font-size: 0.72rem; padding: 0.05rem 0.25rem; background: var(--raised); }
 
-/* Batch export bar (clips & bookmarks browsers) */
+/* ---- batch export bars (search hits, clips and bookmarks) ----------------------------- */
 .batch-bar {
   display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1.1rem;
-  background: var(--card); border-radius: 10px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg);
   padding: 0.55rem 0.9rem; margin: 0.25rem 0 0.75rem;
   font-size: 0.85rem;
 }
-.batch-bar label { display: flex; align-items: center; gap: 0.35rem; color: var(--muted); }
+.batch-bar label { display: flex; align-items: center; gap: 0.35rem; color: var(--dim); }
 /* Channel-group picker (which channels to export when splitting). */
 .chan-groups {
   display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 0.6rem;
   padding: 0.2rem 0.55rem; border-radius: 6px;
-  background: var(--bg); border: 1px solid var(--badge);
+  background: var(--sunken); border: 1px solid var(--line-strong);
 }
-.chan-groups-label { color: var(--muted); }
+.chan-groups-label { color: var(--dim); }
 .batch-bar select, .batch-bar input[type="number"], .batch-bar .clip-template-input {
-  background: var(--bg); color: var(--fg); border: 1px solid var(--badge);
-  border-radius: 6px; padding: 0.25rem 0.45rem;
+  border-radius: var(--radius); padding: 0.25rem 0.45rem;
 }
-.batch-bar select { width: auto; min-width: 8rem; }
-.batch-bar select option:disabled { color: var(--badge); }
+.batch-bar select { width: auto; min-width: 8rem; margin-top: 0; }
+.batch-bar select option:disabled { color: var(--faint); }
 .batch-bar input[type="number"] { width: 4.5rem; }
-.batch-template-label { display: flex; align-items: center; gap: 0.35rem; color: var(--muted); }
+.batch-template-label { display: flex; align-items: center; gap: 0.35rem; color: var(--dim); }
 .batch-bar .clip-template-input {
-  width: 17rem; max-width: 100%; font-size: 0.82rem;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  width: 19rem; max-width: 100%; font-size: 0.82rem; font-family: var(--font-mono);
 }
 .batch-export-btn { padding: 0.35rem 0.9rem; font-size: 0.85rem; }
 .entry-select { flex-shrink: 0; cursor: pointer; }
 .clip-btn {
-  background: var(--ok); color: var(--bg); border: none;
-  border-radius: 6px; padding: 0.5rem 1.25rem; font-weight: 600;
+  background: var(--accent); color: var(--accent-ink); border: none;
+  border-radius: var(--radius); padding: 0.5rem 1.25rem; font-weight: 600;
   cursor: pointer; font-size: 0.95rem;
 }
-.clip-btn:hover { opacity: 0.85; }
+.clip-btn:hover { filter: brightness(1.08); }
 .clip-btn:disabled { opacity: 0.5; cursor: default; }
 
 /* Per-page Clips list: one row per clip made, newest first. */
@@ -306,21 +288,22 @@ code {
   display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.6rem;
   font-size: 0.9rem;
 }
-.clip-made-row + .clip-made-row { border-top: 1px solid var(--badge); padding-top: 0.45rem; }
-.clip-made-title { color: var(--fg); }
+.clip-made-row + .clip-made-row { border-top: 1px solid var(--line); padding-top: 0.45rem; }
+.clip-made-title { color: var(--text); }
 .clip-made-status { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.6rem; }
 /* Compact download link inside a clip row (vs the big button elsewhere). */
 .clip-made-row .download-link { margin-top: 0; padding: 0.2rem 0.6rem; font-size: 0.8rem; }
-.job-running { color: var(--accent); }
+.job-running { color: var(--accent-text); }
 .job-done { color: var(--ok); font-weight: 600; }
-.job-failed { color: var(--error); }
+.job-failed { color: var(--danger); }
 .download-link {
   display: inline-block; margin-top: 0.5rem;
-  background: var(--accent); color: var(--bg); text-decoration: none;
-  padding: 0.4rem 1rem; border-radius: 6px; font-weight: 600; font-size: 0.9rem;
+  background: var(--accent); color: var(--accent-ink); text-decoration: none;
+  padding: 0.4rem 1rem; border-radius: var(--radius); font-weight: 600; font-size: 0.9rem;
 }
-.download-link:hover { opacity: 0.85; }
+.download-link:hover { filter: brightness(1.08); }
 
+/* ---- Marks panel ------------------------------------------------------------------------ */
 .marks-panel { margin-top: 0.5rem; padding-top: 0.85rem; padding-bottom: 0.5rem; }
 /* Top row: title + selected range on the left, icon actions on the right. */
 .marks-header { display: flex; align-items: center; gap: 0.6rem; }
@@ -331,33 +314,34 @@ code {
 .mark-icon-btn {
   display: inline-flex; align-items: center; justify-content: center;
   width: 2.1rem; height: 2.1rem; padding: 0; line-height: 1;
-  border-radius: 6px; cursor: pointer; font-size: 1.05rem;
-  background: var(--badge); color: var(--fg); border: 1px solid var(--badge);
+  border-radius: var(--radius); cursor: pointer; font-size: 1.05rem;
+  background: var(--raised); color: var(--text); border: 1px solid var(--line-strong);
 }
-.mark-icon-btn:hover:not(:disabled) { background: var(--hover); border-color: var(--accent); }
+.mark-icon-btn:hover:not(:disabled) { border-color: var(--accent-text); }
 .mark-icon-btn:disabled { opacity: 0.4; cursor: default; }
-.mark-icon-btn .star { color: #ffd24a; }
-.mark-icon-btn:disabled .star { color: var(--muted); }
-/* Make clip is the primary action — accent it green. */
-.make-clip-btn { background: var(--ok); border-color: var(--ok); color: var(--bg); }
-.make-clip-btn:hover:not(:disabled) { opacity: 0.85; background: var(--ok); border-color: var(--ok); }
-.make-clip-btn:disabled { background: var(--badge); border-color: var(--badge); }
+.mark-icon-btn .star { color: var(--accent-text); }
+.mark-icon-btn:disabled .star { color: var(--faint); }
+/* Make clip is the primary action — amber. */
+.make-clip-btn { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.make-clip-btn:hover:not(:disabled) { filter: brightness(1.08); background: var(--accent); border-color: var(--accent); }
+.make-clip-btn:disabled { background: var(--raised); border-color: var(--line-strong); color: var(--faint); }
 /* Inline clip status, left of the ★/✂ buttons. */
 .mark-clip-indicator { display: inline-flex; align-items: center; }
 .clip-spinner {
   width: 1.2rem; height: 1.2rem; border-radius: 50%;
-  border: 2px solid var(--badge); border-top-color: var(--accent);
+  border: 2px solid var(--line-strong); border-top-color: var(--accent-text);
   animation: clip-spin 0.7s linear infinite;
 }
 @keyframes clip-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .clip-spinner { animation-duration: 2.4s; } }
 /* Download button (matches the icon-button size, accented to stand out). */
 .clip-dl-mini {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 2.1rem; height: 2.1rem; border-radius: 6px; line-height: 1;
-  background: var(--accent); color: var(--bg); text-decoration: none; font-size: 1.15rem;
+  width: 2.1rem; height: 2.1rem; border-radius: var(--radius); line-height: 1;
+  background: var(--accent); color: var(--accent-ink); text-decoration: none; font-size: 1.15rem;
 }
-.clip-dl-mini:hover { opacity: 0.85; }
-.clip-fail-mini { color: var(--error); font-size: 1.2rem; cursor: help; padding: 0 0.2rem; }
+.clip-dl-mini:hover { filter: brightness(1.08); }
+.clip-fail-mini { color: var(--danger); font-size: 1.2rem; cursor: help; padding: 0 0.2rem; }
 /* Clip options under the cues: buffer + audio-only + format, then the name row. */
 .clip-options {
   display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.9rem;
@@ -367,90 +351,90 @@ code {
 .marks-buffer, .bm-buffer { display: flex; align-items: center; gap: 0.4rem; }
 .marks-buffer label, .bm-buffer label {
   display: inline-flex; align-items: center; gap: 0.2rem;
-  font-size: 0.78rem; color: var(--muted);
+  font-size: 0.78rem; color: var(--dim);
 }
 .marks-buffer input, .bm-buffer input {
-  width: 3.2rem; padding: 0.2rem 0.3rem; font-size: 0.78rem;
-  background: var(--bg); color: var(--fg);
-  border: 1px solid var(--badge); border-radius: 5px;
-  font-variant-numeric: tabular-nums;
+  width: 3.2rem; padding: 0.2rem 0.3rem; font-size: 0.78rem; border-radius: 6px;
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
 }
-/* Outline button: override .clip-btn's dark-on-light text (was invisible on the
-   transparent dark panel) with a visible muted colour; red on hover. */
-.bm-clear-all-btn { background: transparent; border-color: var(--badge); color: var(--fg); }
-.bm-clear-all-btn:hover { border-color: #c0504d; color: #e88; }
+/* Outline button: a quiet secondary next to the primary export; red on hover. */
+.bm-clear-all-btn { background: transparent; border: 1px solid var(--line-strong); color: var(--text); }
+.bm-clear-all-btn:hover { border-color: var(--danger); color: var(--danger); filter: none; }
 .mark-range-display {
-  font-size: 0.85rem; color: var(--muted); flex: 1;
-  font-variant-numeric: tabular-nums; text-align: left;
+  font-size: 0.85rem; color: var(--dim); flex: 1;
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums; text-align: left;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.mark-range-display .range-times { color: rgba(255, 220, 100, 0.8); }
+.mark-range-display .range-times { color: var(--accent-text); }
 .mark-clear-inline {
-  background: none; border: none; color: var(--muted); cursor: pointer;
+  background: none; border: none; color: var(--dim); cursor: pointer;
   font-size: 1rem; padding: 0 0.2rem; vertical-align: middle;
-  opacity: 0.6; transition: opacity 0.1s;
+  opacity: 0.8; transition: opacity 0.1s;
 }
-.mark-clear-inline:hover { opacity: 1; color: var(--error); }
+.mark-clear-inline:hover { opacity: 1; color: var(--danger); }
 
+/* ---- bookmarks ------------------------------------------------------------------------------ */
 .bookmarks-list { list-style: none; margin: 0; padding: 0; }
 .bookmark-item {
   display: flex; align-items: center; gap: 0.6rem;
-  padding: 0.45rem 0.6rem; border-radius: 8px;
+  padding: 0.45rem 0.6rem; border-radius: var(--radius);
 }
-.bookmark-item:hover { background: var(--hover); }
+.bookmark-item:hover { background: var(--raised); }
 .bookmark-label { flex: 1; font-size: 0.9rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bookmark-range { font-size: 0.8rem; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bookmark-range {
+  font-size: 0.8rem; color: var(--dim); white-space: nowrap;
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+}
 .bookmark-use, .bookmark-seek, .bookmark-del {
-  background: none; border: 1px solid var(--badge); color: var(--fg);
-  border-radius: 5px; padding: 0.2rem 0.5rem; cursor: pointer; font-size: 0.75rem;
+  background: none; border: 1px solid var(--line-strong); color: var(--text);
+  border-radius: var(--radius-sm); padding: 0.2rem 0.5rem; cursor: pointer; font-size: 0.75rem;
   white-space: nowrap;
 }
 .bookmark-use:hover { border-color: var(--ok); color: var(--ok); }
-.bookmark-seek:hover { border-color: var(--accent); color: var(--accent); }
-.bookmark-del:hover { border-color: var(--error); color: var(--error); }
+.bookmark-seek:hover { border-color: var(--accent-text); color: var(--accent-text); }
+.bookmark-del:hover { border-color: var(--danger); color: var(--danger); }
 
 .clips-nav-link {
-  color: var(--accent); cursor: pointer; padding: 0 0.4rem;
-  font-size: 0.85rem; text-decoration: none;
+  color: var(--dim); cursor: pointer; padding: 0.2rem 0.6rem; border-radius: var(--radius);
+  font-size: 0.9rem; text-decoration: none;
 }
-.clips-nav-link:hover { text-decoration: underline; }
-.clip-dl {
-  font-size: 0.75rem; padding: 0.2rem 0.6rem; margin-left: auto;
-}
+.clips-nav-link:hover { color: var(--text); background: var(--raised); }
+.clip-dl { font-size: 0.75rem; padding: 0.2rem 0.6rem; margin-left: auto; }
 
 /* Bookmarks browser */
 .bm-browser-list { list-style: none; margin: 0; padding: 0; }
 .bm-browser-group {
   display: flex; align-items: center; gap: 0.6rem;
   padding: 0.6rem 0.8rem; margin-top: 0.75rem;
-  background: var(--card); border-radius: 8px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
 }
 .bm-browser-group:first-child { margin-top: 0; }
 .bm-browser-file {
-  flex: 1; font-size: 0.9rem; font-weight: 600; color: var(--accent);
+  flex: 1; font-size: 0.9rem; font-weight: 600; color: var(--accent-text);
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 /* Clickable names (open the video / load the bookmark for clipping). */
 .clickable { cursor: pointer; }
 .clickable:hover { text-decoration: underline; }
-.bookmark-label.clickable:hover { color: var(--accent); }
+.bookmark-label.clickable:hover { color: var(--accent-text); }
 .bm-browser-open {
-  background: none; border: 1px solid var(--badge); color: var(--fg);
-  border-radius: 5px; padding: 0.2rem 0.5rem; cursor: pointer; font-size: 0.75rem;
+  background: none; border: 1px solid var(--line-strong); color: var(--text);
+  border-radius: var(--radius-sm); padding: 0.2rem 0.5rem; cursor: pointer; font-size: 0.75rem;
   white-space: nowrap;
 }
-.bm-browser-open:hover { border-color: var(--accent); color: var(--accent); }
+.bm-browser-open:hover { border-color: var(--accent-text); color: var(--accent-text); }
 .bm-browser-item {
   display: flex; align-items: center; gap: 0.6rem;
   padding: 0.35rem 0.8rem 0.35rem 1.5rem;
 }
-.bm-browser-item:hover { background: var(--hover); border-radius: 6px; }
+.bm-browser-item:hover { background: var(--raised); border-radius: var(--radius); }
 
-.muted { color: var(--muted); }
-.error { color: var(--error); }
+.muted { color: var(--dim); }
+.error { color: var(--danger); }
 
 footer { padding: 2rem 1.25rem; font-size: 0.8rem; }
 
+/* ---- notes and banners ------------------------------------------------------------------- */
 /* Transcode seek bar */
 .transcode-seek-bar {
   display: flex; align-items: center; gap: 0.5rem;
@@ -460,16 +444,13 @@ footer { padding: 2rem 1.25rem; font-size: 0.8rem; }
 /* Video re-encode indicator (B20/B22) — more prominent than the seek hint. */
 .reencode-note {
   font-size: 0.82rem; margin: 0.3rem 0; padding: 0.4rem 0.7rem;
-  border-radius: 6px; text-align: center;
-  background: rgba(255, 200, 80, 0.12); color: #e9c46a;
-  border: 1px solid rgba(255, 200, 80, 0.3);
+  border-radius: var(--radius); text-align: center;
+  background: var(--accent-soft); color: var(--accent-text);
+  border: 1px solid var(--accent-soft);
 }
-.transcode-seek-bar input[type="range"] {
-  flex: 1; height: 6px; cursor: pointer;
-  accent-color: var(--accent);
-}
+.transcode-seek-bar input[type="range"] { flex: 1; height: 6px; cursor: pointer; }
 .transcode-time {
-  font-size: 0.8rem; color: var(--muted); font-variant-numeric: tabular-nums;
+  font-size: 0.8rem; color: var(--dim); font-family: var(--font-mono); font-variant-numeric: tabular-nums;
   min-width: 3.5em; white-space: nowrap;
 }
 .transcode-time:last-child { text-align: right; }
@@ -478,101 +459,76 @@ footer { padding: 2rem 1.25rem; font-size: 0.8rem; }
 .index-banner {
   display: flex; align-items: center; gap: 0.75rem;
   padding: 0.5rem 0.75rem; margin-top: 0.5rem;
-  background: var(--card); border: 1px solid var(--badge);
-  border-radius: 8px; font-size: 0.85rem; color: var(--muted);
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius); font-size: 0.85rem; color: var(--dim);
 }
-.index-btn {
-  background: var(--accent); color: var(--bg); border: none;
-  border-radius: 6px; padding: 0.35rem 0.75rem; cursor: pointer;
-  font-weight: 600; font-size: 0.8rem; white-space: nowrap;
-}
-.index-btn:hover { opacity: 0.85; }
-.index-btn:disabled { opacity: 0.5; cursor: default; }
+.index-btn { padding: 0.35rem 0.75rem; font-size: 0.8rem; }
 
 /* Reindex controls */
-.reindex-row {
-  display: flex; align-items: center; gap: 0.6rem;
-  margin-top: 0.5rem;
-}
+.reindex-row { display: flex; align-items: center; gap: 0.6rem; margin-top: 0.5rem; }
 .reindex-link {
-  color: var(--muted); cursor: pointer; font-size: 0.8rem;
+  color: var(--dim); cursor: pointer; font-size: 0.8rem;
   text-decoration: none; white-space: nowrap;
 }
-.reindex-link:hover { color: var(--accent); text-decoration: underline; }
+.reindex-link:hover { color: var(--accent-text); text-decoration: underline; }
 .reindex-link.disabled { opacity: 0.5; cursor: default; pointer-events: none; }
 .reindex-status { font-size: 0.8rem; }
 
-/* Subtitle script view */
+/* ---- subtitle script view ------------------------------------------------------------------- */
 .script-wrap { margin-top: 0.75rem; }
-.script-hint {
-  font-size: 0.8rem; color: var(--muted); margin-bottom: 0.4rem;
-}
-.script-hint strong { color: var(--fg); }
+.script-hint { font-size: 0.8rem; color: var(--dim); margin-bottom: 0.4rem; }
+.script-hint strong { color: var(--text); }
 .script-list {
-  max-height: 320px; overflow-y: auto; border-radius: 8px;
-  background: var(--bg); border: 1px solid var(--badge);
+  max-height: 320px; overflow-y: auto; border-radius: var(--radius);
+  background: var(--sunken); border: 1px solid var(--line);
   scroll-behavior: smooth;
 }
 .script-line {
+  position: relative;
   display: flex; gap: 0.6rem; padding: 0.35rem 0.7rem;
   cursor: pointer; font-size: 0.9rem; line-height: 1.4;
   border-left: 3px solid transparent;
   transition: background 0.15s, border-color 0.15s;
 }
-.script-line { position: relative; }
-.script-line:hover { background: var(--hover); }
-.script-line.active {
-  background: rgba(108, 199, 255, 0.08);
-  border-left-color: var(--accent);
-}
-.script-line.in-range {
-  background: rgba(255, 220, 100, 0.18);
-  border-left-color: rgba(255, 220, 100, 0.7);
-}
+.script-line:hover { background: var(--raised); }
+/* The line being spoken now: blue (the playhead). */
+.script-line.active { background: var(--playhead-soft); border-left-color: var(--playhead); }
+/* The selected clip range: amber. */
+.script-line.in-range { background: var(--accent-soft); border-left-color: var(--accent); }
 .script-line.in-range.range-first {
-  border-top: 2px solid rgba(255, 220, 100, 0.8);
+  border-top: 2px solid var(--accent);
   padding-top: calc(0.35rem - 2px);
 }
 .script-line.in-range.range-last {
-  border-bottom: 2px solid rgba(255, 220, 100, 0.8);
+  border-bottom: 2px solid var(--accent);
   padding-bottom: calc(0.35rem - 2px);
 }
-/* Active line inside the range keeps blue accent on left but yellow bg */
-.script-line.in-range.active {
-  background: rgba(255, 220, 100, 0.25);
-  border-left-color: var(--accent);
-}
+/* Active line inside the range keeps the blue edge on the amber fill. */
+.script-line.in-range.active { background: var(--accent-soft); border-left-color: var(--playhead); }
 .script-ts {
-  color: var(--muted); font-size: 0.8rem; font-variant-numeric: tabular-nums;
+  color: var(--dim); font-size: 0.8rem; font-family: var(--font-mono); font-variant-numeric: tabular-nums;
   min-width: 4.5em; white-space: nowrap; padding-top: 0.1rem;
   flex-shrink: 0;
 }
+.script-line.in-range .script-ts { color: var(--accent-text); }
 .script-text { flex: 1; }
 /* Synthetic "Start of video" line that opens every script (clip from 0:00). */
-.script-line.script-synthetic .script-text { font-style: italic; color: var(--muted); }
+.script-line.script-synthetic .script-text { font-style: italic; color: var(--dim); }
 .script-line.script-synthetic.in-range .script-text,
-.script-line.script-synthetic.active .script-text { color: var(--fg); }
+.script-line.script-synthetic.active .script-text { color: var(--text); }
 /* Speaker attribution (WebVTT <v Name> / transcript speaker field). */
-.script-speaker {
-  color: var(--accent); font-weight: 600; margin-right: 0.4em;
-}
-.hit-speaker {
-  color: var(--accent); font-weight: 600; margin-right: 0.35em;
-}
+.script-speaker { color: var(--playhead); font-weight: 600; margin-right: 0.4em; }
+.hit-speaker { color: var(--playhead); font-weight: 600; margin-right: 0.35em; }
 .script-loading { padding: 0.6rem 0.7rem; font-size: 0.85rem; }
 /* Floating In/Out buttons on hover */
-.script-actions {
-  display: none; flex-shrink: 0; gap: 0.25rem; align-items: center;
-}
+.script-actions { display: none; flex-shrink: 0; gap: 0.25rem; align-items: center; }
 .script-line:hover .script-actions { display: flex; }
 .script-mark-btn {
-  background: var(--badge); color: var(--fg); border: 1px solid transparent;
-  border-radius: 4px; padding: 0.1rem 0.4rem; font-size: 0.7rem;
+  background: var(--raised); color: var(--text); border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm); padding: 0.1rem 0.4rem; font-size: 0.7rem;
   cursor: pointer; line-height: 1.2; white-space: nowrap;
-  opacity: 0.7; transition: opacity 0.1s, border-color 0.1s;
 }
-.script-mark-btn:hover { opacity: 1; }
-.script-start-btn { border-color: rgba(95, 208, 122, 0.4); color: var(--ok); }
-.script-start-btn:hover { border-color: var(--ok); }
-.script-end-btn { border-color: rgba(255, 107, 107, 0.4); color: var(--error); }
-.script-end-btn:hover { border-color: var(--error); }
+.script-start-btn { color: var(--accent-text); }
+.script-start-btn:hover { border-color: var(--accent-text); }
+.script-end-btn { color: var(--danger); }
+.script-end-btn:hover { border-color: var(--danger); }
