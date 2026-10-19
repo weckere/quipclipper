@@ -14,6 +14,13 @@ search re-extracts automatically.  ``is_cached()`` therefore doubles as a
 
 Each cache file stores the originating video path so stale entries (left
 behind when the source mtime changes) can be located and cleared.
+
+No subtitles
+------------
+A file with no usable subtitles (no sidecar, and no embedded text track) gets a
+``.nosubs`` marker under the same mtime-based key, so the folder index can tell
+"nothing to index" from "not indexed yet". Adding a sidecar or remuxing in a
+track changes the key, which retires the marker on its own.
 """
 
 from __future__ import annotations
@@ -27,7 +34,11 @@ import threading
 from pathlib import Path
 
 from quipclipper.models import Cue
-from quipclipper.subtitles import find_sidecar, resolve_subtitles
+from quipclipper.subtitles import (
+    find_sidecar, is_text_subtitle, list_embedded_tracks, resolve_subtitles,
+)
+
+_ENTRY_GLOBS = ("*.json", "*.nosubs")
 
 
 class SubtitleCache:
@@ -91,6 +102,40 @@ class SubtitleCache:
             return self._cache_path(video, track).exists()
         except OSError:
             return False
+
+    # --- files with no usable subtitles -------------------------------------
+
+    def _nosubs_path(self, video: Path) -> Path:
+        return self._dir / (self._cache_key(video) + ".nosubs")
+
+    def has_no_subs(self, video: Path) -> bool:
+        """True when indexing found no usable subtitles at the current source mtime."""
+        try:
+            return self._nosubs_path(video).exists()
+        except OSError:
+            return False
+
+    def mark_no_subs(self, video: Path) -> bool:
+        """Record that *video* has nothing to index, if that is really so.
+
+        Called after an extraction failed: only a file with no sidecar and no
+        embedded TEXT track is marked (image-only PGS/VobSub tracks count as none).
+        A probe error means "unknown", so nothing is marked. Returns True if marked."""
+        try:
+            if find_sidecar(video, self._default_langs):
+                return False
+            if any(is_text_subtitle(t) for t in list_embedded_tracks(video)):
+                return False
+        except (OSError, RuntimeError, ValueError):
+            return False
+        with contextlib.suppress(OSError):
+            self._nosubs_path(video).write_text(json.dumps({"video": str(video)}))
+            return True
+        return False
+
+    def _entries(self):
+        for pattern in _ENTRY_GLOBS:
+            yield from self._dir.glob(pattern)
 
     def _read(self, cp: Path) -> list[Cue] | None:
         if not cp.exists():
@@ -200,7 +245,7 @@ class SubtitleCache:
         removed = 0
         target = str(video)
         current_mtime = self._source_mtime(video)
-        for f in self._dir.glob("*.json"):
+        for f in self._entries():
             if self._stored_video(f) != target:
                 continue
             # Recompute the key prefix for this file's video at the current
@@ -250,8 +295,8 @@ class SubtitleCache:
             with contextlib.suppress(OSError):
                 cp.unlink()
                 removed += 1
-        # Orphans: older entries written under a different source mtime.
-        for f in self._dir.glob("*.json"):
+        # Orphans: older entries written under a different source mtime, and markers.
+        for f in self._entries():
             if f == cp:
                 continue
             if self._stored_video(f) == target:
@@ -267,7 +312,7 @@ class SubtitleCache:
         """
         removed = 0
         prefix = str(folder)
-        for f in self._dir.glob("*.json"):
+        for f in self._entries():
             stored = self._stored_video(f)
             if stored is not None and (stored == prefix or stored.startswith(prefix + os.sep)):
                 with contextlib.suppress(OSError):

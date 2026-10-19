@@ -192,3 +192,68 @@ def test_cache_roundtrips_speaker(cache):
     back = cache._read(cp)
     assert [c.speaker for c in back] == ["Chris", None]
     assert [c.text for c in back] == ["Hello", "Yo"]
+
+
+# --- files with no usable subtitles ------------------------------------------------
+
+
+class _Track:
+    def __init__(self, codec):
+        self.codec = codec
+
+
+def _video(tmp_path, name="movie.mkv"):
+    v = tmp_path / "media" / name
+    v.parent.mkdir(parents=True, exist_ok=True)
+    v.write_bytes(b"")
+    return v
+
+
+def test_no_subs_marker_set_and_retired_by_a_new_sidecar(tmp_path, monkeypatch):
+    cache = SubtitleCache(tmp_path / "state")
+    v = _video(tmp_path)
+    monkeypatch.setattr(sub_cache_mod, "list_embedded_tracks", lambda video: [])
+    assert not cache.has_no_subs(v)
+    assert cache.mark_no_subs(v)
+    assert cache.has_no_subs(v)
+    # A sidecar appears: the key moves to its mtime, so the marker no longer applies,
+    # and the file can't be marked again while the sidecar is there.
+    v.with_suffix(".srt").write_text("1\n00:00:01,000 --> 00:00:02,000\nhi\n")
+    assert not cache.has_no_subs(v)
+    assert not cache.mark_no_subs(v)
+
+
+@pytest.mark.parametrize("tracks,marked", [
+    ([], True),
+    ([_Track("hdmv_pgs_subtitle"), _Track("dvd_subtitle")], True),   # image-only = none
+    ([_Track("dvd_subtitle"), _Track("subrip")], False),            # one text track
+])
+def test_no_subs_marker_only_when_no_text_track(tmp_path, monkeypatch, tracks, marked):
+    cache = SubtitleCache(tmp_path / "state")
+    v = _video(tmp_path)
+    monkeypatch.setattr(sub_cache_mod, "list_embedded_tracks", lambda video: tracks)
+    assert cache.mark_no_subs(v) is marked
+    assert cache.has_no_subs(v) is marked
+
+
+def test_no_subs_marker_not_set_when_the_probe_fails(tmp_path, monkeypatch):
+    cache = SubtitleCache(tmp_path / "state")
+    v = _video(tmp_path)
+
+    def boom(video):
+        raise RuntimeError("ffprobe timed out")
+    monkeypatch.setattr(sub_cache_mod, "list_embedded_tracks", boom)
+    assert not cache.mark_no_subs(v)
+    assert not cache.has_no_subs(v)
+
+
+def test_clear_and_clear_under_remove_the_marker(tmp_path, monkeypatch):
+    cache = SubtitleCache(tmp_path / "state")
+    a, b = _video(tmp_path, "a.mkv"), _video(tmp_path, "b.mkv")
+    monkeypatch.setattr(sub_cache_mod, "list_embedded_tracks", lambda video: [])
+    cache.mark_no_subs(a)
+    cache.mark_no_subs(b)
+    assert cache.clear(a) == 1
+    assert not cache.has_no_subs(a) and cache.has_no_subs(b)
+    assert cache.clear_under(tmp_path / "media") == 1
+    assert not cache.has_no_subs(b)

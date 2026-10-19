@@ -761,14 +761,28 @@ function renderIndexStatus(data) {
     return;
   }
   $("reindex-folder-btn").hidden = false;
-  setIndexBar(data.indexed / data.total);
-  const missing = data.total - data.indexed;
+  // Files indexing found to have no subtitles at all (no sidecar, no text
+  // track) aren't "missing": there is nothing to index, so don't offer it.
+  const noSubs = data.no_subs || 0;
+  const withSubs = data.total - noSubs;
+  const none = noSubs
+    ? ` ${plural(noSubs, "file")} ${noSubs === 1 ? "has" : "have"} no subtitles.`
+    : "";
+  if (withSubs <= 0) {
+    text.textContent = `None of the ${plural(data.total, "file")} here has subtitles, so there is nothing to search.`;
+    setIndexBar(null);
+    return;
+  }
+  setIndexBar(data.indexed / withSubs);
+  const missing = withSubs - data.indexed;
   if (missing <= 0) {
-    text.textContent = `All ${plural(data.total, "file")} indexed. Dialogue search sees every subtitle here.`;
+    text.textContent = noSubs
+      ? `All ${plural(withSubs, "file")} with subtitles indexed.${none}`
+      : `All ${plural(data.total, "file")} indexed. Dialogue search sees every subtitle here.`;
   } else {
-    text.textContent = data.indexed === 0
-      ? `None of the ${plural(data.total, "file")} are indexed yet. Indexing makes dialogue search fast.`
-      : `${data.indexed} of ${plural(data.total, "file")} have searchable subtitles.`;
+    text.textContent = (data.indexed === 0
+      ? `None of the ${plural(withSubs, "file")} ${noSubs ? "with subtitles " : ""}are indexed yet. Indexing makes dialogue search fast.`
+      : `${data.indexed} of ${plural(withSubs, "file")} have searchable subtitles.`) + none;
     index.textContent = `Index ${plural(missing, "file")}`;
     index.hidden = false;
   }

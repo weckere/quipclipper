@@ -785,9 +785,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         books.sort(key=lambda p: p.name.lower())
 
         def _search_one(video: Path) -> list[dict]:
+            if sub_cache.has_no_subs(video):
+                return []  # known to have nothing to search: skip the probe
             try:
                 cues = sub_cache.resolve(video)
             except (ValueError, FileNotFoundError, RuntimeError):
+                sub_cache.mark_no_subs(video)
                 return []
             matches = engine_search(
                 query, cues,
@@ -911,8 +914,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         videos, skipped = _folder_videos(path, cap=INDEX_CAP)
         if skipped:
             return {"total": len(videos), "indexed": 0, "skipped": True}
-        indexed = sum(1 for v in videos if sub_cache.is_cached(v))
-        return {"total": len(videos), "indexed": indexed, "skipped": False}
+        indexed = no_subs = 0
+        for v in videos:
+            if sub_cache.is_cached(v):
+                indexed += 1
+            elif sub_cache.has_no_subs(v):
+                no_subs += 1
+        return {"total": len(videos), "indexed": indexed, "no_subs": no_subs, "skipped": False}
 
     # This and /api/items/subtitles/reindex take their input via the query string
     # and no body, so they would be CORS "simple requests" — the classic CSRF
@@ -944,11 +952,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             total = len(videos)
             done = 0
             for v in videos:
-                if not sub_cache.is_cached(v):
+                if not sub_cache.is_cached(v) and not sub_cache.has_no_subs(v):
                     try:
                         sub_cache.resolve(v)
                     except (ValueError, FileNotFoundError, RuntimeError):
-                        pass
+                        # Nothing to index (no sidecar, no text track)? Remember it,
+                        # so the folder stops offering to index this file.
+                        sub_cache.mark_no_subs(v)
                 done += 1
                 yield f"{done}/{total} {v.name}\n"
 

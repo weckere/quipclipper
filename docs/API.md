@@ -106,7 +106,7 @@ resolved stream URLs, so `split_channels` and `backend=mkvmerge` return 400 for
 |---|---|---|
 | GET | `/api/search?path=&query=&track=&limit=&min_score=&max_span=` | Rank dialogue matches in one file. |
 | GET | `/api/search/folder?path=&query=` | Search dialogue across a folder (repeat `path=` for several). |
-| GET | `/api/search/folder/index-status?path=` | How much of a folder's subtitles are cached. |
+| GET | `/api/search/folder/index-status?path=` | How much of a folder's subtitles are cached: `{total, indexed, no_subs, skipped}`. `no_subs` counts files indexing found to have no subtitles at all (no sidecar, no text track); they are never offered for indexing. |
 | POST | `/api/search/folder/index?path=&force=` | Pre-extract subtitles for a folder (streams progress). |
 
 `/api/search` returns `{query, count, matches: [{index, score, text, speaker,

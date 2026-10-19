@@ -1788,3 +1788,38 @@ def test_clip_from_segment_names_by_book(tmp_path: Path) -> None:
     assert not captured["source"].exists()                  # temp cleaned up post-cut
     assert "The Test Book" in str(captured["out"].parent)   # {source} = book title
     assert "The_Assimilation" in captured["out"].name        # {title} = chapter
+
+
+def test_index_marks_subtitle_less_files_and_status_counts_them(tmp_path: Path, monkeypatch) -> None:
+    """A file with no sidecar and no text track is "nothing to index", not "not indexed
+    yet": the index marks it, index-status reports it in no_subs, and folder search
+    skips it from then on (no ffprobe per search)."""
+    from quipclipper_web import sub_cache as sub_cache_mod
+
+    media = tmp_path / "media"
+    media.mkdir()
+    (media / "talk.mkv").write_bytes(b"")
+    (media / "talk.srt").write_text(SRT)
+    (media / "silent.mkv").write_bytes(b"")
+    probes = []
+
+    def tracks(video):
+        probes.append(Path(video).name)
+        return []
+    monkeypatch.setattr(sub_cache_mod, "list_embedded_tracks", tracks)
+    monkeypatch.setattr("quipclipper.subtitles.list_embedded_tracks", tracks)
+    client = _csrf(TestClient(create_app(Settings.from_env(
+        {"QC_MEDIA_ROOTS": str(media), "QC_STATE_DIR": str(tmp_path / "state")}))))
+
+    before = client.get("/api/search/folder/index-status", params={"path": str(media)}).json()
+    assert before == {"total": 2, "indexed": 0, "no_subs": 0, "skipped": False}
+
+    resp = client.post("/api/search/folder/index", params={"path": str(media)})
+    assert resp.status_code == 200
+    after = client.get("/api/search/folder/index-status", params={"path": str(media)}).json()
+    assert after == {"total": 2, "indexed": 1, "no_subs": 1, "skipped": False}
+
+    probes.clear()
+    found = client.get("/api/search/folder", params={"path": str(media), "query": "force"})
+    assert found.status_code == 200
+    assert "silent.mkv" not in probes
