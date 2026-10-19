@@ -75,7 +75,7 @@ per-browser preferences.
 | `server` | Server URL when `--server` and `QC_URL` aren't set. |
 | `token_file` | File holding the API token. |
 | `clip_template` | Default `--template` (the web app's Name box). |
-| `sub_langs` | Default subtitle languages (the web app's Auto-lang box). |
+| `sub_langs` | Default subtitle languages (the web app's Subtitle languages setting). |
 | `out_dir` | Default `--out-dir` for finished jobs. |
 
 Clip name templates use `{timestamp}`, `{end}`, `{duration}`, `{cue}`, `{title}`,

@@ -56,18 +56,21 @@ a quipclipper server or, for search and clip, on local files. See
   sidecar transcript sits beside them.
 - **Dialogue search** — open a video and fuzzy-search its subtitles (sidecar or
   embedded), with surrounding context and ranked, typo-tolerant matches. Clicking
-  a result selects the matching dialogue line in **Marks** (highlighted in the
-  script), ready to clip or fine-tune.
+  a result selects the matching dialogue line in the **script** (highlighted),
+  ready to clip or fine-tune. One **search box in the top bar** does all the
+  dialogue searching; its scope chip picks *this video*, *this folder* or the
+  *whole library*, and follows the page you are on.
 - **Folder dialogue search** — search subtitles across every video in one or more
   folders at once. Useful for finding a line when you don't know which episode
-  it's in. Clicking a hit opens that file and selects the matched line in Marks.
+  it's in. Hits are grouped by file with the matched words highlighted; on a wide
+  screen a click previews the lines around it, and *Open in workspace* opens that
+  file with the matched line selected.
   A subtitle cache plus a pre-index button make repeat searches near-instant.
   - **Scope follows the library filter.** When you type in the **library
     (name) filter**, the dialogue search narrows to *exactly the folders that
-    filter surfaced* — not the whole folder you started in. The dialogue search
-    box shows which mode is active: **"Search dialogue across N folders…"** (scoped
-    to your N filtered folders) vs **"Search dialogue in this folder…"** (no
-    filter — the current folder, searched recursively). Clearing the filter
+    filter surfaced* — not the whole folder you started in. The scope chip shows
+    which mode is active: **"N folders"** (your N filtered folders) vs **"This
+    folder"** (no filter — the current folder, searched recursively). Clearing the filter
     reverts to the current folder. (A filter that matches only *files*, not
     folders, doesn't narrow the scope — it falls back to the current folder.)
 - **Scrolling script view** — the full subtitle script scrolls with playback;
@@ -76,7 +79,10 @@ a quipclipper server or, for search and clip, on local files. See
   Every script opens with a synthetic **Start of video** line (0:00 up to the
   first cue), so a clip can begin at the very start of the file — before any
   dialogue — or capture just the cold open.
-  A **Before/After buffer** in the Marks header expands the selection live.
+  A **Before/After buffer** in the clip bar expands the selection live. A **dialogue
+  map** under the player shows where the talking is across the whole runtime
+  (selection in amber, playhead in blue); click it to seek. The script, matches,
+  bookmarks and clips for the file are tabs beside the player.
 - **Stream selector** — one menu under the seek bar picks the subtitle track,
   the audio stream, and (for multichannel audio) a channel subset — affecting
   live playback. The selection drives the clip output too: the chosen audio
@@ -238,7 +244,7 @@ All settings are environment variables on the `app` service:
 | `QC_MAX_CONCURRENT_JOBS` | `2` | Clip-job thread-pool size |
 | `QC_PASSWORD` | *(none)* | When set, nginx gates the whole site with HTTP basic auth (username `QC_USERNAME`). Must be set on the **web** (nginx) service. Unset = open. |
 | `QC_USERNAME` | `quip` | Basic-auth username (only used when `QC_PASSWORD` is set). |
-| `QC_SUBTITLE_LANGS` | `en` | Ordered subtitle-language preference for auto-selection (comma-separated, e.g. `eng,spa`). The UI's **Auto-lang** box overrides it per browser. |
+| `QC_SUBTITLE_LANGS` | `en` | Ordered subtitle-language preference for auto-selection (comma-separated, e.g. `eng,spa`). The UI's **Subtitle languages** setting (the sliders button in the top bar) overrides it per browser; the same menu switches between light and dark. |
 | `QC_API_TOKEN` | *(none)* | Token(s) for programmatic clients — agents and scripts (comma-separated to rotate). Set the same value on **both** services so `-u api:<token>` passes the basic-auth gate too. See [HTTP API](#http-api-agents--scripts). |
 | `QC_PROXY_SECRET` | *(none)* | Defence-in-depth: a shared secret nginx injects on every proxied request. When set on **both** services, the backend rejects anything that reaches its port without it (except `/api/health`) — blocking direct hits that bypass nginx. |
 

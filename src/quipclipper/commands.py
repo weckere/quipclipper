@@ -130,7 +130,7 @@ COMMANDS: tuple[Command, ...] = (
     # --- server ---------------------------------------------------------------
     Command("server.health", "Show the version and which media tools are installed.",
             "GET", "/api/health", mode="both", shortcut="status",
-            ui="Status line at the top of every page"),
+            ui="Status line at the foot of every page"),
     Command("server.config", "Show the server's configuration (media roots, limits, "
             "subtitle languages).", "GET", "/api/config", ui="Loaded on start"),
 
@@ -209,7 +209,7 @@ COMMANDS: tuple[Command, ...] = (
                           where=CLIENT, flags=("-s",), local_only=True),
                     Param("langs", "str", "Preferred subtitle languages, comma-separated.",
                           where=CLIENT, local_only=True)),
-            mode="both", shortcut="search", ui="Item dialogue search"),
+            mode="both", shortcut="search", ui="Top-bar search, scope This video"),
     Command("search.folder", "Search dialogue across every file in one or more folders.",
             "GET", "/api/search/folder",
             params=(Param("query", "str", "Dialogue to look for.", main=True, required=True),
@@ -218,18 +218,18 @@ COMMANDS: tuple[Command, ...] = (
                     Param("limit", "int", "Most matches per file.", default=5,
                           flags=("-n",)),
                     *_SEARCH_TUNING),
-            ui="Folder dialogue search"),
+            ui="Top-bar search, scope This folder / Whole library"),
 
     # --- index -------------------------------------------------------------------------
     Command("index.status", "Show how many files in a folder have cached subtitles.",
             "GET", "/api/search/folder/index-status",
             params=(Param("path", "str", "Folder.", main=True, required=True),),
-            ui="Folder index banner"),
+            ui="Dialogue index card"),
     Command("index.build", "Cache the subtitles of every file in a folder (prints "
             "progress).", "POST", "/api/search/folder/index",
             params=(Param("path", "str", "Folder.", main=True, required=True),
                     Param("force", "bool", "Re-read files already cached.", default=False)),
-            response="lines", ui="Index now; ↻ Reindex subtitles (folder)"),
+            response="lines", ui="Index N files; Re-index all (Dialogue index card)"),
     Command("index.fetch-subs", "Fetch missing YouTube subtitles for every video in a "
             "folder.", "POST", "/api/search/folder/fetch-subs",
             params=(Param("path", "str", "Folder.", main=True, required=True),)
@@ -288,7 +288,7 @@ COMMANDS: tuple[Command, ...] = (
 
     # --- jobs ------------------------------------------------------------------------------
     Command("job.list", "List recent jobs (clips, downloads, YouTube).", "GET", "/api/jobs",
-            shortcut="jobs", ui="Job status lines"),
+            shortcut="jobs", ui="Jobs popover"),
     Command("job.get", "Show one job.", "GET", "/api/jobs/{job_id}",
             params=(Param("job_id", "str", "Job id.", where=PATH, main=True,
                           required=True),),
@@ -303,7 +303,7 @@ COMMANDS: tuple[Command, ...] = (
             "DELETE", "/api/jobs/{job_id}",
             params=(Param("job_id", "str", "Job id.", where=PATH, main=True,
                           required=True),),
-            ui="✕ Cancel"),
+            ui="Cancel / Dismiss in the Jobs popover; ✕ Cancel (folder subtitle fetch)"),
     Command("job.download", "Download a finished job's file (all files if FILENAME is "
             "omitted).", "GET", "/api/jobs/{job_id}/download/{filename}",
             params=(Param("job_id", "str", "Job id.", where=PATH, main=True,
@@ -387,7 +387,7 @@ COMMANDS: tuple[Command, ...] = (
                           required=True),
                     Param("value", "str", "New value (omit to clear).", where=CLIENT,
                           default="", main=True)),
-            mode="client", ui="Name template; Auto-lang"),
+            mode="client", ui="Name field (clip bar); Subtitle languages (Settings)"),
 )
 
 BY_ID: dict[str, Command] = {c.id: c for c in COMMANDS}
@@ -399,7 +399,7 @@ SETTINGS: dict[str, str] = {
     "token_file": "File holding the API token (instead of QC_API_TOKEN).",
     "clip_template": "Default --template for clips (the web UI's Name box, "
                      "localStorage qc_clip_template).",
-    "sub_langs": "Default subtitle languages (the web UI's Auto-lang box, "
+    "sub_langs": "Default subtitle languages (the web UI's Subtitle languages setting, "
                  "localStorage qc_sub_langs).",
     "out_dir": "Default --out-dir for downloading finished jobs.",
 }

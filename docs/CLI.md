@@ -75,7 +75,7 @@ per-browser preferences.
 | `server` | Server URL when `--server` and `QC_URL` aren't set. |
 | `token_file` | File holding the API token. |
 | `clip_template` | Default `--template` (the web app's Name box). |
-| `sub_langs` | Default subtitle languages (the web app's Auto-lang box). |
+| `sub_langs` | Default subtitle languages (the web app's Subtitle languages setting). |
 | `out_dir` | Default `--out-dir` for finished jobs. |
 
 Clip name templates use `{timestamp}`, `{end}`, `{duration}`, `{cue}`, `{title}`,
@@ -99,7 +99,7 @@ The server's default is `{source}/{timestamp}_{cue}_{title}`.
 
 | Command | What it does | Arguments | API | Web UI |
 |---|---|---|---|---|
-| `server.health` (`status`) | Show the version and which media tools are installed. |  | `GET /api/health` · local | Status line at the top of every page |
+| `server.health` (`status`) | Show the version and which media tools are installed. |  | `GET /api/health` · local | Status line at the foot of every page |
 | `server.config` | Show the server's configuration (media roots, limits, subtitle languages). |  | `GET /api/config` | Loaded on start |
 
 ## library
@@ -132,15 +132,15 @@ The server's default is `{source}/{timestamp}_{cue}_{title}`.
 
 | Command | What it does | Arguments | API | Web UI |
 |---|---|---|---|---|
-| `search.item` (`search`) | Search one file's dialogue. | `QUERY` `--path` `--track` `--limit` `--min-score` `--max-span` `--subs¹` `--langs¹` | `GET /api/search` · local | Item dialogue search |
-| `search.folder` | Search dialogue across every file in one or more folders. | `QUERY` `--path` `--limit` `--min-score` `--max-span` | `GET /api/search/folder` | Folder dialogue search |
+| `search.item` (`search`) | Search one file's dialogue. | `QUERY` `--path` `--track` `--limit` `--min-score` `--max-span` `--subs¹` `--langs¹` | `GET /api/search` · local | Top-bar search, scope This video |
+| `search.folder` | Search dialogue across every file in one or more folders. | `QUERY` `--path` `--limit` `--min-score` `--max-span` | `GET /api/search/folder` | Top-bar search, scope This folder / Whole library |
 
 ## index
 
 | Command | What it does | Arguments | API | Web UI |
 |---|---|---|---|---|
-| `index.status` | Show how many files in a folder have cached subtitles. | `PATH` | `GET /api/search/folder/index-status` | Folder index banner |
-| `index.build` | Cache the subtitles of every file in a folder (prints progress). | `PATH` `--force` | `POST /api/search/folder/index` | Index now; ↻ Reindex subtitles (folder) |
+| `index.status` | Show how many files in a folder have cached subtitles. | `PATH` | `GET /api/search/folder/index-status` | Dialogue index card |
+| `index.build` | Cache the subtitles of every file in a folder (prints progress). | `PATH` `--force` | `POST /api/search/folder/index` | Index N files; Re-index all (Dialogue index card) |
 | `index.fetch-subs` | Fetch missing YouTube subtitles for every video in a folder. | `PATH` `--wait` `--out-dir` | `POST /api/search/folder/fetch-subs` | ⬇ Fetch missing YouTube subtitles; ✕ Cancel |
 
 ## clip
@@ -154,10 +154,10 @@ The server's default is `{source}/{timestamp}_{cue}_{title}`.
 
 | Command | What it does | Arguments | API | Web UI |
 |---|---|---|---|---|
-| `job.list` (`jobs`) | List recent jobs (clips, downloads, YouTube). |  | `GET /api/jobs` | Job status lines |
+| `job.list` (`jobs`) | List recent jobs (clips, downloads, YouTube). |  | `GET /api/jobs` | Jobs popover |
 | `job.get` | Show one job. | `JOB_ID` | `GET /api/jobs/{job_id}` | Job progress polling |
 | `job.wait` | Wait for a job to finish. | `JOB_ID` `--out-dir` | (client) | Job progress polling |
-| `job.cancel` | Cancel a queued or running job, or forget a finished one. | `JOB_ID` | `DELETE /api/jobs/{job_id}` | ✕ Cancel |
+| `job.cancel` | Cancel a queued or running job, or forget a finished one. | `JOB_ID` | `DELETE /api/jobs/{job_id}` | Cancel / Dismiss in the Jobs popover; ✕ Cancel (folder subtitle fetch) |
 | `job.download` | Download a finished job's file (all files if FILENAME is omitted). | `JOB_ID` `FILENAME` `--out-dir` | `GET /api/jobs/{job_id}/download/{filename}` | ⤓ link after a clip finishes |
 
 ## bookmark
@@ -184,6 +184,6 @@ The server's default is `{source}/{timestamp}_{cue}_{title}`.
 |---|---|---|---|---|
 | `settings.list` | Show the CLI settings. |  | (client) | — |
 | `settings.get` | Show one CLI setting. | `KEY` | (client) | — |
-| `settings.set` | Change a CLI setting (empty value clears it). | `KEY` `VALUE` | (client) | Name template; Auto-lang |
+| `settings.set` | Change a CLI setting (empty value clears it). | `KEY` `VALUE` | (client) | Name field (clip bar); Subtitle languages (Settings) |
 
 ⚠ destructive: refused with `--safe`. ¹ local mode only.
