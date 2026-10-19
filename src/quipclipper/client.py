@@ -251,9 +251,13 @@ def _error_from(resp: Response) -> CliError:
             f"{'.'.join(str(x) for x in d.get('loc', [])[1:])}: {d.get('msg')}" for d in detail
         )
     message = detail or resp.body.decode("utf-8", "replace")[:300] or f"HTTP {resp.status}"
-    if resp.status in (401, 403):
+    # The auth/CSRF gate answers a bare "Forbidden"; a route's own 403 (a path outside
+    # the media roots) carries a real message and is not about the token.
+    if resp.status == 401 or (resp.status == 403 and message.strip().strip('"') == "Forbidden"):
         return CliError(f"{message} (check QC_API_TOKEN / the token file)", code="auth",
                         exit_code=EXIT_AUTH)
+    if resp.status == 403:
+        return CliError(message, code="forbidden", exit_code=EXIT_USAGE)
     if resp.status == 422 or resp.status == 400:
         return CliError(message, code="bad_request", exit_code=EXIT_USAGE)
     if resp.status == 404:

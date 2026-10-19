@@ -58,7 +58,8 @@ def test_failed_job_raises():
 
 @pytest.mark.parametrize("status,exit_code", [(401, 4), (403, 4), (422, 2), (404, 1), (500, 1)])
 def test_http_errors_map_to_exit_codes(status, exit_code):
-    c = ctx([(status, {"detail": "nope"})])
+    # 403 here is the auth/CSRF gate's bare "Forbidden" (a route's own 403 is tested below).
+    c = ctx([(status, {"detail": "Forbidden" if status == 403 else "nope"})])
     with pytest.raises(CliError) as exc:
         execute(c, reg.BY_ID["library.roots"], {})
     assert exc.value.exit_code == exit_code
@@ -69,3 +70,13 @@ def test_safe_refuses_destructive_commands_before_any_request():
     with pytest.raises(CliError) as exc:
         execute(c, reg.BY_ID["bookmark.clear"], {})
     assert exc.value.exit_code == 5 and c.transport.calls == []
+
+
+def test_a_403_with_a_message_is_not_reported_as_a_token_problem():
+    with pytest.raises(CliError) as exc:
+        execute(ctx([(403, {"detail": "Path is outside the configured media roots: /x"})]),
+                reg.BY_ID["library.browse"], {"path": "/x"})
+    assert exc.value.code == "forbidden" and "QC_API_TOKEN" not in str(exc.value)
+    with pytest.raises(CliError) as exc:
+        execute(ctx([(403, {"detail": "Forbidden"})]), reg.BY_ID["library.browse"], {"path": "/x"})
+    assert exc.value.code == "auth"
