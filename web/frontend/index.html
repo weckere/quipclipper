@@ -14,6 +14,7 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
+    <a href="#main" id="skip-link" class="skip-link" title="Skip past the top bar to the page's content">Skip to content</a>
     <!-- Icon sprite (stroke icons, 24px grid; draw with <svg class="icon"><use href="#i-name"/></svg>).
          Paths come from the FigCraft mockups. -->
     <svg class="sprite" width="0" height="0" aria-hidden="true" focusable="false">
@@ -39,10 +40,10 @@
           <span id="search-scope-label">Library</span><span class="chev" aria-hidden="true">▾</span>
         </button>
         <ul id="scope-menu" class="scope-menu" role="menu" aria-label="Where to search" hidden>
-          <li role="none"><button type="button" role="menuitemradio" data-scope="item" title="Search this video's dialogue">This video</button></li>
-          <li role="none"><button type="button" role="menuitemradio" data-scope="folder" title="Search the dialogue of every file in this folder">This folder</button></li>
-          <li role="none"><button type="button" role="menuitemradio" data-scope="library" title="Search the dialogue of every file in the library">Whole library</button></li>
-          <li role="none" id="scope-nowplaying" hidden><button type="button" role="menuitemradio" data-scope="nowplaying" data-action="jellyfin.sessions" title="Open what's playing on Jellyfin, at its playhead">Now playing</button></li>
+          <li role="none"><button type="button" role="menuitemradio" tabindex="-1" data-scope="item" title="Search this video's dialogue">This video</button></li>
+          <li role="none"><button type="button" role="menuitemradio" tabindex="-1" data-scope="folder" title="Search the dialogue of every file in this folder">This folder</button></li>
+          <li role="none"><button type="button" role="menuitemradio" tabindex="-1" data-scope="library" title="Search the dialogue of every file in the library">Whole library</button></li>
+          <li role="none" id="scope-nowplaying" hidden><button type="button" role="menuitemradio" tabindex="-1" data-scope="nowplaying" data-action="jellyfin.sessions" title="Open what's playing on Jellyfin, at its playhead">Now playing</button></li>
         </ul>
         <input id="global-search-input" type="text" aria-label="Search the dialogue" title="Type a line you remember and press Enter to find it (/ jumps here)" placeholder="Search the dialogue: type a line you remember" />
         <kbd class="key-hint" aria-hidden="true">/</kbd>
@@ -56,15 +57,15 @@
         </button>
         <button type="button" id="settings-btn" class="icon-btn" aria-haspopup="dialog" aria-expanded="false" aria-controls="settings-popover" aria-label="Settings" title="Settings: appearance and subtitles"><svg class="icon"><use href="#i-gear"/></svg></button>
       </nav>
-      <div id="settings-popover" class="jobs-popover settings-popover" role="dialog" aria-label="Settings" hidden>
-        <div class="jobs-head"><h3>Settings</h3><span class="muted settings-saved">Saved in this browser</span></div>
+      <div id="settings-popover" class="jobs-popover settings-popover" role="dialog" aria-modal="true" aria-labelledby="settings-heading" tabindex="-1" hidden>
+        <div class="jobs-head"><h2 id="settings-heading">Settings</h2><span class="muted settings-saved">Saved in this browser</span></div>
         <div class="settings-body">
           <div class="set-row">
             <div class="set-label" id="theme-label">Appearance</div>
             <div id="theme-seg" class="segmented" role="radiogroup" aria-labelledby="theme-label" data-action="settings.set">
               <button type="button" role="radio" data-theme-choice="system" aria-checked="true" title="Follow the system's light or dark setting">System</button>
-              <button type="button" role="radio" data-theme-choice="dark" aria-checked="false" title="Always dark">Dark</button>
-              <button type="button" role="radio" data-theme-choice="light" aria-checked="false" title="Always light">Light</button>
+              <button type="button" role="radio" data-theme-choice="dark" aria-checked="false" tabindex="-1" title="Always dark">Dark</button>
+              <button type="button" role="radio" data-theme-choice="light" aria-checked="false" tabindex="-1" title="Always light">Light</button>
             </div>
           </div>
           <div class="set-row">
@@ -75,14 +76,14 @@
           <p class="muted set-help">The clip name template is the Name field in the clip bar. The YouTube player choice is on a YouTube video.</p>
         </div>
       </div>
-      <div id="jobs-popover" class="jobs-popover" role="dialog" aria-label="Jobs" hidden>
-        <div class="jobs-head"><h3>Jobs</h3><button type="button" id="jobs-clear" class="link-btn" data-action="job.cancel" title="Remove every finished, failed or cancelled job from this list">Clear finished</button></div>
+      <div id="jobs-popover" class="jobs-popover" role="dialog" aria-modal="true" aria-labelledby="jobs-heading" tabindex="-1" hidden>
+        <div class="jobs-head"><h2 id="jobs-heading">Jobs</h2><button type="button" id="jobs-clear" class="link-btn" data-action="job.cancel" title="Remove every finished, failed or cancelled job from this list">Clear finished</button></div>
         <ul id="jobs-list" class="jobs-list" data-action="job.list"></ul>
         <p id="jobs-empty" class="muted jobs-empty">No recent jobs.</p>
       </div>
     </header>
 
-    <main>
+    <main id="main" tabindex="-1">
       <!-- Library browser -->
       <section id="browser" class="library-layout">
         <aside class="roots-rail" aria-label="Library roots">
@@ -133,7 +134,7 @@
           </section>
         </div>
         <div id="entries-wrap" class="entries-wrap">
-          <ul id="entries" class="entries"></ul>
+          <ul id="entries" class="entries" tabindex="-1" aria-label="Folder contents"></ul>
           <!-- Context for the highlighted search hit (wide screens): the lines around it. -->
           <aside id="hit-preview" class="hit-preview" aria-label="Context for the selected match" hidden>
             <div class="preview-label">Preview</div>
@@ -183,7 +184,7 @@
           <button type="button" id="clips-home" class="crumb" title="All clips (the top folder)">Clips</button>
           <span id="clips-folder-crumb" class="muted"></span>
         </nav>
-        <div class="page-head"><h2 id="clips-title" class="page-title">Clips</h2><span id="clips-count" class="muted"></span></div>
+        <div class="page-head"><h2 id="clips-title" class="page-title" tabindex="-1">Clips</h2><span id="clips-count" class="muted"></span></div>
         <ul id="clips-entries" class="entries"></ul>
         <p id="clips-empty" class="muted" hidden>No clips yet.</p>
         <div id="clips-batch" class="batch-bar sticky" hidden>
@@ -218,7 +219,7 @@
           <button type="button" id="all-bm-back-lib" class="crumb" title="Back to the library">Library</button>
           <span class="muted"> / Bookmarks</span>
         </nav>
-        <div class="page-head"><h2 class="page-title">Bookmarks</h2><span id="bm-count" class="muted"></span></div>
+        <div class="page-head"><h2 id="bm-title" class="page-title" tabindex="-1">Bookmarks</h2><span id="bm-count" class="muted"></span></div>
         <ul id="all-bookmarks-list" class="bookmarks-list bm-browser-list"></ul>
         <p id="all-bookmarks-empty" class="muted" hidden>No bookmarks saved yet.</p>
         <div id="bm-batch" class="batch-bar sticky" hidden>
@@ -254,7 +255,7 @@
         <div class="ws-head">
           <button type="button" id="back" data-action="library.browse" class="back" title="Back to the folder this file is in"><span aria-hidden="true">←</span> Back</button>
           <div class="ws-title">
-            <h2 id="item-name"></h2>
+            <h2 id="item-name" tabindex="-1"></h2>
             <div id="item-filename" class="item-filename muted"></div>
           </div>
           <div id="stream-selector" data-action="item.info" class="stream-selector" hidden>
@@ -291,7 +292,7 @@
             </div>
             <!-- Cue density over the whole runtime: where the talking is. Selection in
                  amber, playhead in blue; click to seek. Built from the loaded script. -->
-            <div id="dialogue-map" class="dialogue-map" title="Where the dialogue is: amber is the selection, blue the playhead. Click to seek." role="img" aria-label="Dialogue map: where the dialogue is, with the selected range and the playhead" hidden>
+            <div id="dialogue-map" class="dialogue-map" title="Where the dialogue is: amber is the selection, blue the playhead. Click to seek; arrow keys step 1 s (Shift: 10 s)." role="slider" tabindex="0" aria-label="Dialogue map" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" aria-valuetext="0:00" hidden>
               <div id="dialogue-map-bars" class="dm-bars"></div>
               <div id="dialogue-map-sel" class="dm-sel" hidden></div>
               <div id="dialogue-map-head" class="dm-head"></div>
@@ -374,7 +375,7 @@
           </div>
 
           <!-- Script, matches, bookmarks and clips for this file, one tab each. -->
-          <aside class="ws-side panel">
+          <section class="ws-side panel" aria-label="This file">
             <div class="tabs" role="tablist" aria-label="This file">
               <button type="button" role="tab" id="tab-script" class="tab" data-tab="script" aria-selected="true" aria-controls="pane-script" title="The file's dialogue, line by line">Script</button>
               <button type="button" role="tab" id="tab-matches" class="tab" data-tab="matches" aria-selected="false" aria-controls="item-search-panel" title="The lines that match your search" hidden>Matches <span id="count-matches" class="tab-count"></span></button>
@@ -383,12 +384,12 @@
             </div>
             <div id="pane-script" class="tabpane" role="tabpanel" aria-labelledby="tab-script">
               <div class="script-bar">
-                <span id="marks-hint" class="script-hint" hidden>Click a line to seek · hover for <strong>Start</strong> / <strong>End</strong>. The first line, <em>Start of video</em>, lets a clip begin at 0:00.</span>
+                <span id="marks-hint" class="script-hint" hidden>Click a line to seek · hover for <strong>Start</strong> / <strong>End</strong> (keys: ↑ ↓ move, <kbd>S</kbd> / <kbd>E</kbd> set them). The first line, <em>Start of video</em>, lets a clip begin at 0:00.</span>
                 <label class="checkbox-label script-follow" title="Keep the script scrolled to the line that's playing"><input id="script-follow" class="switch" type="checkbox" checked /> Follow playback</label>
               </div>
               <!-- The dialogue cues. -->
               <div id="script-wrap" class="script-wrap" hidden>
-                <div id="script-list" class="script-list"></div>
+                <div id="script-list" class="script-list" role="list" aria-label="Script"></div>
               </div>
             </div>
             <div id="item-search-panel" class="tabpane" role="tabpanel" aria-labelledby="tab-matches" hidden>
@@ -402,10 +403,13 @@
             <div id="clips-made-panel" class="tabpane" role="tabpanel" aria-labelledby="tab-clips" hidden>
               <ul id="clips-made-list" class="clips-made-list"></ul>
             </div>
-          </aside>
+          </section>
         </div>
       </section>
     </main>
+
+    <!-- One polite live region: jobs finishing or failing, the selection, match counts. -->
+    <div id="announcer" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></div>
 
     <footer>
       <span id="status" data-action="server.health" class="muted">…</span>

@@ -38,6 +38,16 @@ async function postJSON(url, body) {
 
 const qp = (path) => `?path=${encodeURIComponent(path)}`;
 
+/** Say something to screen-reader users through the one polite live region (#announcer):
+ *  jobs finishing or failing, the selection changing, how many matches a search found. */
+let announceTimer = null;
+function announce(msg) {
+  const region = $("announcer");
+  region.textContent = "";  // an identical message twice in a row is still read
+  clearTimeout(announceTimer);
+  announceTimer = setTimeout(() => { region.textContent = msg; }, 60);
+}
+
 // --- views ------------------------------------------------------------------
 
 /** Stop playback and release the source so audio doesn't keep playing
@@ -281,16 +291,21 @@ function renderEntries(entries) {
     // A book (EPUB audiobook) browses into its chapters like a folder.
     const intoFolder = e.is_dir || e.is_book;
     li.className = "entry " + (intoFolder ? "dir" : "video");
-    if (intoFolder) li.dataset.action = "library.browse";
     const icon = e.is_dir ? "folder" : e.is_book ? "book" : e.is_youtube ? "youtube" : e.is_audio ? "music" : "film";
     let chips = (!intoFolder && e.has_sidecar) ? '<span class="badge">sub</span>' : "";
     // A locally downloaded YouTube video plays/cuts from the server's own copy.
     if (e.is_youtube && e.downloaded) chips += '<span class="badge" title="Downloaded to the server">on server</span>';
-    li.innerHTML = `<span class="icon-wrap">${iconSvg(icon)}</span><span class="label">${escapeHtml(e.name)}</span>` +
-      `<span class="chips">${chips}</span>` + (intoFolder ? `<span class="go">${iconSvg("chevron-r")}</span>` : "");
-    li.onclick = () => (intoFolder ? browse(e.path) : openItem(e.path, e.name));
-    makeActivatable(li, e.is_book ? "Open this book's chapters" : intoFolder ? "Open this folder"
-      : "Open in the workspace: play it, read its script, cut a clip", "link");
+    // The row's action is one button; other controls (YouTube's remove) sit beside it, not in it.
+    const main = el("button", {
+      className: "entry-main",
+      title: e.is_book ? "Open this book's chapters" : intoFolder ? "Open this folder"
+        : "Open in the workspace: play it, read its script, cut a clip",
+      html: `<span class="icon-wrap">${iconSvg(icon)}</span><span class="label">${escapeHtml(e.name)}</span>` +
+        `<span class="chips">${chips}</span>` + (intoFolder ? `<span class="go">${iconSvg("chevron-r")}</span>` : ""),
+    });
+    if (intoFolder) main.dataset.action = "library.browse";
+    main.onclick = () => (intoFolder ? browse(e.path) : openItem(e.path, e.name));
+    li.appendChild(main);
     // A YouTube item row gets a remove button (forgets the video + transcript).
     if (e.is_youtube && !e.is_dir) {
       const del = el("button", {
@@ -1501,6 +1516,7 @@ async function openItem(path, name, opts) {
     const absTime = player.currentTime + transcodeOffset;
     seekSlider.value = Math.min(100, Math.max(0, ((absTime - lo) / span) * 100));
     seekTimeLabel.textContent = formatTime(absTime);
+    seekSlider.setAttribute("aria-valuetext", `${formatTimeWhole(absTime)} of ${formatTimeWhole(hi)}`);
   }
 
   // Re-render the seek bar bounds (called when the selected range changes).
@@ -1531,7 +1547,25 @@ async function openItem(path, name, opts) {
 
   seekSlider.addEventListener("input", () => {
     const [lo, hi] = seekBounds();
-    seekTimeLabel.textContent = formatTime(lo + (seekSlider.value / 100) * (hi - lo));
+    const t = lo + (seekSlider.value / 100) * (hi - lo);
+    seekTimeLabel.textContent = formatTime(t);
+    seekSlider.setAttribute("aria-valuetext", `${formatTimeWhole(t)} of ${formatTimeWhole(hi)}`);
+  }, { signal });
+
+  // Arrow keys step in seconds (1 s, Shift 10 s), not in the range's 0.1 % steps, and the
+  // reload waits for the keys to stop.
+  let sliderSeekTimer = null;
+  seekSlider.addEventListener("keydown", (e) => {
+    const [lo, hi] = seekBounds();
+    const step = seekKeyStep(e, lo, hi);
+    if (!step || !isTranscoding) return;
+    e.preventDefault();
+    const cur = lo + (seekSlider.value / 100) * (hi - lo);
+    const t = Math.max(lo, Math.min(hi, step.to ?? cur + step.delta));
+    seekSlider.value = ((t - lo) / Math.max(0.001, hi - lo)) * 100;
+    seekSlider.dispatchEvent(new Event("input"));
+    clearTimeout(sliderSeekTimer);
+    sliderSeekTimer = setTimeout(() => loadTranscode(t), 400);
   }, { signal });
 
   seekSlider.addEventListener("change", () => {
@@ -1885,6 +1919,8 @@ async function doSearch(query, { focus = true } = {}) {
   }
 
   setTabCount("matches", data.matches.length);
+  const n = data.matches.length;
+  announce(n ? `${n} match${n === 1 ? "" : "es"} in this video` : "No matches in this video");
   if (!data.matches.length) {
     empty.hidden = false;
     return;
@@ -1985,6 +2021,7 @@ function setClipInAt(idx) {
   clipFirst = idx;
   if (clipLast < clipFirst) clipLast = clipFirst;
   updateClipUI();
+  announceSelection();
   if (pb) pb.pause();  // stop playback when a clip boundary is set
 }
 
@@ -1992,6 +2029,7 @@ function setClipOutAt(idx) {
   clipLast = idx;
   if (clipFirst < 0 || clipFirst > clipLast) clipFirst = clipLast;
   updateClipUI();
+  announceSelection();
   if (pb) pb.pause();
 }
 
@@ -1999,6 +2037,15 @@ function clearClip() {
   clipFirst = -1;
   clipLast = -1;
   updateClipUI();
+  announce("Selection cleared");
+}
+
+/** Say the new selection: its range and how many lines it holds. */
+function announceSelection() {
+  if (!hasClipRange()) return;
+  const n = selectedLineCount();
+  announce(`Selection ${formatTime(bufStart())} to ${formatTime(bufEnd())}, ` +
+    (n ? `${n} line${n > 1 ? "s" : ""}` : "before the first line"));
 }
 
 function updateClipUI() {
@@ -2091,6 +2138,7 @@ async function saveBookmark() {
   const defaultLabel = defaultBookmarkLabel();
   const label = $("bookmark-label-input").value.trim();
   closeBookmarkLabel();
+  $("mark-save").focus();  // the field it was in is gone
   try {
     const t = getSelectedTrack();
     await postJSON("/api/bookmarks", {
@@ -2106,6 +2154,7 @@ async function saveBookmark() {
       // Keep the matched dialogue so exporting the bookmark fills the {cue} token.
       cue: selectedCueText(),
     });
+    announce("Bookmark saved");
     loadBookmarks();
   } catch (err) {
     alert("Failed to save bookmark: " + err.message);
@@ -2137,7 +2186,7 @@ let scriptLoadId = 0;      // generation token to ignore stale script loads
 let pendingCueSelect = null;
 
 // One tooltip for every script line (not one per line): what a click does.
-const SCRIPT_LINE_TITLE = "Click to play from here; Start / End set the selection";
+const SCRIPT_LINE_TITLE = "Click or Enter to play from here; Start / End (S / E) set the selection; ↑ ↓ move between lines";
 
 /** Load cues as JSON and populate the script panel. */
 async function loadScript(path, track) {
@@ -2187,6 +2236,7 @@ async function loadScript(path, track) {
   scriptCues.forEach((cue, i) => {
     const row = document.createElement("div");
     row.className = cue.synthetic ? "script-line script-synthetic" : "script-line";
+    row.setAttribute("role", "listitem");
     row.dataset.idx = i;
     const speaker = cue.speaker
       ? `<span class="script-speaker">${escapeHtml(cue.speaker)}</span>` : "";
@@ -2194,15 +2244,18 @@ async function loadScript(path, track) {
       ? `${escapeHtml(cue.text)} <span class="muted">(before the first line)</span>`
       : escapeHtml(cue.text);
     const at = formatTime(cue.start);
+    // Named "time, text" so a screen reader hears where the line is before what it says.
+    const name = `${at}, ${cue.speaker ? cue.speaker + ": " : ""}${cue.text}${cue.synthetic ? " (before the first line)" : ""}`;
     row.innerHTML =
-      `<span class="script-ts">${at}</span>` +
-      `<span class="script-text">${speaker}${text}</span>` +
+      `<button type="button" class="script-play" tabindex="${i === 0 ? 0 : -1}" title="${SCRIPT_LINE_TITLE}" aria-label="${escapeHtml(name)}" data-name="${escapeHtml(name)}">` +
+        `<span class="script-ts">${at}</span>` +
+        `<span class="script-text">${speaker}${text}</span>` +
+      `</button>` +
       `<span class="script-actions">` +
-        `<button type="button" class="script-mark-btn script-start-btn" title="Start the selection at ${at}" aria-label="Start selection at ${at}">Start</button>` +
-        `<button type="button" class="script-mark-btn script-end-btn" title="End the selection at ${formatTime(cue.end)}" aria-label="End selection at ${formatTime(cue.end)}">End</button>` +
+        `<button type="button" class="script-mark-btn script-start-btn" tabindex="-1" title="Start the selection at ${at} (S)" aria-label="Start selection at ${at}">Start</button>` +
+        `<button type="button" class="script-mark-btn script-end-btn" tabindex="-1" title="End the selection at ${formatTime(cue.end)} (E)" aria-label="End selection at ${formatTime(cue.end)}">End</button>` +
       `</span>`;
     row.onclick = () => scriptLineClick(i);
-    makeActivatable(row, SCRIPT_LINE_TITLE);
     row.querySelector(".script-start-btn").onclick = (e) => { e.stopPropagation(); setClipInAt(i); };
     row.querySelector(".script-end-btn").onclick = (e) => { e.stopPropagation(); setClipOutAt(i); };
     frag.appendChild(row);
@@ -2239,6 +2292,39 @@ function cueAtOrBefore(t) {
   return found;
 }
 
+/** Move the script's single tab stop to line `idx` (and focus it when asked). */
+function scriptTabStop(idx, focus) {
+  const list = $("script-list");
+  const row = list.children[idx];
+  const play = row && row.querySelector(".script-play");
+  if (!play) return;
+  list.querySelectorAll('.script-play[tabindex="0"]').forEach((b) => { if (b !== play) b.tabIndex = -1; });
+  play.tabIndex = 0;
+  if (focus) { play.focus(); row.scrollIntoView({ block: "nearest" }); }
+}
+
+// The script is one tab stop: ↑ ↓ (Page Up/Down, Home/End) move between lines, Enter plays
+// from the focused line, S and E set the selection's start and end on it.
+$("script-list").addEventListener("keydown", (e) => {
+  const row = e.target.closest(".script-line");
+  if (!row || e.ctrlKey || e.metaKey || e.altKey) return;
+  const i = parseInt(row.dataset.idx, 10);
+  const last = scriptCues.length - 1;
+  const moves = { ArrowDown: i + 1, ArrowUp: i - 1, PageDown: i + 10, PageUp: i - 10, Home: 0, End: last };
+  if (e.key in moves) {
+    e.preventDefault();
+    scriptTabStop(Math.max(0, Math.min(last, moves[e.key])), true);
+  } else if (e.key === "s" || e.key === "S") {
+    e.preventDefault(); setClipInAt(i);
+  } else if (e.key === "e" || e.key === "E") {
+    e.preventDefault(); setClipOutAt(i);
+  }
+});
+$("script-list").addEventListener("focusin", (e) => {
+  const row = e.target.closest(".script-line");
+  if (row && e.target.classList.contains("script-play")) scriptTabStop(parseInt(row.dataset.idx, 10), false);
+});
+
 /** Index of the cue whose `edge` ("start"|"end") time is nearest to `t`. */
 function nearestCueIndex(t, edge) {
   let best = -1, bestDelta = Infinity;
@@ -2260,6 +2346,7 @@ function selectCueRange(start, end) {
   clipFirst = first;
   clipLast = last;
   updateClipUI();  // sets the range, clears any match, highlights cues yellow
+  scriptTabStop(first, false);  // Tab into the script lands on the selection
   // Center the selection in the script panel.
   const list = $("script-list");
   const row = list.children[first];
@@ -2310,12 +2397,13 @@ function updateScript() {
 
   const list = $("script-list");
   const prev = list.querySelector(".script-line.active");
-  if (prev) prev.classList.remove("active");
+  if (prev) { prev.classList.remove("active"); prev.firstElementChild?.removeAttribute("aria-current"); }
 
   if (idx >= 0) {
     const row = list.children[idx];
     if (row) {
       row.classList.add("active");
+      row.firstElementChild?.setAttribute("aria-current", "time");
       if (scriptAutoScroll && $("script-follow").checked) {
         scriptProgScroll = true;
         const listRect = list.getBoundingClientRect();
@@ -2337,6 +2425,10 @@ function updateScriptHighlight() {
     const row = list.children[i];
     if (!row) continue;
     const inRange = hasClipRange() && i >= clipFirst && i <= clipLast;
+    if (row.classList.contains("in-range") !== inRange) {
+      const play = row.firstElementChild;
+      if (play) play.setAttribute("aria-label", play.dataset.name + (inRange ? ", selected" : ""));
+    }
     row.classList.toggle("in-range", inRange);
     row.classList.toggle("range-first", i === clipFirst && hasClipRange());
     row.classList.toggle("range-last", i === clipLast && hasClipRange());
@@ -2354,6 +2446,7 @@ function showTab(name) {
     const on = tab === name;
     $(pane).hidden = !on;
     $("tab-" + tab).setAttribute("aria-selected", String(on));
+    $("tab-" + tab).tabIndex = on ? 0 : -1;  // the tab list is one tab stop; arrows move in it
   }
   if (name === "script") keepSelectionInView();
 }
@@ -2455,8 +2548,45 @@ function updateMapSelection() {
 function updateMapPlayhead() {
   const dur = mapDuration();
   if ($("dialogue-map").hidden || !dur) return;
-  $("dialogue-map-head").style.setProperty("--f", String(Math.max(0, Math.min(1, playerTime() / dur))));
+  const t = mapPending ?? playerTime();
+  $("dialogue-map-head").style.setProperty("--f", String(Math.max(0, Math.min(1, t / dur))));
+  setSliderValue($("dialogue-map"), t, dur);
 }
+
+/** A seek slider's value for assistive technology: whole seconds, "3:42 of 1:19:16". */
+function setSliderValue(node, t, dur) {
+  const now = String(Math.round(Math.max(0, Math.min(dur, t))));
+  if (node.getAttribute("aria-valuenow") === now && node.getAttribute("aria-valuemax") === String(Math.round(dur))) return;
+  node.setAttribute("aria-valuemax", String(Math.round(dur)));
+  node.setAttribute("aria-valuenow", now);
+  node.setAttribute("aria-valuetext", `${formatTimeWhole(+now)} of ${formatTimeWhole(dur)}`);
+}
+
+/** Arrow-key seeking: ← → step 1 s, Shift 10 s, Page Up/Down 1 min, Home/End the ends. */
+function seekKeyStep(e, lo, hi) {
+  const big = e.shiftKey ? 10 : 1;
+  const d = { ArrowRight: big, ArrowUp: big, ArrowLeft: -big, ArrowDown: -big, PageUp: 60, PageDown: -60 }[e.key];
+  if (d !== undefined) return { delta: d };
+  if (e.key === "Home") return { to: lo };
+  if (e.key === "End") return { to: hi };
+  return null;
+}
+
+// The map's keyboard seeks land after a short pause, so holding an arrow key doesn't reload a
+// transcode once per step.
+let mapPending = null;
+let mapSeekTimer = null;
+$("dialogue-map").addEventListener("keydown", (e) => {
+  const dur = mapDuration();
+  const step = dur && seekKeyStep(e, 0, dur);
+  if (!step) return;
+  e.preventDefault();
+  const from = mapPending ?? playerTime();
+  mapPending = Math.max(0, Math.min(dur, step.to ?? from + step.delta));
+  updateMapPlayhead();
+  clearTimeout(mapSeekTimer);
+  mapSeekTimer = setTimeout(() => { const t = mapPending; mapPending = null; seekTo(t); }, 300);
+});
 
 $("dialogue-map").addEventListener("click", (e) => {
   const dur = mapDuration();
@@ -2873,11 +3003,14 @@ async function browseClips(folder) {
   for (const f of data.folders) {
     const li = document.createElement("li");
     li.className = "entry dir";
-    li.dataset.action = "clips.list";
-    li.innerHTML = `<span class="icon-wrap">${iconSvg("folder")}</span><span class="label">${escapeHtml(f)}</span>` +
-      `<span class="chips"></span><span class="go">${iconSvg("chevron-r")}</span>`;
-    li.onclick = () => browseClips(f);
-    makeActivatable(li, "Open this folder of clips", "link");
+    const main = el("button", {
+      className: "entry-main", title: "Open this folder of clips",
+      html: `<span class="icon-wrap">${iconSvg("folder")}</span><span class="label">${escapeHtml(f)}</span>` +
+        `<span class="chips"></span><span class="go">${iconSvg("chevron-r")}</span>`,
+    });
+    main.dataset.action = "clips.list";
+    main.onclick = () => browseClips(f);
+    li.appendChild(main);
     list.appendChild(li);
   }
 
@@ -2890,7 +3023,7 @@ async function browseClips(folder) {
     li.innerHTML =
       `<input type="checkbox" class="entry-select clip-select" title="Select for Export selected" aria-label="Select ${escapeHtml(c.name)}" />` +
       `<span class="icon-wrap">${iconSvg(/\.(flac|wav|mp3|m4a|opus|ogg|aac)$/i.test(c.name) ? "music" : "film")}</span>` +
-      `<span class="label clip-name">${escapeHtml(c.name)}</span>` +
+      `<button type="button" class="label clip-name clip-open" title="Open this clip in the workspace to re-cut it">${escapeHtml(c.name)}</button>` +
       `<span class="chips"><span class="badge">${size}</span></span>` +
       (appConfig.public_url
         ? `<button type="button" class="btn clip-ls" data-action="leadstinger.link" title="Send to LeadStinger: this clip in a new tile" aria-label="Send ${escapeHtml(c.name)} to LeadStinger"><svg class="icon" aria-hidden="true"><use href="#i-leadstinger"/></svg></button>`
@@ -2910,8 +3043,9 @@ async function browseClips(folder) {
       };
     }
     cb.onclick = (e) => { e.stopPropagation(); updateBatchState("clips"); };
+    // A click anywhere on the row opens the clip; the name is the button that does it by keyboard.
     li.onclick = (e) => {
-      if (e.target.closest("a")) return; // let download link work normally
+      if (e.target.closest("a, input, .clip-ls")) return; // let the row's own controls work
       openItem(c.path, c.name, { selectWholeClip: true });
     };
     list.appendChild(li);
@@ -3537,22 +3671,33 @@ function updateScopeUI() {
   }
 }
 
-function toggleScopeMenu(open) {
+function toggleScopeMenu(open, restore) {
   const menu = $("scope-menu");
   const show = open === undefined ? menu.hidden : open;
+  const wasOpen = !menu.hidden;
   menu.hidden = !show;
   $("search-scope").setAttribute("aria-expanded", String(show));
   if (show) (menu.querySelector('[aria-checked="true"]:not(:disabled)') || menu.querySelector("button:not(:disabled)"))?.focus();
+  else if (wasOpen && (restore || menu.contains(document.activeElement))) $("search-scope").focus();
 }
 
 $("search-scope").onclick = (e) => { e.stopPropagation(); toggleJobs(false); toggleScopeMenu(); };
-$("scope-menu").addEventListener("keydown", (e) => {
+// ↓ / ↑ on the chip open the menu, as on a menu button.
+$("search-scope").addEventListener("keydown", (e) => {
   if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+  e.preventDefault();
+  toggleScopeMenu(true);
+});
+// In the menu: ↑ ↓ Home End move, Esc closes (back to the chip), Tab closes and moves on.
+$("scope-menu").addEventListener("keydown", (e) => {
+  if (e.key === "Tab") { toggleScopeMenu(false); return; }
   const items = [...$("scope-menu").querySelectorAll("button:not(:disabled)")]
     .filter((b) => !b.closest("[hidden]"));
   const i = items.indexOf(document.activeElement);
+  const next = { ArrowDown: i + 1, ArrowUp: i - 1, Home: 0, End: items.length - 1 }[e.key];
+  if (next === undefined) return;
   e.preventDefault();
-  items[(i + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length].focus();
+  items[(next + items.length) % items.length].focus();
 });
 $("scope-menu").addEventListener("click", (e) => {
   const b = e.target.closest("button[data-scope]");
@@ -3604,7 +3749,7 @@ $("global-search").addEventListener("submit", (e) => { e.preventDefault(); runGl
 
 // "/" jumps to the search box from anywhere that isn't a text field.
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") { toggleScopeMenu(false); toggleJobs(false); toggleSettings(false); return; }
+  if (e.key === "Escape") { toggleScopeMenu(false, true); toggleJobs(false, true); toggleSettings(false, true); return; }
   if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey) return;
   const t = e.target;
   if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
@@ -3719,13 +3864,32 @@ function fmtSize(n) {
   return n > 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB";
 }
 
+// Each job's last-seen status, so a job that finishes (or fails) is announced once.
+const jobSeen = new Map();
+let jobsPrimed = false;     // the first poll only learns what's already there
+const pageOpened = Date.now() / 1000;
+
 async function refreshJobs() {
   try {
     lastJobs = (await getJSON("/api/jobs")).jobs || [];
     jobsFailures = 0;
   } catch { jobsFailures++; return; }
+  for (const j of lastJobs) {
+    const prev = jobSeen.get(j.id);
+    const ended = !jobActive(j) && (prev ? jobActive({ status: prev }) : j.created >= pageOpened);
+    if (jobsPrimed && ended && prev !== j.status) announceJob(j);
+    jobSeen.set(j.id, j.status);
+  }
+  jobsPrimed = true;
   renderJobsPill();
   if (jobsOpen) renderJobsList();
+}
+
+function announceJob(j) {
+  const what = j.label || "job";
+  if (j.status === "done") announce(`Finished: ${what}`);
+  else if (j.status === "failed") announce(`Failed: ${what}. ${j.error || ""}`.trim());
+  else if (j.status === "cancelled") announce(`Cancelled: ${what}`);
 }
 
 function renderJobsPill() {
@@ -3737,12 +3901,16 @@ function renderJobsPill() {
 
 function renderJobsList() {
   const list = $("jobs-list");
+  // The list re-renders every poll while open: put focus back on the same control after.
+  const had = list.contains(document.activeElement) ? document.activeElement : null;
+  const keep = had && { id: had.closest(".job-row")?.dataset.jobId, cls: had.classList.contains("job-act") ? "job-act" : "job-file" };
   list.innerHTML = "";
   $("jobs-empty").hidden = lastJobs.length > 0;
   $("jobs-clear").hidden = !lastJobs.some((j) => !jobActive(j));
   for (const j of lastJobs) {
     const li = document.createElement("li");
     li.className = `job-row job-state-${j.status}`;
+    li.dataset.jobId = j.id;
     let sub;
     if (j.status === "queued") sub = "Queued";
     else if (j.status === "running") {
@@ -3769,17 +3937,53 @@ function renderJobsList() {
     };
     list.appendChild(li);
   }
+  if (keep) {
+    const again = [...list.children].find((r) => r.dataset.jobId === keep.id)?.querySelector("." + keep.cls);
+    (again || $("jobs-popover")).focus();
+  }
 }
 
-function toggleJobs(open) {
+function toggleJobs(open, restore) {
   const pop = $("jobs-popover");
   const show = open === undefined ? pop.hidden : open;
+  const was = !pop.hidden;
   jobsOpen = show;
-  pop.hidden = !show;
-  $("jobs-pill").setAttribute("aria-expanded", String(show));
-  if (show) { toggleScopeMenu(false); toggleSettings(false); renderJobsList(); refreshJobs(); }
+  setPopover(pop, $("jobs-pill"), show, restore);
+  if (show && !was) { toggleScopeMenu(false); toggleSettings(false); renderJobsList(); refreshJobs(); focusFirstIn(pop); }
   scheduleJobs();
 }
+
+// --- popovers (Jobs, Settings): focus moves in, Tab stays in, Esc closes and returns focus --
+
+const FOCUSABLE = 'button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), [tabindex="0"]';
+const focusables = (root) => [...root.querySelectorAll(FOCUSABLE)].filter((n) => !n.closest("[hidden]") && n.offsetParent !== null);
+
+function focusFirstIn(pop) {
+  const first = focusables(pop)[0];
+  (first || pop).focus();
+}
+
+/** Show or hide a popover from its button. Hiding it returns focus to the button when focus
+ *  was inside (or `restore` asks, as Esc does), not when a click elsewhere closed it. */
+function setPopover(pop, btn, show, restore) {
+  const wasOpen = !pop.hidden;
+  pop.hidden = !show;
+  btn.setAttribute("aria-expanded", String(show));
+  if (!show && wasOpen && (restore || pop.contains(document.activeElement))) btn.focus();
+}
+
+function trapTab(pop) {
+  pop.addEventListener("keydown", (e) => {
+    if (e.key !== "Tab") return;
+    const items = focusables(pop);
+    if (!items.length) { e.preventDefault(); return; }
+    const first = items[0], last = items[items.length - 1];
+    if (e.shiftKey && (document.activeElement === first || document.activeElement === pop)) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  });
+}
+trapTab($("jobs-popover"));
+trapTab($("settings-popover"));
 $("jobs-pill").onclick = (e) => { e.stopPropagation(); toggleJobs(); };
 
 // --- Settings popover: appearance and subtitle languages ----------------------
@@ -3800,9 +4004,27 @@ function applyTheme(choice) {
   if (choice === "light" || choice === "dark") document.documentElement.dataset.theme = choice;
   else delete document.documentElement.dataset.theme;
   for (const b of $("theme-seg").querySelectorAll("button")) {
-    b.setAttribute("aria-checked", String(b.dataset.themeChoice === choice));
+    const on = b.dataset.themeChoice === choice;
+    b.setAttribute("aria-checked", String(on));
+    b.tabIndex = on ? 0 : -1;
   }
 }
+
+/** Arrow keys move the choice in a role=radiogroup of buttons, as in the ARIA radio pattern. */
+function radioArrows(group) {
+  group.addEventListener("keydown", (e) => {
+    const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+    if (!step) return;
+    const radios = [...group.querySelectorAll('[role="radio"]')];
+    const i = radios.indexOf(document.activeElement);
+    if (i < 0) return;
+    e.preventDefault();
+    const next = radios[(i + step + radios.length) % radios.length];
+    next.focus();
+    next.click();
+  });
+}
+radioArrows($("theme-seg"));
 
 $("theme-seg").addEventListener("click", (e) => {
   const b = e.target.closest("button[data-theme-choice]");
@@ -3816,12 +4038,16 @@ $("theme-seg").addEventListener("click", (e) => {
 });
 applyTheme(currentThemeChoice());
 
-function toggleSettings(open) {
+function toggleSettings(open, restore) {
   const pop = $("settings-popover");
   const show = open === undefined ? pop.hidden : open;
-  pop.hidden = !show;
-  $("settings-btn").setAttribute("aria-expanded", String(show));
-  if (show) { toggleScopeMenu(false); toggleJobs(false); }
+  const was = !pop.hidden;
+  setPopover(pop, $("settings-btn"), show, restore);
+  if (show && !was) {
+    toggleScopeMenu(false); toggleJobs(false);
+    // Into the appearance choice (its checked option is the group's tab stop).
+    (pop.querySelector('[role="radio"][aria-checked="true"]') || pop).focus();
+  }
 }
 $("settings-btn").onclick = (e) => { e.stopPropagation(); toggleSettings(); };
 $("jobs-clear").onclick = async () => {
@@ -3875,6 +4101,34 @@ async function loadStatus() {
     renderRootsRail(currentBrowsePath);
   } catch {}
 }
+
+// The skip link goes to whatever the page is showing: the workspace, the results, the list.
+function skipTarget() {
+  if (currentView === "item") return [$("item-name"), "Skip to the workspace"];
+  if (currentView === "clips") return [$("clips-title"), "Skip to the clips"];
+  if (currentView === "bookmarks") return [$("bm-title"), "Skip to the bookmarks"];
+  if ($("browser").classList.contains("hits")) return [$("entries"), "Skip to the results"];
+  return [$("entries"), "Skip to the library"];
+}
+$("skip-link").addEventListener("focus", () => { $("skip-link").textContent = skipTarget()[1]; });
+$("skip-link").addEventListener("click", (e) => {
+  e.preventDefault();
+  const [target] = skipTarget();
+  target.focus();
+  target.scrollIntoView({ block: "start" });
+});
+
+// Space or K plays and pauses in the workspace, unless focus is on something Space operates.
+document.addEventListener("keydown", (e) => {
+  if (currentView !== "item" || !pb || e.ctrlKey || e.metaKey || e.altKey) return;
+  const t = e.target;
+  if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+  const onControl = t && t.closest && t.closest('button, a[href], summary, video, [role="button"], [role="slider"], [role="tab"]');
+  if (e.key === "k" || e.key === "K" || (e.key === " " && !onControl)) {
+    e.preventDefault();
+    pb.toggle();
+  }
+});
 
 $("back").onclick = () => browse(currentParent());
 $("home-link").onclick = () => browse(null);
