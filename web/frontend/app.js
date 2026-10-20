@@ -197,7 +197,17 @@ let librarySearchId = 0;  // generation token so a slow search can't overwrite a
 // search can span all of them. null = search the current folder only.
 let dialogueSearchScope = null;
 
+/** A control that a view switch or a re-render removes or hides takes keyboard focus with it,
+ *  to <body>, and the next Tab starts from nowhere useful. Put focus on `target` instead,
+ *  unless `had` (what was focused before) is still on screen. */
+function refocus(had, target) {
+  if (!had || had === document.body || !target) return;
+  if (had.isConnected && had.offsetParent !== null) return;
+  target.focus();
+}
+
 async function browse(path) {
+  const had = document.activeElement;
   showBrowser();
   currentBrowsePath = path;
   dialogueSearchScope = null;
@@ -238,6 +248,11 @@ async function browse(path) {
   renderBreadcrumb(path);
   renderRootsRail(path);
   renderEntries(data.entries);
+  if (had && had !== document.body && !(had.isConnected && had.offsetParent !== null)) {
+    const here = path === "yt:" ? "YouTube" : path ? path.split("/").pop() : "Library";
+    announce(`${here}, ${data.entries.length} item${data.entries.length === 1 ? "" : "s"}`);
+  }
+  refocus(had, $("entries").querySelector(".entry-main") || $("entries"));
   autoScope();
   if (!isYtFolder) checkFolderIndex(path);  // index-status is for real folders
 }
@@ -1215,6 +1230,7 @@ function cleanItemName(path, fileName) {
 
 async function openItem(path, name, opts) {
   const { searchQuery, seekTo: seekTarget, selectWholeClip, markRange } = opts || {};
+  const had = document.activeElement;
   showItem();
   // A dialogue-search match to auto-select in Marks once the script loads.
   pendingCueSelect = markRange || null;
@@ -1229,6 +1245,7 @@ async function openItem(path, name, opts) {
   const signal = itemListeners.signal;
   $("item-name").textContent = cleanItemName(path, name);
   $("item-filename").textContent = name;
+  refocus(had, $("item-name"));  // a keyboard user lands on the workspace's title
   $("stream-selector").hidden = true;
   $("preview-note").textContent = "";
   $("global-search-input").value = searchQuery || "";
@@ -2604,6 +2621,7 @@ $("dialogue-map").addEventListener("mousemove", (e) => {
 
 async function loadBookmarks() {
   if (!currentItem) return;
+  const had = document.activeElement;
   const item = currentItem;  // guard against an item switch during the fetch
   const list = $("bookmarks-list");
   const empty = $("bookmarks-empty");
@@ -2622,6 +2640,7 @@ async function loadBookmarks() {
   setTabCount("bookmarks", data.bookmarks.length);
   if (!data.bookmarks.length) {
     empty.hidden = false;
+    refocus(had, $("tab-bookmarks"));
     return;
   }
   empty.hidden = true;
@@ -2651,6 +2670,7 @@ async function loadBookmarks() {
     };
     list.appendChild(li);
   }
+  refocus(had, list.querySelector("button") || $("tab-bookmarks"));
 }
 
 /** Buffered [start, end] of a bookmark (cue range ± its saved before/after). */
@@ -2969,6 +2989,7 @@ function showClips() {
 let currentClipsFolder = null;
 
 async function browseClips(folder) {
+  const had = document.activeElement;
   showClips();
   currentClipsFolder = folder;
   const list = $("clips-entries");
@@ -2993,6 +3014,7 @@ async function browseClips(folder) {
 
   if (!data.folders.length && !data.clips.length) {
     empty.hidden = false;
+    refocus(had, $("clips-title"));
     return;
   }
 
@@ -3053,6 +3075,7 @@ async function browseClips(folder) {
 
   // Batch export bar only when there are clips to select.
   if (data.clips.length) $("clips-batch").hidden = false;
+  refocus(had, list.querySelector(".entry-main, .clip-open") || $("clips-title"));
 }
 
 $("clips-link").onclick = () => browseClips(null);
@@ -3071,6 +3094,7 @@ function showBookmarksBrowser() {
 }
 
 async function browseBookmarks() {
+  const had = document.activeElement;
   showBookmarksBrowser();
   const list = $("all-bookmarks-list");
   const empty = $("all-bookmarks-empty");
@@ -3091,6 +3115,7 @@ async function browseBookmarks() {
 
   if (!data.bookmarks.length) {
     empty.hidden = false;
+    refocus(had, $("bm-title"));
     return;
   }
   $("bm-batch").hidden = false;
@@ -3164,6 +3189,7 @@ async function browseBookmarks() {
       list.appendChild(li);
     }
   }
+  refocus(had, $("bm-title"));
 }
 
 // When navigating from bookmarks browser to an item with "Clip", we need to
@@ -3809,6 +3835,8 @@ async function refreshNowPlaying() {
 function renderNowPlaying() {
   const list = $("nowplaying-list");
   const status = $("nowplaying-status");
+  // It re-renders every poll: keep keyboard focus on the same row's Open button.
+  const hadIdx = [...list.querySelectorAll("button")].indexOf(document.activeElement);
   list.innerHTML = "";
   status.hidden = nowPlayingSessions.length > 0;
   status.textContent = "Nothing is playing on Jellyfin.";
@@ -3828,6 +3856,10 @@ function renderNowPlaying() {
     const open = li.querySelector("button");
     if (open) open.onclick = () => openNowPlaying(s);
     list.appendChild(li);
+  }
+  if (hadIdx >= 0) {
+    const buttons = list.querySelectorAll("button");
+    (buttons[Math.min(hadIdx, buttons.length - 1)] || $("library-search")).focus();
   }
 }
 

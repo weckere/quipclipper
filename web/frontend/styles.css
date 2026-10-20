@@ -260,7 +260,7 @@ select {
   padding: 0.85rem 1.1rem;
 }
 .index-main { flex: 1 1 18rem; min-width: 0; }
-.index-card h3 { margin: 0; font-size: 0.95rem; font-weight: 600; }
+.index-card h2, .index-card h3 { margin: 0; font-size: 0.95rem; font-weight: 600; }
 .index-card p { margin: 0.15rem 0 0; font-size: 0.85rem; }
 .index-bar { height: 6px; margin-top: 0.55rem; max-width: 26rem; background: var(--raised); border-radius: 3px; overflow: hidden; }
 .index-bar span { display: block; height: 100%; width: 0; background: var(--accent); border-radius: 3px; transition: width 0.2s; }
