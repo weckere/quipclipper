@@ -1148,7 +1148,10 @@ def _leadstinger_items(rows: list[dict], default_path: Optional[str]) -> list[di
         if not path:
             raise CliError("a row has no path; pass --path for search.item results",
                            code="usage", exit_code=EXIT_USAGE)
-        title = (row.get("label") or row.get("cue") or row.get("text")
+        label = (row.get("label") or "").strip()
+        cue = (row.get("cue") or row.get("text") or "").strip()
+        # A bookmark's default label is "<times> — <cue>": the line alone reads better.
+        title = (cue if cue and (not label or label.endswith(cue)) else label or cue
                  or Path(row.get("name") or path).stem)
         item = {"path": path, "title": str(title)[:200]}
         if "start" in row:  # a search hit or a bookmark; a clips entry is the whole file

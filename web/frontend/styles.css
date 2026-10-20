@@ -214,6 +214,11 @@ select {
    (the extra .batch-bar selector outranks .clip-btn's accent background). */
 .batch-bar .batch-bookmark-btn { background: var(--raised); color: var(--text); border: 1px solid var(--line-strong); }
 .batch-bar .batch-bookmark-btn:hover:not(:disabled) { border-color: var(--accent-text); }
+.batch-bar .batch-ls-btn {
+  background: var(--raised); color: var(--text); border: 1px solid var(--line-strong);
+  padding: 0.35rem 0.9rem; font-size: 0.85rem;
+}
+.batch-bar .batch-ls-btn:hover:not(:disabled) { border-color: var(--accent-text); }
 
 /* ---- library: roots rail, folder list, Dialogue index card --------------------------------- */
 .library-layout { display: grid; grid-template-columns: 13rem minmax(0, 1fr); gap: 0 1.75rem; align-items: start; }

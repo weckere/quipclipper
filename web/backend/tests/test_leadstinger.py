@@ -198,11 +198,14 @@ def test_cli_turns_hits_bookmarks_and_clips_into_items():
         {"path": "/m/a.mkv", "start": 1.0, "end": 2.0, "text": "Hit line"},
         {"path": "/m/b.mkv", "start": 3.0, "end": 4.0, "label": "Saved", "cue": "Cue"},
         {"name": "00-01_x.mka", "path": "/clips/a/00-01_x.mka", "size": 10},
+        # A bookmark's default label is "<times> — <cue>": the tile gets the line alone.
+        {"path": "/m/c.mkv", "start": 5.0, "end": 6.0, "label": "44:01 – 44:04 — Hi.", "cue": "Hi."},
     ]
     assert _leadstinger_items(rows, None) == [
         {"path": "/m/a.mkv", "title": "Hit line", "start": 1.0, "end": 2.0},
         {"path": "/m/b.mkv", "title": "Saved", "start": 3.0, "end": 4.0},
         {"path": "/clips/a/00-01_x.mka", "title": "00-01_x"},
+        {"path": "/m/c.mkv", "title": "Hi.", "start": 5.0, "end": 6.0},
     ]
 
 

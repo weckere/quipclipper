@@ -3294,6 +3294,14 @@ $("ls-form").onsubmit = async (e) => {
   tick();
 };
 
+/** A tile title: the bookmark's own label, unless it is just "<times> — <cue>". */
+function lsTitle(label, cue) {
+  label = (label || "").trim();
+  cue = (cue || "").trim();
+  if (cue && (!label || label.endsWith(cue))) return cue;
+  return label || cue || undefined;
+}
+
 /** A batch bar's checked rows as /api/leadstinger/set items. */
 function lsItemsFrom(prefix) {
   return batchBoxes(prefix, true).map((cb) => {
@@ -3303,7 +3311,7 @@ function lsItemsFrom(prefix) {
     }
     return {
       path: d.path, start: parseFloat(d.start), end: parseFloat(d.end),
-      title: (d.label || d.cue || "").trim() || undefined,
+      title: lsTitle(d.label, d.cue),
     };
   });
 }
