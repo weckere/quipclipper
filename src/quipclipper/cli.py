@@ -28,10 +28,14 @@ import tempfile
 import time
 import zipfile
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, List, Literal, Optional
 
-import click
 import typer
+
+try:  # typer >= 0.27 bundles its own click and no longer installs one
+    from typer import _click as click
+except ImportError:  # older typer sits on the real click
+    import click
 
 from quipclipper import commands as reg
 from quipclipper.client import (
@@ -1447,6 +1451,8 @@ def _decls(p: reg.Param) -> list[str]:
 
 def _annotation(p: reg.Param):
     base = {"str": str, "int": int, "float": float, "bool": bool}.get(p.type, str)
+    if p.choices:
+        base = Literal[tuple(p.choices)]  # typer renders it as a click Choice
     if p.type.startswith("list["):
         return Optional[List[str]]
     if p.type == "bool" and p.default is not None:
@@ -1455,12 +1461,10 @@ def _annotation(p: reg.Param):
 
 
 def _typer_default(p: reg.Param):
-    click_type = click.Choice(list(p.choices)) if p.choices else None
     if p.main:
         default = ... if p.required else p.default
-        return typer.Argument(default, help=p.help, click_type=click_type,
-                              show_default=False)
-    return typer.Option(p.default, *_decls(p), help=p.help, click_type=click_type,
+        return typer.Argument(default, help=p.help, show_default=False)
+    return typer.Option(p.default, *_decls(p), help=p.help,
                         show_default=p.default not in (None, "", False))
 
 
@@ -1587,8 +1591,6 @@ def main(argv: Optional[list[str]] = None, transport: Optional[Transport] = None
         # With standalone_mode off, click returns a typer.Exit's code instead of exiting.
         return rv if isinstance(rv, int) else 0
     except typer.Exit as exc:
-        return exc.exit_code
-    except click.exceptions.Exit as exc:
         return exc.exit_code
     except click.ClickException as exc:
         exc.show()

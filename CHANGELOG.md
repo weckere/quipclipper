@@ -10,6 +10,11 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 
 ## [Unreleased]
 
+### Fixed
+
+- The CLI works with typer 0.27, which bundles its own click and no longer installs one;
+  `typer>=0.24` replaces the `<0.27` pin (and the direct `click` dependency).
+
 ## [0.1.1] - 2026-10-19
 
 ### CLI parity (M9)
