@@ -15,7 +15,7 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 - Every action in the web app is a CLI command: 36 commands named `<area>.<action>`
   (`library.browse`, `search.folder`, `bookmark.add`, `clip.batch`, …) built from one command
   registry, with shortcuts for the common ones (`ls`, `search`, `clip`, `tracks`, `jobs`,
-  `status`). See [docs/CLI.md](docs/CLI.md), generated from the registry.
+  `status`). See [docs/CLI.md](https://github.com/weckere/quipclipper/blob/main/docs/CLI.md), generated from the registry.
 - Commands drive a quipclipper server over the HTTP API (`--server` or `QC_URL`, token from
   `QC_API_TOKEN[_FILE]`); `search`, `clip`, `tracks` and `status` still work on local files
   without one. Jobs are followed to completion (`--no-wait`, `--out-dir`), `--json` gives
@@ -121,7 +121,7 @@ The first version, before releases were tagged. Highlights:
   transcode when the browser can't play the source (HLS on iOS and desktop).
 - **YouTube sources:** add a video by URL, search and clip it, optional official player,
   full-video download and subtitle backfill (via yt-dlp).
-- **HTTP API** with token auth for scripts and agents ([docs/API.md](docs/API.md)), a CSRF
+- **HTTP API** with token auth for scripts and agents ([docs/API.md](https://github.com/weckere/quipclipper/blob/main/docs/API.md)), a CSRF
   guard, and an optional password gate.
 - **Deployment:** a Nix flake and NixOS module (with a VM test), and Docker images on GHCR.
 
