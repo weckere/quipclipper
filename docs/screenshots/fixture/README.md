@@ -48,5 +48,5 @@ are a few Borg lines for dialogue search to find.
      --output "docs/screenshots/$(basename "$f")" "$f"; done
    ```
 
-   The search shot is cropped to 1600 × 850 (`ffmpeg -vf crop=1600:850:0:0`).
+   The search shot is cropped to 1600 × 850 (above the footer) (`ffmpeg -vf crop=1600:850:0:0`).
    Look at every image before committing it.

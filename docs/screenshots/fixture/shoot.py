@@ -66,7 +66,7 @@ async def main():
             await page.click("#index-btn")
             await page.wait_for_function("!document.getElementById('index-btn') || document.getElementById('index-btn').hidden || /indexed/i.test(document.getElementById('index-card-text').textContent)", timeout=60000)
             await settle(page, 1500)
-        await shot(page, "library", clip={"x": 0, "y": 0, "width": 1600, "height": 470})
+        await shot(page, "library", clip={"x": 0, "y": 0, "width": 1600, "height": 425})
 
         # Dialogue search over the whole library (from a folder, so the Now
         # playing card is out of the way), tick two hits, preview the first.
