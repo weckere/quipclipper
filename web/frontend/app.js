@@ -3667,7 +3667,7 @@ function updateScopeUI() {
   for (const b of $("scope-menu").querySelectorAll("button")) {
     const s = b.dataset.scope;
     b.disabled = (s === "item" && !inItem) || (s === "folder" && !folderForSearch() && !dialogueSearchScope);
-    b.setAttribute("aria-checked", String(s === searchScope));
+    if (b.getAttribute("role") === "menuitemradio") b.setAttribute("aria-checked", String(s === searchScope));
   }
 }
 
@@ -3823,7 +3823,8 @@ function renderNowPlaying() {
       (s.path ? "" : `<span class="muted">${escapeHtml(s.note || "")}</span>`) +
       `</div>` +
       (s.path ? `<button type="button" class="btn primary" data-action="clip.nowplaying"` +
-        ` title="Open in the workspace at ${at}, with the line just heard selected">Open at ${at}</button>` : "");
+        ` title="Open in the workspace at ${at}, with the line just heard selected"` +
+        ` aria-label="Open ${escapeHtml(nowPlayingTitle(s))} at ${at}">Open at ${at}</button>` : "");
     const open = li.querySelector("button");
     if (open) open.onclick = () => openNowPlaying(s);
     list.appendChild(li);
