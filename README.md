@@ -124,6 +124,15 @@ a quipclipper server or, for search and clip, on local files. See
   (the subfolder) and `{title}` is the cleaned parent-folder/series name, so a
   dialogue-search clip lands at e.g.
   `The.Sandlot.1993.1080p/00-27-58_Youre_killing_me_Smalls_The_Sandlot_1993.mkv`.
+- **Keyboard, screen readers and low vision** — every control has hover text
+  and a name a screen reader can say (aiming at WCAG 2.2 AA). A skip link jumps
+  past the top bar; `/` goes to the search box; in the workspace Space or K play
+  and pause, the script is one tab stop (↑ ↓ move, Enter plays, **S** / **E** set
+  the selection's start and end), and the dialogue map and seek bar take the
+  arrow keys (1 s, Shift 10 s). Finished and failed jobs are announced. Settings
+  has a subtitle size (Normal, Large, Extra large) and a solid background for
+  the video's subtitles; both themes meet AA contrast, with a stronger palette
+  under `prefers-contrast: more`, and the pages reflow down to 320 px wide.
 - **HTTP API for agents & scripts** — everything the UI does is a plain
   HTTP+JSON API, designed so self-hosters can drive quipclipper
   programmatically: browse the library, search dialogue, cut clips, and
