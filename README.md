@@ -1,907 +1,228 @@
 # quipclipper
 
-Find and cut audio/video clips from your movie & TV library by **searching the
-subtitle dialogue** — from any browser.
+[![CI](https://github.com/weckere/quipclipper/actions/workflows/ci.yml/badge.svg?branch=dev)](https://github.com/weckere/quipclipper/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/weckere/quipclipper)](https://github.com/weckere/quipclipper/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-Subtitles already carry precise timestamps, so the whole trick is: parse the
-subtitles → fuzzy-search the line you remember → map the match back to its time
-span → cut it out with ffmpeg. quipclipper is a **self-hosted web app**: point it
-at your media folders, browse to a video (or search dialogue across a whole
-folder), type the line you remember, and cut a lossless clip — all in the
-browser. It works on **YouTube videos** too: paste a URL and quipclipper (via
-[yt-dlp](https://github.com/yt-dlp/yt-dlp)) fetches the transcript so you can
-search, bookmark, and clip them the same way — see
-[YouTube sources](#youtube-sources-experimental).
+**Find a moment in your movies and shows by its dialogue, and cut it.** Type the line you
+remember; quipclipper finds it in the subtitles, shows it on the script, and cuts the clip
+(losslessly when it can) from any browser or the command line.
 
-> [!NOTE]
-> **Audio-only support (podcasts, audiobooks) is experimental.** The video
-> workflow is the stable, primary path; the audio-only features below — listing,
-> playback, transcript/JSON parsing, speaker attribution, and clipping for
-> podcasts and audiobooks — are newer and still being shaken out, so expect rough
-> edges.
->
-> **EPUB3 audiobooks are more experimental still.** quipclipper can search and
-> clip a synced **EPUB3 Media Overlay** book — text + narration in one file, e.g.
-> [Storyteller](https://gitlab.com/storyteller-platform/storyteller) output —
-> cutting a matched line straight out of the embedded audio. In the **web app** a
-> book browses like a folder (📚) into chapters, each a normal audio item you can
-> play, search, and clip; the **CLI** does it by path. See
-> [the manual](docs/MANUAL.md#epub3-audiobooks-experimental).
+Subtitles already carry exact timestamps, so the trick is simple: parse the subtitles,
+fuzzy-search the line, map the match back to its time span, and cut it with ffmpeg or
+mkvmerge. quipclipper is a **self-hosted web app** over your own media folders, plus a
+**CLI** that can do everything the web app does.
 
-It works on **audio-only sources too** — podcasts and audiobooks — as long as a
-sidecar transcript sits next to the audio file. Transcripts can be `.srt`, `.vtt`,
-`.ass`/`.ssa`, `.sub`, or **`.json`** (Podcast Namespace and Whisper-style
-transcripts). Audio sources list with a 🎵 icon, play in a compact audio bar, and
-always cut audio clips. **Speaker attribution** is picked up from WebVTT `<v Name>`
-voice tags, a transcript `speaker` field, or a recurring `Name:` prefix, and shown
-in the script, the search results, and the player captions.
-
-A **command-line tool** ([`quipclipper`](#the-quipclipper-command)) does
-everything the web app does: every action in the web UI is a command, run against
-a quipclipper server or, for search and clip, on local files. See
-[`docs/CLI.md`](docs/CLI.md) for the full command reference.
-
-![quipclipper web app — searching dialogue and selecting a line to clip](docs/screenshot.png)
-
-> **Documentation:** [`docs/MANUAL.md`](docs/MANUAL.md) is the complete user
-> manual; [`docs/API.md`](docs/API.md) documents the HTTP API for driving the web
-> app from agents/scripts; [`docs/DESIGN_NOTES.md`](docs/DESIGN_NOTES.md) explains
-> the design decisions and their rationale.
+![The workspace: a video with its script, one line selected, ready to clip](docs/screenshots/workspace-dark.png)
 
 ## Features
 
-- **Library browser** — browse multiple media folders (movies, shows, etc.) with
-  a search bar to filter by name and a clickable breadcrumb for jumping up levels.
-  Video files always appear; audio-only files (podcasts, audiobooks) appear when a
-  sidecar transcript sits beside them.
-- **Dialogue search** — open a video and fuzzy-search its subtitles (sidecar or
-  embedded), with surrounding context and ranked, typo-tolerant matches. Clicking
-  a result selects the matching dialogue line in the **script** (highlighted),
-  ready to clip or fine-tune. One **search box in the top bar** does all the
-  dialogue searching; its scope chip picks *this video*, *this folder* or the
-  *whole library*, and follows the page you are on.
-- **Folder dialogue search** — search subtitles across every video in one or more
-  folders at once. Useful for finding a line when you don't know which episode
-  it's in. Hits are grouped by file with the matched words highlighted; on a wide
-  screen a click previews the lines around it, and *Open in workspace* opens that
-  file with the matched line selected.
-  A subtitle cache plus a pre-index button make repeat searches near-instant.
-  - **Scope follows the library filter.** When you type in the **library
-    (name) filter**, the dialogue search narrows to *exactly the folders that
-    filter surfaced* — not the whole folder you started in. The scope chip shows
-    which mode is active: **"N folders"** (your N filtered folders) vs **"This
-    folder"** (no filter — the current folder, searched recursively). Clearing the filter
-    reverts to the current folder. (A filter that matches only *files*, not
-    folders, doesn't narrow the scope — it falls back to the current folder.)
-- **Scrolling script view** — the full subtitle script scrolls with playback;
-  click a line to seek, hover (or tap, on touch) for Start/End buttons to select
-  a clip range by dialogue lines (timestamps are derived from the selected cues).
-  Every script opens with a synthetic **Start of video** line (0:00 up to the
-  first cue), so a clip can begin at the very start of the file — before any
-  dialogue — or capture just the cold open.
-  A **Before/After buffer** in the clip bar expands the selection live. A **dialogue
-  map** under the player shows where the talking is across the whole runtime
-  (selection in amber, playhead in blue); click it to seek. The script, matches,
-  bookmarks and clips for the file are tabs beside the player.
-- **Stream selector** — one menu under the seek bar picks the subtitle track,
-  the audio stream, and (for multichannel audio) a channel subset — affecting
-  live playback. The selection drives the clip output too: the chosen audio
-  stream and channel subset, and the selected subtitle becomes the clip's
-  default track.
-- **Lossless clipping** — mkvmerge with automatic ffmpeg fallback, an async job
-  queue, and a clips library. Audio export offers three lossless modes:
-  **Passthrough** (stream-copy the original codec, all tracks), **WAV/FLAC**
-  (full-mix re-encode keeping every channel — a 5.1 source becomes a 5.1 WAV/FLAC
-  in one file), and **Split channels** (one file per channel group: stereo pairs
-  + centre/LFE).
-- **Bookmarks** — save selected dialogue ranges as named bookmarks per file
-  (with their buffer + stream selection), browse them all from a top-level
-  Bookmarks view, adjust each one's buffer inline, or Clear all.
-- **Clips as first-class items** — open a finished clip in the full item view:
-  search its dialogue, bookmark it, even cut a clip from a clip. Opening a clip
-  pre-selects the whole file for one-click re-export.
-- **Batch export** — select multiple clips, bookmarks, or dialogue-search hits
-  and export them all at once (audio-only, passthrough/FLAC/WAV, split channels)
-  without opening each one. When splitting channels you can pick which groups to
-  export — e.g. just the **Center** channel of a 5.1 track — and the batch bar
-  has its own **name template**, so a leading folder collects the whole batch in
-  one place.
-- **Automatic transcode for in-browser playback** — when the browser can't play
-  a file's audio codec (AC3, DTS, FLAC, …) the player remuxes on the fly,
-  copying the video and transcoding audio to Opus, with a custom seek bar and
-  keyframe-aligned subtitles. When the *video* codec also can't be decoded —
-  HEVC on Firefox, or MPEG-4 ASP/XviD AVIs, MPEG-2, VC1 — the video is
-  **re-encoded to H.264**, hardware-accelerated via Intel Quick Sync (VAAPI)
-  when an iGPU is available (else software), with an on-screen indicator that
-  loading/seeking may be slower. Desktop and Android (Chromium) use this path;
-  **iOS** plays through an on-the-fly **HLS** stream instead (Safari can't demux
-  Matroska/Opus), with native controls and inline playback.
-- **Custom clip naming** — clips are filed into a per-source subfolder, named
-  from a configurable template (default `{source}/{timestamp}_{cue}_{title}`,
-  remembered per browser). Tokens cover the timestamp, matched dialogue,
-  cleaned title, source filename, year, season/episode, duration and date, and
-  `/` makes subfolders. With the default, `{source}` is the source file's stem
-  (the subfolder) and `{title}` is the cleaned parent-folder/series name, so a
-  dialogue-search clip lands at e.g.
-  `The.Sandlot.1993.1080p/00-27-58_Youre_killing_me_Smalls_The_Sandlot_1993.mkv`.
-- **Keyboard, screen readers and low vision** — every control has hover text
-  and a name a screen reader can say (aiming at WCAG 2.2 AA). A skip link jumps
-  past the top bar; `/` goes to the search box; in the workspace Space or K play
-  and pause, the script is one tab stop (↑ ↓ move, Enter plays, **S** / **E** set
-  the selection's start and end), and the dialogue map and seek bar take the
-  arrow keys (1 s, Shift 10 s). Finished and failed jobs are announced. Settings
-  has a subtitle size (Normal, Large, Extra large) and a solid background for
-  the video's subtitles; both themes meet AA contrast, with a stronger palette
-  under `prefers-contrast: more`, and the pages reflow down to 320 px wide.
-- **HTTP API for agents & scripts** — everything the UI does is a plain
-  HTTP+JSON API, designed so self-hosters can drive quipclipper
-  programmatically: browse the library, search dialogue, cut clips, and
-  download them from a script, a cron job, or an AI agent. One `QC_API_TOKEN`
-  gets a machine client through the password gate, and Swagger/OpenAPI docs are
-  served from the app itself. See [HTTP API](#http-api-agents--scripts) below
-  and the full reference in [`docs/API.md`](docs/API.md).
-- **YouTube sources (experimental)** — paste a watch URL into the **▶ YouTube**
-  section and yt-dlp fetches the **subtitles + metadata only** (no video
-  download). The video then behaves like a library item: browse the transcript,
-  fuzzy-search its dialogue, bookmark ranges, and cut clips — Exact or lossless —
-  with playback and cutting streaming from YouTube on demand. See
-  [YouTube sources](#youtube-sources-experimental) below.
+- **Dialogue search** in a video, a folder or your whole library: fuzzy and typo-tolerant,
+  phrases that span several subtitles still match, results grouped by file with the words
+  highlighted and a preview of the lines around each hit.
+- **A workspace for each file:** the player, a dialogue map of where the talking is, and the
+  scrolling script. Set the selection by whole lines (Start / End), add padding, and see it
+  loop before you cut.
+- **Clips that keep the source:** a lossless stream copy (every audio track, 5.1/7.1
+  intact) or a frame-exact H.264 re-encode (Intel Quick Sync when present); full-mix
+  WAV/FLAC; surround split into channel groups (just the centre channel, say); GIFs from
+  the CLI. Clips are filed by a name template you choose.
+- **Bookmarks and batches:** save lines as bookmarks, then clip or export many at once
+  from search results, bookmarks or the clips library.
+- **Plays anything:** files the browser can't play are converted on the fly (audio, or the
+  video too), and iOS gets an HLS stream.
+- **[Send to LeadStinger](#leadstinger):** hand a line straight to the LeadStinger
+  soundboard as a trimmed tile, or many lines as a set.
+- **[Jellyfin Now playing](#jellyfin-now-playing):** open whatever a Jellyfin client is
+  playing at its playhead, with the line just heard selected.
+- **[Accessible](#accessibility):** hover text and screen-reader names on every control,
+  full keyboard use, subtitle size options, AA contrast in dark and light, a phone layout.
+- **A CLI and an HTTP API** for scripts and agents: every web action is a CLI command
+  ([docs/CLI.md](docs/CLI.md)) and an API call ([docs/API.md](docs/API.md)).
+- **More sources (experimental):** YouTube videos by URL (via yt-dlp), podcasts and
+  audiobooks with a transcript, and EPUB3 read-along audiobooks.
 
-By default a **video** clip is re-encoded to a frame-exact H.264 file (a lossless
-copy can only start on a keyframe, so it runs long on long-GOP sources), while
-**audio** clips are lossless stream copies (`-c copy`, no re-encoding — lossy
-stays lossy, every track and 5.1/7.1 layout preserved). Untick **Exact** for a
-lossless video copy. See [Lossless cutting](#lossless-cutting) for the details.
+## Screenshots
 
-## Quick start (Docker Compose)
-
-The repo ships a ready-to-edit [`docker-compose.example.yml`](docker-compose.example.yml)
-(fully commented, with optional hardware transcode and the password gate). Copy
-it, set your media paths, and `docker compose up -d`.
-
-CI publishes prebuilt images to GitHub Container Registry on every push to
-`main`, so the simplest deploy just **pulls** them — no local build. A minimal
-version:
-
-```yaml
-# docker-compose.yml (minimal example, prebuilt images)
-services:
-  app:
-    image: ghcr.io/weckere/quipclipper-app:latest
-    environment:
-      QC_MEDIA_ROOTS: /media/movies:/media/shows
-      QC_CLIPS_DIR: /clips
-      QC_CLIPS_URL_PREFIX: /clips
-      QC_STATE_DIR: /state
-    volumes:
-      - /path/to/movies:/media/movies:ro
-      - /path/to/shows:/media/shows:ro
-      - /path/to/clips:/clips
-      - quip-state:/state
-    expose:
-      - "8000"
-
-  web:
-    image: ghcr.io/weckere/quipclipper-web:latest
-    depends_on:
-      - app
-    ports:
-      - "8896:80"
-    volumes:
-      - /path/to/clips:/clips:ro
-
-volumes:
-  quip-state:
-```
-
-Then `docker compose pull && docker compose up -d` (update with `pull` again),
-and browse at `http://localhost:8896`.
-
-**Optional — hardware video transcode (Intel Quick Sync):** to re-encode
-undecodable video (HEVC for Firefox, XviD/MPEG-4 AVIs, …) on an Intel iGPU
-instead of the CPU, pass the render device into the `app` service:
-
-```yaml
-  app:
-    devices:
-      - /dev/dri:/dev/dri
-    group_add:
-      - "<render-group-gid>"   # `getent group render` on the host
-```
-
-The image ships the Intel `iHD` VAAPI driver; without the device it falls back
-to software encoding automatically.
-
-**Optional — password gate:** set `QC_PASSWORD` on the **web** (nginx) service to
-gate the whole site behind HTTP basic auth (username defaults to `quip`, override
-with `QC_USERNAME`); leave it unset for an open LAN instance:
-
-```yaml
-  web:
-    environment:
-      QC_PASSWORD: "your-secret"   # or ${QC_PASSWORD}
-      QC_USERNAME: "quip"          # optional
-```
-
-<details><summary>Build from source instead (no published images)</summary>
-
-Swap each service's `image:` for a `build:` block pointing at the repo:
-
-```yaml
-  app:
-    build:
-      context: "https://github.com/weckere/quipclipper.git#main"
-      dockerfile: web/Dockerfile
-  web:
-    build:
-      context: "https://github.com/weckere/quipclipper.git#main"
-      dockerfile: web/nginx/Dockerfile
-```
-
-</details>
-
-## Configuration
-
-All settings are environment variables on the `app` service:
-
-| Variable | Default | Description |
-|---|---|---|
-| `QC_MEDIA_ROOTS` | *(required)* | Colon-separated list of media directories (in-container paths) |
-| `QC_CLIPS_DIR` | `/clips` | Where finished clips are saved |
-| `QC_CLIPS_URL_PREFIX` | *(empty)* | URL prefix where a front proxy (nginx) serves the clips dir directly; empty = download via the backend API |
-| `QC_STATE_DIR` | `/state` | Bookmarks, subtitle cache, and other persistent state |
-| `QC_MAX_CONCURRENT_JOBS` | `2` | Clip-job thread-pool size |
-| `QC_PASSWORD` | *(none)* | When set, nginx gates the whole site with HTTP basic auth (username `QC_USERNAME`). Must be set on the **web** (nginx) service. Unset = open. |
-| `QC_USERNAME` | `quip` | Basic-auth username (only used when `QC_PASSWORD` is set). |
-| `QC_SUBTITLE_LANGS` | `en` | Ordered subtitle-language preference for auto-selection (comma-separated, e.g. `eng,spa`). The UI's **Subtitle languages** setting (the sliders button in the top bar) overrides it per browser; the same menu switches between light and dark. |
-| `QC_API_TOKEN` | *(none)* | Token(s) for programmatic clients — agents and scripts (comma-separated to rotate). Set the same value on **both** services so `-u api:<token>` passes the basic-auth gate too. See [HTTP API](#http-api-agents--scripts). |
-| `QC_PUBLIC_URL` | *(none)* | This server's base URL as other machines reach it (e.g. `https://quipclipper.example.net`). **Send to LeadStinger** puts it in a `leadstinger://quip` link, and LeadStinger downloads the clip from there with `QC_API_TOKEN`. Unset = Send to LeadStinger makes set files only. See [docs/MANUAL.md](docs/MANUAL.md#sending-clips-to-leadstinger). |
-| `QC_JELLYFIN_URL` | *(none)* | Jellyfin's base URL, for **Now playing** (what each Jellyfin client is playing, opened at its playhead). Needs the key below. See [docs/MANUAL.md](docs/MANUAL.md#now-playing-jellyfin). |
-| `QC_JELLYFIN_API_KEY` / `QC_JELLYFIN_API_KEY_FILE` | *(none)* | A Jellyfin API key, or a file holding one. |
-| `QC_JELLYFIN_PATH_MAP` | *(none)* | Jellyfin's paths → quipclipper's, e.g. `/movies=/media/movies:/shows=/media/shows`, when Jellyfin sees the media elsewhere (its own container). |
-| `QC_PROXY_SECRET` | *(none)* | Defence-in-depth: a shared secret nginx injects on every proxied request. When set on **both** services, the backend rejects anything that reaches its port without it (except `/api/health`) — blocking direct hits that bypass nginx. |
-
-(`QC_BIND`, `QC_PORT`, and `QC_VAAPI_DEVICE` also exist for non-default network
-binds and hardware-transcode setups — see
-[`web/backend/README.md`](web/backend/README.md) for the full table.)
-
-## HTTP API (agents & scripts)
-
-The web app is a thin frontend over a plain HTTP+JSON API, and the API is a
-first-class interface: it's designed so self-hosters can point **agents and
-scripts** at their instance and use *all* of quipclipper's functionality
-programmatically — browse the library, fuzzy-search dialogue across folders,
-cut lossless clips, poll the job, download the result.
-
-- **Auth in one secret:** set `QC_API_TOKEN` and a client passes both the
-  password gate and the CSRF guard with `curl -u api:<token>` (or
-  `X-API-Key`/`Bearer` headers).
-- **Self-documenting:** Swagger UI at `/docs`, ReDoc at `/redoc`, and the
-  OpenAPI schema at `/openapi.json` — served by your own instance (behind the
-  same gate), so an agent can discover the API without leaving your network.
-- **Full reference:** [`docs/API.md`](docs/API.md) documents every endpoint,
-  the `POST /api/clip` body, and a worked find-a-line-and-cut-it example.
-
-## YouTube sources (experimental)
-
-Open the **▶ YouTube** entry at the library root and paste a watch URL
-(`youtube.com/watch`, `youtu.be/…`, shorts/embed links work too). quipclipper
-runs **yt-dlp** to fetch the video's **subtitles and metadata only** — nothing
-is downloaded — and the video joins the list permanently (stored under the
-state dir; ✕ on a row removes it).
-
-From there it works like any library item:
-
-- **Transcript & search** — the scrolling script view, per-item dialogue
-  search, and cross-video dialogue search over the whole YouTube section all
-  run on the fetched captions. Manual subtitles are preferred; YouTube's
-  auto-captions are used as a fallback (with their rolling-duplicate lines
-  cleaned up). ↻ Reindex re-fetches the transcript.
-- **Preview** — a per-browser **Player** setting on each YouTube item picks
-  between two modes (both support the full marks/preview workflow):
-  - **Official YouTube player** (the default on iOS) — the standard embed via
-    the IFrame API: instant, reliable, plays anywhere, uses YouTube's own
-    captions. Your browser talks to YouTube directly in this mode.
-  - **Server stream** (the default on desktop) — yt-dlp resolves the direct
-    stream URLs and ffmpeg remuxes them live to the player (same transcode
-    path as unplayable library codecs); nothing in your browser ever loads
-    YouTube scripts. Seeking works via the custom seek bar.
-- **Bookmarks** — saved against the video like any file, and visible in the
-  Bookmarks view.
-- **Clipping** — cuts run ffmpeg **directly against the stream URLs**, so
-  nothing is downloaded even then: **Exact** re-encodes a frame-tight H.264
-  clip; unticking it stream-copies losslessly (keyframe-aligned start, no
-  quality loss). Clips land in the clips library under
-  `<Video Title>/<timestamp>_<cue>_<Channel>…` and are named by the same
-  template tokens as everything else. (Channel-split export and the mkvmerge
-  backend don't apply to stream sources.)
-- **Optional full download** — a **⬇ Download video** button on each item
-  fetches the whole video to the server once (browser-native mp4). Everything
-  then transparently prefers the local copy: playback seeks natively (no
-  transcode proxy), keyframe probes are exact, and clips cut from the file with
-  the **full** pipeline (channel split and mkvmerge included) — no YouTube
-  round-trips at all. A 💾 badge marks downloaded videos; **Remove download**
-  deletes the file and keeps the transcript. By default the file is private to
-  the app; set **`QC_YOUTUBE_DIR`** (Docker) / **`youtubeDir`** (NixOS) to a
-  real folder and each download lands as `<Title> [<id>].mp4` with a `.vtt`
-  sidecar — a browsable, dialogue-searchable library item, visible to Jellyfin
-  and Samba too.
-
-### Backfilling subtitles for existing videos
-
-If your library already holds YouTube-sourced videos with **no subtitles** — a
-Pinchflat/yt-dlp archive that only saved `.info.json`, say — quipclipper can
-fetch their transcripts on demand so they become dialogue-searchable and
-clippable like anything else. It recognises a video's YouTube id from the
-`[<id>]` in its filename or a sibling `.info.json`, then downloads a `.vtt`
-sidecar next to it. This is **opt-in per video or per folder** — nothing is
-fetched automatically across your library:
-
-- **One video** — open it; if it's YouTube-sourced and has no subtitles, a
-  **⬇ Fetch subtitles from YouTube** link appears in the stream selector.
-- **A whole folder** — **⬇ Fetch missing YouTube subtitles** in the folder
-  toolbar backfills every id'd, subtitle-less video in that folder as a
-  background job (with progress and a Cancel button), skipping any that already
-  have subtitles, so it's safe to re-run.
-
-Backfill writes sidecars *next to the videos*, so the folder must be
-writable by the app — a `writableMediaRoots` entry (NixOS) or a read-write
-mount (Docker). Read-only roots show a clear "add it to writableMediaRoots"
-message instead.
-
-Requires `yt-dlp` on the backend's PATH — the Docker image installs it via pip
-(rebuild the image to pick up a current release when YouTube changes something),
-and the Nix package wraps it in. `/api/health` reports whether it's present.
-Stream URLs expire after a few hours; quipclipper re-resolves them on demand,
-so long sessions just keep working. Heads-up: some videos only expose formats
-ffmpeg can't fetch directly — those fail with a clear error rather than
-silently degrading.
-
-## Architecture
-
-The web app is two containers:
-
-- **app** — Python (FastAPI + Uvicorn) serving the API and the static frontend.
-  Runs the quipclipper engine for search and clipping via a thread-pool job queue.
-- **web** — Nginx reverse proxy handling static assets, large file downloads
-  (clips), and forwarding API requests to the app.
-
-Media directories are mounted read-only. All file access is realpath-checked
-against the configured media roots — path traversal and symlink escapes are
-rejected.
-
-## NixOS (declarative)
-
-On NixOS, deploy the web app declaratively with the flake's module instead of
-Docker — it runs the backend as a hardened systemd service and configures the
-host nginx (a VM test in CI exercises the whole flow).
-
-Add the flake as an input and pull the module into your host. A minimal
-`flake.nix`:
-
-```nix
-{
-  inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    quipclipper.url = "github:weckere/quipclipper";
-  };
-
-  outputs = { nixpkgs, quipclipper, ... }: {
-    nixosConfigurations.myhost = nixpkgs.lib.nixosSystem {
-      system = "x86_64-linux";
-      modules = [
-        quipclipper.nixosModules.default
-        ./configuration.nix
-      ];
-    };
-  };
-}
-```
-
-Then enable the service in `configuration.nix` (or any imported module). The
-minimal config is just `enable` + `mediaRoots`:
-
-```nix
-{
-  services.quipclipper-web = {
-    enable = true;
-    mediaRoots = [ "/srv/media/movies" "/srv/media/tv" ];  # required
-    openFirewall = true;   # then browse at http://<host>/ on the LAN
-  };
-}
-```
-
-That's a complete deployment: nginx fronts the app on `:80`, finished clips are
-written to `/var/lib/quipclipper-web/clips` and served from there.
-
-Optional settings (all off/defaulted unless set):
-
-| Option | Purpose |
+| | |
 |---|---|
-| `passwordFile` | Gate the whole site behind HTTP basic auth — path to a ready-made nginx htpasswd file (kept out of the store). Unlike Docker's plaintext `QC_PASSWORD`, the module takes the htpasswd directly. |
-| `apiTokenFile` | API token(s) for agents/scripts — path to a systemd `EnvironmentFile` containing `QC_API_TOKEN=<token>` (kept out of the store). Add an `api` user with the token as password to `passwordFile` so one secret passes the basic-auth gate too. |
-| `publicUrl` | This server's base URL as other machines reach it (`QC_PUBLIC_URL`), for **Send to LeadStinger** links. LeadStinger downloads with the token from `apiTokenFile`. |
-| `jellyfin.url` / `jellyfin.apiKeyFile` / `jellyfin.pathMap` | **Now playing** from Jellyfin: its URL, a file holding an API key (root-only is fine: it's passed as a systemd credential) and Jellyfin's paths → this host's (`{ "/movies" = "/srv/movies"; }`). |
-| `hardwareAcceleration.enable` | Intel Quick Sync H.264 encoding (else software `libx264`). Adds the service user to the `render` group, exposes the render node, and enables the Intel media driver. |
-| `virtualHost` | nginx server name for a public hostname; pair with `enableACME`/`forceSSL` on that vhost for TLS. Default (null) is a catch-all vhost for LAN-by-IP over `:80`. |
-| `nginx.enable` | `false` runs **only** the hardened backend on `listenAddress:listenPort` and skips the bundled vhost — bring your own front (nginx/Caddy/Tailscale) proxying to it (the backend then serves clips itself). |
-| `nginx.port` / `nginx.listen` | Move the bundled vhost off `:80`. `nginx.port` sets the port; `nginx.listen` (e.g. `[ { addr = "172.17.0.1"; port = 8080; } ]`) sets explicit listen entries to bind a specific address/port. `openFirewall` tracks whichever it binds. |
-| `nginx.defaultServer` | `false` so the vhost isn't nginx's catch-all `default_server` — lets quipclipper coexist with another web service on the host without grabbing every unmatched request. |
-| `clipsDir` | Where finished clips live (default `/var/lib/quipclipper-web/clips`, private to the service). |
-| `clipsGroup` / `clipsMode` | Share `clipsDir` with other users/services (SMB export, Jellyfin library). See below. |
-| `manageClipsDir` | `false` = `clipsDir` is owned/created elsewhere (e.g. an existing SMB mount); the module won't chown/chmod it. See below. |
-| `writableMediaRoots` | Media roots the app may **write into** (bound read-write, not read-only) — so it can drop subtitle sidecars next to your videos (downloaded transcripts, subtitle backfill). Browsed and clipped exactly like `mediaRoots`. Use it for a library you want quipclipper to enrich (e.g. a Pinchflat/yt-dlp folder). |
-| `youtubeDir` | Where downloaded YouTube videos land (default `null` = private in the state dir). Point it at a folder — ideally under a `writableMediaRoots` entry — and each download becomes `<Title> [<id>].mp4` with a `.vtt` sidecar: a browsable, dialogue-searchable library item, visible to Jellyfin/Samba too. |
-| `subtitleLangs`, `listenAddress`, `listenPort`, `maxConcurrentJobs` | Mirror the Docker env vars `QC_SUBTITLE_LANGS` / `QC_BIND` / `QC_PORT` / `QC_MAX_CONCURRENT_JOBS`. `youtubeDir` mirrors `QC_YOUTUBE_DIR`. |
+| ![The library, with the Dialogue index card](docs/screenshots/library.png) | ![Search results across the library, grouped by file, with a preview](docs/screenshots/search-results.png) |
+| **The library:** media roots on the left, and a Dialogue index card that caches subtitles so search is instant. | **Dialogue search** over the whole library: grouped by file, highlighted, with a preview and a batch bar. |
+| ![The workspace in the light theme](docs/screenshots/workspace-light.png) | ![Now playing from Jellyfin](docs/screenshots/now-playing.png) ![The Selection panel with the Send to LeadStinger toggle ticked](docs/screenshots/send-to-leadstinger.png) |
+| **The workspace** in the light theme. | **Now playing** from Jellyfin, and the **Send to LeadStinger** toggle (⚡) beside Make clip. |
 
-The module builds the app from quipclipper's own pinned nixpkgs, so you don't
-need an `inputs.nixpkgs.follows`.
-
-### Sharing the clips directory
-
-By default `clipsDir` is private (`0750`, owned by the service) and served only
-through quipclipper's own web UI. To make finished clips land in a folder other
-users and services can read — an SMB export, a directory Jellyfin indexes — there
-are two supported flows:
-
-**Let the module own a shared directory.** Give it a shared group and a setgid,
-group-readable mode; new clips inherit the group and are group-readable:
-
-```nix
-services.quipclipper-web = {
-  enable = true;
-  mediaRoots = [ "/srv/media/movies" ];
-  clipsDir   = "/srv/clips";
-  clipsGroup = "users";   # the group your SMB/Jellyfin runs as (must exist)
-  clipsMode  = "2775";    # setgid + group-writable
-};
-```
-
-**Point it at a directory provisioned elsewhere** (e.g. a pre-existing SMB share
-that is already `root:users` setgid `2775`). Set `manageClipsDir = false` so the
-module leaves the directory's owner and mode alone — it only adds the service
-user (and nginx) to `clipsGroup` so they can write and serve through the share's
-group-writable/setgid bits:
-
-```nix
-services.quipclipper-web = {
-  enable = true;
-  mediaRoots = [ "/srv/media/movies" ];
-  clipsDir   = "/mnt/share/clips";   # mounted + owned externally
-  clipsGroup = "users";
-  manageClipsDir = false;
-};
-```
-
-In both cases nginx is added to `clipsGroup`, so the web UI keeps serving the same
-clips, and the service writes with a group-writable umask (`0002`) so clips land
-**group-readable and group-writable** — members of `clipsGroup` (samba, Jellyfin,
-your user) can both read *and* delete/manage them. With `manageClipsDir = false`,
-ensure the directory exists and is group-writable (setgid `2775`) before the
-service starts — the unit waits for its mount via `RequiresMountsFor`, but it
-won't create or fix permissions on it.
-
-## Lossless cutting
-
-Inspired by [LosslessCut](https://github.com/mifi/lossless-cut), quipclipper can
-cut **losslessly** — ffmpeg stream-copies (`-c copy`) the original encoded packets
-straight into a new container, with **no re-encoding at all**. The source format
-is preserved exactly: a lossy AC3/AAC/EAC3 track stays that same lossy bitstream,
-byte-for-byte, and the cut is near-instant. This is the default for **audio**;
-for **video** it's one flag away (see the end of this section).
-
-What "preserve everything" means here:
-
-- **No transcoding** — the encoded audio/video bytes are copied, not re-rendered.
-- **All audio tracks are kept** — quipclipper maps *every* audio stream (e.g. a 5.1
-  EAC3 main track plus a stereo commentary), with their language/title metadata.
-- **Multichannel layouts are intact** — 5.1 / 7.1 channel layouts are part of the
-  copied bitstream, so they come through untouched.
-- **Video mode keeps all video, audio and subtitle tracks** in one `.mkv`.
-
-The one inherent tradeoff — true of every codec — is that a video copy can only
-begin at a **keyframe**. quipclipper seeks to the nearest keyframe at or before your
-start time, so a lossless **video** clip starts a little earlier than requested
-(the end is exact). For dialogue clips that's usually a welcome lead-in, but on
-sources with a long GOP (sparse keyframes — some BluRay encodes are 8–10s apart)
-it can be several seconds. Two things keep this in check:
-
-- **Audio clips are frame-exact** — audio has no keyframes, so an audio-only clip
-  is cut at precisely the selected span (no lead-in).
-- **Video clips are frame-exact by default** — the web app ships with **Exact
-  (re-encode)** on, so a video clip is re-encoded to H.264 to match the dialogue
-  span to the frame. Untick it (or use plain lossless on the CLI) for a
-  byte-for-byte stream copy instead — that keeps the keyframe lead-in, but is
-  instant and preserves the original encode.
-
-Containers are chosen to hold the source streams without transcoding:
-
-| Mode | Output container |
-|---|---|
-| Lossless audio, single stream | codec-matched (`.m4a` / `.ac3` / `.eac3` / `.opus` / `.flac` / …) |
-| Lossless audio, **multiple streams** | `.mka` (Matroska — holds any number of streams/codecs) |
-| Lossless video | `.mkv` (all video + audio + subtitle tracks) |
-| Re-encoded audio | `.mp3` |
-| Re-encoded video | `.mp4` (H.264 / AAC) |
-
-By default, both the web app and the CLI **re-encode video** for a frame-exact
-clip (a lossless copy can only start on a keyframe, so it runs long on long-GOP
-sources) but keep **audio** a lossless stream copy. Force a lossless video copy
-with `--lossless` on the CLI (or by unticking **Exact** in the web app); force a
-re-encode with `--no-lossless`.
-
----
-
-# The quipclipper command
-
-The same search-and-clip engine as a **command-line tool**, for scripting and
-quick one-off cuts. Point it at a video plus a subtitle file (or let it find a
-sidecar `.srt` / extract an embedded track), type the dialogue, and get a clip.
-
-## Driving a server
-
-Every action in the web app is also a command (`quipclipper commands` lists
-them; [`docs/CLI.md`](docs/CLI.md) is the full reference). Point the CLI at a
-running quipclipper and it works on the server's library over the HTTP API:
-
-```sh
-export QC_URL=https://quipclipper.example.net   # or --server URL
-export QC_API_TOKEN=...                          # or QC_API_TOKEN_FILE
-quipclipper ls /movies
-quipclipper search.folder "you're killing me" --path /movies
-quipclipper clip "you're killing me" -v "/movies/The Sandlot (1993)/The.Sandlot.mkv" \
-    -t audio --out-dir ~/clips
-quipclipper --json bookmark.list | quipclipper clip.batch --kind audio
-```
-
-Clips can go straight to [LeadStinger](https://github.com/weckere/leadstinger), the
-soundboard. Tick the small LeadStinger toggle beside Make clip (or beside Clip / Export
-selected on the search results, bookmarks and clips). With the server's `QC_PUBLIC_URL`
-set, one line or clip then goes straight into LeadStinger: the browser opens a
-`leadstinger://quip` link and LeadStinger downloads the clip into a new tile (connect it
-once with the API token; see [docs/MANUAL.md](docs/MANUAL.md#sending-clips-to-leadstinger)).
-Several at once, or without `QC_PUBLIC_URL`, make a set file (`.lsset`) instead, named
-after the movie or show. Each tile is trimmed to its line; the clip's Before/After
-padding (a bookmark's saved padding, none for search hits) is kept as audio either side,
-so the cut points can still be moved there. A clip in the Clips library also has its own
-Send to LeadStinger button. From the CLI:
-
-```sh
-quipclipper leadstinger.quip "/shows/TNG/S03E26.mkv" --start 2002.4 --end 2004 \
-    --title "Resistance is futile." --set Borg            # opens LeadStinger
-quipclipper leadstinger.link "Heat/Heat - attached.mkv"   # a clip already made
-quipclipper --json search.folder "resistance is futile" --path /shows \
-    | quipclipper leadstinger.set Borg --before 2 --after 2 --out-dir .   # Borg.lsset
-quipclipper --json bookmark.list | quipclipper leadstinger.send --set Quotes
-```
-
-`leadstinger.quip` and `leadstinger.link` open the link on the machine you run them on
-(`--no-open` only prints it). `leadstinger.send` runs on the machine with LeadStinger and
-drives its `leadstinger-cli`: a new set, or appended to an existing one with `--set`.
-
-With Jellyfin configured, a **Now playing** card on the library lists what each Jellyfin
-client is playing; one tap opens it in the workspace at the playhead with the line just
-heard selected. From the CLI: `quipclipper nowplaying`, and `quipclipper clip.nowplaying
--t audio` cuts that line (see [docs/MANUAL.md](docs/MANUAL.md#now-playing-jellyfin)).
-
-Add `--json` for machine-readable output and `--safe` to refuse anything that
-deletes data (for agents). New web UI actions must get a command in
-`src/quipclipper/commands.py`: a parity test fails until they do.
-
-## CLI features
-
-- **Local, offline** — works on your own video + subtitle files, no API keys.
-- **Lossless cutting** — audio is stream-copied (`-c copy`) with no re-encoding,
-  preserving the original format exactly (lossy stays lossy) including all audio
-  tracks and 5.1/7.1 channel layouts. `--lossless` extends that to video too — a
-  near-instant copy, keyframe-aligned (video defaults to a frame-exact re-encode,
-  matching the web app; see below).
-- **MKVToolNix backend** — quipclipper cuts lossless audio/video with `mkvmerge` when
-  it's installed (all tracks/chapters, native subtitle handling). Sources are
-  cut directly by default; `--remux-first` muxes non-MKV sources into a
-  temporary MKV first for maximum accuracy (needs local disk space).
-- **Interactive picker** — when a line matches several places, `--pick` lists the
-  candidates and lets you select several at once to clip in one go.
-- **Fuzzy, ranked search** — case-insensitive, typo-tolerant, with surrounding
-  context so you pick the right hit. Phrases that span two or three captions
-  still match, and overlapping span-variants are collapsed so results don't
-  duplicate the same line.
-- **Flexible subtitle source** — explicit `--subs`, a sidecar file next to the
-  video, or an embedded subtitle track pulled out via ffmpeg. When multiple
-  embedded tracks exist, quipclipper auto-selects the best dialogue track
-  (English full dialogue > SDH > forced); pass `--track` to override.
-- **Audio / video / gif output** — pick with `--type`.
-- **Track selection** — keep all audio tracks or pick specific ones with
-  `--audio-track`; video clips also retain embedded subtitle tracks.
-- **Full-mix lossless audio** — `--audio-format wav|flac` re-encodes one audio
-  stream keeping **all** channels in a single file (a 5.1 source → a 5.1 WAV),
-  distinct from passthrough (original codec) and `--split-channels`.
-- **Surround channel split** — `--split-channels` exports a 5.1/7.1 track as
-  stereo pairs + centre/LFE files, in lossless WAV/FLAC or the source codec;
-  `--split-groups` limits it to a subset (e.g. just the centre), and
-  `--audio-track` picks which stream to split.
-- **Subtitles in clips** — embedded subtitle streams are preserved, and external
-  search subtitles are muxed in, aligned to the cut (`--no-embed-subs` to skip).
-- **Configurable padding** — clip the line's own span plus `--before` / `--after`
-  seconds (e.g. start 5s early and run a few seconds long).
-
-## Requirements
-
-- Python ≥ 3.10
-- [`ffmpeg`](https://ffmpeg.org/) and `ffprobe` on your `PATH` (used to cut clips
-  and to read/extract embedded subtitle tracks)
-- *(optional)* [MKVToolNix](https://mkvtoolnix.download/) (`mkvmerge`) — used as
-  the cutting backend for MKV sources; see "MKV sources" below
+<p align="center"><img src="docs/screenshots/phone.png" width="300" alt="The workspace on a phone, with the selection pinned to the bottom"></p>
 
 ## Install
 
+quipclipper needs `ffmpeg` and `ffprobe`; `mkvmerge` (MKVToolNix) is used when present.
+The Docker images and the Nix packages include them. Releases are listed in
+[CHANGELOG.md](CHANGELOG.md) and on the [releases page](https://github.com/weckere/quipclipper/releases).
+
+### Docker (GHCR images)
+
+Each release publishes two images, `ghcr.io/weckere/quipclipper-app` (the backend) and
+`ghcr.io/weckere/quipclipper-web` (nginx and the UI), tagged with the version (`0.1.1`),
+the series (`0.1`) and `latest`. Copy
+[`docker-compose.example.yml`](docker-compose.example.yml), set your media paths, and:
+
 ```bash
-pip install -e .          # or: pip install -e ".[dev]" for the test deps
+docker compose up -d
 ```
 
-**Nix:** quipclipper has a flake — `ffmpeg` and `mkvmerge` are wrapped onto `PATH`
-automatically:
+Then browse to `http://localhost:8896`. [docs/DEPLOY.md](docs/DEPLOY.md) has a minimal
+compose file, every setting (`QC_MEDIA_ROOTS`, the password gate, the API token, hardware
+transcoding, LeadStinger and Jellyfin), and building from source.
+
+### NixOS module
 
 ```nix
-# in your flake inputs:
-inputs.quipclipper.url = "github:weckere/quipclipper";
-# then add to packages:
-inputs.quipclipper.packages.${system}.default
+# flake.nix
+inputs.quipclipper.url = "github:weckere/quipclipper";   # main = the latest release
+
+# a NixOS module, with quipclipper.nixosModules.default imported
+services.quipclipper-web = {
+  enable = true;
+  mediaRoots = [ "/srv/media/movies" "/srv/media/tv" ];
+  openFirewall = true;   # then browse to http://<host>/
+};
 ```
 
-## Usage
+It runs the backend as a hardened systemd service behind the host's nginx, and a NixOS VM
+test in CI covers it. The options (password, API token, a shared clips folder, Quick
+Sync, your own front proxy, Jellyfin, LeadStinger) are in
+[docs/DEPLOY.md](docs/DEPLOY.md#nixos-module).
 
-### Search for a line
+### The CLI on its own
 
 ```bash
-quipclipper search "i'll be back" --subs movie.srt
+pip install "git+https://github.com/weckere/quipclipper@v0.1.1"
+# or with Nix: nix run github:weckere/quipclipper -- --help
 ```
 
-```
-[0]     1.00s  00:00:01.000–00:00:03.000  (score 100)
-      I'll be back.
-```
+## The CLI
 
-Use a video instead of a subtitle file and quipclipper will look for a sidecar
-subtitle, or pull an embedded track:
+On local files, `search`, `clip` and `tracks` need no server:
 
 ```bash
-quipclipper search "hasta la vista" --video movie.mkv
+quipclipper search "resistance is futile" --video "Large Locutus Leporid (2016).mp4"
+quipclipper clip "you will become one with the borg" -v "Large Locutus Leporid (2016).mp4" -t audio
+quipclipper clip "we are the borg" -v movie.mkv --split-channels --split-groups center
 ```
 
-### Cut a clip
+Point it at a server (`QC_URL` and `QC_API_TOKEN`, or `--server`) and every web action is
+a command: browse, search folders, bookmark, batch, follow jobs, download.
 
 ```bash
-# audio: lossless stream copy by default -> codec-matched container (e.g. .m4a)
-quipclipper clip "i'll be back" --video movie.mkv --type audio
-
-# video: re-encodes to a frame-exact .mp4 by default (matches the web app)
-quipclipper clip "get to the chopper" --video movie.mkv --type video --before 5 --after 3
-
-# video, lossless: a near-instant stream copy (keyframe-aligned start) -> .mkv
-quipclipper clip "get to the chopper" --video movie.mkv --type video --lossless
-
-# gif (always re-encoded)
-quipclipper clip "hasta la vista" --video movie.mkv --type gif
-
-# force a re-encode of an audio clip (e.g. to mp3) with --no-lossless
-quipclipper clip "i'll be back" --video movie.mkv --type audio --no-lossless
-
-# pick a different ranked match, name the output, skip the confirm prompt
-quipclipper clip "come with me" -v movie.mkv -t audio -i 1 -o out.m4a --yes
+quipclipper ls /movies
+quipclipper search.folder "resistance is futile" --path /shows
+quipclipper --json bookmark.list | quipclipper clip.batch --kind audio --out-dir ~/clips
 ```
 
-By default the clip covers the matched line's own start/end plus `--before` /
-`--after` padding. The output is auto-named next to the source unless you pass
-`--out`.
+`--json` gives machine output and `--safe` refuses anything destructive (for agents).
+[docs/CLI.md](docs/CLI.md) lists all the commands; [docs/MANUAL.md](docs/MANUAL.md)
+covers local cutting in depth (lossless copies, mkvmerge, audio tracks, surround split,
+subtitles in clips).
 
-A video re-encode **auto-detects an Intel iGPU** and encodes on it (Quick Sync
-via VAAPI, `h264_vaapi`) when available, falling back to software `libx264`. Force
-software with `--no-hwaccel`, or point at a specific render node with
-`--vaapi-device /dev/dri/renderD129`.
+## The HTTP API
 
-### Picking among multiple matches
+The web UI is a thin layer over a plain HTTP+JSON API, and the API is meant to be used:
+browse, search dialogue, cut clips, poll the job and download the result from a script,
+a cron job or an AI agent. One `QC_API_TOKEN` gets a client through the password gate
+(`curl -u api:<token>`), and your instance serves its own OpenAPI docs at `/docs`.
+[docs/API.md](docs/API.md) documents every endpoint, with a worked find-a-line-and-cut-it
+example.
 
-When a phrase appears in several places (a recurring catchphrase), `--pick` lists
-the candidates and lets you select **one or more** to clip in a single run.
-Candidates never overlap — the search collapses span-variants (the line alone vs.
-windows that join it with neighbours), so you get one entry per distinct place the
-phrase occurs:
+## Integrations
 
-```bash
-quipclipper clip "i'll be back" -v movie.mkv -s movie.srt --pick
-```
+### LeadStinger
 
-```
-5 match(es):
-[0]   83.00s  00:01:23.000–00:01:24.500  (score 100)
-      I'll be back.
-[1]  742.00s  00:12:22.000–00:12:23.500  (score 100)
-      I'll be back!
-...
-Select matches to clip (comma-separated indices, or 'all') [0]: 0,1
-```
+[LeadStinger](https://github.com/weckere/leadstinger) is a soundboard for live shows.
+Tick the **Send to LeadStinger** toggle (⚡) beside Make clip, or beside Clip / Export
+selected, and the line goes straight into LeadStinger as a new tile: quipclipper cuts it
+as a full-mix FLAC with its padding kept as handles, and the tile's trim sits exactly on
+the line, so it can still be nudged there. Several lines at once make a LeadStinger set
+file. It needs the server's public address (`QC_PUBLIC_URL`) and LeadStinger connected
+once with the API token; from the CLI it is `leadstinger.quip`, `leadstinger.link`,
+`leadstinger.set` and `leadstinger.send`. Setup and the link format:
+[docs/MANUAL.md](docs/MANUAL.md#sending-clips-to-leadstinger).
 
-Selection is non-exclusive — enter comma-separated indices (`0,2,3`), `all`, or
-just press Enter for the top match. Each selected match is clipped (auto-named by
-its timestamp, so they don't collide). `--limit/-n` controls how many candidates
-are offered; `--out` can't be combined with multiple selections. Without `--pick`,
-the best match (or `--index N`) is used.
+### Jellyfin Now playing
 
-### Choosing audio tracks
+Watching something on Jellyfin and hear a line worth keeping? With `QC_JELLYFIN_URL` and
+an API key set, a **Now playing** card on the library lists what each client is playing,
+and **Open at 12:34** opens the file in the workspace with the line just heard selected:
+nothing to search for. Jellyfin is only asked what is playing; quipclipper still reads and
+cuts the media from its own folders. From the CLI: `quipclipper nowplaying` and
+`quipclipper clip.nowplaying -t audio`. Setup and path mapping:
+[docs/MANUAL.md](docs/MANUAL.md#now-playing-jellyfin).
 
-By default every audio stream is kept. Use `--audio-track` (a `a:N` index, or a
-comma-separated list) to keep only some:
+## Accessibility
 
-```bash
-quipclipper clip "i'll be back" -v movie.mkv --audio-track 0      # just the first track
-quipclipper clip "i'll be back" -v movie.mkv --audio-track 0,2    # tracks 0 and 2
-quipclipper tracks movie.mkv                                       # list all streams + indices
-```
+The web app aims at WCAG 2.2 AA, and tests keep it there:
 
-`quipclipper tracks` prints the video, audio and subtitle streams with the `a:N` /
-`s:N` indices to feed back into `--audio-track` / `--track`:
+- every control has hover text (what it does, and its shortcut) and a name a screen reader
+  can say; a skip link jumps past the top bar;
+- the keyboard does everything: `/` to search, Space or K to play, the script as one tab
+  stop (↑ ↓ to move, Enter to play, S and E to set the selection), arrow keys on the
+  dialogue map and seek bar;
+- finished and failed jobs, the selection and match counts are announced;
+- Settings has subtitle size (Normal, Large, Extra large) and a solid subtitle background;
+  both themes meet AA contrast (a test checks every colour pair), with a stronger palette
+  under `prefers-contrast: more`; pages reflow down to 320 px wide.
 
-```
-Video:
-  v:0  h264
-Audio:
-  a:0  ac3  5.1(side)  eng
-  a:1  aac  stereo  eng  'Commentary'
-Subtitle:
-  s:0  subrip  eng
-```
+Details: [docs/MANUAL.md](docs/MANUAL.md#keyboard-screen-readers-and-low-vision).
 
-### Full-mix lossless WAV/FLAC (keeps 5.1)
+## Experimental sources
 
-By default a lossless audio clip is a **passthrough** stream copy (the original
-codec, e.g. AC3/DTS, in a matching container). To get an editable lossless file
-in one piece — keeping the full surround mix — use `--audio-format`:
+- **YouTube:** paste a URL and quipclipper fetches the transcript and details with yt-dlp
+  (nothing is downloaded unless you ask); search, bookmark and clip it like a file. It can
+  also backfill transcripts for YouTube videos already in your library.
+- **Podcasts and audiobooks:** an audio file with a sidecar transcript (`.srt`, `.vtt`,
+  `.ass`, or Podcast Namespace / Whisper `.json`) is a source like any other, with speaker
+  names picked up from the transcript.
+- **EPUB3 read-along audiobooks** (such as [Storyteller](https://gitlab.com/storyteller-platform/storyteller)
+  output): a book browses like a folder of chapters, and a line is cut straight from the
+  embedded narration.
 
-```bash
-# 5.1 source -> a single 5.1 WAV (pcm_s24le, all channels), no downmix
-quipclipper clip "get to the chopper" -v movie.mkv -t audio --audio-format wav
+See [docs/MANUAL.md](docs/MANUAL.md#youtube-sources-experimental) and
+[EPUB3 audiobooks](docs/MANUAL.md#epub3-audiobooks-experimental).
 
-# or FLAC (lossless compression, bit-exact)
-quipclipper clip "get to the chopper" -v movie.mkv -t audio --audio-format flac
-```
+## Documentation
 
-This decodes one audio stream and re-encodes every channel into a single
-WAV/FLAC (WAV stores 5.1 via `WAVE_FORMAT_EXTENSIBLE`). It is lossless relative
-to the decode — PCM verbatim or FLAC bit-exact. It maps a single audio stream
-(the first selected, or `a:0`), since WAV/FLAC hold one stream; to keep *every*
-track use the default passthrough (`.mka`). For separate per-channel files
-instead of one mixed file, use `--split-channels` below.
-
-### Splitting surround sound into separate files
-
-`--split-channels` writes one file per channel group — a stereo file for the
-front pair and the surround pair(s), plus a mono file for the centre and LFE
-channels. A 5.1 source has a single surround pair, written as `surround`; a 7.1
-source has two, kept distinct as `side` and `back`:
-
-```bash
-# 5.1 -> front.wav (stereo) + surround.wav + center.wav + lfe.wav  (lossless PCM)
-quipclipper clip "get to the chopper" -v movie.mkv --split-channels
-
-# lossless FLAC instead of WAV
-quipclipper clip "get to the chopper" -v movie.mkv --split-channels --split-format flac
-
-# drop the LFE channel
-quipclipper clip "get to the chopper" -v movie.mkv --split-channels --no-lfe
-
-# only some groups: just the centre channel (subset of front,center,surround,lfe)
-quipclipper clip "get to the chopper" -v movie.mkv --split-channels --split-groups center
-
-# pick which audio stream to split when there are several (default a:0)
-quipclipper clip "get to the chopper" -v movie.mkv --split-channels --audio-track 1
-```
-
-`--split-groups` (comma-separated `front,center,surround,lfe`) limits which groups
-are written; `--audio-track N` selects the single stream to split (its first index
-is used) — same controls the web app's batch channel picker exposes.
-
-**Channel splitting writes lossless WAV or FLAC and never does a lossy
-re-encode.** Pulling channels apart does require *decoding* the surround mix —
-that is unavoidable, you cannot route channels out of a compressed stream without
-decoding it — but the decoded audio is written verbatim: `wav` is raw PCM
-(`pcm_s24le`) and `flac` is lossless compression (bit-exact). Neither loses any
-quality relative to the source.
-
-There is also an opt-in `--split-format original`, the **only** option that
-re-encodes (back to the source codec, e.g. AC3). Use it only if you specifically
-need the original format rather than lossless WAV/FLAC.
-
-## MKV sources & the mkvmerge backend
-
-quipclipper cuts **lossless** audio/video with **[MKVToolNix](https://mkvtoolnix.download/)'s
-`mkvmerge`** whenever it's installed. mkvmerge splits losslessly and superbly: it
-keeps every track, chapter and attachment, never re-encodes, produces tighter
-cuts, and trims and time-shifts subtitles natively (including a sidecar file).
-(Audio is lossless by default; add `--lossless` for a lossless video cut, since
-video otherwise re-encodes via ffmpeg.)
-
-```bash
-quipclipper clip "i'll be back" -v movie.mkv -t video --lossless                  # lossless video: direct mkvmerge cut
-quipclipper clip "i'll be back" -v movie.mp4 -t video --lossless                  # non-MKV: direct mkvmerge cut (--remux-first for max accuracy)
-quipclipper clip "i'll be back" -v movie.mp4 -t video --lossless --backend ffmpeg # force ffmpeg
-quipclipper clip "i'll be back" -v movie.mkv -t video --lossless --no-chapters    # drop chapters
-```
-
-`--backend` is `auto` (default), `ffmpeg`, or `mkvmerge`:
-
-- **auto** — uses mkvmerge for any lossless **audio or video** cut when it's
-  installed (audio → `.mka`, video → `.mkv`), for MKV *and* non-MKV sources;
-  falls back to ffmpeg only if mkvmerge is missing.
-- **mkvmerge** — force mkvmerge. Lossless cuts only — not gif, `--no-lossless`,
-  or `--split-channels`.
-- **ffmpeg** — always use ffmpeg.
-
-`--chapters` / `--no-chapters` (default keep) controls whether chapters are kept
-in mkvmerge output; mkvmerge trims them to the clip range.
-
-### `--remux-first`
-
-By default, quipclipper cuts sources **directly** — no temporary copy needed.
-**MKV sources are always cut directly** regardless of this flag.
-
-For **non-MKV sources** (mp4, avi, …), pass `--remux-first` to mux the source (and
-any sidecar subtitle) into a temporary MKV with mkvmerge first, then cut from
-that. This bypasses ffmpeg entirely for maximum accuracy, but needs local disk
-space for the full-size temp copy:
-
-```
-remux-first: muxing the source to a temporary MKV for best accuracy.
-estimated scratch space: ~4.7 GB (temp file, deleted afterward).
-Proceed? [Y/n]
-```
-
-The temp file is written next to the output and **deleted afterward**.
-
-Pass **`--yes` / `-y`** to skip all confirmation prompts (including the remux
-disk-space confirmation). remux-first applies only to lossless audio/video cuts;
-gif, `--no-lossless` and `--split-channels` always use ffmpeg.
-
-mkvmerge requires MKVToolNix on your `PATH` (`mkvmerge`).
-
-### Subtitles in video clips
-
-A **lossless** video clip keeps all embedded subtitle tracks (they ride along in
-the `.mkv` stream copy). When you search with an external subtitle file (`--subs`
-or a sidecar), quipclipper also muxes those lines into the clip, trimmed and
-time-shifted to line up with the cut. Disable with `--no-embed-subs`. (Subtitle
-embedding is a lossless feature — pass `--lossless`, since a re-encoded clip
-doesn't carry subtitles.)
-
-```bash
-quipclipper clip "i'll be back" -v movie.mkv -t video --lossless                 # subtitles included
-quipclipper clip "i'll be back" -v movie.mkv -t video --lossless --no-embed-subs # video subs only
-```
-
-## How it works
-
-| Module | Responsibility |
+| | |
 |---|---|
-| `models.py` | `Cue` (a timed subtitle line) and `Match` (a ranked hit). |
-| `subtitles.py` | Parse `.srt`/`.vtt`/`.ass`/`.ssa`/`.sub`/`.json`; find sidecars; list/extract embedded tracks; list all streams. |
-| `search.py` | Fuzzy ranking (`rapidfuzz`) over single cues and sliding windows of consecutive cues; collapses overlapping span-variants into non-overlapping results. |
-| `clip.py` | Turn a match into a padded time range and cut it with ffmpeg (lossless `-c copy`, re-encode, or surround channel split). Sources can be local files or http(s) URLs (e.g. resolved YouTube streams — used by the web app). |
-| `mkv.py` | MKVToolNix (`mkvmerge`) backend for lossless cuts of Matroska sources. |
-| `epub.py` | EPUB3 media-overlay audiobooks: detect by manifest, parse chapters/cues from OPF/NCX/SMIL, extract the embedded narration audio. |
-| `cli.py` | `typer` CLI: `search`, `clip`, `tracks`. |
-| `web/` | Self-hosted web app (FastAPI + nginx + vanilla JS) — the engine behind the [Features](#features) above. |
+| [docs/MANUAL.md](docs/MANUAL.md) | The user manual: the web app's screens, the CLI on local files, and the topics they share. |
+| [docs/DEPLOY.md](docs/DEPLOY.md) | Docker Compose, every setting, the NixOS module, versions and upgrades. |
+| [docs/CLI.md](docs/CLI.md) | Every CLI command (generated from the command registry). |
+| [docs/API.md](docs/API.md) | The HTTP API. |
+| [docs/DESIGN_NOTES.md](docs/DESIGN_NOTES.md) | Why it is built the way it is. |
+| [CHANGELOG.md](CHANGELOG.md) | What changed in each release. |
 
 ## Development
 
 ```bash
-pip install -e ".[dev]"
-pytest
+pip install -e ".[dev]" -e "web/backend[dev]"
+pytest -q                              # the engine and the CLI
+(cd web/backend && pytest -q)          # the web app, CLI parity and the frontend guards
+nix develop                            # or a shell with everything, including ffmpeg
 ```
 
-The tests cover subtitle/transcript parsing, search ranking, ffmpeg and mkvmerge
-command construction, channel grouping, EPUB overlay parsing, and the CLI's
-selection logic — and don't require ffmpeg.
+Work happens on the `dev` branch; `main` is always the latest release. Each change that
+users would notice adds a line to the Unreleased section of [CHANGELOG.md](CHANGELOG.md).
+`scripts/release.sh X.Y.Z` cuts a release: it bumps the version (only `pyproject.toml`
+holds it), dates the changelog, tags `vX.Y.Z` and moves `main`; the tag's workflow runs the
+tests, publishes the images and creates the GitHub Release. Every new web UI action needs a
+CLI command in `src/quipclipper/commands.py`: a parity test fails until it has one.
 
-## License
+## Licence and credits
 
-MIT
+quipclipper is released under the [MIT licence](LICENSE).
+
+The screenshots use **"Large Locutus Leporid (2016)"**, a fixture cut from
+[*Big Buck Bunny*](https://peach.blender.org/) (© 2008 Blender Foundation,
+www.bigbuckbunny.org), licensed [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/).
+Its subtitles quote a few Borg lines from *Star Trek: The Next Generation* for search to
+find; Star Trek is a trademark of CBS Studios, and quipclipper has nothing to do with it.
+How the fixture and the screenshots are made:
+[docs/screenshots/fixture](docs/screenshots/fixture/README.md).

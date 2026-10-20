@@ -6,8 +6,12 @@ job is: parse the subtitles → fuzzy-search the line you remember → map the m
 back to its time span → cut it out. The result is a lossless clip, produced
 in a fraction of a second.
 
-This manual is the complete reference. For a shorter tour see [`../README.md`](../README.md);
-for *why* the code is built the way it is, see [`DESIGN_NOTES.md`](DESIGN_NOTES.md).
+quipclipper comes as a **self-hosted web app** and a **command-line tool** over the same
+engine. This manual covers both: the web app's screens, the CLI on local files, and the
+topics they share. For a shorter tour see [`../README.md`](../README.md); to install the
+web app see [`DEPLOY.md`](DEPLOY.md); every CLI command (including the ones that drive a
+server) is in [`CLI.md`](CLI.md); the HTTP API is in [`API.md`](API.md); for *why* the
+code is built the way it is, see [`DESIGN_NOTES.md`](DESIGN_NOTES.md).
 
 ---
 
@@ -17,6 +21,15 @@ for *why* the code is built the way it is, see [`DESIGN_NOTES.md`](DESIGN_NOTES.
 - [Requirements](#requirements)
 - [Quick start](#quick-start)
 - [How it works](#how-it-works)
+- [The web app](#the-web-app)
+  - [The top bar](#the-top-bar)
+  - [The library](#the-library)
+  - [Searching dialogue](#searching-dialogue)
+  - [The workspace](#the-workspace)
+  - [Bookmarks and clips](#bookmarks-and-clips)
+  - [Settings](#settings)
+  - [Keyboard, screen readers and low vision](#keyboard-screen-readers-and-low-vision)
+  - [YouTube sources (experimental)](#youtube-sources-experimental)
 - [Command reference](#command-reference)
   - [`quipclipper search`](#quipclipper-search)
   - [`quipclipper clip`](#quipclipper-clip)
@@ -48,7 +61,8 @@ pip install -e .            # or: pip install -e ".[dev]" for the test dependenc
 ```
 
 This installs the `quipclipper` command and the Python dependencies (`pysubs2`,
-`rapidfuzz`, `typer`).
+`rapidfuzz`, `typer`, `click`). The web app is installed separately, with Docker or the
+NixOS module: see [`DEPLOY.md`](DEPLOY.md).
 
 ### Nix
 
@@ -125,10 +139,219 @@ subtitles ──parse──► cues ──fuzzy search──► ranked matches �
 
 ---
 
+## The web app
+
+The web app does everything in the browser: browse your media folders, find a line by
+typing what you remember, select it on the script, and cut it. The screenshots in the
+[README](../README.md#screenshots) show each screen.
+
+### The top bar
+
+- **quipclipper** (the logo) goes back to the top of the library.
+- **The search box** searches dialogue. Its chip says where: **This video**, **This
+  folder**, **Whole library**, or **N folders** when the library filter has narrowed the
+  list. It follows the page you are on until you pick one yourself. With Jellyfin set up,
+  the chip's menu also has **Now playing**. `/` jumps to the box from anywhere.
+- **Library**, **Bookmarks** and **Clips** switch pages.
+- **Jobs** counts the clips, downloads and subtitle fetches that are running, and opens a
+  list of recent jobs: cancel or dismiss one, download a finished clip, or clear the
+  finished ones.
+- **The sliders button** opens [Settings](#settings).
+
+### The library
+
+A rail on the left lists the media roots and **YouTube**. The main column lists the
+current folder: folders, video files, audio files that have a transcript beside them
+(🎵) and EPUB3 audiobooks (📚). A **sub** chip marks a file with a sidecar subtitle file.
+**Search library** filters the folder by name; the dialogue search then covers exactly
+the folders the filter found (the chip says **N folders**), and clearing it goes back to
+the current folder, searched recursively.
+
+The **Dialogue index** card says how many files in the folder have their subtitles
+cached. **Index N files** extracts and caches the rest, so dialogue search is fast;
+**Re-index all** starts over (use it when subtitles changed). Files with no text
+subtitles at all are counted separately and left out. **Fetch missing YouTube
+subtitles** backfills transcripts for videos that came from YouTube (see
+[below](#backfilling-subtitles-for-existing-videos)).
+
+With Jellyfin set up, a **Now playing** card at the top of the library lists what each
+Jellyfin client is playing; see [Now playing (Jellyfin)](#now-playing-jellyfin).
+
+### Searching dialogue
+
+Type a line in the search box and press Enter. Search is fuzzy (typos and paraphrase are
+fine) and phrases that span two or three subtitles still match.
+
+- **In a video**, the matches appear in the workspace's **Matches** tab.
+- **In a folder or the library**, the results are grouped by file, with the words of the
+  query highlighted and a score on each line. On a wide screen (1250 px and up) clicking
+  a line previews the lines around it, with **Open in workspace**; on a narrower one it
+  opens the file with that line selected.
+- Each result line has **★** (bookmark it) and **✂** (clip it) on hover or focus.
+- Tick lines (or **Select all**) to act on several: **Bookmark selected**, **Clip
+  selected**, and the **Send to LeadStinger** toggle beside it. **Options** opens the
+  batch options: Video / Audio only, Split channels (pick the channel groups), Exact,
+  Format and the Name template.
+
+### The workspace
+
+Opening a file opens its workspace.
+
+- **The player** plays the file. When the browser can't play its audio (AC3, DTS, FLAC…)
+  or video (HEVC in Firefox, XviD, MPEG-2…), the server converts it on the fly (with
+  Intel Quick Sync when there is one) and a note says seeking may be slower; iOS plays an
+  HLS stream instead. The header has the **Subtitles**, audio and channel pickers: they
+  change playback and what the clip contains (the subtitle you pick becomes the clip's
+  default track).
+- **The dialogue map** under the player shows where the talking is over the whole file:
+  the selection in amber, the playhead in blue. Click it to seek.
+- **The transport**: back to the start, play/pause, **Loop selection**, and the
+  selection's range.
+- **The script** on the right lists every line. Click a line to seek; hover (or focus)
+  a line for **Start** and **End**, which set the selection by whole lines. The first
+  line, *Start of video*, lets a clip begin at 0:00. **Follow playback** keeps the
+  playing line in view. The tabs beside **Script** are **Matches** (after a search),
+  **Bookmarks** for this file and **Clips** made from it this visit.
+- **The Selection panel** shows the selected range and acts on it: **★ Bookmark** (with
+  a label you can edit), **✂ Make clip**, and the **Send to LeadStinger** toggle. Under
+  it: **Before** / **After** padding in seconds (it changes the preview, the bookmark and
+  the clip), **Video | Audio only**, **Exact (re-encode)** for a frame-exact video clip
+  (off: a lossless copy that starts on a keyframe), **Format** for audio (Passthrough,
+  FLAC, WAV), and **Name**, the clip's path template (**Tokens** lists what it can use).
+- **On a phone** the player comes first, then the script, with the Selection panel
+  pinned to the bottom of the screen and its options behind **Options**.
+
+Clips are cut as jobs; the Jobs list shows them, and finished clips land in the clips
+library, filed by the Name template (by default `{source}/{timestamp}_{cue}_{title}`: a
+folder per source file).
+
+### Bookmarks and clips
+
+**Bookmarks** lists every saved bookmark, grouped by file, with its padding and stream
+choice. Open one in its workspace, change its padding, or tick several and **Clip
+selected** / **Export selected** with the shared batch options (and the Send to
+LeadStinger toggle). **Clear all** deletes them all, after asking.
+
+**Clips** is the clips library: folders and finished clips with their sizes. Download a
+clip, send one to LeadStinger, open one in the workspace (a clip is a file like any other:
+search it, bookmark it, cut a clip from it), or tick several and re-cut them.
+
+### Settings
+
+Saved per browser:
+
+- **Appearance**: System, Dark or Light.
+- **Subtitle size** (Normal, Large, Extra large) and **Solid background behind
+  subtitles**, for the subtitles on the video.
+- **Subtitle languages**: the order to prefer when a file has several subtitle tracks
+  (`eng,spa`); empty uses the server's `QC_SUBTITLE_LANGS`.
+
+The clip name template is the Name field in the Selection panel, and the YouTube player
+choice is on each YouTube video.
+
+### Keyboard, screen readers and low vision
+
+The web app aims at WCAG 2.2 AA.
+
+- Every control has hover text saying what it does (and its shortcut) and a name a
+  screen reader can say. A **skip link** jumps past the top bar.
+- `/` focuses the search box. In the workspace, **Space** or **K** play and pause. The
+  script is one tab stop: **↑ ↓** (and Page Up/Down, Home/End) move between lines,
+  **Enter** plays from a line, **S** and **E** set the selection's start and end. The
+  dialogue map and the seek bar are sliders: the arrow keys step 1 s (Shift: 10 s).
+- Jobs and Settings are dialogs: focus moves in, **Esc** closes them and returns focus.
+  When a folder, a file or a page opens, focus moves to it.
+- One polite announcement says when a job finishes or fails, what the selection now is,
+  that a bookmark was saved, and how many matches a search found.
+- Both themes meet AA contrast, with a stronger palette under the system's *increase
+  contrast* setting (`prefers-contrast: more`). The pages reflow down to 320 px wide, and
+  small targets are at least 24 px tall.
+
+### YouTube sources (experimental)
+
+Open **YouTube** in the library's rail and paste a watch URL
+(`youtube.com/watch`, `youtu.be/…`, shorts/embed links work too). quipclipper
+runs **yt-dlp** to fetch the video's **subtitles and metadata only** — nothing
+is downloaded — and the video joins the list permanently (stored under the
+state dir; the ✕ on its row removes it).
+
+From there it works like any library item:
+
+- **Transcript & search** — the scrolling script view, per-item dialogue
+  search, and cross-video dialogue search over the whole YouTube section all
+  run on the fetched captions. Manual subtitles are preferred; YouTube's
+  auto-captions are used as a fallback (with their rolling-duplicate lines
+  cleaned up). **Reindex subtitles** re-fetches the transcript.
+- **Preview** — a per-browser **Player** setting on each YouTube item picks
+  between two modes (both support selecting, bookmarking and clipping):
+  - **Official YouTube player** (the default on iOS) — the standard embed via
+    the IFrame API: instant, reliable, plays anywhere, uses YouTube's own
+    captions. Your browser talks to YouTube directly in this mode.
+  - **Server stream** (the default on desktop) — yt-dlp resolves the direct
+    stream URLs and ffmpeg remuxes them live to the player (same transcode
+    path as unplayable library codecs); nothing in your browser ever loads
+    YouTube scripts. Seeking works via the custom seek bar.
+- **Bookmarks** — saved against the video like any file, and visible in the
+  Bookmarks view.
+- **Clipping** — cuts run ffmpeg **directly against the stream URLs**, so
+  nothing is downloaded even then: **Exact** re-encodes a frame-tight H.264
+  clip; unticking it stream-copies losslessly (keyframe-aligned start, no
+  quality loss). Clips land in the clips library under
+  `<Video Title>/<timestamp>_<cue>_<Channel>…` and are named by the same
+  template tokens as everything else. (Channel-split export and the mkvmerge
+  backend don't apply to stream sources.)
+- **Optional full download** — a **Download video** button on each item
+  fetches the whole video to the server once (browser-native mp4). Everything
+  then transparently prefers the local copy: playback seeks natively (no
+  transcode proxy), keyframe probes are exact, and clips cut from the file with
+  the **full** pipeline (channel split and mkvmerge included) — no YouTube
+  round-trips at all. An **on server** chip marks downloaded videos; **Remove download**
+  deletes the file and keeps the transcript. By default the file is private to
+  the app; set **`QC_YOUTUBE_DIR`** (Docker) / **`youtubeDir`** (NixOS) to a
+  real folder and each download lands as `<Title> [<id>].mp4` with a `.vtt`
+  sidecar — a browsable, dialogue-searchable library item, visible to Jellyfin
+  and Samba too.
+
+#### Backfilling subtitles for existing videos
+
+If your library already holds YouTube-sourced videos with **no subtitles** — a
+Pinchflat/yt-dlp archive that only saved `.info.json`, say — quipclipper can
+fetch their transcripts on demand so they become dialogue-searchable and
+clippable like anything else. It recognises a video's YouTube id from the
+`[<id>]` in its filename or a sibling `.info.json`, then downloads a `.vtt`
+sidecar next to it. This is **opt-in per video or per folder** — nothing is
+fetched automatically across your library:
+
+- **One video** — open it; if it's YouTube-sourced and has no subtitles, a
+  **⬇ Fetch subtitles from YouTube** button appears beside the Subtitles picker.
+- **A whole folder** — **Fetch missing YouTube subtitles** on the folder's
+  Dialogue index card backfills every id'd, subtitle-less video in that folder as a
+  background job (with progress and a Cancel button), skipping any that already
+  have subtitles, so it's safe to re-run.
+
+Backfill writes sidecars *next to the videos*, so the folder must be
+writable by the app — a `writableMediaRoots` entry (NixOS) or a read-write
+mount (Docker). Read-only roots show a clear "add it to writableMediaRoots"
+message instead.
+
+Requires `yt-dlp` on the backend's PATH — the Docker image installs it via pip
+(rebuild the image to pick up a current release when YouTube changes something),
+and the Nix package wraps it in. `/api/health` reports whether it's present.
+Stream URLs expire after a few hours; quipclipper re-resolves them on demand,
+so long sessions just keep working. Heads-up: some videos only expose formats
+ffmpeg can't fetch directly — those fail with a clear error rather than
+silently degrading.
+
+---
+
 ## Command reference
 
-quipclipper has three commands: `search`, `clip`, and `tracks`. Run `quipclipper --help`
-or `quipclipper <command> --help` for the built-in summary.
+This section covers the three commands that work on **local files**: `search`, `clip`
+and `tracks`. Every action in the web app is also a command that drives a quipclipper
+server over its HTTP API (`quipclipper ls`, `search.folder`, `bookmark.add`, `clip.batch`,
+`leadstinger.quip`, `clip.nowplaying`…); those are all in [`CLI.md`](CLI.md), generated
+from the command registry. Run `quipclipper --help` or `quipclipper <command> --help`
+for the built-in summary.
 
 ### `quipclipper search`
 
@@ -656,7 +879,12 @@ src/quipclipper/
                  Sources may be local files or http(s) URLs (resolved YouTube streams — used by the web app).
   mkv.py         MKVToolNix (mkvmerge) backend for lossless cuts; remux-first; disk-space estimate.
   epub.py        EPUB3 media-overlay audiobooks: detect, OPF/NCX/SMIL → chapters + cues, extract embedded audio.
-  cli.py         typer CLI: search, clip, tracks.
+  naming.py      Clip-name templates (tokens, clean titles), shared by the CLI and the web app.
+  commands.py    The command registry: every web UI action as a CLI command (endpoint, parameters, UI place).
+  client.py      The HTTP client the CLI uses to drive a quipclipper server.
+  cli.py         The CLI, built from the registry; search, clip and tracks also run on local files.
+web/backend/quipclipper_web/   FastAPI app: library, search, jobs, bookmarks, YouTube, LeadStinger, Jellyfin.
+web/frontend/                  The web UI: index.html, app.js, styles.css, tokens.css (no build step).
 ```
 
 The cutting backends share the same `ClipRange` (start/end in seconds) and
@@ -674,7 +902,9 @@ pytest
 The test suite covers subtitle parsing (markup stripping, multi-line joining),
 search ranking and span-variant collapse, output/container selection, ffmpeg and
 mkvmerge command construction, channel grouping, the SRT renderer, the CLI's
-selection parsing, EPUB media-overlay parsing, and JSON transcript formats. The
+selection parsing, EPUB media-overlay parsing, and JSON transcript formats; the web
+app's tests (`cd web/backend && pytest`) cover the API, CLI parity, and guards on the
+frontend (every action keeps a control, hover text and names, token contrast). The
 command-building tests are pure functions and need no
 media; the integration behaviour was verified against real `ffmpeg` and
 `mkvmerge` during development.

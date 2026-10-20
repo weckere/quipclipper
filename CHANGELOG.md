@@ -91,6 +91,9 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   release workflow: a `v*` tag runs the tests, publishes the GHCR images tagged `X.Y.Z`,
   `X.Y` and `latest`, and creates a GitHub Release from the changelog. Images are no longer
   pushed on every commit.
+- A rewritten README with screenshots of the current UI, a web-app chapter in the manual,
+  and [docs/DEPLOY.md](https://github.com/weckere/quipclipper/blob/main/docs/DEPLOY.md)
+  for Docker and NixOS.
 
 ### Fixed
 

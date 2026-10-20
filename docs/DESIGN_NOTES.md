@@ -31,7 +31,9 @@ follow from taking those two facts seriously.
 15. [Nix flake](#15-nix-flake)
 16. [Testing strategy](#16-testing-strategy)
 17. [Experimental: audio-only sources and EPUB3 media overlays](#17-experimental-audio-only-sources-and-epub3-media-overlays)
-18. [References](#references)
+18. [The web app: one engine, CLI parity, the redesign](#18-the-web-app-one-engine-cli-parity-the-redesign)
+19. [Releases and the version](#19-releases-and-the-version)
+20. [References](#references)
 
 ---
 
@@ -51,8 +53,8 @@ first**: never degrade the source unless explicitly asked.
 track. Both were rejected as far more work for no benefit when subtitles exist;
 the project deliberately targets "any video that ships with subtitles."
 (A web app was later added on top of the same engine — see
-[`WEBAPP_PLAN.md`](WEBAPP_PLAN.md); the CLI-first scoping here describes the
-original engine.)
+[`WEBAPP_PLAN.md`](WEBAPP_PLAN.md) and [section 18](#18-the-web-app-one-engine-cli-parity-the-redesign);
+the CLI-first scoping here describes the original engine.)
 
 ---
 
@@ -492,6 +494,9 @@ dependencies manually.
 - A `devShells.default` provides a development environment with all
   dependencies and pytest.
 
+- The version comes from `pyproject.toml` (`builtins.fromTOML`), not a literal
+  (see [section 19](#19-releases-and-the-version)).
+
 **Usage in a system config:**
 ```nix
 inputs.quipclipper.url = "github:weckere/quipclipper";
@@ -595,6 +600,65 @@ narration + a SMIL map (each `<par>` ties a sentence to an audio clip) in one zi
   opening a chapter writes nothing. Only *clipping* needs a real seekable file —
   ffmpeg/mkvmerge can't read a zip member — so the member is extracted to a
   **temp that's deleted the moment the cut finishes**. Nothing accumulates.
+
+---
+
+## 18. The web app: one engine, CLI parity, the redesign
+
+**One engine.** The web app (`web/backend`, FastAPI; `web/frontend`, plain HTML/CSS/JS
+with no build step) calls the same `quipclipper` package as the CLI for parsing,
+search, track selection, naming and cutting. Anything learned about media (keyframes,
+layouts, subtitle tracks) is fixed once and both get it.
+
+**Every web UI action is a CLI command.** `src/quipclipper/commands.py` is a registry
+of commands, each with its HTTP endpoint, parameters and place in the web UI; the CLI
+is built from it, and `docs/CLI.md` is generated from it. A parity test fails when an
+API route, a request field, an `/api/` call in `app.js` or a web preference has no
+command, so a new UI feature can't skip the CLI (and agents, which drive quipclipper
+through the CLI, get it too). Presentation-only preferences (theme, subtitle size) are
+listed as exempt, with the reason.
+
+*Alternative considered:* a separate, hand-written CLI for the server. Rejected: it
+would drift from the UI, which is exactly what the parity test prevents.
+
+**Guards against losing controls.** Every control that carries a command is marked
+`data-action="<command id>"`; tests check that each command with a web UI entry keeps a
+marked control and that every element id the script uses exists. A redesign can move
+markup freely but can't silently drop an action.
+
+**The redesign (M12).** The UI was rebuilt around a workspace (player, dialogue map,
+transport and the Selection panel on the left, the script with its tabs on the right),
+one search box whose scope chip replaces three separate search forms, and design tokens
+(`tokens.css`, generated from a FigCraft collection) for dark and light themes. Amber is
+the only accent and always means "the selection / the primary action"; blue marks the
+playhead.
+
+**Accessibility is tested, not just intended (M16).** `test_frontend_a11y.py` fails on
+a control without hover text or an accessible name, and `test_frontend_contrast.py`
+checks every token pair against WCAG 2.2 AA (4.5:1 for text, 3:1 for UI), in both themes
+and the `prefers-contrast: more` palettes. axe-core runs were clean on every page.
+
+---
+
+## 19. Releases and the version
+
+**Decision:** one version source (`pyproject.toml`), a `dev` branch for work, and
+`main` moved only by `scripts/release.sh` at a tagged release.
+
+- The Python packages read their installed metadata (`importlib.metadata`), falling
+  back to the checkout's `pyproject.toml`; the Nix packages read it with
+  `builtins.fromTOML`. `web/backend/pyproject.toml` stays a copy because the backend is
+  built from its own directory (Docker, Nix); `tests/test_version.py` fails if any copy
+  disagrees.
+- `CHANGELOG.md` gets an Unreleased line with each behaviour change; the release script
+  dates that section, and the tag's workflow publishes it as the GitHub Release notes
+  next to the GHCR images (`X.Y.Z`, `X.Y`, `latest`).
+- `main` is the repository's default branch, so `github:weckere/quipclipper` and a
+  visitor's clone get the latest release; `dev` is for those who want work in progress.
+
+*Alternative considered:* a version derived from git tags (setuptools-scm, hatch-vcs).
+Rejected: the Nix builds see a source tree without `.git`, and a tag-derived version
+can't be read with `builtins.fromTOML`.
 
 ---
 

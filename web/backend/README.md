@@ -10,8 +10,8 @@ and a NixOS module.
 
 ## Deploy with Docker
 
-See the [Quick start (Docker Compose)](../../README.md#quick-start-docker-compose)
-in the root README for a ready-to-edit `docker-compose.yml` using the prebuilt
+See the [Docker Compose guide](../../docs/DEPLOY.md#docker-compose)
+for a ready-to-edit `docker-compose.yml` using the prebuilt
 GHCR images (a build-from-source variant is shown there too). For local development,
 [`../docker-compose.yml`](../docker-compose.yml) builds from the working tree and
 bind-mounts the frontend/nginx config so edits show up without a rebuild.
