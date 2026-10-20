@@ -71,6 +71,7 @@ FastAPI publishes the live schema, served behind the same gate:
 | GET | `/api/library/browse?path=` | List a folder (or an EPUB book's segments). Omit `path` for the roots. |
 | GET | `/api/library/search?query=&path=` | Filename search across the library (or under `path`). |
 | GET | `/api/items?path=&langs=` | Probe one media item: streams, duration, subtitle tracks. |
+| GET | `/api/items/link?path=&at=&sel=&track=` | A [deep link](#deep-links) that opens the file in the web app at `at` seconds with `sel` (`START-END`) selected: `{path, at, sel, track, link}`. 503 without `QC_PUBLIC_URL`; the path is checked like `/api/items` (403 outside the roots, 404 missing). |
 | GET | `/api/items/subtitles?path=&track=&offset=&fmt=` | Subtitles as WebVTT (`fmt=vtt`, default) or JSON cues `{start, end, text, speaker}` (`fmt=json` — what the script view uses). |
 | POST | `/api/items/subtitles/reindex?path=` | Rebuild the subtitle cache for one file. |
 | POST | `/api/media/fetch-subs?path=` | Backfill one YouTube-sourced library video's subtitles (async job — poll `job_id`). The video's id is read from its `[<id>]` filename or a sibling `.info.json`; a `.vtt` sidecar is written next to it. 400 = no id found or the folder is read-only (needs `writableMediaRoots`). Job `progress` ends `ok`/`skipped`/`none`. |
@@ -110,8 +111,10 @@ resolved stream URLs, so `split_channels` and `backend=mkvmerge` return 400 for
 | POST | `/api/search/folder/index?path=&force=` | Pre-extract subtitles for a folder (streams progress). |
 
 `/api/search` returns `{query, count, matches: [{index, score, text, speaker,
-start, end, start_ts, end_ts, cue_count}]}`. The `index` is what you pass back as
-`match_index` when clipping.
+start, end, start_ts, end_ts, cue_count, link}]}`. The `index` is what you pass back as
+`match_index` when clipping. `link` (here, on `/api/search/folder` hits, bookmarks and
+clips-library entries) is a [deep link](#deep-links) to that line, present only when
+`QC_PUBLIC_URL` is set.
 
 ### Media (preview/streaming)
 | Method | Path | Purpose |
@@ -137,7 +140,7 @@ where `status` is `queued|running|done|failed|cancelled`, `files` is
 ### Clips library
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/clips?folder=` | List finished clips (optionally within a subfolder). |
+| GET | `/api/clips?folder=` | List finished clips (optionally within a subfolder). Each has a `link` that opens it in the workspace (with `QC_PUBLIC_URL`). |
 | GET | `/api/clips/download/{path}` | Download a finished clip. |
 | GET | `/api/clips/stream/{path}` | Stream a finished clip. |
 
@@ -231,6 +234,30 @@ cue at or before `position` from `/api/items/subtitles` and `POST /api/clip` it;
 | PATCH/DELETE | `/api/bookmarks/{id}` | Edit / delete one. `DELETE /api/bookmarks` clears all. |
 | GET | `/api/health` | Liveness + tool presence (no auth-secret required), and `jellyfin` (Now playing configured). |
 | GET | `/api/config` | Non-secret config the UI needs, including `public_url` (`QC_PUBLIC_URL`, or `null` when Send to LeadStinger links are off) and `jellyfin` (true when Now playing is configured). |
+
+## Deep links
+
+Every view of the web app has a URL, so a page survives a reload, can be bookmarked or sent
+to someone, and Back / Forward move between views. The route lives in the fragment, so the
+server and nginx see only `/`:
+
+| Route | Opens |
+|---|---|
+| `#/library?path=…` | A folder (no `path`: the library home). |
+| `#/search?q=…&scope=library` | Dialogue search across the whole library. |
+| `#/search?q=…&scope=folder&path=…` | Dialogue search in a folder (`path` repeats for several). |
+| `#/item?path=…&t=…[&sel=A-B][&track=N]` | The workspace: seeks to `t` seconds, selects the lines covering `A`–`B`, shows subtitle track `N`. |
+| `#/bookmarks` | Every bookmark. |
+| `#/clips?folder=…` | The clips library (or one of its folders). |
+| `#/nowplaying` | What Jellyfin is playing: the file at its playhead when one client is playing, else the Now playing card. |
+
+Values are percent-encoded (`/` and `:` are left as they are) and times are seconds with up
+to three decimals, e.g.
+`https://quip.example/#/item?path=/media/Movies/T2%20(1991)/T2.mkv&t=3621.2&sel=3621.2-3624.8`.
+A path outside the roots, or one that no longer exists, opens the library with a message
+instead. **Copy link** in the workspace (the selection, else the playhead) and on a search hit
+copies one; `GET /api/items/link` and the `link` fields build them from `QC_PUBLIC_URL`, and
+the CLI's `item.link PATH --at T --sel A-B` prints one.
 
 ## `POST /api/clip` body
 

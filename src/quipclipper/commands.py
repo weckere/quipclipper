@@ -202,6 +202,15 @@ COMMANDS: tuple[Command, ...] = (
             params=(Param("path", "str", "Media file.", main=True, required=True),)
             + _JOB_FOLLOW,
             response="job", ui="⬇ Fetch subtitles from YouTube (item)"),
+    Command("item.link", "A link that opens a file in the web app at a moment, with a range "
+            "selected (needs QC_PUBLIC_URL on the server).", "GET", "/api/items/link",
+            params=(Param("path", "str", "Media file (or yt:<id>).", main=True, required=True),
+                    Param("at", "float", "Seek to this many seconds. Default: the start of "
+                          "--sel."),
+                    Param("sel", "str", "Range to select, START-END in seconds "
+                          "(e.g. 61.2-64.8)."),
+                    Param("track", "int", "Subtitle track (s:N) to show.")),
+            ui="Copy link (workspace selection; search hit)"),
 
     # --- search ------------------------------------------------------------------------
     Command("search.item", "Search one file's dialogue.", "GET", "/api/search",

@@ -29,6 +29,10 @@ mkvmerge. quipclipper is a **self-hosted web app** over your own media folders, 
   the CLI. Clips are filed by a name template you choose.
 - **Bookmarks and batches:** save lines as bookmarks, then clip or export many at once
   from search results, bookmarks or the clips library.
+- **Links to every view:** each folder, search and moment has its own URL, so Back and
+  Forward work (a phone's back gesture too) and **Copy link** shares a line, e.g.
+  `…/#/item?path=/media/Movies/T2.mkv&t=3621.2&sel=3621.2-3624.8`. The format is in
+  [docs/API.md](docs/API.md#deep-links); `item.link` prints one from the CLI.
 - **Plays anything:** files the browser can't play are converted on the fly (audio, or the
   video too), and iOS gets an HLS stream.
 - **[Send to LeadStinger](#leadstinger):** hand a line straight to the LeadStinger

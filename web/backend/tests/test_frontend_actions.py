@@ -49,6 +49,7 @@ MARKED_CONTROLS: dict[str, int] = {
     "leadstinger.quip": 3,    # the workspace, search and bookmarks toggles (one line, by link)
     "leadstinger.link": 2,    # a clip row's Send to LeadStinger button and the clips toggle
     "jellyfin.sessions": 2,   # the Now playing card (library) and the Now playing scope
+    "item.link": 2,           # Copy link in the workspace and on a search hit
     "youtube.download": 1,
     "youtube.delete-download": 1,
 }

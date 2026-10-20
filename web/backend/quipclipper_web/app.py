@@ -62,7 +62,9 @@ from quipclipper.mkv import (
 )
 from quipclipper.search import search as engine_search
 from quipclipper.subtitles import AUDIO_EXTS, VIDEO_EXTS, find_sidecar, load_subtitles
-from quipclipper_web import __version__, epub_items, jellyfin, library, lslink, lsset, media, youtube_items
+from quipclipper_web import (
+    __version__, deeplinks, epub_items, jellyfin, library, lslink, lsset, media, youtube_items,
+)
 from quipclipper_web.bookmarks import BookmarkStore
 from quipclipper_web.config import Settings
 from quipclipper_web.jobs import JobRegistry
@@ -472,6 +474,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return target
         raise HTTPException(status_code=403, detail=f"Path is outside allowed directories: {path}")
 
+    # --- deep links (M18) ----------------------------------------------------
+
+    def _item_link(path: str, at: float | None = None,
+                   sel: tuple[float, float] | None = None, track: int | None = None) -> str | None:
+        """An absolute link to this moment in the web app, or None without QC_PUBLIC_URL."""
+        if not settings.public_url:
+            return None
+        return deeplinks.link(settings.public_url, deeplinks.item_route(path, at, sel, track))
+
+    def _with_link(d: dict, link: str | None) -> dict:
+        """``d`` with its ``link`` field, left out when links are off (no QC_PUBLIC_URL)."""
+        if link:
+            d["link"] = link
+        return d
+
     @app.get("/api/library/roots")
     def roots() -> dict:
         return {"roots": [str(p) for p in settings.media_roots]}
@@ -654,6 +671,45 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 info["backfill_writable"] = os.access(p.parent, os.W_OK)
         return info
 
+    @app.get("/api/items/link")
+    def item_link(
+        path: str = Query(...),
+        at: float | None = Query(None, ge=0),
+        sel: str | None = Query(None),
+        track: int | None = Query(None, ge=0),
+    ) -> dict:
+        """A link that opens ``path`` in the web app at ``at`` seconds, with ``sel``
+        ("START-END", seconds) selected: the Copy link button's twin. Built from
+        QC_PUBLIC_URL; the path is checked the way opening it would check it."""
+        if not settings.public_url:
+            raise HTTPException(status_code=503, detail="Links need QC_PUBLIC_URL: this "
+                                "server's base URL as browsers reach it.")
+        rng = None
+        if sel:
+            try:
+                rng = deeplinks.parse_sel(sel)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc))
+        vid = youtube_items.parse_ref(path)
+        epub_ref, seg = epub_items.parse_ref(path)
+        if vid is not None:
+            try:
+                yt_store.meta(vid)
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail=str(exc))
+            except RuntimeError as exc:
+                raise HTTPException(status_code=500, detail=str(exc))
+        elif seg is not None:
+            if not _resolve(epub_ref).is_file():
+                raise HTTPException(status_code=404, detail=f"Not found: {epub_ref}")
+        else:
+            p = _resolve_any(path)
+            if not p.is_file():
+                raise HTTPException(status_code=404, detail=f"Not a file: {path}")
+        return {"path": path, "at": at if at is not None else (rng[0] if rng else None),
+                "sel": list(rng) if rng else None, "track": track,
+                "link": _item_link(path, at, rng, track)}
+
     @app.get("/api/items/subtitles")
     def subtitles(
         path: str = Query(...),
@@ -767,7 +823,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "query": query,
             "count": len(matches),
             "matches": [
-                {
+                _with_link({
                     "index": i,
                     "score": round(m.score, 1),
                     "text": m.text,
@@ -777,7 +833,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "start_ts": format_timestamp(m.start),
                     "end_ts": format_timestamp(m.end),
                     "cue_count": len(m.cues),
-                }
+                }, _item_link(path, sel=(m.start, m.end), track=track))
                 for i, m in enumerate(matches)
             ],
         }
@@ -948,6 +1004,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 all_hits.extend(fut.result())
 
         all_hits.sort(key=lambda h: -h["score"])
+        for h in all_hits:
+            _with_link(h, _item_link(h["path"], sel=(h["start"], h["end"])))
 
         return {
             "query": query,
@@ -2155,10 +2213,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         epub_ref, seg = epub_items.parse_ref(path)
         return Path(epub_ref if seg is not None else path).name
 
+    def _bookmark_link(d: dict) -> str | None:
+        return _item_link(d["path"], sel=(d["start"], d["end"]), track=d.get("sub_track"))
+
     def _bookmark_dict(b) -> dict:
         d = b.to_dict()
         d["source_name"] = _bookmark_source_name(d["path"])
-        return d
+        return _with_link(d, _bookmark_link(d))
 
     @app.get("/api/bookmarks")
     def list_bookmarks(path: str | None = None) -> dict:
@@ -2180,7 +2241,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             sub_track=req.sub_track, audio_track=req.audio_track,
             channel_subset=req.channel_subset, cue=req.cue,
         )
-        return bm.to_dict()
+        d = bm.to_dict()
+        return _with_link(d, _bookmark_link(d))
 
     @app.patch("/api/bookmarks/{bookmark_id}")
     def update_bookmark(bookmark_id: str, req: BookmarkUpdate) -> dict:
@@ -2189,7 +2251,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         if bm is None:
             raise HTTPException(status_code=404, detail="Bookmark not found.")
-        return bm.to_dict()
+        d = bm.to_dict()
+        return _with_link(d, _bookmark_link(d))
 
     @app.delete("/api/bookmarks")
     def clear_bookmarks() -> dict:
@@ -2241,14 +2304,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         dl_base = settings.clips_url_prefix or "/api/clips/download"
         clips = sorted(
             [
-                {
+                _with_link({
                     "name": f.name,
                     "path": str(f.resolve()),
                     "size": f.stat().st_size,
                     "folder": folder or "",
                     "download_url": f"{dl_base}/{quote(((folder + '/') if folder else '') + f.name)}",
                     "stream_url": f"/api/clips/stream/{quote(((folder + '/') if folder else '') + f.name)}",
-                }
+                }, _item_link(str(f.resolve())))
                 for f in target.iterdir()
                 if _is_clip(f)
             ],

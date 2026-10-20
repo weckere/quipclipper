@@ -31,6 +31,7 @@
       <!-- PLACEHOLDER: LeadStinger's own icon isn't chosen yet. Every "Send to LeadStinger"
            button draws this one symbol, so swapping in the real mark is this one edit. -->
       <symbol id="i-leadstinger" viewBox="0 0 24 24"><path d="M13.5 3 L5.5 13.5 L11.5 13.5 L10.5 21 L18.5 10.5 L12.5 10.5 Z"/></symbol>
+      <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71 M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></symbol>
       <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4 L12 15 M7 10.5 L12 15.5 L17 10.5 M5 19.5 L19 19.5"/></symbol>
     </svg>
     <header class="app-header">
@@ -97,12 +98,14 @@
 
     <main id="main" tabindex="-1">
       <!-- Library browser -->
-      <section id="browser" class="library-layout">
+      <!-- Each view lists its hash routes in data-route (app.js ROUTES; test_frontend_routes.py). -->
+      <section id="browser" class="library-layout" data-route="library search nowplaying">
         <aside class="roots-rail" aria-label="Library roots">
           <h2 class="rail-title">Library</h2>
           <ul id="roots-list" class="roots-list"></ul>
         </aside>
         <div class="library-main">
+        <p id="route-note" class="route-note" role="status" hidden></p>
         <nav id="breadcrumb" class="breadcrumb"></nav>
         <!-- Now playing (M15): what each Jellyfin client is playing. Open jumps to the workspace
              at its playhead with the line just heard selected. Library home only, and only
@@ -189,7 +192,7 @@
       </section>
 
       <!-- Clips library -->
-      <section id="clips-browser" hidden>
+      <section id="clips-browser" data-route="clips" hidden>
         <nav class="breadcrumb">
           <button type="button" id="clips-back-lib" class="crumb" title="Back to the library">Library</button>
           <span class="muted"> / </span>
@@ -226,7 +229,7 @@
       </section>
 
       <!-- Bookmarks browser -->
-      <section id="bookmarks-browser" hidden>
+      <section id="bookmarks-browser" data-route="bookmarks" hidden>
         <nav class="breadcrumb">
           <button type="button" id="all-bm-back-lib" class="crumb" title="Back to the library">Library</button>
           <span class="muted"> / Bookmarks</span>
@@ -263,7 +266,7 @@
       </section>
 
       <!-- Item / inspection view -->
-      <section id="item" class="workspace" hidden>
+      <section id="item" class="workspace" data-route="item" hidden>
         <div class="ws-head">
           <button type="button" id="back" data-action="library.browse" class="back" title="Back to the folder this file is in"><span aria-hidden="true">←</span> Back</button>
           <div class="ws-title">
@@ -341,6 +344,7 @@
                 <!-- Inline clip status: spinner while cutting → download (or ✕). -->
                 <span id="mark-clip-indicator" data-action="job.get" class="mark-clip-indicator" hidden></span>
                 <button type="button" id="clip-options-toggle" class="mark-icon-btn opts-toggle" aria-expanded="false" aria-controls="clip-options" title="Show the clip options: padding, kind, format and name">Options</button>
+                <button type="button" id="copy-link" data-action="item.link" class="mark-icon-btn" title="Copy a link to this moment: it opens this file here with the selection (or the playhead) and the subtitle track" aria-label="Copy link to this moment"><svg class="icon" aria-hidden="true"><use href="#i-link"/></svg><span class="btn-label">Copy link</span></button>
                 <button type="button" id="mark-save" data-action="bookmark.add" class="mark-icon-btn" disabled title="Save the selection as a bookmark, with a label you can edit" aria-label="Save as bookmark" aria-expanded="false" aria-controls="bookmark-label-form"><span class="star" aria-hidden="true">★</span><span class="btn-label">Bookmark</span></button>
                 <button type="button" id="clip-btn" data-action="clip.create" class="mark-icon-btn make-clip-btn" disabled title="Cut the selection into a clip with these options (it runs as a job)" aria-label="Make clip"><span class="scissors" aria-hidden="true">✂</span><span class="btn-label">Make clip</span></button>
                 <label class="ls-toggle" title="Send to LeadStinger: Make clip sends the line straight into LeadStinger (or makes a LeadStinger set file when the server has no QC_PUBLIC_URL)"><input type="checkbox" id="ls-send" data-action="leadstinger.set leadstinger.quip" aria-label="Send to LeadStinger" /><svg class="icon" aria-hidden="true"><use href="#i-leadstinger"/></svg></label>

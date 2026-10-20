@@ -156,6 +156,8 @@ h1 {
 }
 
 .breadcrumb { margin: 1.5rem 0 0.75rem; font-size: 0.95rem; }
+/* A deep link that couldn't be opened (bad or out-of-roots path): said over the library. */
+.route-note { margin: 1.25rem 0 0; padding: 0.6rem 0.8rem; border: 1px solid var(--danger); border-radius: var(--radius); color: var(--text); }
 .breadcrumb a, .breadcrumb .crumb { color: var(--accent-text); cursor: pointer; }
 .breadcrumb a:hover, .breadcrumb .crumb:hover { text-decoration: underline; }
 .crumb { background: none; border: none; padding: 0; font: inherit; }
@@ -531,6 +533,8 @@ input[type="checkbox"].switch:disabled { cursor: default; }
 .mark-icon-btn:disabled { opacity: 0.4; cursor: default; }
 .mark-icon-btn .star { color: var(--accent-text); }
 .mark-icon-btn:disabled .star { color: var(--faint); }
+/* Copy link: green for a moment once the link is on the clipboard. */
+.mark-icon-btn.copied, .mark-icon-btn.copied:hover:not(:disabled) { border-color: var(--ok); color: var(--ok); }
 /* Make clip is the primary action — amber. */
 .make-clip-btn { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .make-clip-btn:hover:not(:disabled) { filter: brightness(1.08); background: var(--accent); border-color: var(--accent); }

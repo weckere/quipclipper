@@ -16,7 +16,7 @@ async function getJSON(url) {
   if (!resp.ok) {
     let detail = `${resp.status}`;
     try { detail = (await resp.json()).detail || detail; } catch {}
-    throw new Error(detail);
+    throw Object.assign(new Error(detail), { status: resp.status });
   }
   return resp.json();
 }
@@ -188,6 +188,191 @@ function showItem() {
   $("item").hidden = false;
 }
 
+// --- deep links (M18) -------------------------------------------------------
+//
+// Every view has a hash route, so a page can be reloaded, bookmarked and shared, and Back and
+// Forward (a phone's back gesture too) move between views:
+//   #/library?path=…                       a folder (no path: the library home)
+//   #/search?q=…&scope=library|folder[&path=…]  dialogue search; path repeats per folder
+//   #/item?path=…&t=…[&sel=a-b][&track=N]  the workspace, seeked to t, a-b selected
+//   #/bookmarks   #/clips?folder=…   #/nowplaying (what Jellyfin is playing)
+// Each view's section in index.html lists its routes in data-route, and
+// test_frontend_routes.py checks this table against them. The server builds the same
+// links for the CLI and Hermes (web/backend/quipclipper_web/deeplinks.py): keep the encoders
+// in step. Paths aren't checked here; the API refuses a bad one and the view falls back.
+const ROUTES = {
+  library: "browser",
+  search: "browser",
+  nowplaying: "browser",
+  item: "item",
+  bookmarks: "bookmarks-browser",
+  clips: "clips-browser",
+};
+
+// encodeURIComponent, but / and : stay as they are (a fragment may hold them), so a path
+// reads as a path. Times are seconds with at most three decimals.
+const routeValue = (v) => encodeURIComponent(v).replace(/%2F/g, "/").replace(/%3A/g, ":");
+const routeTime = (t) => String(+(+t).toFixed(3));
+
+function routeHash(view, params = {}) {
+  const pairs = [];
+  for (const [k, v] of Object.entries(params)) {
+    for (const one of [].concat(v)) {
+      if (one != null && one !== "") pairs.push(`${k}=${routeValue(one)}`);
+    }
+  }
+  return `#/${view}` + (pairs.length ? `?${pairs.join("&")}` : "");
+}
+
+/** The workspace route for `path`: seek to `t`, select `sel` ([start, end]), show `track`. */
+function itemRoute(path, { t, sel, track } = {}) {
+  if (t == null && sel) t = sel[0];
+  return routeHash("item", {
+    path,
+    t: t != null ? routeTime(t) : null,
+    sel: sel ? `${routeTime(sel[0])}-${routeTime(sel[1])}` : null,
+    track,
+  });
+}
+
+/** {view, params} for a hash, or null when it isn't one of ours. */
+function parseRoute(hash) {
+  const m = /^#\/([a-z]+)(?:\?(.*))?$/.exec(hash || "");
+  if (!m || !Object.hasOwn(ROUTES, m[1])) return null;
+  return { view: m[1], params: new URLSearchParams(m[2] || "") };
+}
+
+const routeLink = (hash) => location.origin + location.pathname + hash;
+
+// While a URL is being restored (on load, Back/Forward), views replace the history entry
+// instead of pushing one, so restoring doesn't grow the history.
+let routeRestoring = false;
+
+/** Record the view on screen: a new history entry, unless it's the same, or `replace`. */
+function setRoute(hash, { replace = false } = {}) {
+  if (hash === location.hash) return;
+  if (replace || routeRestoring) history.replaceState(null, "", hash);
+  else history.pushState(null, "", hash);
+}
+
+/** A link to a bad or out-of-roots path (or a folder that's gone): say so over the library. */
+async function linkFailed(err) {
+  routeRestoring = true;
+  try { await browse(null); } finally { routeRestoring = false; }
+  const msg = `Couldn't open that link (${err.message}), so here's the library.`;
+  $("route-note").textContent = msg;
+  $("route-note").hidden = false;
+  announce(msg);
+}
+
+/** Show the view a URL names: on load, and on Back / Forward. */
+async function applyRoute(hash, { focus = false } = {}) {
+  const r = parseRoute(hash);
+  const p = r ? r.params : new URLSearchParams();
+  const num = (k) => { const v = parseFloat(p.get(k)); return Number.isFinite(v) && v >= 0 ? v : null; };
+  routeRestoring = true;
+  try {
+    switch (r ? r.view : "library") {
+      case "library":
+        await browse(p.get("path") || null, { fromLink: true });
+        break;
+      case "search":
+        await restoreSearch(p.get("q") || "", p.get("scope"), p.getAll("path"));
+        break;
+      case "item": {
+        const path = p.get("path");
+        if (!path) { await browse(null); break; }
+        const m = /^([\d.]+)-([\d.]+)$/.exec(p.get("sel") || "");
+        const sel = m && +m[1] <= +m[2] ? { start: +m[1], end: +m[2] } : null;
+        const t = num("t") ?? (sel ? sel.start : null);
+        await openItem(path, path.split(/[\\/]/).pop(), {
+          seekTo: t ?? undefined, markRange: sel, track: p.get("track"), fromLink: true,
+        });
+        break;
+      }
+      case "bookmarks":
+        await browseBookmarks();
+        break;
+      case "clips":
+        await browseClips(p.get("folder") || null, { fromLink: true });
+        break;
+      case "nowplaying":
+        await jumpToNowPlaying();
+        break;
+    }
+  } finally {
+    routeRestoring = false;
+  }
+  // Back / Forward: focus lands on the new view's heading (as the skip link would take it).
+  if (focus) {
+    const a = document.activeElement;
+    if (!a || a === document.body || !(a.isConnected && a.offsetParent !== null)) skipTarget()[0].focus();
+  }
+}
+
+/** A search URL: the folder (or library) first, then the search, as the search box runs it. */
+async function restoreSearch(query, scope, folders) {
+  if (scope === "item" && folders.length) {  // in-video search lives in the workspace
+    await openItem(folders[0], folders[0].split(/[\\/]/).pop(), { searchQuery: query, fromLink: true });
+    return;
+  }
+  const inFolders = scope === "folder" && folders.length > 0;
+  if (!(await browse(inFolders && folders.length === 1 ? folders[0] : null, { fromLink: true }))) return;
+  if (!query) return;
+  if (!mediaRoots.length) {
+    try { mediaRoots = (await getJSON("/api/library/roots")).roots || []; } catch {}
+  }
+  if (inFolders && folders.length > 1) dialogueSearchScope = folders;
+  searchScope = inFolders ? "folder" : "library";
+  updateScopeUI();
+  $("global-search-input").value = query;
+  await runGlobalSearch();
+}
+
+window.addEventListener("popstate", () => applyRoute(location.hash, { focus: true }));
+
+/** Put `text` on the clipboard (the async API needs https; fall back to a hidden field). */
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const area = el("textarea", { title: "Link to copy", className: "visually-hidden" });
+    area.value = text;
+    document.body.appendChild(area);
+    area.select();
+    let ok = false;
+    try { ok = document.execCommand("copy"); } catch {}
+    area.remove();
+    return ok;
+  }
+}
+
+/** Copy a link and say so on the button for a moment (and to a screen reader). */
+async function copyLink(link, btn) {
+  const ok = await copyText(link);
+  if (!ok) { window.prompt("Copy this link:", link); return; }
+  announce("Link copied");
+  const label = btn.querySelector(".btn-label");
+  if (label && !btn.classList.contains("copied")) { btn.dataset.label = label.textContent; label.textContent = "Copied"; }
+  btn.classList.add("copied");
+  clearTimeout(btn._copiedTimer);
+  btn._copiedTimer = setTimeout(() => {
+    btn.classList.remove("copied");
+    if (label) label.textContent = btn.dataset.label;
+  }, 1500);
+}
+
+// Copy link (workspace): the selection, else the playhead. The address bar shows it too.
+$("copy-link").onclick = () => {
+  if (!currentItem) return;
+  const sel = hasClipRange() ? [clipStart(), clipEnd()]
+    : !$("clip-btn").disabled && clipRangeStart != null ? [clipRangeStart, clipRangeEnd] : null;
+  const hash = itemRoute(currentItem.path, { t: sel ? sel[0] : playerTime(), sel, track: getSelectedTrack() });
+  setRoute(hash, { replace: true });
+  copyLink(routeLink(hash), $("copy-link"));
+};
+
 // --- library browser --------------------------------------------------------
 
 let currentBrowsePath = null;
@@ -206,9 +391,13 @@ function refocus(had, target) {
   target.focus();
 }
 
-async function browse(path) {
+/** Show a folder (null: the library home). Resolves false when it couldn't be listed;
+ *  `fromLink` (a URL being restored) then falls back to the library with a message. */
+async function browse(path, { fromLink = false } = {}) {
   const had = document.activeElement;
+  setRoute(routeHash("library", { path }));
   showBrowser();
+  $("route-note").hidden = true;
   currentBrowsePath = path;
   dialogueSearchScope = null;
   refreshNowPlaying();  // the Now playing card shows on the library home only
@@ -241,8 +430,9 @@ async function browse(path) {
   try {
     data = await getJSON("/api/library/browse" + (path ? qp(path) : ""));
   } catch (err) {
+    if (fromLink && path) { await linkFailed(err); return false; }
     list.innerHTML = `<li class="error">Could not browse: ${escapeHtml(err.message)}</li>`;
-    return;
+    return false;
   }
 
   renderBreadcrumb(path);
@@ -255,6 +445,7 @@ async function browse(path) {
   refocus(had, $("entries").querySelector(".entry-main") || $("entries"));
   autoScope();
   if (!isYtFolder) checkFolderIndex(path);  // index-status is for real folders
+  return true;
 }
 
 /** Build an element. Every control gets hover text (`title`: what it does, and its
@@ -638,6 +829,7 @@ async function dialogueSearch(query, folders) {
         `<div class="hit-actions">` +
           `<button type="button" class="mark-icon-btn hit-bookmark" data-action="bookmark.add" title="Save this line as a bookmark" aria-label="Bookmark the line at ${hit.start_ts}"><span class="star" aria-hidden="true">★</span></button>` +
           `<button type="button" class="mark-icon-btn make-clip-btn hit-clip" data-action="clip.create" title="Cut a clip of this line with the bar's options" aria-label="Clip the line at ${hit.start_ts}"><span class="scissors" aria-hidden="true">✂</span></button>` +
+          `<button type="button" class="mark-icon-btn hit-link" data-action="item.link" title="Copy a link to this line: it opens the file here with the line selected" aria-label="Copy a link to the line at ${hit.start_ts}">${iconSvg("link")}</button>` +
           `<span class="hit-status" data-action="job.get"></span>` +
         `</div>`;
       // Checkbox drives the batch bar (and carries the data the batch bodies need).
@@ -653,6 +845,10 @@ async function dialogueSearch(query, folders) {
       const statusEl = li.querySelector(".hit-status");
       li.querySelector(".hit-bookmark").onclick = (e) => { e.stopPropagation(); bookmarkSearchHit(hit, statusEl); };
       li.querySelector(".hit-clip").onclick = (e) => { e.stopPropagation(); clipSearchHit(hit, statusEl); };
+      li.querySelector(".hit-link").onclick = (e) => {
+        e.stopPropagation();
+        copyLink(routeLink(itemRoute(hit.path, { sel: [hit.start, hit.end] })), e.currentTarget);
+      };
       const open = () => openItem(hit.path, hit.file, {
         searchQuery: query,
         seekTo: hit.start,
@@ -1229,8 +1425,13 @@ function cleanItemName(path, fileName) {
 }
 
 async function openItem(path, name, opts) {
-  const { searchQuery, seekTo: seekTarget, selectWholeClip, markRange } = opts || {};
+  const { searchQuery, seekTo: seekTarget, selectWholeClip, markRange, track, fromLink } = opts || {};
   const had = document.activeElement;
+  // Re-opening the file on screen (a player switch, fresh subtitles) keeps its history entry.
+  const shown = parseRoute(location.hash);
+  setRoute(itemRoute(path, {
+    t: seekTarget, sel: markRange && markRange.start != null ? [markRange.start, markRange.end] : null, track,
+  }), { replace: !!shown && shown.view === "item" && shown.params.get("path") === path });
   showItem();
   // A dialogue-search match to auto-select in Marks once the script loads.
   pendingCueSelect = markRange || null;
@@ -1238,7 +1439,7 @@ async function openItem(path, name, opts) {
   // probe failure) can't leak it into the next item opened.
   const bookmarkClip = pendingBookmarkClip;
   pendingBookmarkClip = null;
-  currentItem = { path, name };
+  currentItem = { path, name, wantTrack: track ?? null };
   // Remove the previous item's player/slider listeners before wiring this one's.
   if (itemListeners) itemListeners.abort();
   itemListeners = new AbortController();
@@ -1285,6 +1486,7 @@ async function openItem(path, name, opts) {
       (subtitleLangs() ? `&langs=${encodeURIComponent(subtitleLangs())}` : ""));
   } catch (err) {
     if (signal.aborted) return;  // superseded while the request was in flight
+    if (fromLink && [400, 403, 404].includes(err.status)) { await linkFailed(err); return; }
     $("preview-note").innerHTML = `<span class="error">${escapeHtml(err.message)}</span>`;
     return;
   }
@@ -1746,6 +1948,15 @@ async function openItem(path, name, opts) {
 
   renderStreamSelector(info, path, reloadStreams);
   loadBookmarks();
+  // A link's selection in a file with no subtitles: no lines to select, so take the range as is.
+  if (pendingCueSelect && pendingCueSelect.start != null && $("ss-subs").hidden) {
+    const { start, end } = pendingCueSelect;
+    pendingCueSelect = null;
+    clipRangeStart = start;
+    clipRangeEnd = end;
+    showClipTarget(true);
+    $("clip-range-display").textContent = `${formatTime(start)} – ${formatTime(end)} (${(end - start).toFixed(1)}s)`;
+  }
 
   autoScope();
   if (searchQuery) doSearch(searchQuery, { focus: false });  // the hit's own cue is already selected
@@ -1825,7 +2036,11 @@ function renderStreamSelector(info, path, onStreamChange) {
       o.textContent = `${t.codec}${t.language ? " " + t.language : ""}${t.title ? " — " + t.title : ""}`;
       subSel.appendChild(o);
     });
-    if (info.has_sidecar) { subSel.value = ""; initialTrack = null; }
+    // A link's track (&track=N) wins when this file has it as a text track.
+    const want = currentItem && currentItem.wantTrack;
+    if (want != null && tracks.some((t) => String(t.index) === String(want))) {
+      subSel.value = String(want); initialTrack = +want;
+    } else if (info.has_sidecar) { subSel.value = ""; initialTrack = null; }
     else { subSel.value = String(bestIdx); initialTrack = bestIdx; }
   }
   subSel.onchange = () => {
@@ -2988,8 +3203,9 @@ function showClips() {
 
 let currentClipsFolder = null;
 
-async function browseClips(folder) {
+async function browseClips(folder, { fromLink = false } = {}) {
   const had = document.activeElement;
+  setRoute(routeHash("clips", { folder }));
   showClips();
   currentClipsFolder = folder;
   const list = $("clips-entries");
@@ -3008,6 +3224,7 @@ async function browseClips(folder) {
     const url = folder ? `/api/clips?folder=${encodeURIComponent(folder)}` : "/api/clips";
     data = await getJSON(url);
   } catch (err) {
+    if (fromLink && folder) { await linkFailed(err); return; }
     list.innerHTML = `<li class="error">Could not load clips: ${escapeHtml(err.message)}</li>`;
     return;
   }
@@ -3095,6 +3312,7 @@ function showBookmarksBrowser() {
 
 async function browseBookmarks() {
   const had = document.activeElement;
+  setRoute(routeHash("bookmarks"));
   showBookmarksBrowser();
   const list = $("all-bookmarks-list");
   const empty = $("all-bookmarks-empty");
@@ -3764,6 +3982,8 @@ async function runGlobalSearch() {
     const folders = wholeLibrary ? mediaRoots.slice()
       : (currentView === "browser" && dialogueSearchScope) || [currentBrowsePath].filter(Boolean);
     if (!folders.length) return;
+    setRoute(routeHash("search", wholeLibrary ? { q: query, scope: "library" }
+      : { q: query, scope: "folder", path: folders }));
     await dialogueSearch(query, folders);
   } finally {
     searching = false;
@@ -4227,5 +4447,5 @@ function currentParent() {
 }
 
 loadStatus();
-browse(null);
+applyRoute(location.hash);
 refreshJobs().then(scheduleJobs);

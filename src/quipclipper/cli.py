@@ -389,6 +389,10 @@ def _fmt_settings(data: dict) -> None:
         typer.echo(f"{k} = {v}" if v else f"{k} (not set)")
 
 
+def _fmt_link(data: dict) -> None:
+    typer.echo(data.get("link") or "")
+
+
 _FORMATTERS = {
     "library.browse": _fmt_entries, "library.find": _fmt_entries,
     "search.item": _fmt_matches, "search.folder": _fmt_matches,
@@ -397,7 +401,7 @@ _FORMATTERS = {
     "item.fetch-subs": _fmt_job, "index.fetch-subs": _fmt_job,
     "bookmark.list": _fmt_bookmarks, "clips.list": _fmt_clips,
     "item.script": _fmt_script, "item.info": _fmt_item, "server.health": _fmt_health,
-    "jellyfin.sessions": _fmt_sessions,
+    "jellyfin.sessions": _fmt_sessions, "item.link": _fmt_link,
     "settings.list": _fmt_settings, "settings.get": _fmt_settings,
     "settings.set": _fmt_settings,
 }

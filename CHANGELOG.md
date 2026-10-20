@@ -10,6 +10,17 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 
 ## [Unreleased]
 
+### Deep links (M18)
+
+- Every view has a URL (`#/library`, `#/search`, `#/item`, `#/bookmarks`, `#/clips`,
+  `#/nowplaying`): a reload keeps your place, Back and Forward move between views (a phone's
+  back gesture too), and a link to a moment opens the file seeked there with the line
+  selected. A bad or out-of-roots path opens the library with a message. Format:
+  [docs/API.md](https://github.com/weckere/quipclipper/blob/main/docs/API.md#deep-links).
+- **Copy link** in the workspace (the selection, else the playhead) and on each search hit.
+- With `QC_PUBLIC_URL` set, search hits, bookmarks and clips carry a `link` field, and
+  `GET /api/items/link` / `quipclipper item.link PATH --at T --sel A-B` build one.
+
 ### Fixed
 
 - The CLI works with typer 0.27, which bundles its own click and no longer installs one;

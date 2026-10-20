@@ -331,3 +331,22 @@ def test_every_server_command_is_reachable_by_id_and_shortcut():
         assert c.id in names
         if c.shortcut:
             assert c.shortcut in names
+
+
+def test_round_trip_item_link(tmp_path, capsys):
+    """item.link (the Copy link button's twin) prints the deep link, built from QC_PUBLIC_URL."""
+    media = tmp_path / "media"
+    media.mkdir()
+    video = media / "movie.mkv"
+    video.write_bytes(b"")
+    app = create_app(Settings.from_env({
+        "QC_MEDIA_ROOTS": str(media), "QC_CLIPS_DIR": str(tmp_path / "clips"),
+        "QC_STATE_DIR": str(tmp_path / "state"), "QC_API_TOKEN": TOKEN,
+        "QC_PUBLIC_URL": "https://quip.example/"}))
+    transport = AppTransport(TestClient(app))
+    code, out = _run(transport, ["item.link", str(video), "--at", "5", "--sel", "5-7.25"], capsys)
+    assert code == 0, out
+    assert _last_json(out)["link"] == f"https://quip.example/#/item?path={video}&t=5&sel=5-7.25"
+    # Without --json it prints the link alone, ready to paste.
+    assert cli.main(["item.link", str(video), "--sel", "1-2"], transport=transport) == 0
+    assert capsys.readouterr().out.strip() == f"https://quip.example/#/item?path={video}&t=1&sel=1-2"
