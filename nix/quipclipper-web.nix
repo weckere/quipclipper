@@ -11,7 +11,9 @@
 
 python3Packages.buildPythonApplication {
   pname = "quipclipper-web";
-  version = "0.1.0";
+  # The root pyproject.toml is the one version source (web/backend/pyproject.toml
+  # is kept equal to it by scripts/release.sh and tests/test_version.py).
+  version = (builtins.fromTOML (builtins.readFile ../pyproject.toml)).project.version;
   pyproject = true;
 
   src = ../web/backend;

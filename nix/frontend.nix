@@ -7,7 +7,8 @@
 
 stdenvNoCC.mkDerivation {
   pname = "quipclipper-web-frontend";
-  version = "0.1.0";
+  # The root pyproject.toml is the one version source.
+  version = (builtins.fromTOML (builtins.readFile ../pyproject.toml)).project.version;
 
   src = ../web/frontend;
 

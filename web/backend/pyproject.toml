@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "quipclipper-web"
-version = "0.1.0"
+version = "0.1.0"  # always the root pyproject.toml's version (scripts/release.sh)
 description = "Web app for quipclipper: find and cut clips from a browser."
 readme = "README.md"
 requires-python = ">=3.10"

@@ -19,10 +19,12 @@
           # yt-dlp from its own fresh pin (see the input comment above).
           yt-dlp-fresh = nixpkgs-ytdlp.legacyPackages.${system}.yt-dlp;
           python = pkgs.python313;
+          # pyproject.toml is the one version source (scripts/release.sh bumps it).
+          version = (builtins.fromTOML (builtins.readFile ./pyproject.toml)).project.version;
 
           quipclipper = python.pkgs.buildPythonApplication {
             pname = "quipclipper";
-            version = "0.1.0";
+            inherit version;
             pyproject = true;
 
             src = ./.;
