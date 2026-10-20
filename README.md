@@ -44,12 +44,30 @@ mkvmerge. quipclipper is a **self-hosted web app** over your own media folders, 
 
 ## Screenshots
 
-| | |
-|---|---|
-| ![The library, with the Dialogue index card](docs/screenshots/library.png) | ![Search results across the library, grouped by file, with a preview](docs/screenshots/search-results.png) |
-| **The library:** media roots on the left, and a Dialogue index card that caches subtitles so search is instant. | **Dialogue search** over the whole library: grouped by file, highlighted, with a preview and a batch bar. |
-| ![The workspace in the light theme](docs/screenshots/workspace-light.png) | ![Now playing from Jellyfin](docs/screenshots/now-playing.png) ![The Selection panel with the Send to LeadStinger toggle ticked](docs/screenshots/send-to-leadstinger.png) |
-| **The workspace** in the light theme. | **Now playing** from Jellyfin, and the **Send to LeadStinger** toggle (⚡) beside Make clip. |
+**The library:** the media roots on the left, and a Dialogue index card that caches
+subtitles so dialogue search is instant.
+
+![The library, with the Dialogue index card](docs/screenshots/library.png)
+
+**Dialogue search** over the whole library: grouped by file, the words highlighted, a
+preview of the lines around a hit, and a batch bar for the ticked lines.
+
+![Search results across the library, grouped by file, with a preview](docs/screenshots/search-results.png)
+
+**The workspace** in the light theme (the dark one is at the top).
+
+![The workspace in the light theme](docs/screenshots/workspace-light.png)
+
+**Now playing** from Jellyfin: open what a client is playing, at its playhead.
+
+![Now playing from Jellyfin](docs/screenshots/now-playing.png)
+
+**Send to LeadStinger:** the ⚡ toggle beside Make clip sends the line to LeadStinger
+instead of the clips library.
+
+<img src="docs/screenshots/send-to-leadstinger.png" width="880" alt="The Selection panel with the Send to LeadStinger toggle ticked">
+
+**On a phone**, the selection stays pinned to the bottom of the screen.
 
 <p align="center"><img src="docs/screenshots/phone.png" width="300" alt="The workspace on a phone, with the selection pinned to the bottom"></p>
 
