@@ -10,6 +10,8 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-19
+
 ### CLI parity (M9)
 
 - Every action in the web app is a CLI command: 36 commands named `<area>.<action>`
@@ -128,4 +130,5 @@ The first version, before releases were tagged. Highlights:
   guard, and an optional password gate.
 - **Deployment:** a Nix flake and NixOS module (with a VM test), and Docker images on GHCR.
 
-[Unreleased]: https://github.com/weckere/quipclipper/commits/dev
+[Unreleased]: https://github.com/weckere/quipclipper/compare/v0.1.1...dev
+[0.1.1]: https://github.com/weckere/quipclipper/releases/tag/v0.1.1
