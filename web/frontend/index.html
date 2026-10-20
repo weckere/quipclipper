@@ -25,6 +25,9 @@
       <symbol id="i-chevron-r" viewBox="0 0 24 24"><path d="M9 6 L15 12 L9 18"/></symbol>
       <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M19 12 A7 7 0 1 1 16.5 6.8 M17 3 L17 7.5 L12.5 7.5"/></symbol>
       <symbol id="i-gear" viewBox="0 0 24 24"><path d="M11.5 8 A2.5 2.5 0 1 1 6.5 8 A2.5 2.5 0 1 1 11.5 8 Z M17.5 16 A2.5 2.5 0 1 1 12.5 16 A2.5 2.5 0 1 1 17.5 16 Z M4 8 L6.5 8 M11.5 8 L20 8 M4 16 L12.5 16 M17.5 16 L20 16"/></symbol>
+      <!-- PLACEHOLDER: LeadStinger's own icon isn't chosen yet. Every "Send to LeadStinger"
+           button draws this one symbol, so swapping in the real mark is this one edit. -->
+      <symbol id="i-leadstinger" viewBox="0 0 24 24"><path d="M13.5 3 L5.5 13.5 L11.5 13.5 L10.5 21 L18.5 10.5 L12.5 10.5 Z"/></symbol>
       <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4 L12 15 M7 10.5 L12 15.5 L17 10.5 M5 19.5 L19 19.5"/></symbol>
     </svg>
     <header class="app-header">
@@ -139,7 +142,7 @@
           <span id="search-batch-status" class="muted batch-status"></span>
           <span class="batch-spacer"></span>
         <button id="search-batch-bookmark" data-action="bookmark.batch" class="clip-btn batch-bookmark-btn" disabled>Bookmark selected</button>
-          <button id="search-batch-ls" data-action="leadstinger.set" class="clip-btn batch-ls-btn" disabled title="Make a LeadStinger set file from the selection">Send to LeadStinger</button>
+          <button id="search-batch-ls" data-action="leadstinger.set" class="clip-btn batch-ls-btn" disabled title="Send to LeadStinger: make a set file from the selection" aria-label="Send to LeadStinger"><svg class="icon" aria-hidden="true"><use href="#i-leadstinger"/></svg></button>
           <button id="search-batch-export" data-action="clip.batch" class="clip-btn batch-export-btn" disabled>Clip selected</button>
         </div>
         <div id="search-batch-options" class="batch-options" hidden>
@@ -179,7 +182,7 @@
           <button type="button" class="link-btn batch-options-toggle" aria-expanded="false" aria-controls="clips-batch-options">Options</button>
           <span id="clips-batch-status" class="muted batch-status"></span>
           <span class="batch-spacer"></span>
-          <button id="clips-batch-ls" data-action="leadstinger.set" class="clip-btn batch-ls-btn" disabled title="Make a LeadStinger set file from the selection">Send to LeadStinger</button>
+          <button id="clips-batch-ls" data-action="leadstinger.set" class="clip-btn batch-ls-btn" disabled title="Send to LeadStinger: make a set file from the selection" aria-label="Send to LeadStinger"><svg class="icon" aria-hidden="true"><use href="#i-leadstinger"/></svg></button>
           <button id="clips-batch-export" data-action="clip.batch" class="clip-btn batch-export-btn" disabled>Export selected</button>
         </div>
         <div id="clips-batch-options" class="batch-options" hidden>
@@ -215,7 +218,7 @@
           <span id="bm-batch-status" class="muted batch-status"></span>
           <span class="batch-spacer"></span>
         <button id="bm-clear-all" data-action="bookmark.clear" class="clip-btn bm-clear-all-btn">Clear all</button>
-          <button id="bm-batch-ls" data-action="leadstinger.set" class="clip-btn batch-ls-btn" disabled title="Make a LeadStinger set file from the selection">Send to LeadStinger</button>
+          <button id="bm-batch-ls" data-action="leadstinger.set" class="clip-btn batch-ls-btn" disabled title="Send to LeadStinger: make a set file from the selection" aria-label="Send to LeadStinger"><svg class="icon" aria-hidden="true"><use href="#i-leadstinger"/></svg></button>
           <button id="bm-batch-export" data-action="clip.batch" class="clip-btn batch-export-btn" disabled>Export selected</button>
         </div>
         <div id="bm-batch-options" class="batch-options" hidden>
@@ -316,7 +319,7 @@
                 <button type="button" id="clip-options-toggle" class="mark-icon-btn opts-toggle" aria-expanded="false" title="Clip options">Options</button>
                 <button id="mark-save" data-action="bookmark.add" class="mark-icon-btn" disabled title="Save as bookmark" aria-label="Save as bookmark"><span class="star">★</span><span class="btn-label">Bookmark</span></button>
                 <button id="clip-btn" data-action="clip.create" class="mark-icon-btn make-clip-btn" disabled title="Make clip" aria-label="Make clip"><span class="scissors">✂</span><span class="btn-label">Make clip</span></button>
-                <button id="ls-send" data-action="leadstinger.set" class="mark-icon-btn" disabled title="Send this line to LeadStinger (a set file)" aria-label="Send to LeadStinger"><span class="btn-label">LeadStinger</span></button>
+                <button id="ls-send" data-action="leadstinger.set" class="mark-icon-btn ls-icon-btn" disabled title="Send this line to LeadStinger (a set file)" aria-label="Send to LeadStinger"><svg class="icon" aria-hidden="true"><use href="#i-leadstinger"/></svg></button>
               </div>
             </div>
             <!-- ★ Bookmark opens this inline label field (no window.prompt): Enter saves,

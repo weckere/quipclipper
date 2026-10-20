@@ -214,9 +214,10 @@ select {
    (the extra .batch-bar selector outranks .clip-btn's accent background). */
 .batch-bar .batch-bookmark-btn { background: var(--raised); color: var(--text); border: 1px solid var(--line-strong); }
 .batch-bar .batch-bookmark-btn:hover:not(:disabled) { border-color: var(--accent-text); }
+/* Send to LeadStinger is an icon-only button (placeholder glyph: #i-leadstinger). */
 .batch-bar .batch-ls-btn {
   background: var(--raised); color: var(--text); border: 1px solid var(--line-strong);
-  padding: 0.35rem 0.9rem; font-size: 0.85rem;
+  display: inline-flex; align-items: center; justify-content: center; padding: 0.35rem 0.55rem;
 }
 .batch-bar .batch-ls-btn:hover:not(:disabled) { border-color: var(--accent-text); }
 
@@ -822,6 +823,7 @@ footer { padding: 2rem 1.25rem; font-size: 0.8rem; }
 .ws-clip .mark-range-display .range-times { font-size: 1.05rem; font-weight: 600; }
 .marks-actions .mark-icon-btn { width: auto; height: 2.4rem; padding: 0 0.9rem; gap: 0.4rem; font-size: 0.9rem; font-weight: 600; }
 .marks-actions .mark-icon-btn .star, .marks-actions .mark-icon-btn .scissors { font-size: 1.05rem; }
+.marks-actions .ls-icon-btn { padding: 0; width: 2.4rem; }
 .ws-clip .clip-options { margin-top: 0.7rem; padding-top: 0.7rem; border-top: 1px solid var(--line); }
 .ws-clip .clip-name-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.8rem; margin: 0; }
 .ws-clip .clip-name-row .clip-range { display: none; }  /* the range is already the header */
