@@ -149,6 +149,13 @@ The server's default is `{source}/{timestamp}_{cue}_{title}`.
 |---|---|---|---|---|
 | `clip.create` (`clip`) | Cut a clip: around a line of dialogue (QUERY) or between --start and --end. | `QUERY` `--path` `--start` `--end` `--match-index` `--track` `--cue-text` `--before` `--after` `--kind` `--lossless` `--audio-format` `--audio-tracks` `--backend` `--chapters` `--remux-first` `--embed-subs` `--split-channels` `--split-format` `--split-groups` `--include-lfe` `--template` `--default-sub-track` `--wait` `--out-dir` `--subs¹` `--langs¹` `--pick¹` `--limit¹` `--min-score¹` `--max-span¹` `--out¹` `--yes¹` `--hwaccel¹` `--vaapi-device¹` | `POST /api/clip` · local | ✂ Make clip; ✂ on a search hit |
 | `clip.batch` | Cut one clip per JSON line on stdin: search hits, bookmarks or clips-library entries (pipe from search.folder, bookmark.list or clips.list with --json). | `--path` `--kind` `--lossless` `--audio-format` `--audio-tracks` `--backend` `--chapters` `--remux-first` `--embed-subs` `--split-channels` `--split-format` `--split-groups` `--include-lfe` `--template` `--default-sub-track` `--wait` `--out-dir` | (client) | Clip selected / Export selected (search, bookmarks, clips) |
+| `clip.nowplaying` | Clip the line just heard on a Jellyfin client: the cue at or before its playhead (less --back seconds), cut like clip.create. Needs Jellyfin on the server. | `--session` `--back` `--lines` `--before` `--after` `--kind` `--lossless` `--audio-format` `--audio-tracks` `--backend` `--chapters` `--remux-first` `--embed-subs` `--split-channels` `--split-format` `--split-groups` `--include-lfe` `--template` `--default-sub-track` `--wait` `--out-dir` | (client) | Now playing card and scope: open at the playhead, then ✂ Make clip |
+
+## jellyfin
+
+| Command | What it does | Arguments | API | Web UI |
+|---|---|---|---|---|
+| `jellyfin.sessions` (`nowplaying`) | What each Jellyfin client is playing: device, title, playhead and the file in the library. |  | `GET /api/jellyfin/sessions` | Now playing card (library) and scope (search box) |
 
 ## job
 

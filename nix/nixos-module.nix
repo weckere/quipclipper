@@ -99,6 +99,49 @@ in
       '';
     };
 
+    jellyfin = {
+      url = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        example = "http://127.0.0.1:8096";
+        description = ''
+          Jellyfin's base URL, as this host reaches it (`QC_JELLYFIN_URL`). With
+          `apiKeyFile`, it turns on "Now playing": the library page lists what each
+          Jellyfin client is playing, and one tap opens that file in the workspace at
+          the playhead (CLI: `nowplaying`, `clip.nowplaying`). Jellyfin is used for
+          nothing else; media is still read from the media roots. `null` = off.
+        '';
+      };
+
+      apiKeyFile = lib.mkOption {
+        type = lib.types.nullOr lib.types.path;
+        default = null;
+        example = "/run/secrets/jellyfin_api_key";
+        description = ''
+          File holding a Jellyfin API key (Dashboard → API Keys), and nothing else.
+          systemd reads it as root and hands it to the service as a credential, so
+          the file can stay root-only (e.g. a sops-nix secret). Kept out of the Nix
+          store.
+        '';
+      };
+
+      pathMap = lib.mkOption {
+        type = lib.types.attrsOf lib.types.str;
+        default = { };
+        example = {
+          "/movies" = "/srv/media/movies";
+          "/shows" = "/srv/media/shows";
+        };
+        description = ''
+          Jellyfin's paths → the same folders here (`QC_JELLYFIN_PATH_MAP`). Jellyfin
+          reports the paths it sees, which inside a container are its mount points,
+          not the host's. The longest matching prefix wins; a mapped path must still
+          be inside `mediaRoots`/`writableMediaRoots`. Leave empty when Jellyfin runs
+          on this host and sees the same paths.
+        '';
+      };
+    };
+
     clipsDir = lib.mkOption {
       type = lib.types.path;
       default = "/var/lib/quipclipper-web/clips";
@@ -332,7 +375,10 @@ in
     # false, passwordFile enforces nothing (the backend has no auth of its own) —
     # yet the UI still reports auth as required. Warn so a "bring your own front"
     # setup doesn't ship believing it's password-protected when it isn't.
-    warnings = lib.optional (cfg.passwordFile != null && !cfg.nginx.enable) ''
+    warnings = lib.optional ((cfg.jellyfin.url == null) != (cfg.jellyfin.apiKeyFile == null)) ''
+      services.quipclipper-web.jellyfin needs both url and apiKeyFile; with only one
+      of them, Now playing stays off.
+    '' ++ lib.optional (cfg.passwordFile != null && !cfg.nginx.enable) ''
       services.quipclipper-web.passwordFile is set but nginx.enable = false, so
       no HTTP basic-auth gate is applied. Enforce authentication in your own
       reverse proxy, or the service is reachable without a password.
@@ -406,6 +452,13 @@ in
         QC_YOUTUBE_DIR = toString cfg.youtubeDir;
       } // lib.optionalAttrs (cfg.publicUrl != null) {
         QC_PUBLIC_URL = cfg.publicUrl;
+      } // lib.optionalAttrs (cfg.jellyfin.url != null) {
+        QC_JELLYFIN_URL = cfg.jellyfin.url;
+        QC_JELLYFIN_PATH_MAP = lib.concatStringsSep ":"
+          (lib.mapAttrsToList (from: to: "${from}=${to}") cfg.jellyfin.pathMap);
+      } // lib.optionalAttrs (cfg.jellyfin.apiKeyFile != null) {
+        # The credential below, where systemd puts it for this unit.
+        QC_JELLYFIN_API_KEY_FILE = "/run/credentials/quipclipper-web.service/jellyfin-api-key";
       } // lib.optionalAttrs cfg.nginx.enable {
         # The bundled nginx serves the clips dir directly at /clips/ (see the vhost
         # below). Without nginx, the backend serves clips itself under /api.
@@ -429,6 +482,10 @@ in
         # API token(s) for programmatic clients, loaded from a file so the secret
         # stays out of the Nix store (see apiTokenFile).
         EnvironmentFile = lib.mkIf (cfg.apiTokenFile != null) cfg.apiTokenFile;
+        # The Jellyfin API key: systemd reads the (root-only) file and exposes a copy
+        # only this unit can read (see jellyfin.apiKeyFile).
+        LoadCredential = lib.mkIf (cfg.jellyfin.apiKeyFile != null)
+          [ "jellyfin-api-key:${toString cfg.jellyfin.apiKeyFile}" ];
 
         # Hardening. Media roots are exposed read-only; only the clips + state
         # dirs are writable. These are created up front by the tmpfiles rules

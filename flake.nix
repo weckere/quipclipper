@@ -103,12 +103,22 @@
               # BYO front — proving quipclipper can stay off :80.
               nodes.backendonly = { ... }: {
                 imports = [ self.nixosModules.default ];
-                systemd.tmpfiles.rules = [ "d /srv/media 0755 root root - -" ];
+                # A root-only Jellyfin key, as a sops secret would be: the service user
+                # can't read it, so health's jellyfin=true proves LoadCredential works.
+                systemd.tmpfiles.rules = [
+                  "d /srv/media 0755 root root - -"
+                  "f /etc/jellyfin-key 0400 root root - test-key"
+                ];
                 services.quipclipper-web = {
                   enable = true;
                   mediaRoots = [ "/srv/media" ];
                   listenAddress = "0.0.0.0";  # reachable on the test net for the assert
                   nginx.enable = false;
+                  jellyfin = {
+                    url = "http://127.0.0.1:8096";
+                    apiKeyFile = "/etc/jellyfin-key";
+                    pathMap."/movies" = "/srv/media";
+                  };
                 };
               };
               nodes.machine = { ... }: {
@@ -178,6 +188,10 @@
                 backendonly.fail("curl -fsS http://localhost:80/")
                 backendonly.succeed("curl -fsS http://localhost:8000/api/health -o /tmp/h.json")
                 backendonly.succeed("grep -q ok /tmp/h.json")
+                # Jellyfin: the root-only key reached the service (Now playing is on);
+                # the default host has no Jellyfin, so it's off there.
+                backendonly.succeed("grep -q '\"jellyfin\": *true' /tmp/h.json")
+                machine.succeed("grep -q '\"jellyfin\": *false' /tmp/health.json")
                 backendonly.succeed("curl -fsS http://localhost:8000/api/library/roots -o /tmp/r.json")
                 backendonly.succeed("grep -q /srv/media /tmp/r.json")
               '';

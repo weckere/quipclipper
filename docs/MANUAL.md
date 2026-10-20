@@ -33,6 +33,7 @@ for *why* the code is built the way it is, see [`DESIGN_NOTES.md`](DESIGN_NOTES.
   - [Output names and containers](#output-names-and-containers)
   - [EPUB3 audiobooks (experimental)](#epub3-audiobooks-experimental)
   - [Sending clips to LeadStinger](#sending-clips-to-leadstinger)
+  - [Now playing (Jellyfin)](#now-playing-jellyfin)
 - [Architecture](#architecture)
 - [Development](#development)
 - [Troubleshooting](#troubleshooting)
@@ -594,6 +595,54 @@ Linux) and print it; `--no-open` only prints it, for a script or an agent to pas
 For several lines at once, `leadstinger.set` and `leadstinger.send` make a LeadStinger
 set file instead (see [`CLI.md`](CLI.md)).
 
+### Now playing (Jellyfin)
+
+Watching something on a Jellyfin client and hear a line worth keeping? quipclipper can
+ask Jellyfin what is playing and open that file at the playhead, so there is nothing to
+search for. Jellyfin is used for this alone: quipclipper still reads the media from its
+own media roots and cuts it itself.
+
+**In the web app**, a **Now playing** card at the top of the library lists each Jellyfin
+client that is playing or paused: the title, the device and user, and the position. It
+refreshes every 5 seconds while it is on screen. **Open at 12:34** opens the file in the
+workspace with the line at or before the playhead selected, so **✂ Make clip** cuts what
+was just heard (nudge the selection a line up or down first if needed). The search box's
+scope menu has **Now playing** too: it opens the one session that is playing a library
+file, or shows the card when there are several.
+
+**From the CLI** (needs a server):
+
+```sh
+quipclipper nowplaying                               # jellyfin.sessions: what is playing
+quipclipper clip.nowplaying -t audio --out-dir .     # cut the line just heard
+quipclipper clip.nowplaying --session bedroom --back 5 --lines 2
+```
+
+`clip.nowplaying` takes the line at or before the playhead (minus `--back` seconds),
+`--lines N` to end a run of N lines there, and every `clip.create` option (`-t audio`,
+`--before`/`--after`, `--template`…). With several sessions playing it stops and lists
+them; pick one with `--session` (its id, or part of the device, user or client name).
+
+**Accuracy.** A playing client reports its position about every 10 seconds; quipclipper
+adds the time since the last report (at most 30 s), so the playhead is close, and a
+paused client is exact. The line *at or before* the playhead is the one that has
+started, which is the one you just heard.
+
+**Setup**, on the server:
+
+1. **An API key:** Jellyfin → Dashboard → API Keys → +.
+2. **Where Jellyfin is and the key:** `QC_JELLYFIN_URL=http://jellyfin:8096` plus
+   `QC_JELLYFIN_API_KEY` (or `QC_JELLYFIN_API_KEY_FILE`, a file holding it) on the `app`
+   service (Docker), or `services.quipclipper-web.jellyfin.url` and `.apiKeyFile`
+   (NixOS; the file can stay root-only, systemd hands the service a copy).
+3. **Path mapping**, when Jellyfin sees the media under other paths (it runs in a
+   container, or on another machine): `QC_JELLYFIN_PATH_MAP=/movies=/media/movies:/shows=/media/shows`
+   (Jellyfin's path `=` quipclipper's, pairs separated by `:`), or
+   `jellyfin.pathMap = { "/movies" = "/srv/movies"; }` (NixOS). A file that maps
+   nowhere, or outside the media roots, shows on the card as not in the library.
+
+`GET /api/health` and `/api/config` report `jellyfin: true` once the URL and key are set.
+
 ---
 
 ## Architecture
@@ -642,6 +691,9 @@ media; the integration behaviour was verified against real `ffmpeg` and
 | `--out can't be used when clipping multiple matches` | Drop `--out`; clips are auto-named per match. |
 | `Send to LeadStinger needs QC_PUBLIC_URL` (503), or the toggle only makes set files | Set `QC_PUBLIC_URL` (NixOS: `publicUrl`) to the server's base URL; see [Sending clips to LeadStinger](#sending-clips-to-leadstinger). |
 | LeadStinger refuses the link as not connected | Run `leadstinger-cli quip.connect <the same URL as QC_PUBLIC_URL> --token -` on that machine. |
+| No Now playing card | Jellyfin isn't configured: set `QC_JELLYFIN_URL` and the API key (`/api/health` says `jellyfin: true` when it is). |
+| `Jellyfin answered 401 (check the API key)` / `Jellyfin is unreachable` (502) | The key is wrong or revoked, or `QC_JELLYFIN_URL` isn't reachable from the server. |
+| Now playing says "Not in quipclipper's library" | Jellyfin's path for that file has no `QC_JELLYFIN_PATH_MAP` entry, or it maps outside the media roots. |
 | Nothing happens on Send to LeadStinger | The system doesn't know the `leadstinger://` scheme: open LeadStinger once (macOS) or run `leadstinger --register-links` (Linux AppImage/tarball). |
 
 ## License

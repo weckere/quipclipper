@@ -292,6 +292,32 @@ COMMANDS: tuple[Command, ...] = (
                           "(search.item results).", where=CLIENT),
                     *_CLIP_OPTIONS, *_JOB_FOLLOW),
             mode="client", ui="Clip selected / Export selected (search, bookmarks, clips)"),
+    Command("clip.nowplaying", "Clip the line just heard on a Jellyfin client: the cue at or "
+            "before its playhead (less --back seconds), cut like clip.create. Needs Jellyfin "
+            "on the server.", None, None,
+            params=(Param("session", "str", "Which session: its id, or part of its device, "
+                          "user or client name. Default: the only one playing a library "
+                          "file.", where=CLIENT, flags=("-S",)),
+                    Param("back", "float", "Seconds before the playhead to look for the "
+                          "line (the playhead lags a few seconds while playing).",
+                          where=CLIENT, default=0.0),
+                    Param("lines", "int", "How many lines to clip, ending with that one.",
+                          where=CLIENT, default=1, flags=("-n",)),
+                    Param("before", "float", "Seconds of padding before the line.",
+                          where=CLIENT, default=2.0, flags=("-b",)),
+                    Param("after", "float", "Seconds of padding after the line.",
+                          where=CLIENT, default=2.0, flags=("-a",)),
+                    *(Param(p.name, p.type, p.help, where=CLIENT, default=p.default,
+                            choices=p.choices, flags=p.flags, negative=p.negative)
+                      for p in _CLIP_OPTIONS),
+                    *_JOB_FOLLOW),
+            mode="client", response="job",
+            ui="Now playing card and scope: open at the playhead, then ✂ Make clip"),
+
+    # --- jellyfin --------------------------------------------------------------------------
+    Command("jellyfin.sessions", "What each Jellyfin client is playing: device, title, "
+            "playhead and the file in the library.", "GET", "/api/jellyfin/sessions",
+            shortcut="nowplaying", ui="Now playing card (library) and scope (search box)"),
 
     # --- jobs ------------------------------------------------------------------------------
     Command("job.list", "List recent jobs (clips, downloads, YouTube).", "GET", "/api/jobs",

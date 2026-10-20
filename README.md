@@ -247,6 +247,9 @@ All settings are environment variables on the `app` service:
 | `QC_SUBTITLE_LANGS` | `en` | Ordered subtitle-language preference for auto-selection (comma-separated, e.g. `eng,spa`). The UI's **Subtitle languages** setting (the sliders button in the top bar) overrides it per browser; the same menu switches between light and dark. |
 | `QC_API_TOKEN` | *(none)* | Token(s) for programmatic clients — agents and scripts (comma-separated to rotate). Set the same value on **both** services so `-u api:<token>` passes the basic-auth gate too. See [HTTP API](#http-api-agents--scripts). |
 | `QC_PUBLIC_URL` | *(none)* | This server's base URL as other machines reach it (e.g. `https://quipclipper.example.net`). **Send to LeadStinger** puts it in a `leadstinger://quip` link, and LeadStinger downloads the clip from there with `QC_API_TOKEN`. Unset = Send to LeadStinger makes set files only. See [docs/MANUAL.md](docs/MANUAL.md#sending-clips-to-leadstinger). |
+| `QC_JELLYFIN_URL` | *(none)* | Jellyfin's base URL, for **Now playing** (what each Jellyfin client is playing, opened at its playhead). Needs the key below. See [docs/MANUAL.md](docs/MANUAL.md#now-playing-jellyfin). |
+| `QC_JELLYFIN_API_KEY` / `QC_JELLYFIN_API_KEY_FILE` | *(none)* | A Jellyfin API key, or a file holding one. |
+| `QC_JELLYFIN_PATH_MAP` | *(none)* | Jellyfin's paths → quipclipper's, e.g. `/movies=/media/movies:/shows=/media/shows`, when Jellyfin sees the media elsewhere (its own container). |
 | `QC_PROXY_SECRET` | *(none)* | Defence-in-depth: a shared secret nginx injects on every proxied request. When set on **both** services, the backend rejects anything that reaches its port without it (except `/api/health`) — blocking direct hits that bypass nginx. |
 
 (`QC_BIND`, `QC_PORT`, and `QC_VAAPI_DEVICE` also exist for non-default network
@@ -409,6 +412,7 @@ Optional settings (all off/defaulted unless set):
 | `passwordFile` | Gate the whole site behind HTTP basic auth — path to a ready-made nginx htpasswd file (kept out of the store). Unlike Docker's plaintext `QC_PASSWORD`, the module takes the htpasswd directly. |
 | `apiTokenFile` | API token(s) for agents/scripts — path to a systemd `EnvironmentFile` containing `QC_API_TOKEN=<token>` (kept out of the store). Add an `api` user with the token as password to `passwordFile` so one secret passes the basic-auth gate too. |
 | `publicUrl` | This server's base URL as other machines reach it (`QC_PUBLIC_URL`), for **Send to LeadStinger** links. LeadStinger downloads with the token from `apiTokenFile`. |
+| `jellyfin.url` / `jellyfin.apiKeyFile` / `jellyfin.pathMap` | **Now playing** from Jellyfin: its URL, a file holding an API key (root-only is fine: it's passed as a systemd credential) and Jellyfin's paths → this host's (`{ "/movies" = "/srv/movies"; }`). |
 | `hardwareAcceleration.enable` | Intel Quick Sync H.264 encoding (else software `libx264`). Adds the service user to the `render` group, exposes the render node, and enables the Intel media driver. |
 | `virtualHost` | nginx server name for a public hostname; pair with `enableACME`/`forceSSL` on that vhost for TLS. Default (null) is a catch-all vhost for LAN-by-IP over `:80`. |
 | `nginx.enable` | `false` runs **only** the hardened backend on `listenAddress:listenPort` and skips the bundled vhost — bring your own front (nginx/Caddy/Tailscale) proxying to it (the backend then serves clips itself). |
@@ -565,6 +569,11 @@ quipclipper --json bookmark.list | quipclipper leadstinger.send --set Quotes
 `leadstinger.quip` and `leadstinger.link` open the link on the machine you run them on
 (`--no-open` only prints it). `leadstinger.send` runs on the machine with LeadStinger and
 drives its `leadstinger-cli`: a new set, or appended to an existing one with `--set`.
+
+With Jellyfin configured, a **Now playing** card on the library lists what each Jellyfin
+client is playing; one tap opens it in the workspace at the playhead with the line just
+heard selected. From the CLI: `quipclipper nowplaying`, and `quipclipper clip.nowplaying
+-t audio` cuts that line (see [docs/MANUAL.md](docs/MANUAL.md#now-playing-jellyfin)).
 
 Add `--json` for machine-readable output and `--safe` to refuse anything that
 deletes data (for agents). New web UI actions must get a command in

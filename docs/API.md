@@ -199,13 +199,38 @@ the clips library) and returns `{link, clip}`; without `start`/`end` the tile pl
 whole clip. Open the link in a browser or with `open`/`xdg-open` on the machine with
 LeadStinger.
 
+### Now playing (Jellyfin)
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/jellyfin/sessions` | What each Jellyfin client is playing or has paused, its playhead and the file in the library. |
+
+Needs `QC_JELLYFIN_URL` and an API key (503 without them; 502 when Jellyfin can't be
+reached or refuses the key). The reply, newest report first:
+
+```json
+{"sessions": [{"id": "5f2…", "user": "wiz", "device": "Living room TV", "client": "Jellyfin Android TV",
+  "item_id": "a41…", "type": "Episode", "title": "The Best of Both Worlds", "series": "Star Trek: TNG",
+  "season": 3, "episode": 26, "year": 1990, "duration": 2716.4,
+  "position": 2003.1, "reported_position": 1998.0, "reported_at": "2026-10-20T01:02:03.123456Z",
+  "paused": false, "jellyfin_path": "/shows/Star Trek TNG/Season 3/S03E26.mkv",
+  "path": "/srv/shows/Star Trek TNG/Season 3/S03E26.mkv", "note": null}]}
+```
+
+`position` is the playhead in seconds: the client's last report (`reported_position`,
+sent about every 10 s while playing) plus the time since (`reported_at`), at most 30 s
+more; a paused client is exact. `path` is the file under the media roots
+(`QC_JELLYFIN_PATH_MAP` turns Jellyfin's paths into them), or `null` with a `note` saying
+why. Sessions with nothing playing are left out. To clip the line just heard, take the
+cue at or before `position` from `/api/items/subtitles` and `POST /api/clip` it; the CLI's
+`clip.nowplaying` does exactly that.
+
 ### Bookmarks & meta
 | Method | Path | Purpose |
 |---|---|---|
 | GET/POST | `/api/bookmarks` | List (optionally filtered by `?path=`) / create bookmarks. |
 | PATCH/DELETE | `/api/bookmarks/{id}` | Edit / delete one. `DELETE /api/bookmarks` clears all. |
-| GET | `/api/health` | Liveness + tool presence (no auth-secret required). |
-| GET | `/api/config` | Non-secret config the UI needs, including `public_url` (`QC_PUBLIC_URL`, or `null` when Send to LeadStinger links are off). |
+| GET | `/api/health` | Liveness + tool presence (no auth-secret required), and `jellyfin` (Now playing configured). |
+| GET | `/api/config` | Non-secret config the UI needs, including `public_url` (`QC_PUBLIC_URL`, or `null` when Send to LeadStinger links are off) and `jellyfin` (true when Now playing is configured). |
 
 ## `POST /api/clip` body
 

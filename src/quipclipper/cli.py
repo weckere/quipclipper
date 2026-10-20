@@ -363,6 +363,20 @@ def _fmt_health(data: dict) -> None:
                f"({where}) — {tools}")
 
 
+def _fmt_sessions(data: dict) -> None:
+    rows = data.get("sessions") or []
+    if not rows:
+        typer.echo("Nothing is playing on Jellyfin.")
+    for r in rows:
+        what = r.get("title") or "?"
+        if r.get("series"):
+            what = f"{r['series']} S{r.get('season') or 0:02d}E{r.get('episode') or 0:02d} {what}"
+        state = "paused" if r.get("paused") else "playing"
+        typer.echo(f"{r.get('id')}  {r.get('device')} ({r.get('user')})  {state} at "
+                   f"{format_clock(r.get('position') or 0)}  {what}")
+        typer.secho(f"  {r.get('path') or r.get('note')}", dim=True)
+
+
 def _fmt_settings(data: dict) -> None:
     values = data.get("settings", data)
     if data.get("file"):
@@ -375,10 +389,11 @@ _FORMATTERS = {
     "library.browse": _fmt_entries, "library.find": _fmt_entries,
     "search.item": _fmt_matches, "search.folder": _fmt_matches,
     "job.get": _fmt_job, "job.wait": _fmt_job, "job.list": _fmt_jobs,
-    "clip.create": _fmt_job, "youtube.add": _fmt_job, "youtube.download": _fmt_job,
+    "clip.create": _fmt_job, "clip.nowplaying": _fmt_job, "youtube.add": _fmt_job, "youtube.download": _fmt_job,
     "item.fetch-subs": _fmt_job, "index.fetch-subs": _fmt_job,
     "bookmark.list": _fmt_bookmarks, "clips.list": _fmt_clips,
     "item.script": _fmt_script, "item.info": _fmt_item, "server.health": _fmt_health,
+    "jellyfin.sessions": _fmt_sessions,
     "settings.list": _fmt_settings, "settings.get": _fmt_settings,
     "settings.set": _fmt_settings,
 }
@@ -1299,6 +1314,73 @@ def _client_leadstinger_link(c: Context, v: dict) -> Any:
     return _deliver_link(v, call(c, method, path, query, body).json())
 
 
+def format_clock(seconds: float) -> str:
+    seconds = int(max(seconds, 0))
+    h, rest = divmod(seconds, 3600)
+    return f"{h}:{rest // 60:02d}:{rest % 60:02d}" if h else f"{rest // 60}:{rest % 60:02d}"
+
+
+def pick_session(sessions: list[dict], want: Optional[str]) -> dict:
+    """The session clip.nowplaying means: ``want`` (an id, or part of a device, user or
+    client name), else the only one playing a library file. Ambiguity is an error that
+    lists the choices, so an agent can ask which one."""
+    playable = [s for s in sessions if s.get("path")]
+    if want:
+        key = want.casefold()
+        hits = [s for s in sessions if s.get("id") == want] or [
+            s for s in sessions
+            if any(key in str(s.get(f) or "").casefold() for f in ("device", "user", "client"))]
+    else:
+        hits = playable
+    if not hits:
+        if not sessions:
+            msg = "Nothing is playing on Jellyfin."
+        elif want:
+            msg = f"No Jellyfin session matches {want!r}."
+        else:
+            msg = "Nothing playing on Jellyfin is in quipclipper's library: " + "; ".join(
+                f"{s.get('device')}: {s.get('note')}" for s in sessions)
+        raise CliError(msg, code="not_found")
+    if len(hits) > 1:
+        names = "; ".join(f"{s.get('id')} = {s.get('device')} ({s.get('title')})" for s in hits)
+        raise CliError(f"{len(hits)} Jellyfin sessions are playing; pass --session: {names}",
+                       code="ambiguous", exit_code=EXIT_USAGE)
+    if not hits[0].get("path"):
+        raise CliError(f"{hits[0].get('device')}: {hits[0].get('note')}", code="not_found")
+    return hits[0]
+
+
+def cues_before(cues: list[dict], at: float, count: int = 1) -> list[dict]:
+    """The ``count`` cues ending with the one at or before ``at``: the last cue that has
+    started by then (the playhead lags, so the line just heard has started)."""
+    started = [c for c in cues if isinstance(c.get("start"), (int, float)) and c["start"] <= at]
+    return started[-max(count, 1):]
+
+
+def _client_clip_nowplaying(c: Context, v: dict) -> Any:
+    sessions = execute(c, reg.BY_ID["jellyfin.sessions"], {}).get("sessions") or []
+    session = pick_session(sessions, v.get("session"))
+    at = max((session.get("position") or 0) - (v.get("back") or 0), 0)
+    cues = execute(c, reg.BY_ID["item.script"], {"path": session["path"]})
+    lines = cues_before(cues if isinstance(cues, list) else [], at, v.get("lines") or 1)
+    if not lines:
+        raise CliError(f"No dialogue at or before {format_clock(at)} in {session['path']}.",
+                       code="not_found")
+    values = {p.name: v.get(p.name) for p in reg._CLIP_OPTIONS}
+    values["template"] = values.get("template") or c.settings.get("clip_template")
+    values.update(path=session["path"], start=lines[0]["start"], end=lines[-1]["end"],
+                  cue_text=" ".join(x.get("text", "") for x in lines).strip() or None,
+                  before=v.get("before"), after=v.get("after"),
+                  wait=v.get("wait", True), out_dir=v.get("out_dir"))
+    job = execute(c, reg.BY_ID["clip.create"], values)
+    line = {"start": lines[0]["start"], "end": lines[-1]["end"], "text": values["cue_text"]}
+    if not c.json:
+        typer.echo(f"{session.get('device')}: {format_clock(line['start'])} "
+                   f"\u201c{line['text']}\u201d")
+    return {**job, "session": session.get("id"), "device": session.get("device"),
+            "line": line}
+
+
 def _client_job_wait(c: Context, v: dict) -> Any:
     return wait_job(c, v["job_id"], out_dir=v.get("out_dir") or c.settings.get("out_dir"))
 
@@ -1335,6 +1417,8 @@ def _run_client(c: Context, cmd: reg.Command, v: dict) -> Any:
         return _client_leadstinger_quip(c, v)
     if cmd.id == "leadstinger.link":
         return _client_leadstinger_link(c, v)
+    if cmd.id == "clip.nowplaying":
+        return _client_clip_nowplaying(c, v)
     if cmd.id == "job.wait":
         return _client_job_wait(c, v)
     if cmd.area == "settings":

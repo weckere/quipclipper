@@ -42,6 +42,7 @@
           <li role="none"><button type="button" role="menuitem" data-scope="item">This video</button></li>
           <li role="none"><button type="button" role="menuitem" data-scope="folder">This folder</button></li>
           <li role="none"><button type="button" role="menuitem" data-scope="library">Whole library</button></li>
+          <li role="none" id="scope-nowplaying" hidden><button type="button" role="menuitem" data-scope="nowplaying" data-action="jellyfin.sessions" title="Open what's playing on Jellyfin, at its playhead">Now playing</button></li>
         </ul>
         <input id="global-search-input" type="text" aria-label="Search the dialogue" placeholder="Search the dialogue: type a line you remember" />
         <kbd class="key-hint" aria-hidden="true">/</kbd>
@@ -90,6 +91,16 @@
         </aside>
         <div class="library-main">
         <nav id="breadcrumb" class="breadcrumb"></nav>
+        <!-- Now playing (M15): what each Jellyfin client is playing. Open jumps to the workspace
+             at its playhead with the line just heard selected. Library home only, and only
+             when the server has Jellyfin configured. -->
+        <section id="nowplaying-card" class="index-card nowplaying-card" data-action="jellyfin.sessions" aria-label="Now playing on Jellyfin" hidden>
+          <div class="index-main">
+            <h3>Now playing</h3>
+            <p id="nowplaying-status" class="muted" role="status">Checking Jellyfin…</p>
+            <ul id="nowplaying-list" class="nowplaying-list"></ul>
+          </div>
+        </section>
         <div class="library-search-bar">
           <input id="library-search" data-action="library.find" type="text" aria-label="Filter this folder by name" placeholder="Search library…" autocomplete="off" />
         </div>

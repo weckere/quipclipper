@@ -62,7 +62,7 @@ from quipclipper.mkv import (
 )
 from quipclipper.search import search as engine_search
 from quipclipper.subtitles import AUDIO_EXTS, VIDEO_EXTS, find_sidecar, load_subtitles
-from quipclipper_web import __version__, epub_items, library, lslink, lsset, media, youtube_items
+from quipclipper_web import __version__, epub_items, jellyfin, library, lslink, lsset, media, youtube_items
 from quipclipper_web.bookmarks import BookmarkStore
 from quipclipper_web.config import Settings
 from quipclipper_web.jobs import JobRegistry
@@ -411,6 +411,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "mkvmerge": shutil.which("mkvmerge") is not None,
                 "yt-dlp": shutil.which("yt-dlp") is not None,
             },
+            "jellyfin": settings.jellyfin_enabled,  # Now playing (M15) configured
         }
 
     @app.get("/api/config")
@@ -424,7 +425,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "subtitle_langs": settings.subtitle_langs,  # default auto-select prefs (B14)
             # Base URL in Send to LeadStinger links (QC_PUBLIC_URL); null = links are off.
             "public_url": settings.public_url or None,
+            # Jellyfin URL + API key set: the Now playing card and scope show (M15).
+            "jellyfin": settings.jellyfin_enabled,
         }
+
+    # --- Jellyfin now playing (M15) ---------------------------------------------
+
+    @app.get("/api/jellyfin/sessions")
+    def jellyfin_sessions() -> dict:
+        """What each Jellyfin client is playing, its playhead and the file in the library.
+
+        ``position`` is the playhead estimated from the client's last report (clients
+        report every ~10 s while playing; a paused one is exact). ``path`` is the file
+        under the media roots, or null with a ``note`` saying why."""
+        if not settings.jellyfin_enabled:
+            raise HTTPException(status_code=503, detail="Jellyfin isn't configured "
+                                "(QC_JELLYFIN_URL and an API key).")
+        client = jellyfin.JellyfinClient(settings.jellyfin_url, settings.jellyfin_api_key)
+        try:
+            raw = client.sessions()
+        except jellyfin.JellyfinError as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+        return {"sessions": jellyfin.now_playing(
+            raw, settings.jellyfin_path_map, settings.media_roots,
+            item_path=client.item_path)}
 
     # --- library browsing ----------------------------------------------------
 

@@ -10,7 +10,7 @@ small for Phase 0.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -18,6 +18,32 @@ def _roots(raw: str | None) -> list[Path]:
     if not raw:
         return []
     return [Path(p).expanduser() for p in raw.split(os.pathsep) if p.strip()]
+
+
+def _path_map(raw: str | None) -> tuple[tuple[str, str], ...]:
+    """``QC_JELLYFIN_PATH_MAP``: ``<jellyfin path>=<local path>`` pairs, separated like
+    ``QC_MEDIA_ROOTS`` (``:``), e.g. ``/movies=/srv/movies:/shows=/srv/shows``."""
+    pairs = []
+    for part in (raw or "").split(os.pathsep):
+        src, sep, dst = part.partition("=")
+        if sep and src.strip() and dst.strip():
+            pairs.append((src.strip().rstrip("/") or "/", dst.strip().rstrip("/") or "/"))
+    return tuple(pairs)
+
+
+def _secret(e, name: str) -> str:
+    """A secret from ``<name>`` or from the file ``<name>_FILE`` names (the NixOS module
+    passes it as a systemd credential). An unreadable file is a missing secret, not a
+    failed start: the feature it gates reports itself off."""
+    if e.get(name):
+        return e[name].strip()
+    path = e.get(name + "_FILE")
+    if not path:
+        return ""
+    try:
+        return Path(path).expanduser().read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
 
 
 @dataclass(frozen=True)
@@ -37,6 +63,13 @@ class Settings:
     api_tokens: frozenset[str]
     youtube_dir: Path | None
     public_url: str
+    jellyfin_url: str = ""
+    jellyfin_api_key: str = field(default="", repr=False)
+    jellyfin_path_map: tuple[tuple[str, str], ...] = ()
+
+    @property
+    def jellyfin_enabled(self) -> bool:
+        return bool(self.jellyfin_url and self.jellyfin_api_key)
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> "Settings":
@@ -97,4 +130,12 @@ class Settings:
             # Host header, which a proxy or a crafted request could change. Empty =
             # links are off (the button says how to turn them on).
             public_url=e.get("QC_PUBLIC_URL", "").strip().rstrip("/"),
+            # Jellyfin, for "Now playing" only (M15, D-025): which sessions are playing
+            # and where their playheads are. The server's own API key (QC_JELLYFIN_API_KEY,
+            # or a file named by QC_JELLYFIN_API_KEY_FILE), not a user sign-in. Jellyfin
+            # reports its own (container) paths, so QC_JELLYFIN_PATH_MAP maps them onto
+            # the media roots. No URL or no key = the feature is off.
+            jellyfin_url=e.get("QC_JELLYFIN_URL", "").strip().rstrip("/"),
+            jellyfin_api_key=_secret(e, "QC_JELLYFIN_API_KEY"),
+            jellyfin_path_map=_path_map(e.get("QC_JELLYFIN_PATH_MAP")),
         )

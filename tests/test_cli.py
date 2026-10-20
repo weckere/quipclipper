@@ -369,3 +369,53 @@ def test_clip_audio_format_passes_codec_to_cut_clip(tmp_path, monkeypatch):
     assert res.exit_code == 0, res.output
     assert captured.get("audio_codec") == "flac"
     assert "full-mix lossless flac" in res.output
+
+
+# --- clip.nowplaying helpers (M15) ---------------------------------------------------
+
+
+def _sess(i, device, path="/m/a.mkv", **kw):
+    return {"id": i, "device": device, "user": "wiz", "client": "Jellyfin Android TV",
+            "title": "T", "path": path, "note": None if path else "Not in the library.", **kw}
+
+
+def test_pick_session_takes_the_only_library_one():
+    tv, song = _sess("a", "Living room TV"), _sess("b", "Pixel", path=None)
+    assert cli.pick_session([tv, song], None) is tv
+
+
+def test_pick_session_by_id_or_name_part():
+    tv, phone = _sess("a", "Living room TV"), _sess("b", "Pixel")
+    assert cli.pick_session([tv, phone], "b") is phone
+    assert cli.pick_session([tv, phone], "living") is tv
+
+
+def test_pick_session_ambiguous_lists_the_choices():
+    with pytest.raises(cli.CliError) as exc:
+        cli.pick_session([_sess("a", "TV"), _sess("b", "Pixel")], None)
+    assert exc.value.code == "ambiguous" and "a = TV" in str(exc.value)
+
+
+def test_pick_session_explains_nothing_to_clip():
+    with pytest.raises(cli.CliError, match="Nothing is playing"):
+        cli.pick_session([], None)
+    with pytest.raises(cli.CliError, match="Not in the library"):
+        cli.pick_session([_sess("b", "Pixel", path=None)], None)
+    with pytest.raises(cli.CliError, match="Not in the library"):
+        cli.pick_session([_sess("b", "Pixel", path=None)], "pixel")
+    with pytest.raises(cli.CliError, match="matches 'bedroom'"):
+        cli.pick_session([_sess("b", "Pixel")], "bedroom")
+
+
+def test_cues_before_picks_the_line_at_or_before_the_playhead():
+    cues = [{"start": 1, "end": 3, "text": "a"}, {"start": 4, "end": 6, "text": "b"},
+            {"start": 9, "end": 11, "text": "c"}]
+    assert [c["text"] for c in cli.cues_before(cues, 8)] == ["b"]
+    assert [c["text"] for c in cli.cues_before(cues, 9)] == ["c"]
+    assert [c["text"] for c in cli.cues_before(cues, 10, 2)] == ["b", "c"]
+    assert cli.cues_before(cues, 0.5) == []
+
+
+def test_format_clock():
+    assert cli.format_clock(65) == "1:05"
+    assert cli.format_clock(3725.9) == "1:02:05"

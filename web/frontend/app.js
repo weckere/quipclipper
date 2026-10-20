@@ -191,6 +191,7 @@ async function browse(path) {
   showBrowser();
   currentBrowsePath = path;
   dialogueSearchScope = null;
+  refreshNowPlaying();  // the Now playing card shows on the library home only
   const list = $("entries");
   list.innerHTML = "";
   $("search-batch").hidden = true;
@@ -2188,10 +2189,27 @@ async function loadScript(path, track) {
   // Auto-select the matching cue range when this item was opened from a
   // dialogue search (consumed once — track switches afterward don't re-select).
   if (pendingCueSelect) {
-    const { start, end } = pendingCueSelect;
+    const { start, end, at } = pendingCueSelect;
     pendingCueSelect = null;
-    selectCueRange(start, end);
+    if (at != null) {
+      // Now playing: the line at or before the playhead (it lags while playing).
+      const cue = cueAtOrBefore(at);
+      if (cue) selectCueRange(cue.start, cue.end);
+    } else {
+      selectCueRange(start, end);
+    }
   }
+}
+
+/** The last real cue that has started by `t`, or null. */
+function cueAtOrBefore(t) {
+  let found = null;
+  for (const c of scriptCues) {
+    if (c.synthetic) continue;
+    if (c.start > t) break;
+    found = c;
+  }
+  return found;
 }
 
 /** Index of the cue whose `edge` ("start"|"end") time is nearest to `t`. */
@@ -3501,7 +3519,8 @@ function toggleScopeMenu(open) {
 $("search-scope").onclick = (e) => { e.stopPropagation(); toggleJobs(false); toggleScopeMenu(); };
 $("scope-menu").addEventListener("keydown", (e) => {
   if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
-  const items = [...$("scope-menu").querySelectorAll("button:not(:disabled)")];
+  const items = [...$("scope-menu").querySelectorAll("button:not(:disabled)")]
+    .filter((b) => !b.closest("[hidden]"));
   const i = items.indexOf(document.activeElement);
   e.preventDefault();
   items[(i + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length].focus();
@@ -3509,6 +3528,11 @@ $("scope-menu").addEventListener("keydown", (e) => {
 $("scope-menu").addEventListener("click", (e) => {
   const b = e.target.closest("button[data-scope]");
   if (!b || b.disabled) return;
+  if (b.dataset.scope === "nowplaying") {  // not a search: jump to what's playing
+    toggleScopeMenu(false);
+    jumpToNowPlaying();
+    return;
+  }
   searchScope = b.dataset.scope;
   updateScopeUI();
   toggleScopeMenu(false);
@@ -3563,6 +3587,92 @@ document.addEventListener("click", (e) => {
   if (!e.target.closest("#jobs-popover") && !e.target.closest("#jobs-pill")) toggleJobs(false);
   if (!e.target.closest("#settings-popover") && !e.target.closest("#settings-btn")) toggleSettings(false);
 });
+
+// --- Now playing: what Jellyfin clients are playing (M15) --------------------
+//
+// GET /api/jellyfin/sessions (jellyfin.sessions) lists each Jellyfin client that is
+// playing or paused, its playhead and the file in the library. The card on the library
+// home polls it while it is on screen. Open (clip.nowplaying in the CLI) opens that file
+// in the workspace at the playhead with the line at or before it selected, so ✂ Make
+// clip cuts what was just heard. The "Now playing" scope jumps straight there.
+
+const NOWPLAYING_POLL_MS = 5000;
+let nowPlayingTimer = null;
+let nowPlayingSessions = [];
+
+const nowPlayingShown = () =>
+  !!appConfig.jellyfin && currentView === "browser" && currentBrowsePath === null;
+
+function nowPlayingTitle(s) {
+  if (!s.series) return s.title || "Untitled";
+  const two = (n) => String(n).padStart(2, "0");
+  const ep = s.season != null && s.episode != null ? ` S${two(s.season)}E${two(s.episode)}` : "";
+  return `${s.series}${ep}${s.title ? " · " + s.title : ""}`;
+}
+
+async function refreshNowPlaying() {
+  clearTimeout(nowPlayingTimer);
+  nowPlayingTimer = null;
+  $("nowplaying-card").hidden = !nowPlayingShown();
+  if (!nowPlayingShown()) return;
+  if (!document.hidden) {
+    try {
+      nowPlayingSessions = (await getJSON("/api/jellyfin/sessions")).sessions || [];
+      renderNowPlaying();
+    } catch (err) {
+      nowPlayingSessions = [];
+      $("nowplaying-list").innerHTML = "";
+      $("nowplaying-status").hidden = false;
+      $("nowplaying-status").textContent = `Couldn't ask Jellyfin: ${err.message}`;
+    }
+  }
+  // Still on the library home (a browse may have left it while we waited)? Keep polling.
+  if (nowPlayingShown() && !nowPlayingTimer) {
+    nowPlayingTimer = setTimeout(refreshNowPlaying, NOWPLAYING_POLL_MS);
+  }
+}
+
+function renderNowPlaying() {
+  const list = $("nowplaying-list");
+  const status = $("nowplaying-status");
+  list.innerHTML = "";
+  status.hidden = nowPlayingSessions.length > 0;
+  status.textContent = "Nothing is playing on Jellyfin.";
+  for (const s of nowPlayingSessions) {
+    const li = document.createElement("li");
+    li.className = "nowplaying-row";
+    const who = [s.device, s.user].filter(Boolean).map(escapeHtml).join(" · ");
+    const at = formatTimeWhole(s.position || 0);
+    li.innerHTML =
+      `<div class="nowplaying-what"><strong>${escapeHtml(nowPlayingTitle(s))}</strong>` +
+      `<span class="muted">${who} · ${s.paused ? "paused" : "playing"} at ${at}</span>` +
+      (s.path ? "" : `<span class="muted">${escapeHtml(s.note || "")}</span>`) +
+      `</div>` +
+      (s.path ? `<button type="button" class="btn primary" data-action="clip.nowplaying"` +
+        ` title="Open in the workspace at ${at}, with the line just heard selected">Open at ${at}</button>` : "");
+    const open = li.querySelector("button");
+    if (open) open.onclick = () => openNowPlaying(s);
+    list.appendChild(li);
+  }
+}
+
+function openNowPlaying(s) {
+  if (!s.path) return;
+  const name = s.path.split(/[\\/]/).pop();
+  openItem(s.path, name, { seekTo: s.position || 0, markRange: { at: s.position || 0 } });
+}
+
+/** The "Now playing" scope: open the one session playing a library file, or show the
+ *  card to choose from (or to say why there's nothing to open). */
+async function jumpToNowPlaying() {
+  try {
+    const sessions = (await getJSON("/api/jellyfin/sessions")).sessions || [];
+    const playable = sessions.filter((s) => s.path);
+    if (playable.length === 1) { openNowPlaying(playable[0]); return; }
+  } catch {}  // the card says what went wrong
+  await browse(null);
+  $("nowplaying-card").scrollIntoView({ block: "nearest" });
+}
 
 // --- Jobs: the pill counts running jobs, the popover lists them -------------
 //
@@ -3696,7 +3806,9 @@ function scheduleJobs() {
 }
 /** Called after a request that starts a job, so the pill doesn't wait for the next poll. */
 function nudgeJobs() { setTimeout(async () => { await refreshJobs(); scheduleJobs(); }, 400); }
-document.addEventListener("visibilitychange", () => { if (!document.hidden) { refreshJobs(); scheduleJobs(); } });
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) { refreshJobs(); scheduleJobs(); refreshNowPlaying(); }
+});
 
 // --- boot -------------------------------------------------------------------
 
@@ -3720,6 +3832,9 @@ async function loadStatus() {
     if (appConfig.subtitle_langs && $("ss-langs")) {
       $("ss-langs").placeholder = appConfig.subtitle_langs.join(",");
     }
+    // Jellyfin configured: offer the Now playing scope and card (M15).
+    $("scope-nowplaying").hidden = !appConfig.jellyfin;
+    refreshNowPlaying();
   } catch {}
   // Load media roots so the breadcrumb can offer clickable path segments.
   try {

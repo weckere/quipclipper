@@ -262,6 +262,18 @@ select {
 .index-bar span { display: block; height: 100%; width: 0; background: var(--accent); border-radius: 3px; transition: width 0.2s; }
 .index-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
 
+/* ---- Now playing (Jellyfin) --------------------------------------------------------------- */
+.nowplaying-card { margin-bottom: 0.75rem; }
+.nowplaying-list { list-style: none; margin: 0; padding: 0; }
+.nowplaying-row {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem;
+  padding: 0.55rem 0; border-top: 1px solid var(--line);
+}
+.nowplaying-row:first-child { border-top: 0; }
+.nowplaying-what { flex: 1 1 16rem; min-width: 0; display: flex; flex-direction: column; gap: 0.1rem; }
+.nowplaying-what strong { font-weight: 600; overflow-wrap: anywhere; }
+.nowplaying-what .muted { font-size: 0.85rem; }
+
 /* ---- library listing ---------------------------------------------------------------------- */
 .entries { list-style: none; margin: 0; padding: 0; }
 .entry {
