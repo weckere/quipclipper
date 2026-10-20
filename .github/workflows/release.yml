@@ -92,16 +92,11 @@ jobs:
         env:
           VERSION: ${{ needs.check.outputs.version }}
         run: |
-          awk -v v="$VERSION" '
-            index($0, "## [" v "] - ") == 1 { on = 1; next }
-            on && /^## / { exit }
-            on && /^\[[^]]+\]: / { next }
-            on { print }
-          ' CHANGELOG.md > notes.md
           {
+            python3 scripts/release-notes.py "$VERSION"
             echo
             echo "**Images:** \`ghcr.io/${GITHUB_REPOSITORY}-app:$VERSION\` and \`ghcr.io/${GITHUB_REPOSITORY}-web:$VERSION\`"
-          } >> notes.md
+          } > notes.md
           cat notes.md
 
       - name: Create the GitHub Release

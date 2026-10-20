@@ -1,0 +1,31 @@
+#!/usr/bin/env python3
+"""Print the GitHub Release notes for a version: its CHANGELOG.md section.
+
+    scripts/release-notes.py X.Y.Z
+
+GitHub renders every newline in release notes as a line break, so the changelog's
+wrapped paragraphs and list items are joined back into single lines; headings, list
+items and blank lines stay as they are. release.yml uses this; so can a person
+fixing a published Release (gh release edit vX.Y.Z --notes-file ...).
+"""
+import re
+import sys
+from pathlib import Path
+
+version = sys.argv[1].lstrip("v")
+text = (Path(__file__).resolve().parents[1] / "CHANGELOG.md").read_text()
+found = re.search(rf"^## \[{re.escape(version)}\] - .*?\n(.*?)(?=^## |\Z)", text, re.M | re.S)
+if not found:
+    sys.exit(f"CHANGELOG.md has no dated section for {version}")
+
+starts_block = re.compile(r"\s*([-*+]\s|\d+\.\s|#|\[[^\]]+\]:\s|```|<)")
+out: list[str] = []
+for line in found.group(1).splitlines():
+    if re.match(r"\[[^\]]+\]: ", line):  # link reference definitions
+        continue
+    prev = out[-1] if out else ""
+    if line.strip() and prev.strip() and not starts_block.match(line) and not prev.lstrip().startswith("#"):
+        out[-1] = prev.rstrip() + " " + line.strip()
+    else:
+        out.append(line)
+print("\n".join(out).strip())
