@@ -1024,3 +1024,46 @@ main:focus, [tabindex="-1"]:focus:not(:focus-visible) { outline: none; }
 .script-hint kbd { font: 0.72rem var(--font-mono); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); padding: 0 0.3rem; }
 .dialogue-map:focus-visible { outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) { .script-list { scroll-behavior: auto; } }
+
+/* ---- low vision (M16) -----------------------------------------------------------------------
+   Targets at least 24 px (WCAG 2.2 SC 2.5.8) for the small buttons; the tokens carry the
+   colour side of prefers-contrast: more, this carries the rest: solid lines and no faded text. */
+.script-mark-btn, .bookmark-use, .bookmark-seek, .bookmark-del, .bm-browser-open,
+.link-btn, .reindex-link, .scope-chip, .mark-clear-inline, .yt-remove, .yt-download-btn, .crumb {
+  min-height: 24px; min-width: 24px;
+}
+.script-mark-btn { padding: 0.15rem 0.5rem; }
+.mark-clear-inline { display: inline-flex; align-items: center; justify-content: center; }
+input[type="checkbox"]:not(.switch) { width: 1rem; height: 1rem; }
+.set-check { display: flex; margin-top: 0.6rem; font-size: 0.88rem; }
+
+@media (prefers-contrast: more) {
+  :focus-visible { outline-width: 3px; }
+  .badge, .tab-count, .hit-score { border: 1px solid var(--line-strong); }
+  .mark-clear-inline, .dm-bars i { opacity: 1; }
+  .dm-bars i.empty { opacity: 0.6; }
+  .dialogue-hit .hit-actions .mark-icon-btn { opacity: 1; }
+  .btn.ghost, .jobs-pill, .root-link, .clips-nav-link, .tab { color: var(--text); }
+  .script-line.active, .script-line.in-range { border-left-width: 5px; }
+  .panel, .index-card, .batch-bar, .dialogue-map, .hit-preview { border-color: var(--line-strong); }
+}
+
+/* Reflow (SC 1.4.10): usable at 320 px wide, i.e. 1280 px at 400 % zoom, with no sideways
+   scrolling. The nav tightens, the map's bars may thin below a pixel. */
+.dm-bars i { min-width: 0; }
+@media (max-width: 480px) {
+  .dm-bars { gap: 0; }
+  .key-hint { display: none; }
+  .app-nav { gap: 0; flex-wrap: wrap; }
+  .clips-nav-link { padding: 0.3rem 0.45rem; font-size: 0.85rem; }
+  .jobs-pill { margin-left: 0.2rem; padding: 0.25rem 0.6rem; }
+  .ws-head .stream-selector { width: 100%; }
+}
+/* Switches are 24 px tall so they're a full-size target on their own. */
+input[type="checkbox"].switch { width: 2.5rem; height: 1.5rem; }
+input[type="checkbox"].switch::after { top: 0.2rem; left: 0.2rem; width: 1.1rem; height: 1.1rem; }
+input[type="checkbox"].switch:checked::after { transform: translateX(1rem); }
+.script-play { min-height: 24px; }
+.global-search { min-width: 0; }
+.global-search input[type="text"] { width: 0; }
+.bm-browser-file, .bm-browser-item .bookmark-label { min-height: 24px; line-height: 24px; }

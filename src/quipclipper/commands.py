@@ -528,6 +528,8 @@ EXEMPT_ROUTES: dict[tuple[str, str], str] = {
 EXEMPT_UI_SETTINGS: dict[str, str] = {
     "qcYtPlayer": "playback: chooses the YouTube player in the browser",
     "qc_theme": "presentation: light or dark appearance in the browser",
+    "qc_sub_size": "presentation: subtitle size on the video in the browser",
+    "qc_sub_bg": "presentation: solid background behind the video's subtitles in the browser",
 }
 
 

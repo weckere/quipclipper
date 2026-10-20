@@ -4,7 +4,12 @@
  * `variable.export format=css` and wrapped by export_tokens.py (kept with the mockup generators,
  * not in this repo). Edit the colours in the FigCraft generator and re-export; don't hand-edit
  * them here. Dark is the default; the Light block applies when the OS asks for light, and
- * <html data-theme="light"> forces it (a future Settings override).
+ * <html data-theme="light"> forces it (the Settings override).
+ *
+ * M16 (WCAG 2.2 AA): the light accent, faint and ok were darkened by hand so every text
+ * colour reaches 4.5:1 and every UI colour 3:1 on all four grounds; carry these values back
+ * into the FigCraft generator. test_frontend_contrast.py checks both themes and the
+ * prefers-contrast: more blocks at the bottom of this file.
  */
 :root {
   color-scheme: dark;
@@ -44,14 +49,14 @@
     --line-strong: #7A8090;
     --text: #1B1D22;
     --dim: #555B69;
-    --faint: #646B7A;
-    --accent: #D98E04;
+    --faint: #5C6372;
+    --accent: #B07203;
     --accent-text: #7D4B00;
     --accent-ink: #1A1303;
-    --accent-soft: rgba(217, 142, 4, 0.15);
+    --accent-soft: rgba(176, 114, 3, 0.15);
     --playhead: #1565B0;
     --playhead-soft: rgba(21, 101, 176, 0.10);
-    --ok: #16793C;
+    --ok: #136E36;
     --danger: #B52A40;
   }
 }
@@ -66,13 +71,46 @@
   --line-strong: #7A8090;
   --text: #1B1D22;
   --dim: #555B69;
-  --faint: #646B7A;
-  --accent: #D98E04;
+  --faint: #5C6372;
+  --accent: #B07203;
   --accent-text: #7D4B00;
   --accent-ink: #1A1303;
-  --accent-soft: rgba(217, 142, 4, 0.15);
+  --accent-soft: rgba(176, 114, 3, 0.15);
   --playhead: #1565B0;
   --playhead-soft: rgba(21, 101, 176, 0.10);
-  --ok: #16793C;
+  --ok: #136E36;
   --danger: #B52A40;
+}
+
+/* prefers-contrast: more (M16): stronger lines, secondary text close to the main text, a
+ * stronger selection tint. Dark first; the light blocks outrank it in light mode. */
+@media (prefers-contrast: more) {
+  :root {
+    --line: #6A7282;
+    --line-strong: #9AA2B1;
+    --dim: #D2D6DE;
+    --faint: #B4BAC6;
+    --accent-soft: rgba(242, 181, 68, 0.24);
+    --playhead-soft: rgba(91, 181, 255, 0.22);
+  }
+}
+@media (prefers-contrast: more) and (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --line: #7A8090;
+    --line-strong: #4A505C;
+    --dim: #383D47;
+    --faint: #464C58;
+    --accent-soft: rgba(176, 114, 3, 0.22);
+    --playhead-soft: rgba(21, 101, 176, 0.16);
+  }
+}
+@media (prefers-contrast: more) {
+  :root[data-theme="light"] {
+    --line: #7A8090;
+    --line-strong: #4A505C;
+    --dim: #383D47;
+    --faint: #464C58;
+    --accent-soft: rgba(176, 114, 3, 0.22);
+    --playhead-soft: rgba(21, 101, 176, 0.16);
+  }
 }

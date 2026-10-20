@@ -4038,6 +4038,57 @@ $("theme-seg").addEventListener("click", (e) => {
 });
 applyTheme(currentThemeChoice());
 
+// Subtitle size and background on the video (M16), per browser. Normal leaves the player's
+// own size; Large and Extra large set it from the player's height, so it follows the window
+// and full screen. The official YouTube embed draws its own captions and ignores these.
+const SUB_SIZE_KEY = "qc_sub_size";
+const SUB_BG_KEY = "qc_sub_bg";
+const CUE_SCALE = { large: [0.07, 20], xl: [0.095, 26] };  // share of the player's height, minimum px
+
+function readPref(key) {
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+function writePref(key, value) {
+  try { if (value == null) localStorage.removeItem(key); else localStorage.setItem(key, value); } catch {}
+}
+
+function applyCueStyle() {
+  const size = readPref(SUB_SIZE_KEY);
+  const rules = [];
+  const h = $("player").clientHeight;
+  if (CUE_SCALE[size] && h) {
+    const [share, min] = CUE_SCALE[size];
+    rules.push(`font-size: ${Math.max(min, Math.round(h * share))}px`);
+  }
+  if (readPref(SUB_BG_KEY) === "solid") rules.push("background: #000", "color: #fff");
+  $("cue-style").textContent = rules.length ? `#player::cue { ${rules.join("; ")}; }` : "";
+}
+
+function showSubPrefs() {
+  const size = CUE_SCALE[readPref(SUB_SIZE_KEY)] ? readPref(SUB_SIZE_KEY) : "normal";
+  for (const b of $("sub-size-seg").querySelectorAll("button")) {
+    const on = b.dataset.subSize === size;
+    b.setAttribute("aria-checked", String(on));
+    b.tabIndex = on ? 0 : -1;
+  }
+  $("sub-bg").checked = readPref(SUB_BG_KEY) === "solid";
+  applyCueStyle();
+}
+
+$("sub-size-seg").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-sub-size]");
+  if (!b) return;
+  writePref(SUB_SIZE_KEY, b.dataset.subSize === "normal" ? null : b.dataset.subSize);
+  showSubPrefs();
+});
+radioArrows($("sub-size-seg"));
+$("sub-bg").addEventListener("change", () => {
+  writePref(SUB_BG_KEY, $("sub-bg").checked ? "solid" : null);
+  showSubPrefs();
+});
+new ResizeObserver(applyCueStyle).observe($("player"));
+showSubPrefs();
+
 function toggleSettings(open, restore) {
   const pop = $("settings-popover");
   const show = open === undefined ? pop.hidden : open;

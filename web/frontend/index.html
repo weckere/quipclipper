@@ -12,6 +12,8 @@
     </script>
     <link rel="stylesheet" href="tokens.css" />
     <link rel="stylesheet" href="styles.css" />
+    <!-- The video's subtitle size and background (Settings), written by app.js. -->
+    <style id="cue-style"></style>
   </head>
   <body>
     <a href="#main" id="skip-link" class="skip-link" title="Skip past the top bar to the page's content">Skip to content</a>
@@ -67,6 +69,16 @@
               <button type="button" role="radio" data-theme-choice="dark" aria-checked="false" tabindex="-1" title="Always dark">Dark</button>
               <button type="button" role="radio" data-theme-choice="light" aria-checked="false" tabindex="-1" title="Always light">Light</button>
             </div>
+          </div>
+          <div class="set-row">
+            <div class="set-label" id="sub-size-label">Subtitle size</div>
+            <div id="sub-size-seg" class="segmented" role="radiogroup" aria-labelledby="sub-size-label">
+              <button type="button" role="radio" data-sub-size="normal" aria-checked="true" title="The player's own subtitle size">Normal</button>
+              <button type="button" role="radio" data-sub-size="large" aria-checked="false" tabindex="-1" title="Subtitles about half as large again">Large</button>
+              <button type="button" role="radio" data-sub-size="xl" aria-checked="false" tabindex="-1" title="Subtitles about twice the normal size">Extra large</button>
+            </div>
+            <label class="checkbox-label set-check" title="White subtitles on solid black, instead of the player's see-through box"><input id="sub-bg" class="switch" type="checkbox" /> Solid background behind subtitles</label>
+            <p class="muted set-help">For subtitles on the video. The official YouTube player has its own caption settings.</p>
           </div>
           <div class="set-row">
             <label class="set-label" for="ss-langs">Subtitle languages</label>
