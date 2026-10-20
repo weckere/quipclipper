@@ -308,6 +308,9 @@ def test_cli_clip_nowplaying_cuts_the_line_before_the_playhead(fake, cli_run):
     code, out = cli_run("clip.nowplaying", "--kind", "audio", "--backend", "ffmpeg")
     assert code == 0, out
     assert out["status"] == "done" and out["line"]["text"] == "Make it so."
+    # The job names the clip as the clips library has it, so `clips.download` can fetch it.
+    (f,) = out["files"]
+    assert f["clip"].endswith("/" + f["name"]) and not f["clip"].startswith("/")
     assert out["device"] == "Living room TV"
     (body,) = cli_run.transport.bodies
     assert (body["start"], body["end"], body["kind"]) == (4.0, 6.5, "audio")

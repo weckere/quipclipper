@@ -126,7 +126,7 @@ start, end, start_ts, end_ts, cue_count}]}`. The `index` is what you pass back a
 |---|---|---|
 | POST | `/api/clip` | Start a clip job (JSON body, see below). Returns `{job_id, status}`. |
 | GET | `/api/jobs` | Recent jobs. |
-| GET | `/api/jobs/{id}` | One job's status/result: `files` it wrote and, for some jobs, a `result` object (the link of a Send to LeadStinger job). |
+| GET | `/api/jobs/{id}` | One job's status/result: `files` it wrote (`{name, size, clip}`, where `clip` is the file's path in the clips library, as `/api/clips/download/{clip}` takes it) and, for some jobs, a `result` object (the link of a Send to LeadStinger job). |
 | DELETE | `/api/jobs/{id}` | Cancel a queued job / prune a finished one → `{cancelled}`; a running job that can stop (folder subtitle backfill) → `{cancelling}`; any other running job → 409. |
 | GET | `/api/jobs/{id}/download/{filename}` | Download a finished clip by name. |
 

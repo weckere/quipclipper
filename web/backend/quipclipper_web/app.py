@@ -2069,18 +2069,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 return job, registry
         return None, None
 
+    def _job_dict(job) -> dict:
+        """A job as the API shows it: each file in the clips library also carries ``clip``,
+        its path there (what ``/api/clips/download/{clip}`` takes)."""
+        d = job.to_dict()
+        for entry, path in zip(d.get("files") or [], job.result_paths):
+            try:
+                entry["clip"] = lslink.clip_path(path, settings.clips_dir)
+            except lslink.LinkError:
+                pass
+        return d
+
     @app.get("/api/jobs")
     def list_jobs() -> dict:
         merged = [*jobs.list_recent(), *dl_jobs.list_recent(), *yt_jobs.list_recent()]
         merged.sort(key=lambda j: j.created, reverse=True)
-        return {"jobs": [j.to_dict() for j in merged[:20]]}
+        return {"jobs": [_job_dict(j) for j in merged[:20]]}
 
     @app.get("/api/jobs/{job_id}")
     def get_job(job_id: str) -> dict:
         job, _ = _find_job(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="Job not found.")
-        return job.to_dict()
+        return _job_dict(job)
 
     @app.delete("/api/jobs/{job_id}")
     def cancel_job(job_id: str) -> dict:
