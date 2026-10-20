@@ -796,6 +796,10 @@ footer { padding: 2rem 1.25rem; font-size: 0.8rem; }
 
 /* clip bar */
 .ws-clip .marks-header { flex-wrap: wrap; row-gap: 0.4rem; }
+/* The range keeps room to read on one line; when the buttons don't fit beside it they
+   wrap below it (the selection bar is ~475 px wide in an 800 px window). */
+.ws-clip .marks-titlerow { flex: 1 1 16rem; }
+.ws-clip .marks-actions { margin-left: auto; }
 .bookmark-label-form { display: flex; gap: 0.5rem; align-items: center; margin: 0.6rem 0 0.2rem; }
 .bookmark-label-form[hidden] { display: none; }
 .bookmark-label-input {
