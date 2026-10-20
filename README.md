@@ -540,13 +540,16 @@ quipclipper --json bookmark.list | quipclipper clip.batch --kind audio
 ```
 
 Clips can go straight to [LeadStinger](https://github.com/weckere/leadstinger), the
-soundboard: "Send to LeadStinger" on the search results, bookmarks, clips and the
-workspace makes a set file (`.lsset`) whose tiles are trimmed to the lines, with 2 s of
-audio either side to move the cut points. From the CLI:
+soundboard. Tick the small LeadStinger toggle beside Make clip (or beside Clip / Export
+selected on the search results, bookmarks and clips) and the button makes a set file
+(`.lsset`) instead of plain clips, named after the movie or show. Each tile is trimmed
+to its line; the clip's Before/After padding (a bookmark's saved padding, none for search
+hits) is kept as audio either side, so the cut points can still be moved there. From the
+CLI:
 
 ```sh
 quipclipper --json search.folder "resistance is futile" --path /shows \
-    | quipclipper leadstinger.set Borg --out-dir .          # Borg.lsset
+    | quipclipper leadstinger.set Borg --before 2 --after 2 --out-dir .   # Borg.lsset
 quipclipper --json bookmark.list | quipclipper leadstinger.send --set Quotes
 ```
 

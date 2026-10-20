@@ -144,15 +144,18 @@ where `status` is `queued|running|done|failed|cancelled`, `files` is
 ### LeadStinger set files
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/api/leadstinger/set` | Cut lines as FLAC with handles and zip them as a [LeadStinger](https://github.com/weckere/leadstinger) set file (job). |
+| POST | `/api/leadstinger/set` | Cut lines as FLAC with their padding and zip them as a [LeadStinger](https://github.com/weckere/leadstinger) set file (job). |
 
-The body is `{name, items: [{path, start?, end?, title?, notes?, track?}], handles?}`
-(1–200 items; `handles` defaults to 2 s, at most 30). Each item is a search hit, a
-bookmark or a clips-library file (no `start`: the whole file, no handles). The job cuts
-`[start − handles, end + handles]` as a full-mix FLAC (every channel kept) and writes
-`LeadStinger/<name>.lsset` in the clips library: `manifest.json` (LeadStinger's
-starter-pack format) plus one folder for the set. Each tile's `trim_start`/`trim_end`
-sit on the line, so the cut points can still be moved in LeadStinger. Download it with
+The body is `{name?, items: [{path, start?, end?, title?, notes?, track?, before?, after?}]}`
+(1–200 items). Each item is a search hit, a bookmark or a clips-library file (no `start`:
+the whole file, no padding). `before`/`after` are the clip's padding as for `/api/clip`
+(0–60 s, default 0). The job cuts `[start − before, end + after]` as a full-mix FLAC
+(every channel kept) and writes `LeadStinger/<name>.lsset` in the clips library:
+`manifest.json` (LeadStinger's starter-pack format) plus one folder for the set. Each
+tile's `trim_start`/`trim_end` sit on the line, so the padding is handle audio and the cut
+points can still be moved in LeadStinger. Without `name`, the set is named after the
+movie or show when every clip comes from it, else `quipclipper <date>`; LeadStinger
+numbers a name that's already taken. Download it with
 `GET /api/jobs/{id}/download/<name>.lsset`; import it with LeadStinger's File ▸ Import
 Set…, a drop on its window, or `leadstinger-cli set.import`.
 

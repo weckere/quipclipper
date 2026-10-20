@@ -2566,7 +2566,6 @@ let loadedBookmarkCue = null;  // {cue} fallback when a bookmark range is loaded
 // clip target (a cue selection or a loaded bookmark); hide otherwise.
 function showClipTarget(on) {
   $("clip-btn").disabled = !on;
-  $("ls-send").disabled = !on;
   $("clip-name-row").hidden = !on;
 }
 
@@ -2598,6 +2597,7 @@ async function makeClip() {
   if (!currentItem) return;
   // Need a selected clip range (cue selection or loaded bookmark).
   if (clipRangeStart === null || clipRangeEnd === null) return;
+  if (lsOn("ls-send")) return makeLeadStingerClip();
   setClipIndicator("processing");
 
   const fmt = $("clip-format").value;
@@ -3000,8 +3000,6 @@ function updateBatchState(prefix) {
   // Optional second action (the search bar also offers "Bookmark selected").
   const bm = $(`${prefix}-batch-bookmark`);
   if (bm) { bm.disabled = n === 0; bm.textContent = n ? `Bookmark selected (${n})` : "Bookmark selected"; }
-  const ls = $(`${prefix}-batch-ls`);
-  if (ls) ls.disabled = n === 0;
 }
 
 // Channel groups a split can export (categories the backend understands), in
@@ -3161,6 +3159,7 @@ async function runBatchExport(prefix, bodyFor, onDone) {
 }
 
 $("clips-batch-export").onclick = () => {
+  if (lsOn("clips-batch-ls")) return runLeadStingerBatch("clips");
   const opts = batchOptions("clips");
   runBatchExport(
     "clips",
@@ -3178,6 +3177,7 @@ $("clips-batch-export").onclick = () => {
 };
 
 $("bm-batch-export").onclick = () => {
+  if (lsOn("bm-batch-ls")) return runLeadStingerBatch("bm");
   const opts = batchOptions("bm");
   // Each bookmark carries its own saved buffer (B16).
   runBatchExport("bm", (cb) => ({
@@ -3204,6 +3204,7 @@ $("bm-clear-all").onclick = async () => {
 
 // Clip / bookmark the selected dialogue-search hits straight from the results.
 $("search-batch-export").onclick = () => {
+  if (lsOn("search-batch-ls")) return runLeadStingerBatch("search");
   const opts = batchOptions("search");
   runBatchExport("search", (cb) => ({
     path: cb.dataset.path,
@@ -3236,63 +3237,16 @@ $("search-batch-bookmark").onclick = async () => {
   btn.disabled = false;
 };
 
-// --- Send to LeadStinger (M14) ------------------------------------------------
+// --- Send to LeadStinger (M14, D-026) ------------------------------------------
 //
-// POST /api/leadstinger/set cuts each item as FLAC with 2 s handles and zips a
-// LeadStinger set file (.lsset) whose tiles are trimmed to the lines. The dialog
-// asks for the set's name, follows the job and then downloads the file.
+// A small toggle beside Make clip and beside each batch bar's Clip/Export selected:
+// when it is on, that same button makes a LeadStinger set file (.lsset) instead of
+// plain clips. POST /api/leadstinger/set cuts each line as FLAC with its own padding
+// (the Before/After fields, a bookmark's saved padding, 0 for search hits and clips),
+// kept as handle audio around a tile trimmed to the line, and names the set after
+// the movie or show.
 
-let lsItems = [];
-
-function openLeadStinger(items, defaultName) {
-  if (!items.length) return;
-  lsItems = items;
-  $("ls-summary").textContent = items.length === 1
-    ? `1 line: ${items[0].title || ""}`.trim()
-    : `${items.length} lines`;
-  $("ls-name").value = (defaultName || "quipclipper").slice(0, 80);
-  $("ls-status").textContent = "";
-  $("ls-make").disabled = false;
-  $("ls-dialog").showModal();
-  $("ls-name").select();
-}
-
-$("ls-cancel").onclick = () => $("ls-dialog").close();
-
-$("ls-form").onsubmit = async (e) => {
-  e.preventDefault();
-  const name = $("ls-name").value.trim();
-  if (!name || !lsItems.length) return;
-  const status = $("ls-status");
-  $("ls-make").disabled = true;
-  status.textContent = "Cutting…";
-  let job;
-  try {
-    job = await postJSON("/api/leadstinger/set", { name, items: lsItems });
-  } catch (err) {
-    status.textContent = `Couldn't start: ${err.message}`;
-    $("ls-make").disabled = false;
-    return;
-  }
-  const tick = async () => {
-    let j;
-    try { j = await getJSON(`/api/jobs/${job.job_id}`); } catch { setTimeout(tick, 1500); return; }
-    if (j.status === "done" && j.files && j.files.length) {
-      const file = j.files[0].name;
-      const href = `/api/jobs/${encodeURIComponent(job.job_id)}/download/${encodeURIComponent(file)}`;
-      status.innerHTML = `Ready: <a data-action="job.download" href="${escapeHtml(href)}" download>${escapeHtml(file)}</a> (also in the Clips library, LeadStinger folder)`;
-      status.querySelector("a").click();
-      $("ls-make").disabled = false;
-    } else if (j.status === "failed" || j.status === "cancelled") {
-      status.textContent = `Failed: ${j.error || j.status}`;
-      $("ls-make").disabled = false;
-    } else {
-      status.textContent = `Cutting… ${j.progress || ""}`;
-      setTimeout(tick, 1000);
-    }
-  };
-  tick();
-};
+const lsOn = (id) => { const el = $(id); return !!(el && el.checked); };
 
 /** A tile title: the bookmark's own label, unless it is just "<times> — <cue>". */
 function lsTitle(label, cue) {
@@ -3302,7 +3256,7 @@ function lsTitle(label, cue) {
   return label || cue || undefined;
 }
 
-/** A batch bar's checked rows as /api/leadstinger/set items. */
+/** A batch bar's checked rows as /api/leadstinger/set items, each with its padding. */
 function lsItemsFrom(prefix) {
   return batchBoxes(prefix, true).map((cb) => {
     const d = cb.dataset;
@@ -3312,23 +3266,73 @@ function lsItemsFrom(prefix) {
     return {
       path: d.path, start: parseFloat(d.start), end: parseFloat(d.end),
       title: lsTitle(d.label, d.cue),
+      before: parseFloat(d.before) || 0, after: parseFloat(d.after) || 0,
     };
   });
 }
 
-$("search-batch-ls").onclick = () =>
-  openLeadStinger(lsItemsFrom("search"), $("global-search-input").value.trim() || "Lines");
-$("bm-batch-ls").onclick = () => openLeadStinger(lsItemsFrom("bm"), "Bookmarks");
-$("clips-batch-ls").onclick = () =>
-  openLeadStinger(lsItemsFrom("clips"), (currentClipsFolder || "Clips").split("/").pop());
-$("ls-send").onclick = () => {
-  if (!currentItem || clipRangeStart === null || clipRangeEnd === null) return;
-  const cue = selectedCueText() || (clipFirst < 0 ? loadedBookmarkCue : "") || "";
-  openLeadStinger([{
+/** One set job for a batch bar's selection; offers (and starts) the .lsset download. */
+async function runLeadStingerBatch(prefix, onDone) {
+  const items = lsItemsFrom(prefix);
+  if (!items.length) return;
+  const btn = $(`${prefix}-batch-export`);
+  const status = $(`${prefix}-batch-status`);
+  btn.disabled = true;
+  status.textContent = "Making a LeadStinger set…";
+  let job;
+  try {
+    job = await postJSON("/api/leadstinger/set", { items });
+  } catch (err) {
+    status.textContent = `LeadStinger set failed: ${err.message}`;
+    btn.disabled = false;
+    return;
+  }
+  const tick = async () => {
+    let j;
+    try { j = await getJSON(`/api/jobs/${job.job_id}`); } catch { setTimeout(tick, 1500); return; }
+    if (j.status === "done" && j.files && j.files.length) {
+      const file = j.files[0].name;
+      const href = `/api/jobs/${encodeURIComponent(job.job_id)}/download/${encodeURIComponent(file)}`;
+      status.innerHTML = `LeadStinger set ready: <a data-action="job.download" href="${escapeHtml(href)}" download>${escapeHtml(file)}</a>`;
+      status.querySelector("a").click();
+      btn.disabled = false;
+      if (onDone) onDone();
+    } else if (j.status === "failed" || j.status === "cancelled") {
+      status.textContent = `LeadStinger set failed: ${j.error || j.status}`;
+      btn.disabled = false;
+    } else {
+      status.textContent = `Making a LeadStinger set… ${j.progress || ""}`;
+      setTimeout(tick, 1000);
+    }
+  };
+  tick();
+}
+
+/** Make clip with the toggle on: the selection becomes a one-tile LeadStinger set. */
+async function makeLeadStingerClip() {
+  const cue = (selectedCueText() || (clipFirst < 0 ? loadedBookmarkCue : "") || "").trim();
+  const item = {
     path: currentItem.path, start: clipRangeStart, end: clipRangeEnd,
-    title: cue.trim() || undefined,
-  }], (currentItem.name || "quipclipper").replace(/\.[^.]+$/, ""));
-};
+    title: cue || undefined,
+    before: parseFloat($("clip-before").value) || 0,
+    after: parseFloat($("clip-after").value) || 0,
+  };
+  const what = cue
+    ? `"${cue.length > 60 ? cue.slice(0, 57) + "…" : cue}"`
+    : `${formatTime(clipRangeStart)} – ${formatTime(clipRangeEnd)}`;
+  const label = `LeadStinger set: ${what}`;
+  setClipIndicator("processing");
+  try {
+    const data = await postJSON("/api/leadstinger/set", { items: [item] });
+    activeJobId = data.job_id;
+    pollClipJob(data.job_id, addClipRow(data.job_id, label));
+  } catch (err) {
+    const row = addClipRow(null, label);
+    row.querySelector(".clip-made-status").innerHTML =
+      `<span class="job-failed">Failed: ${escapeHtml(err.message)}</span>`;
+    setClipIndicator("failed", { error: err.message });
+  }
+}
 
 // --- top bar: one search box with a scope chip, nav state, Jobs pill --------
 //

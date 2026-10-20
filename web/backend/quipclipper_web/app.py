@@ -201,15 +201,19 @@ class LeadStingerItem(BaseModel):
     title: str | None = Field(None, max_length=200)
     notes: str | None = Field(None, max_length=1000)
     track: int | None = Field(None, ge=0)
+    # Padding cut either side of the line, as for clipping (D-026): it becomes the
+    # handle audio around the tile's trim, which sits on the line. 0 = no handles.
+    before: float = Field(0.0, ge=0, le=60)
+    after: float = Field(0.0, ge=0, le=60)
 
 
 class LeadStingerSetRequest(BaseModel):
-    """JSON body for POST /api/leadstinger/set (M14, D-024)."""
+    """JSON body for POST /api/leadstinger/set (M14, D-024, D-026)."""
 
-    name: str = Field(..., min_length=1, max_length=80)
+    # None: the source's title for one clip, the shared title for a batch from one
+    # show or movie, else "quipclipper <date>". LeadStinger numbers a taken name.
+    name: str | None = Field(None, min_length=1, max_length=80)
     items: list[LeadStingerItem] = Field(..., min_length=1, max_length=200)
-    # Seconds of audio kept either side of each line; the tile's trims sit on the line.
-    handles: float = Field(2.0, ge=0, le=30)
 
 
 class ClipRequest(BaseModel):
@@ -1519,7 +1523,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # --- clipping & jobs -------------------------------------------------------
 
     def _plan_clip(req: ClipRequest, out_dir: Path | None = None):
-        """Validate a clip request and return ``(label, do_cut)`` without running it.
+        """Validate a clip request and return ``(label, do_cut, title)`` without running it.
+
+        ``title`` is the source's display name (the movie or show, see clean_title).
 
         ``do_cut(job)`` performs the cut and returns the written paths. With
         ``out_dir`` the clip is written there (flat, by the template's file name)
@@ -1838,14 +1844,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
             # From here the caller owns the EPUB temp: do_cut's finally removes it.
             _submitted = True
-            return label, do_cut
+            return label, do_cut, clean_title(name_source or video)
         finally:
             if epub_temp is not None and not _submitted:
                 epub_temp.unlink(missing_ok=True)
 
     @app.post("/api/clip")
     def create_clip(req: ClipRequest) -> dict:
-        label, do_cut = _plan_clip(req)
+        label, do_cut, _title = _plan_clip(req)
         job = jobs.submit(do_cut, label=label)
         return {"job_id": job.id, "status": job.status.value}
 
@@ -1853,15 +1859,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/leadstinger/set")
     def create_leadstinger_set(req: LeadStingerSetRequest) -> dict:
-        """Cut every item as FLAC with handles and zip them as a LeadStinger set file.
+        """Cut every item as FLAC with its padding and zip them as a LeadStinger set file.
 
         A job on the clip pool: it cuts the items one after another into a staging
         folder, then writes ``LeadStinger/<name>.lsset`` in the clips library (its
-        download is the job's file). Each tile's trims sit on the line (D-024).
+        download is the job's file). Each item's before/after padding is handle audio
+        around the tile's trim, which sits on the line (D-024, D-026).
         """
-        set_name = lsset.safe_name(req.name, fallback="quipclipper")
         items = list(req.items)
-        handles = req.handles
         n = len(items)
 
         def build(job) -> list[Path]:
@@ -1869,22 +1874,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             staging_root.mkdir(parents=True, exist_ok=True)
             staging = Path(tempfile.mkdtemp(prefix="set-", dir=staging_root))
             try:
-                tiles, files = [], []
+                tiles, files, sources = [], [], []
                 for i, item in enumerate(items, 1):
                     if job.cancel_requested:
                         return []
                     title = (item.title or "").strip() or Path(item.path).stem
                     job.progress = f"{i - 1}/{n} {title[:60]}"
                     whole = item.start is None
+                    before = 0.0 if whole else item.before
                     req_i = ClipRequest(
                         path=item.path, kind="audio", audio_format="flac", lossless=False,
                         start=0.0 if whole else item.start, end=item.end,
-                        before=0.0 if whole else handles, after=0.0 if whole else handles,
+                        before=before, after=0.0 if whole else item.after,
                         cue_text=title, track=item.track, template="{timestamp}",
                         embed_subs=False,
                     )
                     try:
-                        _label, do_cut = _plan_clip(req_i, out_dir=staging)
+                        _label, do_cut, source_title = _plan_clip(req_i, out_dir=staging)
                         written = do_cut(job)
                     except HTTPException as exc:
                         raise RuntimeError(f"item {i} ({title[:60]}): {exc.detail}") from None
@@ -1892,13 +1898,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         raise RuntimeError(f"item {i} ({title[:60]}): {exc}") from None
                     if not written:
                         raise RuntimeError(f"item {i} ({title[:60]}): nothing was cut")
-                    arcname = f"{set_name}/{i:02d} {lsset.safe_name(title)}.flac"
-                    trim = lsset.trim_for(None if whole else item.start, item.end, handles)
+                    sources.append(source_title)
+                    arcname = f"{i:02d} {lsset.safe_name(title)}.flac"
+                    trim = lsset.trim_for(None if whole else item.start, item.end, before)
                     where = "" if whole else f" · {format_timestamp(item.start)}"
                     notes = (item.notes or "").strip() or (
                         f"{Path(item.path).stem}{where} · quipclipper")
-                    tiles.append(lsset.tile_entry(arcname, title=title, trim=trim, notes=notes))
+                    tiles.append((arcname, title, trim, notes))
                     files.append((arcname, written[0]))
+                set_name = lsset.safe_name(req.name or lsset.auto_set_name(sources),
+                                           fallback="quipclipper")
+                # Clips live in a folder named after the set inside the zip.
+                files = [(f"{set_name}/{a}", src) for a, src in files]
+                tiles = [lsset.tile_entry(f"{set_name}/{a}", title=t, trim=tr, notes=no)
+                         for a, t, tr, no in tiles]
                 job.progress = f"{n}/{n} zipping"
                 out_dir = settings.clips_dir / "LeadStinger"
                 out_dir.mkdir(parents=True, exist_ok=True)
@@ -1910,7 +1923,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 shutil.rmtree(staging, ignore_errors=True)
 
         plural = "s" if n != 1 else ""
-        job = jobs.submit(build, label=f'LeadStinger set "{set_name}" ({n} clip{plural})')
+        named = f' "{req.name}"' if req.name else ""
+        job = jobs.submit(build, label=f"LeadStinger set{named} ({n} clip{plural})")
         return {"job_id": job.id, "status": job.status.value}
 
     def _find_job(job_id: str):

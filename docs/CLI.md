@@ -182,8 +182,8 @@ The server's default is `{source}/{timestamp}_{cue}_{title}`.
 
 | Command | What it does | Arguments | API | Web UI |
 |---|---|---|---|---|
-| `leadstinger.set` | Make a LeadStinger set file (.lsset) from JSON lines on stdin: search hits, bookmarks or clips-library entries, each cut as FLAC with handles and trimmed to its line. | `NAME` `--handles` `--path` `--wait` `--out-dir` | `POST /api/leadstinger/set` | Send to LeadStinger (search, bookmarks, clips, selection) |
-| `leadstinger.send` | Put the clips on stdin straight into LeadStinger on this machine: a new set, or appended to an existing one with --set. | `NAME` `--set` `--handles` `--path` `--leadstinger-cli` `--data-dir` | (client) | — |
+| `leadstinger.set` | Make a LeadStinger set file (.lsset) from JSON lines on stdin: search hits, bookmarks or clips-library entries, each cut as FLAC with its padding and trimmed to its line. | `NAME` `--before` `--after` `--path` `--wait` `--out-dir` | `POST /api/leadstinger/set` | Send to LeadStinger toggle beside Make clip / Clip / Export selected |
+| `leadstinger.send` | Put the clips on stdin straight into LeadStinger on this machine: a new set, or appended to an existing one with --set. | `NAME` `--set` `--before` `--after` `--path` `--leadstinger-cli` `--data-dir` | (client) | — |
 
 ## settings
 

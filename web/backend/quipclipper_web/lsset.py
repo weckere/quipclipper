@@ -17,6 +17,7 @@ import json
 import re
 import zipfile
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
 FORMAT = "leadstinger-starter"
@@ -43,17 +44,26 @@ class Trim:
     end: float | None     # seconds into the clip file; None = to the end
 
 
-def trim_for(start: float | None, end: float | None, handles: float) -> Trim:
-    """The trims for a clip cut from ``start - handles`` to ``end + handles``.
+def trim_for(start: float | None, end: float | None, before: float) -> Trim:
+    """The trims for a clip cut from ``start - before`` (to ``end`` plus any padding).
 
     The cut is clamped at 0, so a line near the start of the source has a shorter lead.
-    No ``start`` (a whole clips-library file, cut without handles) means no trim."""
+    No ``start`` (a whole clips-library file, cut without padding) means no trim."""
     if start is None:
         return Trim(0.0, None)
-    lead = min(max(handles, 0.0), max(start, 0.0))
+    lead = min(max(before, 0.0), max(start, 0.0))
     if end is None:
         return Trim(round(lead, 3), None)
     return Trim(round(lead, 3), round(lead + max(end - start, 0.0), 3))
+
+
+def auto_set_name(source_titles: list[str], today: date | None = None) -> str:
+    """A set name without asking: the movie or show when every clip comes from it,
+    else ``quipclipper <date>``."""
+    titles = {t.strip() for t in source_titles if t and t.strip()}
+    if len(titles) == 1:
+        return titles.pop()
+    return f"quipclipper {(today or date.today()).isoformat()}"
 
 
 def tile_entry(file: str, *, title: str, trim: Trim, notes: str = "") -> dict:

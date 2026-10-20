@@ -96,16 +96,23 @@ def _fake_cut(*_args, **kwargs):
     return out
 
 
-def test_set_job_cuts_flac_with_handles_and_writes_the_lsset(tmp_path):
-    client, media, clips = _client(tmp_path)
-    ep = media / "TNG S03E26.mkv"
+def _episode(media: Path, show: str, name: str) -> Path:
+    ep = media / show / "Season 3" / name
+    ep.parent.mkdir(parents=True, exist_ok=True)
     ep.write_bytes(b"")
+    return ep
+
+
+def test_set_job_cuts_flac_with_each_items_padding_and_writes_the_lsset(tmp_path):
+    client, media, clips = _client(tmp_path)
+    ep = _episode(media, "Star Trek - The Next Generation", "TNG S03E26.mkv")
     with patch("quipclipper_web.app.cut_clip", side_effect=_fake_cut) as cut:
         resp = client.post("/api/leadstinger/set", json={
             "name": "Borg", "items": [
                 {"path": str(ep), "start": 2002.4, "end": 2004.0,
-                 "title": "Resistance is futile."},
-                {"path": str(ep), "start": 1.0, "end": 2.5, "title": "First line"},
+                 "title": "Resistance is futile.", "before": 2, "after": 2},
+                {"path": str(ep), "start": 1.0, "end": 2.5, "title": "First line",
+                 "before": 2, "after": 0.5},
             ]})
         assert resp.status_code == 200, resp.text
         job = _wait(client, resp.json()["job_id"])
@@ -114,7 +121,9 @@ def test_set_job_cuts_flac_with_handles_and_writes_the_lsset(tmp_path):
     calls = [c.kwargs for c in cut.call_args_list]
     assert all(k["audio_codec"] == "flac" and k["kind"] == "audio" for k in calls)
     rng = cut.call_args_list[0].args[1]
-    assert (round(rng.start, 3), round(rng.end, 3)) == (2000.4, 2006.0)   # 2 s handles
+    assert (round(rng.start, 3), round(rng.end, 3)) == (2000.4, 2006.0)   # its padding
+    rng2 = cut.call_args_list[1].args[1]
+    assert (round(rng2.start, 3), round(rng2.end, 3)) == (0.0, 3.0)
     out = clips / "LeadStinger" / "Borg.lsset"
     with zipfile.ZipFile(out) as zf:
         names = zf.namelist()
@@ -129,6 +138,41 @@ def test_set_job_cuts_flac_with_handles_and_writes_the_lsset(tmp_path):
     assert not any((tmp_path / "state" / "lsset-staging").iterdir())
 
 
+def test_no_padding_means_no_handles_and_the_set_is_named_after_the_show(tmp_path):
+    client, media, clips = _client(tmp_path)
+    ep = _episode(media, "Star Trek - The Next Generation", "TNG S03E26.mkv")
+    with patch("quipclipper_web.app.cut_clip", side_effect=_fake_cut) as cut:
+        job = _wait(client, client.post("/api/leadstinger/set", json={
+            "items": [{"path": str(ep), "start": 10.0, "end": 12.5, "title": "x"}]}).json()["job_id"])
+    assert job["status"] == "done", job
+    rng = cut.call_args.args[1]
+    assert (rng.start, rng.end) == (10.0, 12.5)
+    assert job["files"][0]["name"] == "Star Trek - The Next Generation.lsset"
+    with zipfile.ZipFile(clips / "LeadStinger" / "Star Trek - The Next Generation.lsset") as zf:
+        tile = json.loads(zf.read("manifest.json"))["sets"][0]["tiles"][0]
+    assert "trim_start" not in tile and tile["trim_end"] == 2.5
+
+
+def test_a_batch_from_several_sources_is_named_quipclipper_and_the_date(tmp_path):
+    client, media, clips = _client(tmp_path)
+    a = _episode(media, "Show A", "a.mkv")
+    b = _episode(media, "Show B", "b.mkv")
+    with patch("quipclipper_web.app.cut_clip", side_effect=_fake_cut):
+        job = _wait(client, client.post("/api/leadstinger/set", json={"items": [
+            {"path": str(a), "start": 1, "end": 2}, {"path": str(b), "start": 1, "end": 2},
+        ]}).json()["job_id"])
+    assert job["status"] == "done", job
+    assert job["files"][0]["name"].startswith("quipclipper 20")
+
+
+def test_auto_set_name():
+    from datetime import date
+
+    assert lsset.auto_set_name(["Star Trek", "Star Trek"]) == "Star Trek"
+    assert lsset.auto_set_name(["A", "B"], today=date(2026, 10, 20)) == "quipclipper 2026-10-20"
+    assert lsset.auto_set_name([], today=date(2026, 10, 20)) == "quipclipper 2026-10-20"
+
+
 def test_a_second_set_with_the_same_name_is_numbered(tmp_path):
     client, media, clips = _client(tmp_path)
     ep = media / "a.mkv"
@@ -141,7 +185,7 @@ def test_a_second_set_with_the_same_name_is_numbered(tmp_path):
     assert sorted(p.name for p in (clips / "LeadStinger").iterdir()) == ["Borg 2.lsset", "Borg.lsset"]
 
 
-def test_a_whole_clips_library_file_is_cut_without_handles_or_trims(tmp_path):
+def test_a_whole_clips_library_file_is_cut_without_padding_or_trims(tmp_path):
     client, media, clips = _client(tmp_path)
     clip = clips / "movie" / "00-01-05_line.mka"
     clip.parent.mkdir()
@@ -149,7 +193,7 @@ def test_a_whole_clips_library_file_is_cut_without_handles_or_trims(tmp_path):
     with patch("quipclipper_web.app.cut_clip", side_effect=_fake_cut) as cut, \
             patch("quipclipper_web.app.media.probe_duration", return_value=3.0):
         job = _wait(client, client.post("/api/leadstinger/set", json={
-            "name": "x", "items": [{"path": str(clip)}]}).json()["job_id"])
+            "name": "x", "items": [{"path": str(clip), "before": 5, "after": 5}]}).json()["job_id"])
     assert job["status"] == "done", job
     rng = cut.call_args.args[1]
     assert (rng.start, rng.end) == (0.0, 3.0)
@@ -171,11 +215,11 @@ def test_a_bad_item_fails_the_job_with_its_message_and_writes_nothing(tmp_path):
 
 def test_request_limits_are_enforced(tmp_path):
     client, media, _ = _client(tmp_path)
-    assert client.post("/api/leadstinger/set", json={"name": "x", "items": []}).status_code == 422
+    assert client.post("/api/leadstinger/set", json={"items": []}).status_code == 422
     assert client.post("/api/leadstinger/set", json={
         "name": "", "items": [{"path": "/x"}]}).status_code == 422
     assert client.post("/api/leadstinger/set", json={
-        "name": "x", "items": [{"path": "/x"}], "handles": 31}).status_code == 422
+        "items": [{"path": "/x", "before": 61}]}).status_code == 422
 
 
 # --- the CLI side ------------------------------------------------------------------------
@@ -199,13 +243,18 @@ def test_cli_turns_hits_bookmarks_and_clips_into_items():
         {"path": "/m/b.mkv", "start": 3.0, "end": 4.0, "label": "Saved", "cue": "Cue"},
         {"name": "00-01_x.mka", "path": "/clips/a/00-01_x.mka", "size": 10},
         # A bookmark's default label is "<times> — <cue>": the tile gets the line alone.
-        {"path": "/m/c.mkv", "start": 5.0, "end": 6.0, "label": "44:01 – 44:04 — Hi.", "cue": "Hi."},
+        {"path": "/m/c.mkv", "start": 5.0, "end": 6.0, "label": "44:01 – 44:04 — Hi.", "cue": "Hi.",
+         "before": 3, "after": 1.5},
     ]
-    assert _leadstinger_items(rows, None) == [
-        {"path": "/m/a.mkv", "title": "Hit line", "start": 1.0, "end": 2.0},
-        {"path": "/m/b.mkv", "title": "Saved", "start": 3.0, "end": 4.0},
+    # --before/--after apply to every row; a bookmark's own padding wins (D-026).
+    assert _leadstinger_items(rows, None, 1.0, 0.5) == [
+        {"path": "/m/a.mkv", "title": "Hit line", "start": 1.0, "end": 2.0,
+         "before": 1.0, "after": 0.5},
+        {"path": "/m/b.mkv", "title": "Saved", "start": 3.0, "end": 4.0,
+         "before": 1.0, "after": 0.5},
         {"path": "/clips/a/00-01_x.mka", "title": "00-01_x"},
-        {"path": "/m/c.mkv", "title": "Hi.", "start": 5.0, "end": 6.0},
+        {"path": "/m/c.mkv", "title": "Hi.", "start": 5.0, "end": 6.0,
+         "before": 3.0, "after": 1.5},
     ]
 
 

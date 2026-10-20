@@ -1140,8 +1140,12 @@ LEADSTINGER_CACHE = Path.home() / ".cache" / "quipclipper" / "leadstinger"
 _CACHE_DAYS = 7
 
 
-def _leadstinger_items(rows: list[dict], default_path: Optional[str]) -> list[dict]:
-    """POST /api/leadstinger/set items from search hits, bookmarks or clips-library rows."""
+def _leadstinger_items(rows: list[dict], default_path: Optional[str],
+                       before: float = 0.0, after: float = 0.0) -> list[dict]:
+    """POST /api/leadstinger/set items from search hits, bookmarks or clips-library rows.
+
+    Padding is per clip, as for clip.batch: a bookmark's saved before/after, else the
+    --before/--after given for every row (D-026)."""
     items = []
     for row in rows:
         path = row.get("path") or default_path
@@ -1155,26 +1159,29 @@ def _leadstinger_items(rows: list[dict], default_path: Optional[str]) -> list[di
                  or Path(row.get("name") or path).stem)
         item = {"path": path, "title": str(title)[:200]}
         if "start" in row:  # a search hit or a bookmark; a clips entry is the whole file
-            item.update(start=row["start"], end=row.get("end"))
+            item.update(start=row["start"], end=row.get("end"),
+                        before=float(row["before"]) if row.get("before") else before,
+                        after=float(row["after"]) if row.get("after") else after)
         items.append(item)
     return items
 
 
-def _start_leadstinger_set(c: Context, v: dict, name: str) -> dict:
+def _start_leadstinger_set(c: Context, v: dict, name: Optional[str]) -> dict:
     """POST the stdin rows as a set; returns ``{job_id, status}``."""
     rows = _read_items(sys.stdin.read())
     if not rows:
         raise CliError("No rows on stdin. Pipe in the --json output of search.folder, "
                        "bookmark.list or clips.list.", code="usage", exit_code=EXIT_USAGE)
-    handles = v.get("handles")
-    body = {"name": name, "handles": 2.0 if handles is None else handles,
-            "items": _leadstinger_items(rows, v.get("path"))}
+    body: dict = {"items": _leadstinger_items(rows, v.get("path"), v.get("before") or 0.0,
+                                              v.get("after") or 0.0)}
+    if name:
+        body["name"] = name
     cmd = reg.BY_ID["leadstinger.set"]
     return call(c, cmd.method, cmd.path, body=body).json()
 
 
 def _client_leadstinger_set(c: Context, v: dict) -> Any:
-    job = _start_leadstinger_set(c, v, v["name"])
+    job = _start_leadstinger_set(c, v, v.get("name"))
     if not v.get("wait", True):
         return job
     return wait_job(c, job["job_id"], out_dir=v.get("out_dir") or c.settings.get("out_dir") or ".")
@@ -1213,7 +1220,7 @@ def _leadstinger(v: dict, args: list[str], stdin: Optional[str] = None) -> Any:
 def _client_leadstinger_send(c: Context, v: dict) -> Any:
     _prune_leadstinger_cache()
     target_set = v.get("set")
-    name = target_set or v.get("name") or "quipclipper"
+    name = target_set or v.get("name")
     stage = LEADSTINGER_CACHE / time.strftime("%Y%m%d-%H%M%S")
     stage.mkdir(parents=True, exist_ok=True)
     job = wait_job(c, _start_leadstinger_set(c, v, name)["job_id"], out_dir=str(stage))
