@@ -59,6 +59,10 @@ h1 {
   margin: 0; display: inline-flex; align-items: center; gap: 0.55rem;
   font-size: 1.1rem; font-weight: 600; letter-spacing: -0.02em; cursor: pointer;
 }
+.home-link {
+  display: inline-flex; align-items: center; gap: 0.55rem; padding: 0; border: none; border-radius: var(--radius);
+  background: none; color: inherit; font: inherit; letter-spacing: inherit; cursor: pointer;
+}
 .logo-box {
   display: inline-flex; align-items: center; justify-content: center;
   width: 1.65rem; height: 1.65rem; border-radius: 7px;

@@ -232,18 +232,38 @@ async function browse(path) {
   if (!isYtFolder) checkFolderIndex(path);  // index-status is for real folders
 }
 
-/** An icon from the sprite in index.html. */
-/** Make a clickable non-button element reachable and operable from the keyboard. */
-function makeActivatable(el, role = "button") {
-  el.tabIndex = 0;
-  el.setAttribute("role", role);
-  el.addEventListener("keydown", (e) => {
-    if (e.target !== el) return;  // not a key aimed at a control inside the row
-    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); el.click(); }
-  });
-  return el;
+/** Build an element. Every control gets hover text (`title`: what it does, and its
+ *  shortcut key) and, when its visible text isn't a good name on its own, an accessible
+ *  name (`label`, set as aria-label). test_frontend_a11y.py checks each call passes a title.
+ *  Other props: className, text, html, type (buttons default to "button"), and any
+ *  attribute by name. */
+function el(tag, { title, label, className, text, html, type, ...attrs } = {}) {
+  const node = document.createElement(tag);
+  if (tag === "button") node.type = type || "button";
+  else if (type) node.type = type;
+  if (className) node.className = className;
+  if (title) node.title = title;
+  if (label) node.setAttribute("aria-label", label);
+  if (text != null) node.textContent = text;
+  if (html != null) node.innerHTML = html;
+  for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+  return node;
 }
 
+/** Make a clickable non-button element reachable and operable from the keyboard, with hover
+ *  text saying what activating it does. */
+function makeActivatable(node, title, role = "button") {
+  node.tabIndex = 0;
+  node.setAttribute("role", role);
+  node.title = title;
+  node.addEventListener("keydown", (e) => {
+    if (e.target !== node) return;  // not a key aimed at a control inside the row
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); node.click(); }
+  });
+  return node;
+}
+
+/** An icon from the sprite in index.html. */
 const iconSvg = (name) => `<svg class="icon" aria-hidden="true"><use href="#i-${name}"/></svg>`;
 
 function renderEntries(entries) {
@@ -269,15 +289,16 @@ function renderEntries(entries) {
     li.innerHTML = `<span class="icon-wrap">${iconSvg(icon)}</span><span class="label">${escapeHtml(e.name)}</span>` +
       `<span class="chips">${chips}</span>` + (intoFolder ? `<span class="go">${iconSvg("chevron-r")}</span>` : "");
     li.onclick = () => (intoFolder ? browse(e.path) : openItem(e.path, e.name));
-    makeActivatable(li, "link");
+    makeActivatable(li, e.is_book ? "Open this book's chapters" : intoFolder ? "Open this folder"
+      : "Open in the workspace: play it, read its script, cut a clip", "link");
     // A YouTube item row gets a remove button (forgets the video + transcript).
     if (e.is_youtube && !e.is_dir) {
-      const del = document.createElement("button");
-      del.className = "yt-remove";
+      const del = el("button", {
+        className: "yt-remove", text: "✕",
+        title: "Remove this video from the YouTube list (forgets its subtitles too)",
+        label: `Remove ${e.name}`,
+      });
       del.dataset.action = "youtube.remove";
-      del.title = "Remove this video from the YouTube list";
-      del.setAttribute("aria-label", "Remove this video from the YouTube list");
-      del.textContent = "✕";
       del.onclick = async (ev) => {
         ev.stopPropagation();
         const id = e.path.slice("yt:".length);
@@ -301,9 +322,10 @@ function renderRootsRail(path) {
   for (const it of items) {
     const on = path === it.path || (!!path && it.path !== "yt:" && path.startsWith(it.path + "/"));
     const li = document.createElement("li");
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = "root-link" + (on ? " active" : "");
+    const b = el("button", {
+      className: "root-link" + (on ? " active" : ""),
+      title: it.path === "yt:" ? "The YouTube videos added by URL" : `Browse ${it.path}`,
+    });
     b.dataset.action = "library.browse";
     if (on) b.setAttribute("aria-current", "true");
     b.innerHTML = `${iconSvg(it.icon)}<span>${escapeHtml(it.name)}</span>`;
@@ -436,7 +458,8 @@ function wireYtDownload(path, name, info, signal) {
   if (info.downloaded) {
     delete ytDownloadJobs[path];
     const mb = info.download_size ? ` (${(info.download_size / 1048576).toFixed(1)} MB)` : "";
-    btn.textContent = `💾 Remove download${mb}`;
+    btn.innerHTML = `<span aria-hidden="true">💾</span> Remove download${mb}`;
+    btn.title = "Delete the server's copy of this video; it plays from YouTube again";
     btn.dataset.action = "youtube.delete-download";
     btn.onclick = async () => {
       btn.disabled = true;
@@ -448,7 +471,8 @@ function wireYtDownload(path, name, info, signal) {
     return;
   }
 
-  btn.textContent = "⬇ Download video";
+  btn.innerHTML = '<span aria-hidden="true">⬇</span> Download video';
+  btn.title = "Download the whole video to the server. Playback then seeks natively and clips cut from the local file, with no streaming from YouTube at all.";
   btn.dataset.action = "youtube.download";
 
   // Follow a download job to completion: reload the item on success (native
@@ -560,7 +584,7 @@ async function dialogueSearch(query, folders) {
     const head = document.createElement("li");
     head.className = "hit-group";
     head.innerHTML =
-      `<button type="button" class="hit-group-toggle" aria-expanded="true">${iconSvg("chevron-r")}` +
+      `<button type="button" class="hit-group-toggle" aria-expanded="true" title="Show or hide this file's matches">${iconSvg("chevron-r")}` +
       `<span class="hit-group-icon">${iconSvg("film")}</span><span class="hit-group-name">${escapeHtml(g.file)}</span>` +
       `<span class="hit-group-count">${g.hits.length} ${g.hits.length === 1 ? "match" : "matches"}</span></button>`;
     const rows = [];
@@ -575,15 +599,15 @@ async function dialogueSearch(query, folders) {
       li.className = "dialogue-hit";
       li.dataset.group = gid;
       li.innerHTML =
-        `<label class="hit-check"><input type="checkbox" class="search-select" aria-label="Select this match" /></label>` +
-        `<div class="hit-main" tabindex="0" role="button">` +
+        `<label class="hit-check"><input type="checkbox" class="search-select" title="Select this line for Clip selected and Bookmark selected" aria-label="Select the line at ${hit.start_ts}" /></label>` +
+        `<div class="hit-main" tabindex="0" role="button" title="${previewOn() ? "Show this line in context" : "Open this file in the workspace with the line selected"}">` +
           `<span class="hit-text">${hit.speaker ? `<span class="hit-speaker">${escapeHtml(hit.speaker)}</span>` : ""}${highlightMatch(hit.text, query)}</span>` +
           `<span class="hit-time">${hit.start_ts} – ${hit.end_ts}</span>` +
         `</div>` +
         `<span class="hit-score" title="Match score">${hit.score}%</span>` +
         `<div class="hit-actions">` +
-          `<button class="mark-icon-btn hit-bookmark" data-action="bookmark.add" title="Save as bookmark" aria-label="Save as bookmark"><span class="star">★</span></button>` +
-          `<button class="mark-icon-btn make-clip-btn hit-clip" data-action="clip.create" title="Clip this line" aria-label="Clip this line"><span class="scissors">✂</span></button>` +
+          `<button type="button" class="mark-icon-btn hit-bookmark" data-action="bookmark.add" title="Save this line as a bookmark" aria-label="Bookmark the line at ${hit.start_ts}"><span class="star" aria-hidden="true">★</span></button>` +
+          `<button type="button" class="mark-icon-btn make-clip-btn hit-clip" data-action="clip.create" title="Cut a clip of this line with the bar's options" aria-label="Clip the line at ${hit.start_ts}"><span class="scissors" aria-hidden="true">✂</span></button>` +
           `<span class="hit-status" data-action="job.get"></span>` +
         `</div>`;
       // Checkbox drives the batch bar (and carries the data the batch bodies need).
@@ -985,10 +1009,8 @@ function renderBreadcrumb(path) {
   bc.innerHTML = "";
 
   const addLink = (label, target) => {
-    const a = document.createElement("button");
-    a.type = "button";
-    a.className = "crumb";
-    a.textContent = label;
+    const a = el("button", { className: "crumb", text: label,
+      title: target ? `Go to ${label}` : "Back to the top of the library" });
     a.dataset.action = "library.browse";
     a.onclick = () => browse(target);
     bc.appendChild(a);
@@ -1115,7 +1137,8 @@ let pb = null;
 function updatePlaybackUI() {
   const player = $("player");
   const paused = ytEmbed ? !ytEmbedPlaying() : player.paused;
-  $("pb-playpause").textContent = paused ? "▶" : "⏸";
+  $("pb-playpause-glyph").textContent = paused ? "▶" : "⏸";
+  $("pb-playpause").setAttribute("aria-pressed", String(!paused));
   const note = $("pb-range-note");
   if (hasClipRange()) {
     note.hidden = false;
@@ -1876,7 +1899,7 @@ async function doSearch(query, { focus = true } = {}) {
         `<span class="result-score">${m.score}</span>` +
         `<span>${m.start_ts} – ${m.end_ts}</span>` +
       `</span>`;
-    makeActivatable(li);
+    makeActivatable(li, "Play from this line and select it");
     li.onclick = () => {
       seekTo(m.start);
       // Select the matching cue(s) in Marks (highlighted yellow) — identical to
@@ -1998,7 +2021,7 @@ function updateClipUI() {
     el.innerHTML =
       `<span class="range-times">${formatTime(bs)} – ${formatTime(be)}</span> ` +
       `<span>(${dur.toFixed(1)}s, ${lines})</span>` +
-      ` <button class="mark-clear-inline" title="Clear selection">×</button>`;
+      ` <button type="button" class="mark-clear-inline" title="Clear the selection" aria-label="Clear selection">×</button>`;
     el.querySelector(".mark-clear-inline").onclick = clearClip;
     $("mark-save").disabled = false;
     // Auto-show clip panel and populate range (raw cue range; server pads).
@@ -2113,6 +2136,9 @@ let scriptLoadId = 0;      // generation token to ignore stale script loads
 // (set in openItem from the library/folder search, consumed in loadScript).
 let pendingCueSelect = null;
 
+// One tooltip for every script line (not one per line): what a click does.
+const SCRIPT_LINE_TITLE = "Click to play from here; Start / End set the selection";
+
 /** Load cues as JSON and populate the script panel. */
 async function loadScript(path, track) {
   const wrap = $("script-wrap");
@@ -2167,15 +2193,16 @@ async function loadScript(path, track) {
     const text = cue.synthetic
       ? `${escapeHtml(cue.text)} <span class="muted">(before the first line)</span>`
       : escapeHtml(cue.text);
+    const at = formatTime(cue.start);
     row.innerHTML =
-      `<span class="script-ts">${formatTime(cue.start)}</span>` +
+      `<span class="script-ts">${at}</span>` +
       `<span class="script-text">${speaker}${text}</span>` +
       `<span class="script-actions">` +
-        `<button class="script-mark-btn script-start-btn" title="Set clip start">Start</button>` +
-        `<button class="script-mark-btn script-end-btn" title="Set clip end">End</button>` +
+        `<button type="button" class="script-mark-btn script-start-btn" title="Start the selection at ${at}" aria-label="Start selection at ${at}">Start</button>` +
+        `<button type="button" class="script-mark-btn script-end-btn" title="End the selection at ${formatTime(cue.end)}" aria-label="End selection at ${formatTime(cue.end)}">End</button>` +
       `</span>`;
     row.onclick = () => scriptLineClick(i);
-    makeActivatable(row);
+    makeActivatable(row, SCRIPT_LINE_TITLE);
     row.querySelector(".script-start-btn").onclick = (e) => { e.stopPropagation(); setClipInAt(i); };
     row.querySelector(".script-end-btn").onclick = (e) => { e.stopPropagation(); setClipOutAt(i); };
     frag.appendChild(row);
@@ -2476,9 +2503,9 @@ async function loadBookmarks() {
       `<span class="bookmark-label">${escapeHtml(bm.label)}</span>` +
       `<span class="bookmark-range">${formatTime(bs)} – ${formatTime(be)}</span>` +
       bmBufferControls(bm) +
-      `<button class="bookmark-use" title="Load as clip range">Clip</button>` +
-      `<button class="bookmark-seek" title="Seek to start">▶</button>` +
-      `<button class="bookmark-del" data-action="bookmark.delete" title="Delete">✕</button>`;
+      `<button type="button" class="bookmark-use" title="Load this bookmark as the selection, ready to clip" aria-label="Clip ${escapeHtml(bm.label)}">Clip</button>` +
+      `<button type="button" class="bookmark-seek" title="Play from the bookmark's start" aria-label="Play ${escapeHtml(bm.label)}"><span aria-hidden="true">▶</span></button>` +
+      `<button type="button" class="bookmark-del" data-action="bookmark.delete" title="Delete this bookmark" aria-label="Delete ${escapeHtml(bm.label)}"><span aria-hidden="true">✕</span></button>`;
     wireBmBufferControls(li, bm, () => loadBookmarks());
     li.querySelector(".bookmark-use").onclick = (e) => {
       e.stopPropagation();
@@ -2505,8 +2532,8 @@ function bmBuffered(bm) {
 function bmBufferControls(bm) {
   return (
     `<span class="bm-buffer" data-action="bookmark.update" title="Padding around the bookmark (seconds)">` +
-    `<label>−<input class="bm-before" type="number" min="0" max="60" step="0.5" value="${bm.before || 0}" /></label>` +
-    `<label>+<input class="bm-after" type="number" min="0" max="60" step="0.5" value="${bm.after || 0}" /></label>` +
+    `<label><span aria-hidden="true">−</span><input class="bm-before" type="number" min="0" max="60" step="0.5" value="${bm.before || 0}" title="Seconds kept before the bookmark (saved when you change it)" aria-label="Seconds before" /></label>` +
+    `<label><span aria-hidden="true">+</span><input class="bm-after" type="number" min="0" max="60" step="0.5" value="${bm.after || 0}" title="Seconds kept after the bookmark (saved when you change it)" aria-label="Seconds after" /></label>` +
     `</span>`
   );
 }
@@ -2713,10 +2740,10 @@ function pollClipJob(jobId, row) {
           const size = f.size > 1048576
             ? (f.size / 1048576).toFixed(1) + " MB"
             : (f.size / 1024).toFixed(0) + " KB";
-          html += ` <a class="download-link" data-action="job.download" href="/api/jobs/${jobId}/download/${encodeURIComponent(f.name)}" download>${escapeHtml(f.name)} (${size})</a>`;
+          html += ` <a class="download-link" data-action="job.download" href="/api/jobs/${jobId}/download/${encodeURIComponent(f.name)}" download title="Download this clip">${escapeHtml(f.name)} (${size})</a>`;
         }
         const link = job.result && job.result.link;
-        if (link) html += ` <a class="ls-again" href="${escapeHtml(link)}">Open in LeadStinger</a>`;
+        if (link) html += ` <a class="ls-again" href="${escapeHtml(link)}" title="Open this line in LeadStinger again">Open in LeadStinger</a>`;
         statusEl.innerHTML = html;
         // A Send to LeadStinger job: hand its leadstinger:// link to the system, once.
         if (link && !row.dataset.lsOpened) {
@@ -2850,7 +2877,7 @@ async function browseClips(folder) {
     li.innerHTML = `<span class="icon-wrap">${iconSvg("folder")}</span><span class="label">${escapeHtml(f)}</span>` +
       `<span class="chips"></span><span class="go">${iconSvg("chevron-r")}</span>`;
     li.onclick = () => browseClips(f);
-    makeActivatable(li, "link");
+    makeActivatable(li, "Open this folder of clips", "link");
     list.appendChild(li);
   }
 
@@ -2861,14 +2888,14 @@ async function browseClips(folder) {
       ? (c.size / 1048576).toFixed(1) + " MB"
       : (c.size / 1024).toFixed(0) + " KB";
     li.innerHTML =
-      `<input type="checkbox" class="entry-select clip-select" title="Select for batch export" />` +
+      `<input type="checkbox" class="entry-select clip-select" title="Select for Export selected" aria-label="Select ${escapeHtml(c.name)}" />` +
       `<span class="icon-wrap">${iconSvg(/\.(flac|wav|mp3|m4a|opus|ogg|aac)$/i.test(c.name) ? "music" : "film")}</span>` +
       `<span class="label clip-name">${escapeHtml(c.name)}</span>` +
       `<span class="chips"><span class="badge">${size}</span></span>` +
       (appConfig.public_url
-        ? `<button type="button" class="btn clip-ls" data-action="leadstinger.link" title="Send to LeadStinger: this clip in a new tile" aria-label="Send to LeadStinger"><svg class="icon" aria-hidden="true"><use href="#i-leadstinger"/></svg></button>`
+        ? `<button type="button" class="btn clip-ls" data-action="leadstinger.link" title="Send to LeadStinger: this clip in a new tile" aria-label="Send ${escapeHtml(c.name)} to LeadStinger"><svg class="icon" aria-hidden="true"><use href="#i-leadstinger"/></svg></button>`
         : "") +
-      `<a class="download-link clip-dl" data-action="clips.download" href="${escapeHtml(c.download_url)}" download>Download</a>`;
+      `<a class="download-link clip-dl" data-action="clips.download" href="${escapeHtml(c.download_url)}" download title="Download this clip" aria-label="Download ${escapeHtml(c.name)}">Download</a>`;
     const cb = li.querySelector(".clip-select");
     cb.dataset.path = c.path;
     cb.dataset.name = c.name;
@@ -2951,11 +2978,11 @@ async function browseBookmarks() {
     header.className = "bm-browser-group";
     header.innerHTML =
       `<span class="bm-browser-icon">${iconSvg(path.startsWith("yt:") ? "youtube" : "film")}</span>` +
-      `<span class="bm-browser-file clickable" title="Open this video">${escapeHtml(fileName)}</span>` +
+      `<span class="bm-browser-file clickable">${escapeHtml(fileName)}</span>` +
       `<span class="muted bm-browser-count">${plural(bookmarks.length, "bookmark")}</span>` +
-      `<button type="button" class="bm-browser-open" title="Open this video">Open video</button>`;
+      `<button type="button" class="bm-browser-open" title="Open this video in the workspace" aria-label="Open video ${escapeHtml(fileName)}">Open video</button>`;
     // Clicking the filename (or the button) opens the source video.
-    makeActivatable(header.querySelector(".bm-browser-file"));
+    makeActivatable(header.querySelector(".bm-browser-file"), "Open this video in the workspace");
     header.querySelector(".bm-browser-file").onclick = () => openItem(path, fileName);
     header.querySelector(".bm-browser-open").onclick = () => openItem(path, fileName);
     list.appendChild(header);
@@ -2965,12 +2992,12 @@ async function browseBookmarks() {
       li.className = "bm-browser-item";
       const [bs, be] = bmBuffered(bm);
       li.innerHTML =
-        `<input type="checkbox" class="entry-select bm-select" title="Select for batch export" />` +
-        `<span class="bookmark-label clickable" title="Open the video with this bookmark loaded for clipping">${escapeHtml(bm.label)}</span>` +
+        `<input type="checkbox" class="entry-select bm-select" title="Select for Export selected" aria-label="Select ${escapeHtml(bm.label)}" />` +
+        `<span class="bookmark-label clickable">${escapeHtml(bm.label)}</span>` +
         `<span class="bookmark-range">${formatTime(bs)} – ${formatTime(be)}</span>` +
         bmBufferControls(bm) +
-        `<button class="bookmark-seek" title="Open & seek">▶</button>` +
-        `<button class="bookmark-del" data-action="bookmark.delete" title="Delete">✕</button>`;
+        `<button type="button" class="bookmark-seek" title="Open the video and play from the bookmark" aria-label="Play ${escapeHtml(bm.label)}"><span aria-hidden="true">▶</span></button>` +
+        `<button type="button" class="bookmark-del" data-action="bookmark.delete" title="Delete this bookmark" aria-label="Delete ${escapeHtml(bm.label)}"><span aria-hidden="true">✕</span></button>`;
       const cb = li.querySelector(".bm-select");
       cb.dataset.path = bm.path;
       cb.dataset.start = bm.start;
@@ -2983,6 +3010,7 @@ async function browseBookmarks() {
       wireBmBufferControls(li, bm, () => browseBookmarks());
       // Clicking the bookmark name opens the video with this bookmark preloaded
       // for clipping.
+      makeActivatable(li.querySelector(".bookmark-label"), "Open the video with this bookmark loaded for clipping");
       li.querySelector(".bookmark-label").onclick = (e) => {
         e.stopPropagation();
         pendingBookmarkClip = bm;  // set before openItem — consumed in its prologue
@@ -3060,7 +3088,7 @@ function wireBatchBar(prefix) {
     // 5.1 mix). Tick the others to also export Front / Surround / LFE.
     chanWrap.innerHTML = `<span class="chan-groups-label">Channels:</span>` +
       CHAN_GROUPS.map(([cat, label]) =>
-        `<label class="checkbox-label"><input type="checkbox" id="${prefix}-chan-${cat}"${cat === "center" ? " checked" : ""} /> ${label}</label>`
+        `<label class="checkbox-label"><input type="checkbox" title="Export the ${label} channels" id="${prefix}-chan-${cat}"${cat === "center" ? " checked" : ""} /> ${label}</label>`
       ).join("");
   }
   // Split channels is a sub-option of Audio only (same as the clip panel):
@@ -3336,7 +3364,7 @@ async function runLeadStingerBatch(prefix, onDone) {
     if (j.status === "done" && j.files && j.files.length) {
       const file = j.files[0].name;
       const href = `/api/jobs/${encodeURIComponent(job.job_id)}/download/${encodeURIComponent(file)}`;
-      status.innerHTML = `LeadStinger set ready: <a data-action="job.download" href="${escapeHtml(href)}" download>${escapeHtml(file)}</a>`;
+      status.innerHTML = `LeadStinger set ready: <a data-action="job.download" href="${escapeHtml(href)}" download title="Download the set file again">${escapeHtml(file)}</a>`;
       status.querySelector("a").click();
       btn.disabled = false;
       if (onDone) onDone();
@@ -3394,14 +3422,14 @@ function lsClipItem(path, name, folder) {
 
 /** Open a link (here a leadstinger:// one) as a click on it would. */
 function followLink(link) {
-  const a = document.createElement("a");
+  const a = document.createElement("a");  // notitle: never put on the page, only clicked
   a.href = link;
   a.click();
 }
 
 /** Show a sent link in `status` (to click again if LeadStinger didn't come up) and open it. */
 function launchLeadStinger(link, status, what) {
-  status.innerHTML = `Sent ${escapeHtml(what)} to LeadStinger · <a class="ls-again" href="${escapeHtml(link)}">open again</a>`;
+  status.innerHTML = `Sent ${escapeHtml(what)} to LeadStinger · <a class="ls-again" href="${escapeHtml(link)}" title="Open LeadStinger with it again, if it didn't come up">open again</a>`;
   followLink(link);
 }
 
@@ -3499,6 +3527,7 @@ function updateScopeUI() {
     label = `${dialogueSearchScope.length} folder${dialogueSearchScope.length > 1 ? "s" : ""}`;
   }
   $("search-scope-label").textContent = label;
+  $("search-scope").setAttribute("aria-label", `Search in: ${label}`);
   $("global-search-input").placeholder = SCOPE_HINT[searchScope];
   const inItem = currentView === "item" && !!currentItem;
   for (const b of $("scope-menu").querySelectorAll("button")) {
@@ -3702,6 +3731,7 @@ async function refreshJobs() {
 function renderJobsPill() {
   const n = lastJobs.filter(jobActive).length;
   $("jobs-pill-label").textContent = n ? `${n} running` : "Jobs";
+  $("jobs-pill").setAttribute("aria-label", n ? `Jobs, ${n} running` : "Jobs");
   $("jobs-pill").classList.toggle("running", n > 0);
 }
 
@@ -3720,14 +3750,16 @@ function renderJobsList() {
       sub = `Working… ${secs}s` + (j.progress ? ` · ${escapeHtml(j.progress)}` : "");
     } else if (j.status === "done") {
       sub = (j.files || []).map((f) =>
-        `<a class="job-file" data-action="job.download" href="/api/jobs/${encodeURIComponent(j.id)}/download/${encodeURIComponent(f.name)}" download>⤓ ${escapeHtml(f.name)} (${fmtSize(f.size)})</a>`
+        `<a class="job-file" data-action="job.download" href="/api/jobs/${encodeURIComponent(j.id)}/download/${encodeURIComponent(f.name)}" download title="Download this file"><span aria-hidden="true">⤓</span> ${escapeHtml(f.name)} (${fmtSize(f.size)})</a>`
       ).join(" ") || "Done";
     } else if (j.status === "failed") sub = `<span class="job-failed">${escapeHtml(j.error || "Failed")}</span>`;
     else sub = "Cancelled";
     li.innerHTML =
       `<span class="job-mark" aria-hidden="true"></span>` +
       `<div class="job-main"><div class="job-title">${escapeHtml(j.label || j.id)}</div><div class="job-sub muted">${sub}</div></div>` +
-      `<button type="button" class="link-btn job-act" data-action="job.cancel">${jobActive(j) ? "Cancel" : "Dismiss"}</button>`;
+      `<button type="button" class="link-btn job-act" data-action="job.cancel" ` +
+        `title="${jobActive(j) ? "Stop this job" : "Remove this job from the list"}" ` +
+        `aria-label="${jobActive(j) ? "Cancel" : "Dismiss"} ${escapeHtml(j.label || j.id)}">${jobActive(j) ? "Cancel" : "Dismiss"}</button>`;
     li.querySelector(".job-act").onclick = async (e) => {
       const btn = e.currentTarget;
       btn.disabled = true;

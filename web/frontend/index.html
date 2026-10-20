@@ -31,30 +31,30 @@
       <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4 L12 15 M7 10.5 L12 15.5 L17 10.5 M5 19.5 L19 19.5"/></symbol>
     </svg>
     <header class="app-header">
-      <h1 id="home-link" data-action="library.roots"><span class="logo-box"><svg class="logo-mark" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M8.5 6A2.5 2.5 0 1 1 3.5 6A2.5 2.5 0 1 1 8.5 6ZM8.5 18A2.5 2.5 0 1 1 3.5 18A2.5 2.5 0 1 1 8.5 18ZM8 7.6L20 18.5M8 16.4L20 5.5" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg></span>quipclipper</h1>
+      <h1><button type="button" id="home-link" class="home-link" data-action="library.roots" title="Back to the top of the library"><span class="logo-box"><svg class="logo-mark" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M8.5 6A2.5 2.5 0 1 1 3.5 6A2.5 2.5 0 1 1 8.5 6ZM8.5 18A2.5 2.5 0 1 1 3.5 18A2.5 2.5 0 1 1 8.5 18ZM8 7.6L20 18.5M8 16.4L20 5.5" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg></span>quipclipper</button></h1>
       <!-- One search box. The chip picks where it looks: this video (/api/search), this folder
            or the whole library (/api/search/folder). -->
       <form id="global-search" class="global-search" role="search" autocomplete="off" data-action="search.item search.folder">
-        <button type="button" id="search-scope" class="scope-chip" aria-haspopup="menu" aria-expanded="false" title="Where to search">
+        <button type="button" id="search-scope" class="scope-chip" aria-haspopup="menu" aria-expanded="false" aria-controls="scope-menu" aria-label="Search in: Library" title="Where to search: this video, this folder or the whole library">
           <span id="search-scope-label">Library</span><span class="chev" aria-hidden="true">▾</span>
         </button>
-        <ul id="scope-menu" class="scope-menu" role="menu" hidden>
-          <li role="none"><button type="button" role="menuitem" data-scope="item">This video</button></li>
-          <li role="none"><button type="button" role="menuitem" data-scope="folder">This folder</button></li>
-          <li role="none"><button type="button" role="menuitem" data-scope="library">Whole library</button></li>
-          <li role="none" id="scope-nowplaying" hidden><button type="button" role="menuitem" data-scope="nowplaying" data-action="jellyfin.sessions" title="Open what's playing on Jellyfin, at its playhead">Now playing</button></li>
+        <ul id="scope-menu" class="scope-menu" role="menu" aria-label="Where to search" hidden>
+          <li role="none"><button type="button" role="menuitemradio" data-scope="item" title="Search this video's dialogue">This video</button></li>
+          <li role="none"><button type="button" role="menuitemradio" data-scope="folder" title="Search the dialogue of every file in this folder">This folder</button></li>
+          <li role="none"><button type="button" role="menuitemradio" data-scope="library" title="Search the dialogue of every file in the library">Whole library</button></li>
+          <li role="none" id="scope-nowplaying" hidden><button type="button" role="menuitemradio" data-scope="nowplaying" data-action="jellyfin.sessions" title="Open what's playing on Jellyfin, at its playhead">Now playing</button></li>
         </ul>
-        <input id="global-search-input" type="text" aria-label="Search the dialogue" placeholder="Search the dialogue: type a line you remember" />
+        <input id="global-search-input" type="text" aria-label="Search the dialogue" title="Type a line you remember and press Enter to find it (/ jumps here)" placeholder="Search the dialogue: type a line you remember" />
         <kbd class="key-hint" aria-hidden="true">/</kbd>
       </form>
       <nav class="app-nav" aria-label="Main">
-        <button type="button" id="library-link" class="clips-nav-link" data-action="library.roots">Library</button>
-        <button type="button" id="bookmarks-link" class="clips-nav-link" data-action="bookmark.list">Bookmarks</button>
-        <button type="button" id="clips-link" class="clips-nav-link" data-action="clips.list">Clips</button>
-        <button type="button" id="jobs-pill" class="jobs-pill" aria-haspopup="dialog" aria-expanded="false" title="Clips, downloads and subtitle jobs">
+        <button type="button" id="library-link" class="clips-nav-link" data-action="library.roots" title="Browse the media library">Library</button>
+        <button type="button" id="bookmarks-link" class="clips-nav-link" data-action="bookmark.list" title="Every saved bookmark, across all files">Bookmarks</button>
+        <button type="button" id="clips-link" class="clips-nav-link" data-action="clips.list" title="The clips you've made, to download or re-cut">Clips</button>
+        <button type="button" id="jobs-pill" class="jobs-pill" aria-haspopup="dialog" aria-expanded="false" aria-controls="jobs-popover" aria-label="Jobs" title="Clips, downloads and subtitle jobs: what's running and what finished">
           <span class="jobs-dot" aria-hidden="true"></span><span id="jobs-pill-label">Jobs</span>
         </button>
-        <button type="button" id="settings-btn" class="icon-btn" aria-haspopup="dialog" aria-expanded="false" aria-label="Settings" title="Settings"><svg class="icon"><use href="#i-gear"/></svg></button>
+        <button type="button" id="settings-btn" class="icon-btn" aria-haspopup="dialog" aria-expanded="false" aria-controls="settings-popover" aria-label="Settings" title="Settings: appearance and subtitles"><svg class="icon"><use href="#i-gear"/></svg></button>
       </nav>
       <div id="settings-popover" class="jobs-popover settings-popover" role="dialog" aria-label="Settings" hidden>
         <div class="jobs-head"><h3>Settings</h3><span class="muted settings-saved">Saved in this browser</span></div>
@@ -62,9 +62,9 @@
           <div class="set-row">
             <div class="set-label" id="theme-label">Appearance</div>
             <div id="theme-seg" class="segmented" role="radiogroup" aria-labelledby="theme-label" data-action="settings.set">
-              <button type="button" role="radio" data-theme-choice="system" aria-checked="true">System</button>
-              <button type="button" role="radio" data-theme-choice="dark" aria-checked="false">Dark</button>
-              <button type="button" role="radio" data-theme-choice="light" aria-checked="false">Light</button>
+              <button type="button" role="radio" data-theme-choice="system" aria-checked="true" title="Follow the system's light or dark setting">System</button>
+              <button type="button" role="radio" data-theme-choice="dark" aria-checked="false" title="Always dark">Dark</button>
+              <button type="button" role="radio" data-theme-choice="light" aria-checked="false" title="Always light">Light</button>
             </div>
           </div>
           <div class="set-row">
@@ -76,7 +76,7 @@
         </div>
       </div>
       <div id="jobs-popover" class="jobs-popover" role="dialog" aria-label="Jobs" hidden>
-        <div class="jobs-head"><h3>Jobs</h3><button type="button" id="jobs-clear" class="link-btn" data-action="job.cancel">Clear finished</button></div>
+        <div class="jobs-head"><h3>Jobs</h3><button type="button" id="jobs-clear" class="link-btn" data-action="job.cancel" title="Remove every finished, failed or cancelled job from this list">Clear finished</button></div>
         <ul id="jobs-list" class="jobs-list" data-action="job.list"></ul>
         <p id="jobs-empty" class="muted jobs-empty">No recent jobs.</p>
       </div>
@@ -102,13 +102,13 @@
           </div>
         </section>
         <div class="library-search-bar">
-          <input id="library-search" data-action="library.find" type="text" aria-label="Filter this folder by name" placeholder="Search library…" autocomplete="off" />
+          <input id="library-search" data-action="library.find" type="text" aria-label="Filter this folder by name" title="Show only the files and folders here whose names match" placeholder="Search library…" autocomplete="off" />
         </div>
         <!-- Add-a-YouTube-URL bar, shown only inside the ▶ YouTube pseudo-folder. -->
         <div id="yt-add-bar" class="library-search-bar yt-add-bar" hidden>
           <div class="dialogue-search-row">
-            <input id="yt-url" type="text" aria-label="YouTube URL" placeholder="Paste a YouTube URL to add it…" autocomplete="off" spellcheck="false" />
-            <button id="yt-add-btn" data-action="youtube.add">Add</button>
+            <input id="yt-url" type="text" aria-label="YouTube URL" title="The address of a YouTube video, e.g. https://www.youtube.com/watch?v=…" placeholder="Paste a YouTube URL to add it…" autocomplete="off" spellcheck="false" />
+            <button type="button" id="yt-add-btn" data-action="youtube.add" aria-label="Add YouTube video" title="Add this video to the YouTube list: fetches its subtitles and details (Enter)">Add</button>
           </div>
           <p id="yt-add-status" class="muted" hidden></p>
         </div>
@@ -126,9 +126,9 @@
             </div>
             <div class="index-actions">
               <button type="button" id="fetch-folder-subs-btn" data-action="index.fetch-subs" class="btn ghost" title="Fetch YouTube transcripts for every video in this folder that came from YouTube but has no subtitles, so they become dialogue-searchable. Runs in the background."><svg class="icon"><use href="#i-download"/></svg>Fetch missing YouTube subtitles</button>
-              <button type="button" id="fetch-folder-cancel" data-action="job.cancel" class="btn ghost" hidden>✕ Cancel</button>
+              <button type="button" id="fetch-folder-cancel" data-action="job.cancel" class="btn ghost" title="Stop fetching YouTube subtitles for this folder" hidden><span aria-hidden="true">✕</span> Cancel</button>
               <button type="button" id="reindex-folder-btn" data-action="index.build" class="btn" title="Clear and re-extract subtitles for every file in this folder (use if subtitles changed)"><svg class="icon"><use href="#i-refresh"/></svg>Re-index all</button>
-              <button type="button" id="index-btn" data-action="index.build" class="btn primary" hidden>Index now</button>
+              <button type="button" id="index-btn" data-action="index.build" class="btn primary" title="Extract and cache the subtitles of the files here that aren't indexed yet, so dialogue search is fast" hidden>Index now</button>
             </div>
           </section>
         </div>
@@ -141,28 +141,28 @@
             <div id="hit-preview-time" class="hit-preview-time"></div>
             <ul id="hit-preview-lines" class="preview-lines"></ul>
             <div class="preview-actions">
-              <button type="button" id="hit-preview-open" class="btn">Open in workspace</button>
+              <button type="button" id="hit-preview-open" class="btn" title="Open this file in the workspace with the line selected">Open in workspace</button>
             </div>
           </aside>
         </div>
         <div id="search-batch" class="batch-bar sticky" hidden>
         <div class="batch-row">
-          <label class="checkbox-label"><input id="search-select-all" type="checkbox" /> Select all</label>
+          <label class="checkbox-label" title="Select every match in the list"><input id="search-select-all" type="checkbox" /> Select all</label>
           <span id="search-batch-summary" class="batch-summary"></span>
-          <button type="button" class="link-btn batch-options-toggle" aria-expanded="false" aria-controls="search-batch-options">Options</button>
+          <button type="button" class="link-btn batch-options-toggle" title="Show the clip options: kind, channels, format and name" aria-expanded="false" aria-controls="search-batch-options">Options</button>
           <span id="search-batch-status" class="muted batch-status"></span>
           <span class="batch-spacer"></span>
-        <button id="search-batch-bookmark" data-action="bookmark.batch" class="clip-btn batch-bookmark-btn" disabled>Bookmark selected</button>
+        <button type="button" id="search-batch-bookmark" data-action="bookmark.batch" class="clip-btn batch-bookmark-btn" title="Save each selected line as a bookmark" disabled>Bookmark selected</button>
           <label class="ls-toggle" title="Send to LeadStinger: Clip selected sends one line straight into LeadStinger, or makes a LeadStinger set file of several"><input type="checkbox" id="search-batch-ls" data-action="leadstinger.set leadstinger.quip" aria-label="Send to LeadStinger" /><svg class="icon" aria-hidden="true"><use href="#i-leadstinger"/></svg></label>
-          <button id="search-batch-export" data-action="clip.batch" class="clip-btn batch-export-btn" disabled>Clip selected</button>
+          <button type="button" id="search-batch-export" data-action="clip.batch" class="clip-btn batch-export-btn" title="Cut a clip of each selected line with these options (they run as jobs)" disabled>Clip selected</button>
         </div>
         <div id="search-batch-options" class="batch-options" hidden>
-          <label class="segmented" title="Clip kind"><input id="search-batch-audio" type="checkbox" /><span class="seg seg-off">Video</span><span class="seg seg-on">Audio only</span></label>
-          <label class="checkbox-label"><input id="search-batch-split" class="switch" type="checkbox" /> Split channels</label>
+          <label class="segmented" title="Cut video with its audio, or the audio only"><input id="search-batch-audio" type="checkbox" aria-label="Audio only" /><span class="seg seg-off">Video</span><span class="seg seg-on">Audio only</span></label>
+          <label class="checkbox-label" title="Export each channel group (front, center, surround, LFE) as its own audio file. Needs Audio only."><input id="search-batch-split" class="switch" type="checkbox" /> Split channels</label>
           <span id="search-chan-groups" class="chan-groups" hidden></span>
           <label class="checkbox-label" title="Re-encode video to H.264 so each clip is frame-exact (video only)."><input id="search-batch-exact" class="switch" type="checkbox" checked /> Exact (re-encode)</label>
           <label>Format
-            <select id="search-batch-format">
+            <select id="search-batch-format" title="Passthrough keeps the source's own streams (no re-encode); FLAC and WAV are lossless audio">
               <option value="lossless" selected>Passthrough</option>
               <option value="flac">FLAC</option>
               <option value="wav">WAV</option>
@@ -178,9 +178,9 @@
       <!-- Clips library -->
       <section id="clips-browser" hidden>
         <nav class="breadcrumb">
-          <button type="button" id="clips-back-lib" class="crumb">Library</button>
+          <button type="button" id="clips-back-lib" class="crumb" title="Back to the library">Library</button>
           <span class="muted"> / </span>
-          <button type="button" id="clips-home" class="crumb">Clips</button>
+          <button type="button" id="clips-home" class="crumb" title="All clips (the top folder)">Clips</button>
           <span id="clips-folder-crumb" class="muted"></span>
         </nav>
         <div class="page-head"><h2 id="clips-title" class="page-title">Clips</h2><span id="clips-count" class="muted"></span></div>
@@ -188,20 +188,20 @@
         <p id="clips-empty" class="muted" hidden>No clips yet.</p>
         <div id="clips-batch" class="batch-bar sticky" hidden>
         <div class="batch-row">
-          <label class="checkbox-label"><input id="clips-select-all" type="checkbox" /> Select all</label>
+          <label class="checkbox-label" title="Select every clip on this page"><input id="clips-select-all" type="checkbox" /> Select all</label>
           <span id="clips-batch-summary" class="batch-summary"></span>
-          <button type="button" class="link-btn batch-options-toggle" aria-expanded="false" aria-controls="clips-batch-options">Options</button>
+          <button type="button" class="link-btn batch-options-toggle" title="Show the clip options: kind, channels, format and name" aria-expanded="false" aria-controls="clips-batch-options">Options</button>
           <span id="clips-batch-status" class="muted batch-status"></span>
           <span class="batch-spacer"></span>
           <label class="ls-toggle" title="Send to LeadStinger: Export selected sends one clip straight into LeadStinger, or makes a LeadStinger set file of several"><input type="checkbox" id="clips-batch-ls" data-action="leadstinger.set leadstinger.link" aria-label="Send to LeadStinger" /><svg class="icon" aria-hidden="true"><use href="#i-leadstinger"/></svg></label>
-          <button id="clips-batch-export" data-action="clip.batch" class="clip-btn batch-export-btn" disabled>Export selected</button>
+          <button type="button" id="clips-batch-export" data-action="clip.batch" class="clip-btn batch-export-btn" title="Re-cut each selected clip into a new file with these options" disabled>Export selected</button>
         </div>
         <div id="clips-batch-options" class="batch-options" hidden>
-          <label class="segmented" title="Clip kind"><input id="clips-batch-audio" type="checkbox" checked /><span class="seg seg-off">Video</span><span class="seg seg-on">Audio only</span></label>
-          <label class="checkbox-label"><input id="clips-batch-split" class="switch" type="checkbox" /> Split channels</label>
+          <label class="segmented" title="Cut video with its audio, or the audio only"><input id="clips-batch-audio" type="checkbox" checked aria-label="Audio only" /><span class="seg seg-off">Video</span><span class="seg seg-on">Audio only</span></label>
+          <label class="checkbox-label" title="Export each channel group (front, center, surround, LFE) as its own audio file. Needs Audio only."><input id="clips-batch-split" class="switch" type="checkbox" /> Split channels</label>
           <span id="clips-chan-groups" class="chan-groups" hidden></span>
           <label>Format
-            <select id="clips-batch-format">
+            <select id="clips-batch-format" title="Passthrough keeps the source's own streams (no re-encode); FLAC and WAV are lossless audio">
               <option value="lossless" selected>Passthrough</option>
               <option value="flac">FLAC</option>
               <option value="wav">WAV</option>
@@ -215,7 +215,7 @@
       <!-- Bookmarks browser -->
       <section id="bookmarks-browser" hidden>
         <nav class="breadcrumb">
-          <button type="button" id="all-bm-back-lib" class="crumb">Library</button>
+          <button type="button" id="all-bm-back-lib" class="crumb" title="Back to the library">Library</button>
           <span class="muted"> / Bookmarks</span>
         </nav>
         <div class="page-head"><h2 class="page-title">Bookmarks</h2><span id="bm-count" class="muted"></span></div>
@@ -223,22 +223,22 @@
         <p id="all-bookmarks-empty" class="muted" hidden>No bookmarks saved yet.</p>
         <div id="bm-batch" class="batch-bar sticky" hidden>
         <div class="batch-row">
-          <label class="checkbox-label"><input id="bm-select-all" type="checkbox" /> Select all</label>
+          <label class="checkbox-label" title="Select every bookmark"><input id="bm-select-all" type="checkbox" /> Select all</label>
           <span id="bm-batch-summary" class="batch-summary"></span>
-          <button type="button" class="link-btn batch-options-toggle" aria-expanded="false" aria-controls="bm-batch-options">Options</button>
+          <button type="button" class="link-btn batch-options-toggle" title="Show the clip options: kind, channels, format and name" aria-expanded="false" aria-controls="bm-batch-options">Options</button>
           <span id="bm-batch-status" class="muted batch-status"></span>
           <span class="batch-spacer"></span>
-        <button id="bm-clear-all" data-action="bookmark.clear" class="clip-btn bm-clear-all-btn">Clear all</button>
+        <button type="button" id="bm-clear-all" data-action="bookmark.clear" class="clip-btn bm-clear-all-btn" title="Delete every bookmark (asks first)">Clear all</button>
           <label class="ls-toggle" title="Send to LeadStinger: Export selected sends one line straight into LeadStinger, or makes a LeadStinger set file of several"><input type="checkbox" id="bm-batch-ls" data-action="leadstinger.set leadstinger.quip" aria-label="Send to LeadStinger" /><svg class="icon" aria-hidden="true"><use href="#i-leadstinger"/></svg></label>
-          <button id="bm-batch-export" data-action="clip.batch" class="clip-btn batch-export-btn" disabled>Export selected</button>
+          <button type="button" id="bm-batch-export" data-action="clip.batch" class="clip-btn batch-export-btn" title="Cut a clip of each selected bookmark, each with its own padding" disabled>Export selected</button>
         </div>
         <div id="bm-batch-options" class="batch-options" hidden>
-          <label class="segmented" title="Clip kind"><input id="bm-batch-audio" type="checkbox" checked /><span class="seg seg-off">Video</span><span class="seg seg-on">Audio only</span></label>
-          <label class="checkbox-label"><input id="bm-batch-split" class="switch" type="checkbox" /> Split channels</label>
+          <label class="segmented" title="Cut video with its audio, or the audio only"><input id="bm-batch-audio" type="checkbox" checked aria-label="Audio only" /><span class="seg seg-off">Video</span><span class="seg seg-on">Audio only</span></label>
+          <label class="checkbox-label" title="Export each channel group (front, center, surround, LFE) as its own audio file. Needs Audio only."><input id="bm-batch-split" class="switch" type="checkbox" /> Split channels</label>
           <span id="bm-chan-groups" class="chan-groups" hidden></span>
           <label class="checkbox-label" title="Re-encode video to H.264 so each clip is frame-exact (only applies when exporting video, i.e. with Audio only off). Audio is always cut frame-exact."><input id="bm-batch-exact" class="switch" type="checkbox" checked /> Exact (re-encode)</label>
           <label>Format
-            <select id="bm-batch-format">
+            <select id="bm-batch-format" title="Passthrough keeps the source's own streams (no re-encode); FLAC and WAV are lossless audio">
               <option value="lossless" selected>Passthrough</option>
               <option value="flac">FLAC</option>
               <option value="wav">WAV</option>
@@ -252,25 +252,25 @@
       <!-- Item / inspection view -->
       <section id="item" class="workspace" hidden>
         <div class="ws-head">
-          <button id="back" data-action="library.browse" class="back">← Back</button>
+          <button type="button" id="back" data-action="library.browse" class="back" title="Back to the folder this file is in"><span aria-hidden="true">←</span> Back</button>
           <div class="ws-title">
             <h2 id="item-name"></h2>
             <div id="item-filename" class="item-filename muted"></div>
           </div>
           <div id="stream-selector" data-action="item.info" class="stream-selector" hidden>
             <label class="ss-field" id="ss-subs-field">Subtitles
-              <select id="ss-subs" data-action="item.script"></select>
+              <select id="ss-subs" data-action="item.script" title="The subtitle track shown on the video and used for the script and search"></select>
               <span id="ss-no-subs" class="ss-none muted" hidden>No subtitle stream available</span>
             </label>
             <label class="ss-field" id="ss-audio-field" hidden>Audio
-              <select id="ss-audio"></select>
+              <select id="ss-audio" title="The audio track to play and clip"></select>
             </label>
             <label class="ss-field" id="ss-chan-field" hidden>Channels
-              <select id="ss-chan"></select>
+              <select id="ss-chan" title="Play and clip only these channels (Center is usually the dialogue)"></select>
             </label>
-            <button type="button" id="ss-reindex" data-action="item.reindex" class="reindex-link" title="Clear and re-extract subtitles for this file (use if subtitles changed)" hidden>↻ Reindex subtitles</button>
+            <button type="button" id="ss-reindex" data-action="item.reindex" class="reindex-link" title="Clear and re-extract subtitles for this file (use if subtitles changed)" hidden><span aria-hidden="true">↻</span> Reindex subtitles</button>
             <span id="ss-reindex-status" class="muted reindex-status" hidden></span>
-            <button type="button" id="ss-fetch-subs" data-action="item.fetch-subs" class="reindex-link" title="This video is from YouTube but has no subtitles — fetch its transcript from YouTube so you can search and clip it" hidden>⬇ Fetch subtitles from YouTube</button>
+            <button type="button" id="ss-fetch-subs" data-action="item.fetch-subs" class="reindex-link" title="This video is from YouTube but has no subtitles — fetch its transcript from YouTube so you can search and clip it" hidden><span aria-hidden="true">⬇</span> Fetch subtitles from YouTube</button>
             <span id="ss-fetch-subs-status" class="muted reindex-status" hidden></span>
           </div>
         </div>
@@ -278,7 +278,7 @@
         <div class="ws-grid">
           <!-- Player, dialogue map and transport. -->
           <div class="ws-player">
-            <video id="player" controls playsinline webkit-playsinline preload="metadata" crossorigin="anonymous"></video>
+            <video id="player" aria-label="Video player" controls playsinline webkit-playsinline preload="metadata" crossorigin="anonymous"></video>
             <!-- Official YouTube embed (IFrame API) — used instead of #player when a
                  YouTube item's Player setting is "Official YouTube". -->
             <div id="yt-embed" class="yt-embed" hidden></div>
@@ -286,31 +286,31 @@
             <p id="transcode-hint" class="transcode-hint muted" hidden>The player's built-in timeline cannot seek during audio transcoding — use the seek bar below.</p>
             <div id="transcode-seek-bar" class="transcode-seek-bar" hidden>
               <span id="transcode-time" class="transcode-time">0:00</span>
-              <input id="transcode-slider" type="range" aria-label="Seek" min="0" max="100" step="0.1" value="0">
+              <input id="transcode-slider" type="range" aria-label="Seek" title="Seek within the selection, or the whole file when nothing is selected" min="0" max="100" step="0.1" value="0">
               <span id="transcode-duration" class="transcode-time">0:00</span>
             </div>
             <!-- Cue density over the whole runtime: where the talking is. Selection in
                  amber, playhead in blue; click to seek. Built from the loaded script. -->
-            <div id="dialogue-map" class="dialogue-map" role="img" aria-label="Dialogue map: where the dialogue is, with the selected range and the playhead" hidden>
+            <div id="dialogue-map" class="dialogue-map" title="Where the dialogue is: amber is the selection, blue the playhead. Click to seek." role="img" aria-label="Dialogue map: where the dialogue is, with the selected range and the playhead" hidden>
               <div id="dialogue-map-bars" class="dm-bars"></div>
               <div id="dialogue-map-sel" class="dm-sel" hidden></div>
               <div id="dialogue-map-head" class="dm-head"></div>
               <div class="dm-scale"><span>0:00</span><span id="dialogue-map-total"></span></div>
             </div>
             <div id="playback-controls" class="playback-controls">
-              <button id="pb-restart" class="pb-btn" title="Restart from the beginning of the selection" aria-label="Restart from the beginning of the selection">⏮</button>
-              <button id="pb-playpause" class="pb-btn" title="Play / pause" aria-label="Play or pause">▶</button>
+              <button type="button" id="pb-restart" class="pb-btn" title="Play from the start of the selection, or of the file" aria-label="Restart"><span aria-hidden="true">⏮</span></button>
+              <button type="button" id="pb-playpause" class="pb-btn" title="Play / pause the selection, or the file (Space or K)" aria-label="Play" aria-pressed="false"><span id="pb-playpause-glyph" aria-hidden="true">▶</span></button>
               <label class="checkbox-label pb-loop-label" title="Keep the selection playing on a loop"><input id="pb-loop" class="switch" type="checkbox" /> Loop selection</label>
               <span id="pb-range-note" class="muted pb-range-note" hidden></span>
             </div>
             <div id="yt-player-row" class="yt-player-row" hidden>
-              <label title="How to play this YouTube video: the official YouTube player (reliable, plays anywhere — including iOS), or a server stream via yt-dlp (no YouTube scripts in the browser). Marks, bookmarks, and clipping work with both. Remembered in this browser.">Player
+              <label class="yt-player-label" title="How to play this YouTube video: the official YouTube player (reliable, plays anywhere — including iOS), or a server stream via yt-dlp (no YouTube scripts in the browser). Marks, bookmarks, and clipping work with both. Remembered in this browser.">Player
                 <select id="yt-player-mode">
                   <option value="official">Official YouTube</option>
                   <option value="stream">Server stream</option>
                 </select>
               </label>
-              <button id="yt-download-btn" class="yt-download-btn" title="Download the whole video to the server. Playback then seeks natively and clips cut from the local file — no streaming from YouTube at all." hidden></button>
+              <button type="button" id="yt-download-btn" class="yt-download-btn" title="Download the whole video to the server. Playback then seeks natively and clips cut from the local file — no streaming from YouTube at all." hidden>Download video</button>
               <span id="yt-download-status" class="muted" hidden></span>
             </div>
             <p id="preview-note" class="muted"></p>
@@ -327,9 +327,9 @@
               <div class="marks-actions">
                 <!-- Inline clip status: spinner while cutting → download (or ✕). -->
                 <span id="mark-clip-indicator" data-action="job.get" class="mark-clip-indicator" hidden></span>
-                <button type="button" id="clip-options-toggle" class="mark-icon-btn opts-toggle" aria-expanded="false" title="Clip options">Options</button>
-                <button id="mark-save" data-action="bookmark.add" class="mark-icon-btn" disabled title="Save as bookmark" aria-label="Save as bookmark"><span class="star">★</span><span class="btn-label">Bookmark</span></button>
-                <button id="clip-btn" data-action="clip.create" class="mark-icon-btn make-clip-btn" disabled title="Make clip" aria-label="Make clip"><span class="scissors">✂</span><span class="btn-label">Make clip</span></button>
+                <button type="button" id="clip-options-toggle" class="mark-icon-btn opts-toggle" aria-expanded="false" aria-controls="clip-options" title="Show the clip options: padding, kind, format and name">Options</button>
+                <button type="button" id="mark-save" data-action="bookmark.add" class="mark-icon-btn" disabled title="Save the selection as a bookmark, with a label you can edit" aria-label="Save as bookmark" aria-expanded="false" aria-controls="bookmark-label-form"><span class="star" aria-hidden="true">★</span><span class="btn-label">Bookmark</span></button>
+                <button type="button" id="clip-btn" data-action="clip.create" class="mark-icon-btn make-clip-btn" disabled title="Cut the selection into a clip with these options (it runs as a job)" aria-label="Make clip"><span class="scissors" aria-hidden="true">✂</span><span class="btn-label">Make clip</span></button>
                 <label class="ls-toggle" title="Send to LeadStinger: Make clip sends the line straight into LeadStinger (or makes a LeadStinger set file when the server has no QC_PUBLIC_URL)"><input type="checkbox" id="ls-send" data-action="leadstinger.set leadstinger.quip" aria-label="Send to LeadStinger" /><svg class="icon" aria-hidden="true"><use href="#i-leadstinger"/></svg></label>
               </div>
             </div>
@@ -337,19 +337,19 @@
                  Esc or Cancel closes it. -->
             <form id="bookmark-label-form" class="bookmark-label-form" hidden>
               <input id="bookmark-label-input" class="bookmark-label-input" type="text" maxlength="300"
-                     autocomplete="off" spellcheck="false" aria-label="Bookmark label" />
-              <button type="submit" id="bookmark-label-save" data-action="bookmark.add" class="btn primary">Save bookmark</button>
-              <button type="button" id="bookmark-label-cancel" class="btn ghost">Cancel</button>
+                     autocomplete="off" spellcheck="false" aria-label="Bookmark label" title="The bookmark's name: Enter saves, Esc cancels" />
+              <button type="submit" id="bookmark-label-save" data-action="bookmark.add" class="btn primary" title="Save the bookmark with this label (Enter)">Save bookmark</button>
+              <button type="button" id="bookmark-label-cancel" class="btn ghost" title="Close without saving (Esc)">Cancel</button>
             </form>
-            <div class="clip-options">
+            <div id="clip-options" class="clip-options">
               <div class="marks-buffer" title="Padding added around the selection — applied to preview, bookmark and clip">
-                <label>Before <input id="clip-before" type="number" value="0" min="0" max="60" step="0.5" /></label>
-                <label>After <input id="clip-after" type="number" value="0" min="0" max="60" step="0.5" /></label>
+                <label>Before <input id="clip-before" type="number" title="Seconds of audio/video kept before the line" value="0" min="0" max="60" step="0.5" /></label>
+                <label>After <input id="clip-after" type="number" title="Seconds of audio/video kept after the line" value="0" min="0" max="60" step="0.5" /></label>
               </div>
-              <label class="segmented video-only-opt" title="Clip kind"><input id="clip-audio-only" type="checkbox" /><span class="seg seg-off">Video</span><span class="seg seg-on">Audio only</span></label>
+              <label class="segmented video-only-opt" title="Cut video with its audio, or the audio only"><input id="clip-audio-only" type="checkbox" aria-label="Audio only" /><span class="seg seg-off">Video</span><span class="seg seg-on">Audio only</span></label>
               <label class="checkbox-label video-only-opt" title="Re-encode video to H.264 so the clip is frame-exact. Uncheck for a lossless (stream-copy) video clip — but that can only start on a keyframe, so on long-GOP sources it begins several seconds before the line. Audio is always cut frame-exact."><input id="clip-exact" class="switch" type="checkbox" checked /> Exact (re-encode)</label>
               <label class="clip-format-label">Format
-                <select id="clip-format">
+                <select id="clip-format" title="Passthrough keeps the source's own streams (no re-encode); FLAC and WAV are lossless audio">
                   <option value="lossless" selected>Passthrough</option>
                   <option value="flac">FLAC</option>
                   <option value="wav">WAV</option>
@@ -358,11 +358,11 @@
               <div id="clip-name-row" class="clip-name-row" hidden>
                 <div class="clip-range" id="clip-range-display"></div>
                 <label class="clip-template-label">Name
-                  <input id="clip-template" data-action="settings.set" class="clip-template-input" type="text" autocomplete="off" spellcheck="false"
+                  <input id="clip-template" data-action="settings.set" class="clip-template-input" type="text" title="Where the clip is saved, as a path made of tokens; / makes subfolders" autocomplete="off" spellcheck="false"
                          placeholder="{source}/{timestamp}_{cue}_{title}" />
                 </label>
                 <details class="clip-template-help muted">
-                  <summary>Tokens</summary>
+                  <summary title="The tokens a clip name can use">Tokens</summary>
                   <code>/</code> makes subfolders. Tokens:
                   <code>{source}</code> <code>{timestamp}</code> <code>{end}</code>
                   <code>{duration}</code> <code>{cue}</code> <code>{title}</code>
@@ -376,15 +376,15 @@
           <!-- Script, matches, bookmarks and clips for this file, one tab each. -->
           <aside class="ws-side panel">
             <div class="tabs" role="tablist" aria-label="This file">
-              <button type="button" role="tab" id="tab-script" class="tab" data-tab="script" aria-selected="true" aria-controls="pane-script">Script</button>
-              <button type="button" role="tab" id="tab-matches" class="tab" data-tab="matches" aria-selected="false" aria-controls="item-search-panel" hidden>Matches <span id="count-matches" class="tab-count"></span></button>
-              <button type="button" role="tab" id="tab-bookmarks" class="tab" data-tab="bookmarks" aria-selected="false" aria-controls="bookmarks-panel">Bookmarks <span id="count-bookmarks" class="tab-count"></span></button>
-              <button type="button" role="tab" id="tab-clips" class="tab" data-tab="clips" aria-selected="false" aria-controls="clips-made-panel" hidden>Clips <span id="count-clips" class="tab-count"></span></button>
+              <button type="button" role="tab" id="tab-script" class="tab" data-tab="script" aria-selected="true" aria-controls="pane-script" title="The file's dialogue, line by line">Script</button>
+              <button type="button" role="tab" id="tab-matches" class="tab" data-tab="matches" aria-selected="false" aria-controls="item-search-panel" title="The lines that match your search" hidden>Matches <span id="count-matches" class="tab-count"></span></button>
+              <button type="button" role="tab" id="tab-bookmarks" class="tab" data-tab="bookmarks" aria-selected="false" aria-controls="bookmarks-panel" title="The bookmarks saved for this file">Bookmarks <span id="count-bookmarks" class="tab-count"></span></button>
+              <button type="button" role="tab" id="tab-clips" class="tab" data-tab="clips" aria-selected="false" aria-controls="clips-made-panel" title="The clips made from this file on this visit" hidden>Clips <span id="count-clips" class="tab-count"></span></button>
             </div>
             <div id="pane-script" class="tabpane" role="tabpanel" aria-labelledby="tab-script">
               <div class="script-bar">
                 <span id="marks-hint" class="script-hint" hidden>Click a line to seek · hover for <strong>Start</strong> / <strong>End</strong>. The first line, <em>Start of video</em>, lets a clip begin at 0:00.</span>
-                <label class="checkbox-label script-follow"><input id="script-follow" class="switch" type="checkbox" checked /> Follow playback</label>
+                <label class="checkbox-label script-follow" title="Keep the script scrolled to the line that's playing"><input id="script-follow" class="switch" type="checkbox" checked /> Follow playback</label>
               </div>
               <!-- The dialogue cues. -->
               <div id="script-wrap" class="script-wrap" hidden>
