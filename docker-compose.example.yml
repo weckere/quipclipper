@@ -37,6 +37,11 @@ services:
       # becomes "<Title> [<id>].mp4" + a .vtt sidecar: a browsable, searchable
       # library item. Unset = kept private in the state dir.
       # QC_YOUTUBE_DIR: /media/youtube/one-offs
+      # This server's base URL as other machines reach it. "Send to LeadStinger"
+      # puts it in a leadstinger://quip link, and LeadStinger downloads the clip
+      # from there with QC_API_TOKEN (connected once with leadstinger-cli
+      # quip.connect). Unset = those links are off. See docs/MANUAL.md.
+      # QC_PUBLIC_URL: https://quipclipper.example.net
     volumes:
       # Your media, mounted READ-ONLY. Left = host path, right = the in-container
       # path referenced by QC_MEDIA_ROOTS above.

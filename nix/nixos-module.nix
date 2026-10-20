@@ -87,6 +87,18 @@ in
       '';
     };
 
+    publicUrl = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      example = "https://quip.example";
+      description = ''
+        This server's base URL as other machines reach it (`QC_PUBLIC_URL`).
+        "Send to LeadStinger" puts it in the `leadstinger://quip` link, and
+        LeadStinger downloads the clip from there with the API token it was
+        connected with (`apiTokenFile`). `null` turns those links off.
+      '';
+    };
+
     clipsDir = lib.mkOption {
       type = lib.types.path;
       default = "/var/lib/quipclipper-web/clips";
@@ -392,6 +404,8 @@ in
         QC_SUBTITLE_LANGS = lib.concatStringsSep "," cfg.subtitleLangs;
       } // lib.optionalAttrs (cfg.youtubeDir != null) {
         QC_YOUTUBE_DIR = toString cfg.youtubeDir;
+      } // lib.optionalAttrs (cfg.publicUrl != null) {
+        QC_PUBLIC_URL = cfg.publicUrl;
       } // lib.optionalAttrs cfg.nginx.enable {
         # The bundled nginx serves the clips dir directly at /clips/ (see the vhost
         # below). Without nginx, the backend serves clips itself under /api.

@@ -32,6 +32,7 @@ for *why* the code is built the way it is, see [`DESIGN_NOTES.md`](DESIGN_NOTES.
   - [Searching and the picker](#searching-and-the-picker)
   - [Output names and containers](#output-names-and-containers)
   - [EPUB3 audiobooks (experimental)](#epub3-audiobooks-experimental)
+  - [Sending clips to LeadStinger](#sending-clips-to-leadstinger)
 - [Architecture](#architecture)
 - [Development](#development)
 - [Troubleshooting](#troubleshooting)
@@ -500,6 +501,99 @@ quipclipper clip   "you will become one with the borg" --video "Book (readaloud)
 - All the search options (`--index`/`--pick`/`--min-score`/`--before`/`--after`/…)
   work as usual.
 
+### Sending clips to LeadStinger
+
+[LeadStinger](https://github.com/weckere/leadstinger) is a soundboard for live shows.
+quipclipper can hand it a line in one click. In the web app, tick the small
+**Send to LeadStinger** toggle beside Make clip (or beside Clip / Export selected with one
+line or clip ticked), or use a clip's Send to LeadStinger button in the Clips library; on
+the command line, `quipclipper leadstinger.quip` / `leadstinger.link`. quipclipper cuts
+the line, then opens a `leadstinger://quip` link; LeadStinger downloads the clip from the
+quipclipper server into a new tile whose trim is exactly the line. (With several lines
+ticked, the toggle makes a LeadStinger set file instead.)
+
+The line is cut with **handles**: its padding, kept as extra audio either side (the clip
+bar's Before/After, a bookmark's saved padding, none for a search hit; `--before`/`--after`
+on the CLI, default 2 s), so a cue that starts a beat early or ends a word late can be
+fixed by moving the trim in LeadStinger instead of cutting again. The handles stop at
+the file's edges: a line 0.5 s into an episode gets a 0.5 s lead, and one in the last
+second gets whatever is left (a line that runs past the end is cut at the end).
+
+The clip is a **full-mix FLAC**, the same choice as LeadStinger set files:
+
+- **Lossless.** Re-encoding a lossy source (AC-3, AAC, DTS) to FLAC adds no second
+  generation of loss, and the cut starts on the exact sample instead of the nearest
+  packet or keyframe, as a stream copy would.
+- **Every channel kept.** 5.1 stays 5.1; LeadStinger downmixes it or routes the centre
+  (dialogue) channel itself.
+- **LeadStinger reads it natively.** FLAC needs no ffmpeg on the LeadStinger machine,
+  where AC-3, DTS and video containers do.
+
+Clips land in `LeadStinger/` in the clips library, named
+`<source>_<HH-MM-SS>_<line>.flac` (the time is where the clip, handles included, starts).
+A clip that is already in the library is sent as it is, untrimmed (with ffmpeg,
+LeadStinger converts video or AC-3/DTS clips on import).
+
+**Setup, once:**
+
+1. **Tell quipclipper its own address**, as the machine with LeadStinger reaches it:
+   `QC_PUBLIC_URL=https://quipclipper.example.net` on the `app` service (Docker), or
+   `services.quipclipper-web.publicUrl` (NixOS). The link carries this URL, never a
+   value from the request. Without it, the toggle makes set files only, the Clips
+   library has no Send to LeadStinger buttons, and the link endpoints answer 503.
+2. **Have an API token.** LeadStinger downloads with quipclipper's `QC_API_TOKEN`. If
+   there is none yet, make one (`openssl rand -hex 32`) and set it:
+   - **Docker:** `QC_API_TOKEN: "<token>"` on **both** the `app` and `web` services in
+     `docker-compose.yml` (the `web` one lets `api:<token>` through the password gate).
+   - **NixOS:** `services.quipclipper-web.apiTokenFile`, a file (outside the Nix store)
+     holding `QC_API_TOKEN=<token>`. If the site has a `passwordFile`, add an `api`
+     user to it with the token as its password.
+
+   To find an existing token, look in that same place: the compose file's environment,
+   or the file `apiTokenFile` points at (readable by root).
+3. **Connect LeadStinger to the server** on the machine where it runs, pasting the token
+   when asked (`--token -` reads it from stdin, keeping it out of `ps` and your history):
+
+   ```bash
+   leadstinger-cli quip.connect https://quipclipper.example.net --token -
+   ```
+
+   LeadStinger keeps the token in its own data folder and checks it against the server.
+   It refuses links naming any server it isn't connected to. On Linux with the AppImage
+   or a tarball, run `leadstinger --register-links` once so the browser hands it
+   `leadstinger://` links.
+
+**The link** ([LeadStinger's reference](https://github.com/weckere/leadstinger/blob/main/docs/QUIPCLIPPER.md)):
+
+```text
+leadstinger://quip?server=<QC_PUBLIC_URL>&clip=<clip path>&title=<text>&start=<s>&end=<s>&set=<name>
+```
+
+| Parameter | |
+|---|---|
+| `server` | `QC_PUBLIC_URL`, without a trailing `/`. |
+| `clip` | The clip's path inside the clips library, as `/api/clips/download/{path}` takes it (`LeadStinger/S03E26_00-33-20_Resistance_is_futile.flac`). |
+| `title` | The tile's title: the line (one line, at most 200 characters), or the clip's name. |
+| `start`, `end` | Where the line sits *inside the clip*, in seconds: the tile's trim. With 2 s before, a line from 33:22.4 to 33:24.0 gives `start=2&end=3.6`. Left out for a whole library clip. |
+| `set` | The LeadStinger set for the tile (made if missing). Left out: LeadStinger's current set. |
+
+Every value is percent-encoded the way a browser's `encodeURIComponent` does, so a `+`
+in a title goes out as `%2B`. The link holds no token.
+
+From the CLI (it needs a server, `--server`/`QC_URL`):
+
+```bash
+quipclipper leadstinger.quip "/shows/TNG/S03E26.mkv" --start 2002.4 --end 2004 \
+    --title "Resistance is futile." --set Borg
+quipclipper leadstinger.link "Heat/Heat - attached.mkv" --set "Movie Lines"
+quipclipper --json leadstinger.quip "/shows/TNG/S03E26.mkv" --start 2002.4 --end 2004 --no-open
+```
+
+Both open the link on the machine you run them on (`open` on macOS, `xdg-open` on
+Linux) and print it; `--no-open` only prints it, for a script or an agent to pass on.
+For several lines at once, `leadstinger.set` and `leadstinger.send` make a LeadStinger
+set file instead (see [`CLI.md`](CLI.md)).
+
 ---
 
 ## Architecture
@@ -546,6 +640,9 @@ media; the integration behaviour was verified against real `ffmpeg` and
 | `None of the requested --audio-track indices exist` | Check indices with `quipclipper tracks`. |
 | Clip starts slightly early | Expected for lossless cuts (keyframe lead-in); use `--no-lossless` for frame-exact boundaries. |
 | `--out can't be used when clipping multiple matches` | Drop `--out`; clips are auto-named per match. |
+| `Send to LeadStinger needs QC_PUBLIC_URL` (503), or the toggle only makes set files | Set `QC_PUBLIC_URL` (NixOS: `publicUrl`) to the server's base URL; see [Sending clips to LeadStinger](#sending-clips-to-leadstinger). |
+| LeadStinger refuses the link as not connected | Run `leadstinger-cli quip.connect <the same URL as QC_PUBLIC_URL> --token -` on that machine. |
+| Nothing happens on Send to LeadStinger | The system doesn't know the `leadstinger://` scheme: open LeadStinger once (macOS) or run `leadstinger --register-links` (Linux AppImage/tarball). |
 
 ## License
 

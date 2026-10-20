@@ -62,7 +62,7 @@ from quipclipper.mkv import (
 )
 from quipclipper.search import search as engine_search
 from quipclipper.subtitles import AUDIO_EXTS, VIDEO_EXTS, find_sidecar, load_subtitles
-from quipclipper_web import __version__, epub_items, library, lsset, media, youtube_items
+from quipclipper_web import __version__, epub_items, library, lslink, lsset, media, youtube_items
 from quipclipper_web.bookmarks import BookmarkStore
 from quipclipper_web.config import Settings
 from quipclipper_web.jobs import JobRegistry
@@ -214,6 +214,23 @@ class LeadStingerSetRequest(BaseModel):
     # show or movie, else "quipclipper <date>". LeadStinger numbers a taken name.
     name: str | None = Field(None, min_length=1, max_length=80)
     items: list[LeadStingerItem] = Field(..., min_length=1, max_length=200)
+
+
+class LeadStingerQuipRequest(BaseModel):
+    """JSON body for POST /api/leadstinger/quip (M14, LeadStinger's D-076)."""
+
+    path: str
+    # The line's span in the source; the clip gets `before`/`after` seconds either side.
+    start: float = Field(..., ge=0)
+    end: float = Field(..., gt=0)
+    # The tile's title (the line); trimmed to one line of 200 characters in the link.
+    title: str | None = Field(None, max_length=1000)
+    # Padding cut either side of the line, kept as handle audio around the tile's trim
+    # (D-026) so the cut can be moved in LeadStinger. The web UI sends its Before/After.
+    before: float = Field(2.0, ge=0, le=60)
+    after: float = Field(2.0, ge=0, le=60)
+    # The LeadStinger set to put the tile in (created there if missing); else its current set.
+    set: str | None = Field(None, max_length=100)
 
 
 class ClipRequest(BaseModel):
@@ -405,6 +422,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "max_concurrent_jobs": settings.max_concurrent_jobs,
             "hw_encode": _vaapi_h264_available(),  # iGPU H.264 (B23) for video re-encode
             "subtitle_langs": settings.subtitle_langs,  # default auto-select prefs (B14)
+            # Base URL in Send to LeadStinger links (QC_PUBLIC_URL); null = links are off.
+            "public_url": settings.public_url or None,
         }
 
     # --- library browsing ----------------------------------------------------
@@ -1926,6 +1945,96 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         named = f' "{req.name}"' if req.name else ""
         job = jobs.submit(build, label=f"LeadStinger set{named} ({n} clip{plural})")
         return {"job_id": job.id, "status": job.status.value}
+
+    # --- Send to LeadStinger by link (M14 phase 3, LeadStinger's D-076) --------------------
+
+    def _public_url() -> str:
+        """QC_PUBLIC_URL, checked: the server LeadStinger downloads the clip from."""
+        if not settings.public_url:
+            raise HTTPException(
+                status_code=503,
+                detail="Send to LeadStinger needs QC_PUBLIC_URL: this server's base URL as "
+                       "LeadStinger reaches it (e.g. https://quip.example).",
+            )
+        try:
+            return lslink.normalize_server(settings.public_url)
+        except lslink.LinkError as exc:
+            raise HTTPException(status_code=503, detail=f"QC_PUBLIC_URL: {exc}")
+
+    def _source_duration(path: str) -> float | None:
+        """Best effort: the source's length, so the tail handle stops at its end."""
+        try:
+            yt_vid = youtube_items.parse_ref(path)
+            if yt_vid is not None:
+                return yt_store.meta(yt_vid).get("duration")
+            if epub_items.parse_ref(path)[1] is not None:
+                return None  # a chapter segment: its times are not the book's
+            return media.probe_duration(_resolve_any(path))
+        except Exception:
+            return None  # _plan_clip reports a bad path properly
+
+    @app.post("/api/leadstinger/quip")
+    def send_to_leadstinger(req: LeadStingerQuipRequest) -> dict:
+        """Cut one line as FLAC with its padding into the clips library and make its
+        ``leadstinger://quip`` link (a job; the link is in the finished job's ``result``).
+
+        The clip goes to ``LeadStinger/`` in the clips library, where LeadStinger downloads
+        it with its own API token; ``start``/``end`` in the link are the line inside the clip.
+        """
+        server = _public_url()
+        try:
+            cut = lslink.handle_cut(req.start, req.end, req.before, req.after,
+                                    _source_duration(req.path))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        title, set_name = req.title, req.set
+        clip_req = ClipRequest(
+            path=req.path, kind="audio", audio_format="flac", lossless=False,
+            start=cut.start, end=cut.end, before=0.0, after=0.0, cue_text=title or "",
+            template="{source}_{timestamp}_{cue}", embed_subs=False,
+        )
+        label, do_cut, _source = _plan_clip(clip_req, out_dir=settings.clips_dir / "LeadStinger")
+
+        def send(job) -> list[Path]:
+            written = do_cut(job)
+            if not written:
+                raise RuntimeError("nothing was cut")
+            clip = lslink.clip_path(written[0], settings.clips_dir)
+            job.result = {
+                "link": lslink.build_link(server, clip, title=title, start=cut.line_start,
+                                          end=cut.line_end, set_name=set_name),
+                "clip": clip, "start": cut.line_start, "end": cut.line_end,
+            }
+            return written
+
+        job = jobs.submit(send, label=f"Send to LeadStinger: {label}")
+        return {"job_id": job.id, "status": job.status.value}
+
+    @app.get("/api/leadstinger/link")
+    def leadstinger_link(
+        clip: str,
+        title: str | None = None,
+        start: float | None = None,
+        end: float | None = None,
+        set: str | None = None,  # noqa: A002 - the link's own parameter name
+    ) -> dict:
+        """The ``leadstinger://quip`` link for a clip already in the clips library.
+
+        ``clip`` is its path inside the library, as ``/api/clips/download/{path}`` takes
+        it. No ``start``/``end``: the tile plays the whole clip."""
+        server = _public_url()
+        target = (settings.clips_dir / clip).resolve()
+        if not target.is_relative_to(settings.clips_dir.resolve()):
+            raise HTTPException(status_code=403, detail="Path outside clips dir.")
+        if not target.is_file():
+            raise HTTPException(status_code=404, detail="Clip not found.")
+        try:
+            rel = lslink.clip_path(target, settings.clips_dir)
+            link = lslink.build_link(server, rel, title=title, start=start, end=end,
+                                     set_name=set)
+        except lslink.LinkError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return {"link": link, "clip": rel}
 
     def _find_job(job_id: str):
         """A job from any pool (clips, downloads, or YouTube add/reindex), plus

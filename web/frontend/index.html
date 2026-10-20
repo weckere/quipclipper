@@ -142,7 +142,7 @@
           <span id="search-batch-status" class="muted batch-status"></span>
           <span class="batch-spacer"></span>
         <button id="search-batch-bookmark" data-action="bookmark.batch" class="clip-btn batch-bookmark-btn" disabled>Bookmark selected</button>
-          <label class="ls-toggle" title="Send to LeadStinger: Clip selected makes a LeadStinger set file instead"><input type="checkbox" id="search-batch-ls" data-action="leadstinger.set" aria-label="Send to LeadStinger" /><svg class="icon" aria-hidden="true"><use href="#i-leadstinger"/></svg></label>
+          <label class="ls-toggle" title="Send to LeadStinger: Clip selected sends one line straight into LeadStinger, or makes a LeadStinger set file of several"><input type="checkbox" id="search-batch-ls" data-action="leadstinger.set leadstinger.quip" aria-label="Send to LeadStinger" /><svg class="icon" aria-hidden="true"><use href="#i-leadstinger"/></svg></label>
           <button id="search-batch-export" data-action="clip.batch" class="clip-btn batch-export-btn" disabled>Clip selected</button>
         </div>
         <div id="search-batch-options" class="batch-options" hidden>
@@ -182,7 +182,7 @@
           <button type="button" class="link-btn batch-options-toggle" aria-expanded="false" aria-controls="clips-batch-options">Options</button>
           <span id="clips-batch-status" class="muted batch-status"></span>
           <span class="batch-spacer"></span>
-          <label class="ls-toggle" title="Send to LeadStinger: Export selected makes a LeadStinger set file instead"><input type="checkbox" id="clips-batch-ls" data-action="leadstinger.set" aria-label="Send to LeadStinger" /><svg class="icon" aria-hidden="true"><use href="#i-leadstinger"/></svg></label>
+          <label class="ls-toggle" title="Send to LeadStinger: Export selected sends one clip straight into LeadStinger, or makes a LeadStinger set file of several"><input type="checkbox" id="clips-batch-ls" data-action="leadstinger.set leadstinger.link" aria-label="Send to LeadStinger" /><svg class="icon" aria-hidden="true"><use href="#i-leadstinger"/></svg></label>
           <button id="clips-batch-export" data-action="clip.batch" class="clip-btn batch-export-btn" disabled>Export selected</button>
         </div>
         <div id="clips-batch-options" class="batch-options" hidden>
@@ -218,7 +218,7 @@
           <span id="bm-batch-status" class="muted batch-status"></span>
           <span class="batch-spacer"></span>
         <button id="bm-clear-all" data-action="bookmark.clear" class="clip-btn bm-clear-all-btn">Clear all</button>
-          <label class="ls-toggle" title="Send to LeadStinger: Export selected makes a LeadStinger set file instead"><input type="checkbox" id="bm-batch-ls" data-action="leadstinger.set" aria-label="Send to LeadStinger" /><svg class="icon" aria-hidden="true"><use href="#i-leadstinger"/></svg></label>
+          <label class="ls-toggle" title="Send to LeadStinger: Export selected sends one line straight into LeadStinger, or makes a LeadStinger set file of several"><input type="checkbox" id="bm-batch-ls" data-action="leadstinger.set leadstinger.quip" aria-label="Send to LeadStinger" /><svg class="icon" aria-hidden="true"><use href="#i-leadstinger"/></svg></label>
           <button id="bm-batch-export" data-action="clip.batch" class="clip-btn batch-export-btn" disabled>Export selected</button>
         </div>
         <div id="bm-batch-options" class="batch-options" hidden>
@@ -319,7 +319,7 @@
                 <button type="button" id="clip-options-toggle" class="mark-icon-btn opts-toggle" aria-expanded="false" title="Clip options">Options</button>
                 <button id="mark-save" data-action="bookmark.add" class="mark-icon-btn" disabled title="Save as bookmark" aria-label="Save as bookmark"><span class="star">★</span><span class="btn-label">Bookmark</span></button>
                 <button id="clip-btn" data-action="clip.create" class="mark-icon-btn make-clip-btn" disabled title="Make clip" aria-label="Make clip"><span class="scissors">✂</span><span class="btn-label">Make clip</span></button>
-                <label class="ls-toggle" title="Send to LeadStinger: Make clip makes a LeadStinger set file instead"><input type="checkbox" id="ls-send" data-action="leadstinger.set" aria-label="Send to LeadStinger" /><svg class="icon" aria-hidden="true"><use href="#i-leadstinger"/></svg></label>
+                <label class="ls-toggle" title="Send to LeadStinger: Make clip sends the line straight into LeadStinger (or makes a LeadStinger set file when the server has no QC_PUBLIC_URL)"><input type="checkbox" id="ls-send" data-action="leadstinger.set leadstinger.quip" aria-label="Send to LeadStinger" /><svg class="icon" aria-hidden="true"><use href="#i-leadstinger"/></svg></label>
               </div>
             </div>
             <!-- ★ Bookmark opens this inline label field (no window.prompt): Enter saves,

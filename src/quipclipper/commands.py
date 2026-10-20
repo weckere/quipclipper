@@ -126,6 +126,13 @@ _JOB_FOLLOW = (
 )
 
 
+# Send to LeadStinger by link: open it here, or only print it (an agent, or no desktop).
+_OPEN_LINK = (
+    Param("open", "bool", "Open the link on this machine (LeadStinger must be installed "
+          "here); --no-open only prints it.", where=CLIENT, default=True),
+)
+
+
 COMMANDS: tuple[Command, ...] = (
     # --- server ---------------------------------------------------------------
     Command("server.health", "Show the version and which media tools are installed.",
@@ -410,6 +417,42 @@ COMMANDS: tuple[Command, ...] = (
                     Param("data_dir", "str", "LeadStinger library folder (its --data-dir).",
                           where=CLIENT)),
             mode="client", ui="—"),
+
+    Command("leadstinger.quip", "Send one line to LeadStinger: cut it as FLAC with its padding "
+            "into the clips library (LeadStinger/) and open its leadstinger://quip link, so "
+            "LeadStinger downloads it into a tile trimmed to the line. Needs QC_PUBLIC_URL on "
+            "the server.", "POST", "/api/leadstinger/quip",
+            params=(Param("path", "str", "Media file the line is in.", where=BODY, main=True,
+                          required=True),
+                    Param("start", "float", "Where the line starts (seconds).", where=BODY,
+                          required=True),
+                    Param("end", "float", "Where the line ends (seconds).", where=BODY,
+                          required=True),
+                    Param("title", "str", "The tile's title, usually the line.", where=BODY),
+                    Param("before", "float", "Seconds of padding before the line, kept as "
+                          "handle audio around the tile's trim.", where=BODY, default=2.0),
+                    Param("after", "float", "Seconds of padding after the line.", where=BODY,
+                          default=2.0),
+                    Param("set", "str", "LeadStinger set to put the tile in (made if missing; "
+                          "default: its current set).", where=BODY),
+                    *_OPEN_LINK),
+            mode="client", response="job",
+            ui="Send to LeadStinger toggle with Make clip, or with Clip / Export selected "
+               "on one line (needs QC_PUBLIC_URL)"),
+    Command("leadstinger.link", "The leadstinger://quip link for a clip already in the clips "
+            "library, opened here so LeadStinger downloads it into a new tile. Needs "
+            "QC_PUBLIC_URL on the server.", "GET", "/api/leadstinger/link",
+            params=(Param("clip", "str", "Path inside the clips library (as clips.download "
+                          "takes it).", main=True, required=True),
+                    Param("title", "str", "The tile's title (default: the file name)."),
+                    Param("start", "float", "Trim start inside the clip (seconds)."),
+                    Param("end", "float", "Trim end inside the clip (seconds)."),
+                    Param("set", "str", "LeadStinger set to put the tile in (made if missing; "
+                          "default: its current set)."),
+                    *_OPEN_LINK),
+            mode="client",
+            ui="Send to LeadStinger on a clip row (Clips library), or the toggle with "
+               "Export selected on one clip (needs QC_PUBLIC_URL)"),
 
     # --- settings (the web UI's per-browser preferences) -------------------------------------
     Command("settings.list", "Show the CLI settings.", None, None, mode="client",

@@ -225,6 +225,9 @@ select {
 .ls-toggle:has(input:checked) { border-color: var(--accent); color: var(--accent-text); }
 .ls-toggle input { margin: 0; }
 .ls-toggle .icon { width: 1rem; height: 1rem; }
+.entry .clip-ls { margin-left: auto; padding: 0.3rem 0.5rem; color: var(--dim); }
+.entry .clip-ls .icon { width: 1rem; height: 1rem; }
+.entry .clip-ls + .clip-dl { margin-left: 0; }
 
 /* ---- library: roots rail, folder list, Dialogue index card --------------------------------- */
 .library-layout { display: grid; grid-template-columns: 13rem minmax(0, 1fr); gap: 0 1.75rem; align-items: start; }

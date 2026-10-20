@@ -246,6 +246,7 @@ All settings are environment variables on the `app` service:
 | `QC_USERNAME` | `quip` | Basic-auth username (only used when `QC_PASSWORD` is set). |
 | `QC_SUBTITLE_LANGS` | `en` | Ordered subtitle-language preference for auto-selection (comma-separated, e.g. `eng,spa`). The UI's **Subtitle languages** setting (the sliders button in the top bar) overrides it per browser; the same menu switches between light and dark. |
 | `QC_API_TOKEN` | *(none)* | Token(s) for programmatic clients — agents and scripts (comma-separated to rotate). Set the same value on **both** services so `-u api:<token>` passes the basic-auth gate too. See [HTTP API](#http-api-agents--scripts). |
+| `QC_PUBLIC_URL` | *(none)* | This server's base URL as other machines reach it (e.g. `https://quipclipper.example.net`). **Send to LeadStinger** puts it in a `leadstinger://quip` link, and LeadStinger downloads the clip from there with `QC_API_TOKEN`. Unset = Send to LeadStinger makes set files only. See [docs/MANUAL.md](docs/MANUAL.md#sending-clips-to-leadstinger). |
 | `QC_PROXY_SECRET` | *(none)* | Defence-in-depth: a shared secret nginx injects on every proxied request. When set on **both** services, the backend rejects anything that reaches its port without it (except `/api/health`) — blocking direct hits that bypass nginx. |
 
 (`QC_BIND`, `QC_PORT`, and `QC_VAAPI_DEVICE` also exist for non-default network
@@ -407,6 +408,7 @@ Optional settings (all off/defaulted unless set):
 |---|---|
 | `passwordFile` | Gate the whole site behind HTTP basic auth — path to a ready-made nginx htpasswd file (kept out of the store). Unlike Docker's plaintext `QC_PASSWORD`, the module takes the htpasswd directly. |
 | `apiTokenFile` | API token(s) for agents/scripts — path to a systemd `EnvironmentFile` containing `QC_API_TOKEN=<token>` (kept out of the store). Add an `api` user with the token as password to `passwordFile` so one secret passes the basic-auth gate too. |
+| `publicUrl` | This server's base URL as other machines reach it (`QC_PUBLIC_URL`), for **Send to LeadStinger** links. LeadStinger downloads with the token from `apiTokenFile`. |
 | `hardwareAcceleration.enable` | Intel Quick Sync H.264 encoding (else software `libx264`). Adds the service user to the `render` group, exposes the render node, and enables the Intel media driver. |
 | `virtualHost` | nginx server name for a public hostname; pair with `enableACME`/`forceSSL` on that vhost for TLS. Default (null) is a catch-all vhost for LAN-by-IP over `:80`. |
 | `nginx.enable` | `false` runs **only** the hardened backend on `listenAddress:listenPort` and skips the bundled vhost — bring your own front (nginx/Caddy/Tailscale) proxying to it (the backend then serves clips itself). |
@@ -541,20 +543,28 @@ quipclipper --json bookmark.list | quipclipper clip.batch --kind audio
 
 Clips can go straight to [LeadStinger](https://github.com/weckere/leadstinger), the
 soundboard. Tick the small LeadStinger toggle beside Make clip (or beside Clip / Export
-selected on the search results, bookmarks and clips) and the button makes a set file
-(`.lsset`) instead of plain clips, named after the movie or show. Each tile is trimmed
-to its line; the clip's Before/After padding (a bookmark's saved padding, none for search
-hits) is kept as audio either side, so the cut points can still be moved there. From the
-CLI:
+selected on the search results, bookmarks and clips). With the server's `QC_PUBLIC_URL`
+set, one line or clip then goes straight into LeadStinger: the browser opens a
+`leadstinger://quip` link and LeadStinger downloads the clip into a new tile (connect it
+once with the API token; see [docs/MANUAL.md](docs/MANUAL.md#sending-clips-to-leadstinger)).
+Several at once, or without `QC_PUBLIC_URL`, make a set file (`.lsset`) instead, named
+after the movie or show. Each tile is trimmed to its line; the clip's Before/After
+padding (a bookmark's saved padding, none for search hits) is kept as audio either side,
+so the cut points can still be moved there. A clip in the Clips library also has its own
+Send to LeadStinger button. From the CLI:
 
 ```sh
+quipclipper leadstinger.quip "/shows/TNG/S03E26.mkv" --start 2002.4 --end 2004 \
+    --title "Resistance is futile." --set Borg            # opens LeadStinger
+quipclipper leadstinger.link "Heat/Heat - attached.mkv"   # a clip already made
 quipclipper --json search.folder "resistance is futile" --path /shows \
     | quipclipper leadstinger.set Borg --before 2 --after 2 --out-dir .   # Borg.lsset
 quipclipper --json bookmark.list | quipclipper leadstinger.send --set Quotes
 ```
 
-`leadstinger.send` runs on the machine with LeadStinger and drives its `leadstinger-cli`:
-a new set, or appended to an existing one with `--set`.
+`leadstinger.quip` and `leadstinger.link` open the link on the machine you run them on
+(`--no-open` only prints it). `leadstinger.send` runs on the machine with LeadStinger and
+drives its `leadstinger-cli`: a new set, or appended to an existing one with `--set`.
 
 Add `--json` for machine-readable output and `--safe` to refuse anything that
 deletes data (for agents). New web UI actions must get a command in

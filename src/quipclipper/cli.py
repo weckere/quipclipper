@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -38,6 +39,7 @@ from quipclipper.client import (
     CliError,
     Context,
     Transport,
+    build_request,
     call,
     download_job_files,
     execute,
@@ -1261,6 +1263,42 @@ def _client_leadstinger_send(c: Context, v: dict) -> Any:
     return {"set": target_set, "added": ids, "lsset": str(lsset_file)}
 
 
+def _open_link(link: str) -> bool:
+    """Hand a leadstinger:// link to the system, as a browser would. False if nothing could."""
+    if sys.platform == "win32":
+        try:
+            os.startfile(link)  # type: ignore[attr-defined]
+            return True
+        except OSError:
+            return False
+    opener = "open" if sys.platform == "darwin" else "xdg-open"
+    if shutil.which(opener) is None:
+        return False
+    try:
+        return subprocess.run([opener, link], capture_output=True, timeout=30).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def _deliver_link(v: dict, result: dict) -> dict:
+    """Open a Send to LeadStinger link here (unless --no-open) and return it."""
+    link = result.get("link")
+    if not link:
+        raise CliError("the server sent no leadstinger:// link", code="leadstinger")
+    return {**result, "opened": bool(v.get("open", True)) and _open_link(link)}
+
+
+def _client_leadstinger_quip(c: Context, v: dict) -> Any:
+    method, path, query, body = build_request(reg.BY_ID["leadstinger.quip"], v)
+    job = call(c, method, path, query, body).json()
+    return _deliver_link(v, wait_job(c, job["job_id"]).get("result") or {})
+
+
+def _client_leadstinger_link(c: Context, v: dict) -> Any:
+    method, path, query, body = build_request(reg.BY_ID["leadstinger.link"], v)
+    return _deliver_link(v, call(c, method, path, query, body).json())
+
+
 def _client_job_wait(c: Context, v: dict) -> Any:
     return wait_job(c, v["job_id"], out_dir=v.get("out_dir") or c.settings.get("out_dir"))
 
@@ -1293,6 +1331,10 @@ def _run_client(c: Context, cmd: reg.Command, v: dict) -> Any:
         return _client_leadstinger_set(c, v)
     if cmd.id == "leadstinger.send":
         return _client_leadstinger_send(c, v)
+    if cmd.id == "leadstinger.quip":
+        return _client_leadstinger_quip(c, v)
+    if cmd.id == "leadstinger.link":
+        return _client_leadstinger_link(c, v)
     if cmd.id == "job.wait":
         return _client_job_wait(c, v)
     if cmd.area == "settings":

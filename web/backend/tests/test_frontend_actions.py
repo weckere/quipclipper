@@ -45,7 +45,9 @@ MARKED_CONTROLS: dict[str, int] = {
     "library.browse": 3,      # folder rows, breadcrumbs, Back
     "settings.set": 2,        # Name template and Auto-lang
     "job.cancel": 3,          # folder backfill Cancel, the Jobs popover's Cancel/Dismiss and Clear finished
-    "leadstinger.set": 4,     # Send to LeadStinger on search, bookmarks and clips, and the workspace
+    "leadstinger.set": 4,     # the Send to LeadStinger toggles: workspace, search, bookmarks, clips
+    "leadstinger.quip": 3,    # the workspace, search and bookmarks toggles (one line, by link)
+    "leadstinger.link": 2,    # a clip row's Send to LeadStinger button and the clips toggle
     "youtube.download": 1,
     "youtube.delete-download": 1,
 }

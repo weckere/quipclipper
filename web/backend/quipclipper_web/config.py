@@ -36,6 +36,7 @@ class Settings:
     proxy_secret: str
     api_tokens: frozenset[str]
     youtube_dir: Path | None
+    public_url: str
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> "Settings":
@@ -89,4 +90,11 @@ class Settings:
             youtube_dir=(
                 Path(e["QC_YOUTUBE_DIR"]).expanduser() if e.get("QC_YOUTUBE_DIR") else None
             ),
+            # This server's public base URL, as other machines reach it (e.g.
+            # https://quip.example, or with a path prefix). "Send to LeadStinger"
+            # puts it in the leadstinger://quip link so LeadStinger knows where to
+            # download the clip from. It comes from here, never from the request's
+            # Host header, which a proxy or a crafted request could change. Empty =
+            # links are off (the button says how to turn them on).
+            public_url=e.get("QC_PUBLIC_URL", "").strip().rstrip("/"),
         )

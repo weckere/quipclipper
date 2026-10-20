@@ -2597,7 +2597,7 @@ async function makeClip() {
   if (!currentItem) return;
   // Need a selected clip range (cue selection or loaded bookmark).
   if (clipRangeStart === null || clipRangeEnd === null) return;
-  if (lsOn("ls-send")) return makeLeadStingerClip();
+  if (lsOn("ls-send")) return appConfig.public_url ? sendLeadStingerClip() : makeLeadStingerClip();
   setClipIndicator("processing");
 
   const fmt = $("clip-format").value;
@@ -2697,7 +2697,14 @@ function pollClipJob(jobId, row) {
             : (f.size / 1024).toFixed(0) + " KB";
           html += ` <a class="download-link" data-action="job.download" href="/api/jobs/${jobId}/download/${encodeURIComponent(f.name)}" download>${escapeHtml(f.name)} (${size})</a>`;
         }
+        const link = job.result && job.result.link;
+        if (link) html += ` <a class="ls-again" href="${escapeHtml(link)}">Open in LeadStinger</a>`;
         statusEl.innerHTML = html;
+        // A Send to LeadStinger job: hand its leadstinger:// link to the system, once.
+        if (link && !row.dataset.lsOpened) {
+          row.dataset.lsOpened = "1";
+          followLink(link);
+        }
         const first = job.files && job.files[0];
         if (isLatest) {
           if (first) setClipIndicator("done", {
@@ -2840,10 +2847,23 @@ async function browseClips(folder) {
       `<span class="icon-wrap">${iconSvg(/\.(flac|wav|mp3|m4a|opus|ogg|aac)$/i.test(c.name) ? "music" : "film")}</span>` +
       `<span class="label clip-name">${escapeHtml(c.name)}</span>` +
       `<span class="chips"><span class="badge">${size}</span></span>` +
+      (appConfig.public_url
+        ? `<button type="button" class="btn clip-ls" data-action="leadstinger.link" title="Send to LeadStinger: this clip in a new tile" aria-label="Send to LeadStinger"><svg class="icon" aria-hidden="true"><use href="#i-leadstinger"/></svg></button>`
+        : "") +
       `<a class="download-link clip-dl" data-action="clips.download" href="${escapeHtml(c.download_url)}" download>Download</a>`;
     const cb = li.querySelector(".clip-select");
     cb.dataset.path = c.path;
     cb.dataset.name = c.name;
+    cb.dataset.folder = c.folder || "";
+    const ls = li.querySelector(".clip-ls");
+    if (ls) {
+      ls.onclick = async (e) => {
+        e.stopPropagation();
+        ls.disabled = true;
+        await sendLeadStingerLink(lsClipItem(c.path, c.name, c.folder), $("clips-batch-status"));
+        ls.disabled = false;
+      };
+    }
     cb.onclick = (e) => { e.stopPropagation(); updateBatchState("clips"); };
     li.onclick = (e) => {
       if (e.target.closest("a")) return; // let download link work normally
@@ -3260,9 +3280,7 @@ function lsTitle(label, cue) {
 function lsItemsFrom(prefix) {
   return batchBoxes(prefix, true).map((cb) => {
     const d = cb.dataset;
-    if (prefix === "clips") {
-      return { path: d.path, title: (d.name || "").replace(/\.[^.]+$/, "") || undefined };
-    }
+    if (prefix === "clips") return lsClipItem(d.path, d.name, d.folder);
     return {
       path: d.path, start: parseFloat(d.start), end: parseFloat(d.end),
       title: lsTitle(d.label, d.cue),
@@ -3278,10 +3296,17 @@ async function runLeadStingerBatch(prefix, onDone) {
   const btn = $(`${prefix}-batch-export`);
   const status = $(`${prefix}-batch-status`);
   btn.disabled = true;
+  if (items.length === 1 && appConfig.public_url) {
+    // One line or clip goes straight into LeadStinger by link; several make a set file.
+    await sendLeadStingerLink(items[0], status);
+    btn.disabled = false;
+    if (onDone) onDone();
+    return;
+  }
   status.textContent = "Making a LeadStinger set…";
   let job;
   try {
-    job = await postJSON("/api/leadstinger/set", { items });
+    job = await postJSON("/api/leadstinger/set", { items: items.map(({ clip, ...it }) => it) });
   } catch (err) {
     status.textContent = `LeadStinger set failed: ${err.message}`;
     btn.disabled = false;
@@ -3324,6 +3349,94 @@ async function makeLeadStingerClip() {
   setClipIndicator("processing");
   try {
     const data = await postJSON("/api/leadstinger/set", { items: [item] });
+    activeJobId = data.job_id;
+    pollClipJob(data.job_id, addClipRow(data.job_id, label));
+  } catch (err) {
+    const row = addClipRow(null, label);
+    row.querySelector(".clip-made-status").innerHTML =
+      `<span class="job-failed">Failed: ${escapeHtml(err.message)}</span>`;
+    setClipIndicator("failed", { error: err.message });
+  }
+}
+
+// Send to LeadStinger by link (M14, LeadStinger's D-076). When the server has a public
+// URL (QC_PUBLIC_URL, appConfig.public_url), one line or clip goes straight into
+// LeadStinger: POST /api/leadstinger/quip cuts the line as FLAC with its padding into
+// the clips library (a job whose result is the link), GET /api/leadstinger/link links
+// a clip already there, and the browser opens the leadstinger://quip link. LeadStinger
+// downloads the clip with its own API token and trims the tile to the line.
+
+/** A clips-library file as a LeadStinger item: its path, and its path inside the library. */
+function lsClipItem(path, name, folder) {
+  return {
+    path, clip: (folder ? `${folder}/` : "") + name,
+    title: (name || "").replace(/\.[^.]+$/, "") || undefined,
+  };
+}
+
+/** Open a link (here a leadstinger:// one) as a click on it would. */
+function followLink(link) {
+  const a = document.createElement("a");
+  a.href = link;
+  a.click();
+}
+
+/** Show a sent link in `status` (to click again if LeadStinger didn't come up) and open it. */
+function launchLeadStinger(link, status, what) {
+  status.innerHTML = `Sent ${escapeHtml(what)} to LeadStinger · <a class="ls-again" href="${escapeHtml(link)}">open again</a>`;
+  followLink(link);
+}
+
+/** One item into LeadStinger by link, reporting in a batch bar's `status`. */
+async function sendLeadStingerLink(it, status) {
+  const what = it.title ? `“${it.title.length > 60 ? it.title.slice(0, 57) + "…" : it.title}”` : "the clip";
+  try {
+    if (it.start == null) {
+      const q = new URLSearchParams({ clip: it.clip });
+      if (it.title) q.set("title", it.title);
+      launchLeadStinger((await getJSON(`/api/leadstinger/link?${q}`)).link, status, what);
+      return;
+    }
+    status.textContent = "Sending to LeadStinger…";
+    const job = await postJSON("/api/leadstinger/quip", {
+      path: it.path, start: it.start, end: it.end, title: it.title,
+      before: it.before || 0, after: it.after || 0,
+    });
+    for (;;) {
+      await new Promise((r) => setTimeout(r, 1000));
+      let j;
+      try { j = await getJSON(`/api/jobs/${job.job_id}`); } catch { continue; }
+      if (j.status === "done" && j.result && j.result.link) {
+        launchLeadStinger(j.result.link, status, what);
+        return;
+      }
+      if (j.status === "done" || j.status === "failed" || j.status === "cancelled") {
+        status.textContent = `Send to LeadStinger failed: ${j.error || "no link"}`;
+        return;
+      }
+      status.textContent = `Sending to LeadStinger… ${j.progress || ""}`;
+    }
+  } catch (err) {
+    status.textContent = `Send to LeadStinger failed: ${err.message}`;
+  }
+}
+
+/** Make clip with the toggle on and a public URL: the selection goes straight into
+ *  LeadStinger. The clip row follows the job and opens the link when it is done. */
+async function sendLeadStingerClip() {
+  const cue = (selectedCueText() || (clipFirst < 0 ? loadedBookmarkCue : "") || "").trim();
+  const what = cue
+    ? `"${cue.length > 60 ? cue.slice(0, 57) + "…" : cue}"`
+    : `${formatTime(clipRangeStart)} – ${formatTime(clipRangeEnd)}`;
+  const label = `To LeadStinger: ${what}`;
+  setClipIndicator("processing");
+  try {
+    const data = await postJSON("/api/leadstinger/quip", {
+      path: currentItem.path, start: clipRangeStart, end: clipRangeEnd,
+      title: cue || undefined,
+      before: parseFloat($("clip-before").value) || 0,
+      after: parseFloat($("clip-after").value) || 0,
+    });
     activeJobId = data.job_id;
     pollClipJob(data.job_id, addClipRow(data.job_id, label));
   } catch (err) {

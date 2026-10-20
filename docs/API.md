@@ -126,7 +126,7 @@ start, end, start_ts, end_ts, cue_count}]}`. The `index` is what you pass back a
 |---|---|---|
 | POST | `/api/clip` | Start a clip job (JSON body, see below). Returns `{job_id, status}`. |
 | GET | `/api/jobs` | Recent jobs. |
-| GET | `/api/jobs/{id}` | One job's status/result. |
+| GET | `/api/jobs/{id}` | One job's status/result: `files` it wrote and, for some jobs, a `result` object (the link of a Send to LeadStinger job). |
 | DELETE | `/api/jobs/{id}` | Cancel a queued job / prune a finished one → `{cancelled}`; a running job that can stop (folder subtitle backfill) → `{cancelling}`; any other running job → 409. |
 | GET | `/api/jobs/{id}/download/{filename}` | Download a finished clip by name. |
 
@@ -159,13 +159,53 @@ numbers a name that's already taken. Download it with
 `GET /api/jobs/{id}/download/<name>.lsset`; import it with LeadStinger's File ▸ Import
 Set…, a drop on its window, or `leadstinger-cli set.import`.
 
+### Send to LeadStinger (links)
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/leadstinger/quip` | Cut one line as FLAC with its padding into the clips library and make its `leadstinger://quip` link (job). |
+| GET | `/api/leadstinger/link?clip=&title=&start=&end=&set=` | The `leadstinger://quip` link for a clip already in the clips library. |
+
+Both need `QC_PUBLIC_URL` (this server's base URL as LeadStinger reaches it); without it
+they answer 503. The link names this server and a clip path, never a token: LeadStinger
+downloads `GET /api/clips/download/{clip}` itself with the token it was connected with
+(`leadstinger-cli quip.connect <url> --token -`). The format is LeadStinger's own
+(decision D-076 there, its `docs/QUIPCLIPPER.md`):
+
+```text
+leadstinger://quip?server=<QC_PUBLIC_URL>&clip=<clip path>&title=<text>&start=<s>&end=<s>&set=<name>
+```
+
+Every value is percent-encoded as `encodeURIComponent` does (a `+` goes out as `%2B`);
+`title`, `start`, `end` and `set` are left out when empty. `title` is cut to one line of
+200 characters and `set` to 100. `start`/`end` are plain decimals (at most 3 places).
+
+`POST /api/leadstinger/quip` takes `{path, start, end, title?, before?, after?, set?}`: the
+line's span in the source, the tile's title (usually the line), the padding kept either
+side as handle audio around the tile's trim (`before`/`after`, default 2 s each, at most
+60; 0 = none) and the LeadStinger set to put the tile in (made there if missing; default
+its current set). The job cuts `[start − before, end + after]`, clamped to the file (a
+line near either end gets a shorter handle), as a full-mix FLAC
+into `LeadStinger/` in the clips library. The finished job carries
+`result: {link, clip, start, end}`, where `start`/`end` are the line *inside* the clip:
+
+```json
+{"id": "…", "status": "done", "files": [{"name": "S03E26_00-33-20_Resistance_is_futile.flac", "size": 412345}],
+ "result": {"link": "leadstinger://quip?server=https%3A%2F%2Fquip.example&clip=LeadStinger%2FS03E26_00-33-20_Resistance_is_futile.flac&title=Resistance%20is%20futile.&start=2&end=3.6&set=Borg",
+            "clip": "LeadStinger/S03E26_00-33-20_Resistance_is_futile.flac", "start": 2.0, "end": 3.6}}
+```
+
+`GET /api/leadstinger/link` takes `clip` as `/api/clips/download/{path}` does (relative to
+the clips library) and returns `{link, clip}`; without `start`/`end` the tile plays the
+whole clip. Open the link in a browser or with `open`/`xdg-open` on the machine with
+LeadStinger.
+
 ### Bookmarks & meta
 | Method | Path | Purpose |
 |---|---|---|
 | GET/POST | `/api/bookmarks` | List (optionally filtered by `?path=`) / create bookmarks. |
 | PATCH/DELETE | `/api/bookmarks/{id}` | Edit / delete one. `DELETE /api/bookmarks` clears all. |
 | GET | `/api/health` | Liveness + tool presence (no auth-secret required). |
-| GET | `/api/config` | Non-secret config the UI needs. |
+| GET | `/api/config` | Non-secret config the UI needs, including `public_url` (`QC_PUBLIC_URL`, or `null` when Send to LeadStinger links are off). |
 
 ## `POST /api/clip` body
 

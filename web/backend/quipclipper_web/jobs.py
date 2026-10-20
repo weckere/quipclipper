@@ -44,6 +44,9 @@ class Job:
     # ("12/263 …") and honour a cooperative cancel by checking cancel_requested.
     progress: str | None = None
     cancel_requested: bool = False
+    # Anything else a finished job hands back, as JSON (e.g. the leadstinger:// link
+    # of a Send to LeadStinger job).
+    result: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -64,6 +67,8 @@ class Job:
                 {"name": p.name, "size": p.stat().st_size if p.exists() else 0}
                 for p in self.result_paths
             ]
+        if self.result is not None:
+            d["result"] = self.result
         if self.error:
             d["error"] = self.error
         return d
