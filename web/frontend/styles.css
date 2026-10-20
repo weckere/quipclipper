@@ -860,7 +860,9 @@ footer { padding: 2rem 1.25rem; font-size: 0.8rem; }
   .workspace .stream-selector { justify-content: flex-start; }
   .ws-clip { padding: 0.6rem 1.25rem; }
   .ws-clip .marks-header { flex-direction: column; align-items: stretch; gap: 0.4rem; }
-  .ws-clip .marks-titlerow { flex-wrap: wrap; gap: 0.2rem 0.6rem; }
+  /* The header stacks here, so the wide-screen `flex: 1 1 16rem` would be a 16rem
+     HEIGHT: a tall blank sticky panel over the script on phones. */
+  .ws-clip .marks-titlerow { flex: none; flex-wrap: wrap; gap: 0.2rem 0.6rem; }
   .ws-clip .marks-actions { justify-content: stretch; }
   .ws-clip .make-clip-btn { flex: 1; }
 }
