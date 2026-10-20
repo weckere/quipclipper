@@ -1,0 +1,128 @@
+# Changelog
+
+All notable changes to quipclipper are written down here. The format follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
+[Semantic Versioning](https://semver.org/) (still 0.x: a minor version for features, a patch
+for fixes).
+
+Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
+`scripts/release.sh X.Y.Z` turns that section into the release's, dated.
+
+## [Unreleased]
+
+### CLI parity (M9)
+
+- Every action in the web app is a CLI command: 36 commands named `<area>.<action>`
+  (`library.browse`, `search.folder`, `bookmark.add`, `clip.batch`, …) built from one command
+  registry, with shortcuts for the common ones (`ls`, `search`, `clip`, `tracks`, `jobs`,
+  `status`). See [docs/CLI.md](docs/CLI.md), generated from the registry.
+- Commands drive a quipclipper server over the HTTP API (`--server` or `QC_URL`, token from
+  `QC_API_TOKEN[_FILE]`); `search`, `clip`, `tracks` and `status` still work on local files
+  without one. Jobs are followed to completion (`--no-wait`, `--out-dir`), `--json` gives
+  machine output, `--safe` refuses destructive commands, batch commands read other commands'
+  `--json` on stdin, and `run` executes a JSON-lines script.
+- CLI settings (`~/.config/quipclipper/cli.json`) mirror the web UI's preferences (name
+  template, subtitle languages); local clips can be cut by `--start`/`--end` and named with
+  `--template`.
+- A parity test fails when an API route, request field, `/api/` call in the web UI or web
+  preference has no command, and guards fail if a UI action loses its control.
+
+### Redesigned web app (M12)
+
+- New look on design tokens, in dark and light (System / Dark / Light in Settings).
+- A top bar with one search box whose scope chip picks this video, this folder, the whole
+  library or Now playing; `/` focuses it. Library, Bookmarks and Clips in the nav, and a Jobs
+  popover that lists recent jobs (cancel, dismiss, download, clear finished).
+- Library: a rail of media roots and YouTube, icon rows, and a Dialogue index card with
+  progress and real buttons. It knows which files have no subtitles, so they no longer keep
+  a folder from counting as indexed.
+- The item page is a workspace: player, a dialogue map (cue density over the whole runtime,
+  click to seek), transport and the clip bar on the left; the script on the right with
+  Script / Matches / Bookmarks / Clips tabs; a phone layout with the clip bar pinned to the
+  bottom.
+- Search results are grouped by file with the query highlighted, a preview of the lines
+  around a hit on wide screens, and a compact batch bar at the bottom.
+- Bookmarks and Clips pages in the new style; bookmarks get an inline label field instead of
+  a browser prompt.
+- A Video | Audio only segmented control and toggle switches for the clip options.
+- A job's files say where they are in the clips library (`clip` in `GET /api/jobs`).
+
+### Send to LeadStinger (M14)
+
+- Hand clips to [LeadStinger](https://github.com/weckere/leadstinger) as a set file (`.lsset`):
+  each line is cut as a full-mix FLAC with its padding as handles and the tile's trim on the
+  line (`POST /api/leadstinger/set`, CLI `leadstinger.set` and `leadstinger.send`).
+- Or send one line straight in by a `leadstinger://quip` link (`POST /api/leadstinger/quip`,
+  `GET /api/leadstinger/link`, CLI `leadstinger.quip` and `leadstinger.link`), with the server
+  address from the new `QC_PUBLIC_URL` setting (NixOS `publicUrl`).
+- In the web UI it is a Send to LeadStinger toggle beside Make clip and the batch bars' Clip /
+  Export selected, plus a button on each Clips-library row.
+
+### Jellyfin now playing (M15)
+
+- A Now playing card on the library home and a Now playing search scope: see what each
+  Jellyfin client is playing and open it in the workspace at the playhead, with the line just
+  heard selected. Jellyfin is used for live sessions only; media is still read from the media
+  roots.
+- Settings `QC_JELLYFIN_URL`, `QC_JELLYFIN_API_KEY` (or `_FILE`) and `QC_JELLYFIN_PATH_MAP`;
+  NixOS `jellyfin.url` / `apiKeyFile` / `pathMap` (the key goes in by systemd
+  `LoadCredential`).
+- `GET /api/jellyfin/sessions`; CLI `jellyfin.sessions` (`nowplaying`) and `clip.nowplaying`.
+
+### Accessibility (M16)
+
+- Hover text on every control (what it does, and its shortcut), and an accessible name on
+  every glyph-only or per-row button; a guard test keeps it that way.
+- Screen readers: a skip link, one polite announcer for finished or failed jobs, the
+  selection, bookmarks and match counts; rows without nested controls; the script as one tab
+  stop with arrow keys, Enter, S and E; the dialogue map and seek bar as sliders; Jobs and
+  Settings as modal dialogs that keep and return focus; focus kept when a folder, file or page
+  opens.
+- Low vision: subtitle size (Normal / Large / Extra large) and a solid background for the
+  video's subtitles; tokens that meet WCAG 2.2 AA in both themes (checked by a test); stronger
+  lines and focus under `prefers-contrast: more`; no sideways scroll at 320 px; targets at
+  least 24 px tall.
+
+### Releases (M17)
+
+- One version source, `pyproject.toml`: the Python packages read their installed metadata and
+  the Nix packages read it with `builtins.fromTOML`; a test fails if a copy disagrees.
+- This changelog, a `dev` branch for work in progress (`main` is the latest release), and a
+  release workflow: a `v*` tag runs the tests, publishes the GHCR images tagged `X.Y.Z`,
+  `X.Y` and `latest`, and creates a GitHub Release from the changelog. Images are no longer
+  pushed on every commit.
+
+### Fixed
+
+- Subtitles vanished when hls.js attached after the subtitle track had loaded, and when the
+  audio stream was switched.
+- macOS `._` AppleDouble files showed up as clips in the clips library.
+- YouTube server streams came back empty (yt-dlp bumped to 2026.08.19).
+- A fresh `pip install` had no `click` (typer 0.27 stopped installing it): typer is pinned
+  below 0.27 and click is declared.
+- The CLI reported a 403 with a real message (such as a path outside the media roots) as a
+  token problem.
+- On phones the Selection panel covered the script.
+
+## 0.1.0 (untagged, 2026-06-04 to 2026-09-12)
+
+The first version, before releases were tagged. Highlights:
+
+- **Engine and CLI:** find a line by its dialogue (fuzzy search over `.srt`, `.vtt`, `.ass`
+  and embedded text tracks) and cut it losslessly with ffmpeg stream copy or mkvmerge, or
+  frame-exact with a re-encode (Intel Quick Sync when available); every audio track kept
+  (5.1/7.1), track and channel selection, a centre-channel split, subtitles in the clip,
+  full-mix WAV/FLAC export, and clip names from a template.
+- **Audio-only sources (experimental):** podcasts and audiobooks with a transcript (SRT, VTT,
+  Podcast Namespace / Whisper JSON) and EPUB3 media-overlay audiobooks.
+- **Web app:** browse several media roots, search dialogue in a file, a folder or the whole
+  library (with a subtitle cache and an index), set a selection on the script, bookmark it,
+  clip it, and batch-export bookmarks and clips; in-browser playback with an audio or video
+  transcode when the browser can't play the source (HLS on iOS and desktop).
+- **YouTube sources:** add a video by URL, search and clip it, optional official player,
+  full-video download and subtitle backfill (via yt-dlp).
+- **HTTP API** with token auth for scripts and agents ([docs/API.md](docs/API.md)), a CSRF
+  guard, and an optional password gate.
+- **Deployment:** a Nix flake and NixOS module (with a VM test), and Docker images on GHCR.
+
+[Unreleased]: https://github.com/weckere/quipclipper/commits/dev
