@@ -178,6 +178,13 @@ The server's default is `{source}/{timestamp}_{cue}_{title}`.
 | `clips.list` | List finished clips (a folder of the clips library). | `FOLDER` | `GET /api/clips` | Clips view |
 | `clips.download` | Download a clip from the clips library. | `CLIP_PATH` `--out-dir` | `GET /api/clips/download/{clip_path}` | Clip Download link |
 
+## leadstinger
+
+| Command | What it does | Arguments | API | Web UI |
+|---|---|---|---|---|
+| `leadstinger.set` | Make a LeadStinger set file (.lsset) from JSON lines on stdin: search hits, bookmarks or clips-library entries, each cut as FLAC with handles and trimmed to its line. | `NAME` `--handles` `--path` `--wait` `--out-dir` | `POST /api/leadstinger/set` | Send to LeadStinger (search, bookmarks, clips, selection) |
+| `leadstinger.send` | Put the clips on stdin straight into LeadStinger on this machine: a new set, or appended to an existing one with --set. | `NAME` `--set` `--handles` `--path` `--leadstinger-cli` `--data-dir` | (client) | — |
+
 ## settings
 
 | Command | What it does | Arguments | API | Web UI |

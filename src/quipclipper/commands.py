@@ -375,6 +375,35 @@ COMMANDS: tuple[Command, ...] = (
                           default=".")),
             response="file", ui="Clip Download link"),
 
+    # --- LeadStinger (M14): hand clips to the soundboard ------------------------------------
+    Command("leadstinger.set", "Make a LeadStinger set file (.lsset) from JSON lines on stdin: "
+            "search hits, bookmarks or clips-library entries, each cut as FLAC with handles "
+            "and trimmed to its line.", "POST", "/api/leadstinger/set",
+            params=(Param("name", "str", "The set's name in LeadStinger.", where=BODY,
+                          main=True, required=True),
+                    Param("handles", "float", "Seconds kept either side of each line (the "
+                          "tile's trims sit on the line).", where=BODY, default=2.0),
+                    Param("path", "str", "Media file for hits that don't carry one "
+                          "(search.item results).", where=CLIENT),
+                    *_JOB_FOLLOW),
+            mode="client", response="job",
+            ui="Send to LeadStinger (search, bookmarks, clips, selection)"),
+    Command("leadstinger.send", "Put the clips on stdin straight into LeadStinger on this "
+            "machine: a new set, or appended to an existing one with --set.", None, None,
+            params=(Param("name", "str", "The new set's name (ignored with --set).",
+                          where=CLIENT, main=True, default="quipclipper"),
+                    Param("set", "str", "Append to this existing LeadStinger set instead of "
+                          "importing a new one.", where=CLIENT),
+                    Param("handles", "float", "Seconds kept either side of each line.",
+                          where=CLIENT, default=2.0),
+                    Param("path", "str", "Media file for hits that don't carry one.",
+                          where=CLIENT),
+                    Param("leadstinger_cli", "str", "The leadstinger-cli program.",
+                          where=CLIENT, default="leadstinger-cli"),
+                    Param("data_dir", "str", "LeadStinger library folder (its --data-dir).",
+                          where=CLIENT)),
+            mode="client", ui="—"),
+
     # --- settings (the web UI's per-browser preferences) -------------------------------------
     Command("settings.list", "Show the CLI settings.", None, None, mode="client",
             ui="—"),

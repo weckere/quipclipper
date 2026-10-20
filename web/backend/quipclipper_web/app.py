@@ -22,6 +22,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import time
 from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -61,7 +62,7 @@ from quipclipper.mkv import (
 )
 from quipclipper.search import search as engine_search
 from quipclipper.subtitles import AUDIO_EXTS, VIDEO_EXTS, find_sidecar, load_subtitles
-from quipclipper_web import __version__, epub_items, library, media, youtube_items
+from quipclipper_web import __version__, epub_items, library, lsset, media, youtube_items
 from quipclipper_web.bookmarks import BookmarkStore
 from quipclipper_web.config import Settings
 from quipclipper_web.jobs import JobRegistry
@@ -188,6 +189,27 @@ class BookmarkUpdate(BaseModel):
     label: str | None = None
     before: float | None = Field(None, ge=0, le=60)
     after: float | None = Field(None, ge=0, le=60)
+
+
+class LeadStingerItem(BaseModel):
+    """One line for a LeadStinger set: a search hit, a bookmark or a clips-library file."""
+
+    path: str
+    # No start: the whole file (a clips-library entry), cut with no handles.
+    start: float | None = Field(None, ge=0)
+    end: float | None = Field(None, ge=0)
+    title: str | None = Field(None, max_length=200)
+    notes: str | None = Field(None, max_length=1000)
+    track: int | None = Field(None, ge=0)
+
+
+class LeadStingerSetRequest(BaseModel):
+    """JSON body for POST /api/leadstinger/set (M14, D-024)."""
+
+    name: str = Field(..., min_length=1, max_length=80)
+    items: list[LeadStingerItem] = Field(..., min_length=1, max_length=200)
+    # Seconds of audio kept either side of each line; the tile's trims sit on the line.
+    handles: float = Field(2.0, ge=0, le=30)
 
 
 class ClipRequest(BaseModel):
@@ -1825,6 +1847,70 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def create_clip(req: ClipRequest) -> dict:
         label, do_cut = _plan_clip(req)
         job = jobs.submit(do_cut, label=label)
+        return {"job_id": job.id, "status": job.status.value}
+
+    # --- LeadStinger set files (M14) ---------------------------------------------------
+
+    @app.post("/api/leadstinger/set")
+    def create_leadstinger_set(req: LeadStingerSetRequest) -> dict:
+        """Cut every item as FLAC with handles and zip them as a LeadStinger set file.
+
+        A job on the clip pool: it cuts the items one after another into a staging
+        folder, then writes ``LeadStinger/<name>.lsset`` in the clips library (its
+        download is the job's file). Each tile's trims sit on the line (D-024).
+        """
+        set_name = lsset.safe_name(req.name, fallback="quipclipper")
+        items = list(req.items)
+        handles = req.handles
+        n = len(items)
+
+        def build(job) -> list[Path]:
+            staging_root = settings.state_dir / "lsset-staging"
+            staging_root.mkdir(parents=True, exist_ok=True)
+            staging = Path(tempfile.mkdtemp(prefix="set-", dir=staging_root))
+            try:
+                tiles, files = [], []
+                for i, item in enumerate(items, 1):
+                    if job.cancel_requested:
+                        return []
+                    title = (item.title or "").strip() or Path(item.path).stem
+                    job.progress = f"{i - 1}/{n} {title[:60]}"
+                    whole = item.start is None
+                    req_i = ClipRequest(
+                        path=item.path, kind="audio", audio_format="flac", lossless=False,
+                        start=0.0 if whole else item.start, end=item.end,
+                        before=0.0 if whole else handles, after=0.0 if whole else handles,
+                        cue_text=title, track=item.track, template="{timestamp}",
+                        embed_subs=False,
+                    )
+                    try:
+                        _label, do_cut = _plan_clip(req_i, out_dir=staging)
+                        written = do_cut(job)
+                    except HTTPException as exc:
+                        raise RuntimeError(f"item {i} ({title[:60]}): {exc.detail}") from None
+                    except RuntimeError as exc:
+                        raise RuntimeError(f"item {i} ({title[:60]}): {exc}") from None
+                    if not written:
+                        raise RuntimeError(f"item {i} ({title[:60]}): nothing was cut")
+                    arcname = f"{set_name}/{i:02d} {lsset.safe_name(title)}.flac"
+                    trim = lsset.trim_for(None if whole else item.start, item.end, handles)
+                    where = "" if whole else f" · {format_timestamp(item.start)}"
+                    notes = (item.notes or "").strip() or (
+                        f"{Path(item.path).stem}{where} · quipclipper")
+                    tiles.append(lsset.tile_entry(arcname, title=title, trim=trim, notes=notes))
+                    files.append((arcname, written[0]))
+                job.progress = f"{n}/{n} zipping"
+                out_dir = settings.clips_dir / "LeadStinger"
+                out_dir.mkdir(parents=True, exist_ok=True)
+                out = lsset.unique_path(out_dir / f"{set_name}{lsset.EXTENSION}")
+                lsset.write_lsset(out, lsset.build_manifest(set_name, tiles), files)
+                job.progress = f"{n}/{n}"
+                return [out]
+            finally:
+                shutil.rmtree(staging, ignore_errors=True)
+
+        plural = "s" if n != 1 else ""
+        job = jobs.submit(build, label=f'LeadStinger set "{set_name}" ({n} clip{plural})')
         return {"job_id": job.id, "status": job.status.value}
 
     def _find_job(job_id: str):

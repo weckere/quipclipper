@@ -539,6 +539,20 @@ quipclipper clip "you're killing me" -v "/movies/The Sandlot (1993)/The.Sandlot.
 quipclipper --json bookmark.list | quipclipper clip.batch --kind audio
 ```
 
+Clips can go straight to [LeadStinger](https://github.com/weckere/leadstinger), the
+soundboard: "Send to LeadStinger" on the search results, bookmarks, clips and the
+workspace makes a set file (`.lsset`) whose tiles are trimmed to the lines, with 2 s of
+audio either side to move the cut points. From the CLI:
+
+```sh
+quipclipper --json search.folder "resistance is futile" --path /shows \
+    | quipclipper leadstinger.set Borg --out-dir .          # Borg.lsset
+quipclipper --json bookmark.list | quipclipper leadstinger.send --set Quotes
+```
+
+`leadstinger.send` runs on the machine with LeadStinger and drives its `leadstinger-cli`:
+a new set, or appended to an existing one with `--set`.
+
 Add `--json` for machine-readable output and `--safe` to refuse anything that
 deletes data (for agents). New web UI actions must get a command in
 `src/quipclipper/commands.py`: a parity test fails until they do.

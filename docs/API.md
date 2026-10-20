@@ -141,6 +141,21 @@ where `status` is `queued|running|done|failed|cancelled`, `files` is
 | GET | `/api/clips/download/{path}` | Download a finished clip. |
 | GET | `/api/clips/stream/{path}` | Stream a finished clip. |
 
+### LeadStinger set files
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/leadstinger/set` | Cut lines as FLAC with handles and zip them as a [LeadStinger](https://github.com/weckere/leadstinger) set file (job). |
+
+The body is `{name, items: [{path, start?, end?, title?, notes?, track?}], handles?}`
+(1–200 items; `handles` defaults to 2 s, at most 30). Each item is a search hit, a
+bookmark or a clips-library file (no `start`: the whole file, no handles). The job cuts
+`[start − handles, end + handles]` as a full-mix FLAC (every channel kept) and writes
+`LeadStinger/<name>.lsset` in the clips library: `manifest.json` (LeadStinger's
+starter-pack format) plus one folder for the set. Each tile's `trim_start`/`trim_end`
+sit on the line, so the cut points can still be moved in LeadStinger. Download it with
+`GET /api/jobs/{id}/download/<name>.lsset`; import it with LeadStinger's File ▸ Import
+Set…, a drop on its window, or `leadstinger-cli set.import`.
+
 ### Bookmarks & meta
 | Method | Path | Purpose |
 |---|---|---|

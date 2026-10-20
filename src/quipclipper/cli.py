@@ -24,6 +24,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
+import zipfile
 from pathlib import Path
 from typing import Any, List, Optional
 
@@ -36,6 +38,7 @@ from quipclipper.client import (
     CliError,
     Context,
     Transport,
+    call,
     download_job_files,
     execute,
     load_settings,
@@ -1129,6 +1132,125 @@ def _client_bookmark_batch(c: Context, v: dict) -> Any:
     return {"bookmarks": saved}
 
 
+# --- LeadStinger (M14) --------------------------------------------------------------------
+
+# Imports into a running LeadStinger copy files in the background, so the clips handed to it
+# live here rather than in a temporary folder. Kept a week.
+LEADSTINGER_CACHE = Path.home() / ".cache" / "quipclipper" / "leadstinger"
+_CACHE_DAYS = 7
+
+
+def _leadstinger_items(rows: list[dict], default_path: Optional[str]) -> list[dict]:
+    """POST /api/leadstinger/set items from search hits, bookmarks or clips-library rows."""
+    items = []
+    for row in rows:
+        path = row.get("path") or default_path
+        if not path:
+            raise CliError("a row has no path; pass --path for search.item results",
+                           code="usage", exit_code=EXIT_USAGE)
+        title = (row.get("label") or row.get("cue") or row.get("text")
+                 or Path(row.get("name") or path).stem)
+        item = {"path": path, "title": str(title)[:200]}
+        if "start" in row:  # a search hit or a bookmark; a clips entry is the whole file
+            item.update(start=row["start"], end=row.get("end"))
+        items.append(item)
+    return items
+
+
+def _start_leadstinger_set(c: Context, v: dict, name: str) -> dict:
+    """POST the stdin rows as a set; returns ``{job_id, status}``."""
+    rows = _read_items(sys.stdin.read())
+    if not rows:
+        raise CliError("No rows on stdin. Pipe in the --json output of search.folder, "
+                       "bookmark.list or clips.list.", code="usage", exit_code=EXIT_USAGE)
+    handles = v.get("handles")
+    body = {"name": name, "handles": 2.0 if handles is None else handles,
+            "items": _leadstinger_items(rows, v.get("path"))}
+    cmd = reg.BY_ID["leadstinger.set"]
+    return call(c, cmd.method, cmd.path, body=body).json()
+
+
+def _client_leadstinger_set(c: Context, v: dict) -> Any:
+    job = _start_leadstinger_set(c, v, v["name"])
+    if not v.get("wait", True):
+        return job
+    return wait_job(c, job["job_id"], out_dir=v.get("out_dir") or c.settings.get("out_dir") or ".")
+
+
+def _prune_leadstinger_cache() -> None:
+    if not LEADSTINGER_CACHE.is_dir():
+        return
+    cutoff = time.time() - _CACHE_DAYS * 86400
+    for d in LEADSTINGER_CACHE.iterdir():
+        try:
+            if d.is_dir() and d.stat().st_mtime < cutoff:
+                shutil.rmtree(d, ignore_errors=True)
+        except OSError:
+            pass
+
+
+def _leadstinger(v: dict, args: list[str], stdin: Optional[str] = None) -> Any:
+    """Run leadstinger-cli with --json and return its parsed output."""
+    exe = v.get("leadstinger_cli") or "leadstinger-cli"
+    if shutil.which(exe) is None and not Path(exe).is_file():
+        raise CliError(f"{exe} not found: install LeadStinger, or pass --leadstinger-cli PATH",
+                       code="no_leadstinger", exit_code=EXIT_USAGE)
+    cmd = [exe, "--json"]
+    if v.get("data_dir"):
+        cmd += ["--data-dir", str(Path(v["data_dir"]).expanduser())]
+    proc = subprocess.run(cmd + args, input=stdin, capture_output=True, text=True)
+    out = proc.stdout.strip()
+    if proc.returncode != 0:
+        detail = out or proc.stderr.strip() or f"exit {proc.returncode}"
+        raise CliError(f"leadstinger-cli {args[0]} failed: {detail[:500]}", code="leadstinger")
+    lines = [json.loads(line) for line in out.splitlines() if line.strip()]
+    return lines[0] if len(lines) == 1 else lines
+
+
+def _client_leadstinger_send(c: Context, v: dict) -> Any:
+    _prune_leadstinger_cache()
+    target_set = v.get("set")
+    name = target_set or v.get("name") or "quipclipper"
+    stage = LEADSTINGER_CACHE / time.strftime("%Y%m%d-%H%M%S")
+    stage.mkdir(parents=True, exist_ok=True)
+    job = wait_job(c, _start_leadstinger_set(c, v, name)["job_id"], out_dir=str(stage))
+    saved = [Path(p) for p in job.get("saved", []) if str(p).endswith(".lsset")]
+    if not saved:
+        raise CliError("the server made no set file", code="leadstinger")
+    lsset_file = saved[0]
+    if not target_set:
+        result = _leadstinger(v, ["set.import", str(lsset_file)])
+        return {"imported": str(lsset_file), "leadstinger": result}
+
+    # Append to an existing set: set.import always adds new sets, so add the clips to the
+    # set and then give each new tile its title, trims and notes from the manifest.
+    files = stage / "files"
+    with zipfile.ZipFile(lsset_file) as zf:
+        manifest = json.loads(zf.read("manifest.json"))
+        zf.extractall(files)
+    tiles = [t for s in manifest.get("sets", []) for t in s.get("tiles", [])]
+    paths = [str((files / t["file"]).resolve()) for t in tiles]
+    added = _leadstinger(v, ["tile.add", "--params",
+                             json.dumps({"paths": paths, "set": target_set})])
+    ids = added.get("added", []) if isinstance(added, dict) else []
+    if len(ids) != len(tiles):
+        raise CliError(f"LeadStinger added {len(ids)} of {len(tiles)} clips: "
+                       f"{added.get('errors') if isinstance(added, dict) else added}",
+                       code="leadstinger")
+    script = []
+    for tile_id, t in zip(ids, tiles):
+        params = {"tile": tile_id, "title": t.get("title", "")}
+        if t.get("trim_start"):
+            params["trimStart"] = t["trim_start"]
+        if t.get("trim_end") is not None:
+            params["trimEnd"] = t["trim_end"]
+        if t.get("notes"):
+            params["notes"] = t["notes"]
+        script.append(json.dumps({"command": "tile.set", "params": params}))
+    _leadstinger(v, ["run", "-"], stdin="\n".join(script) + "\n")
+    return {"set": target_set, "added": ids, "lsset": str(lsset_file)}
+
+
 def _client_job_wait(c: Context, v: dict) -> Any:
     return wait_job(c, v["job_id"], out_dir=v.get("out_dir") or c.settings.get("out_dir"))
 
@@ -1157,6 +1279,10 @@ def _run_client(c: Context, cmd: reg.Command, v: dict) -> Any:
         return _client_clip_batch(c, v)
     if cmd.id == "bookmark.batch":
         return _client_bookmark_batch(c, v)
+    if cmd.id == "leadstinger.set":
+        return _client_leadstinger_set(c, v)
+    if cmd.id == "leadstinger.send":
+        return _client_leadstinger_send(c, v)
     if cmd.id == "job.wait":
         return _client_job_wait(c, v)
     if cmd.area == "settings":

@@ -757,6 +757,24 @@ footer { padding: 2rem 1.25rem; font-size: 0.8rem; }
 .ws-clip .marks-header { flex-wrap: wrap; row-gap: 0.4rem; }
 .bookmark-label-form { display: flex; gap: 0.5rem; align-items: center; margin: 0.6rem 0 0.2rem; }
 .bookmark-label-form[hidden] { display: none; }
+/* Send to LeadStinger (M14) */
+.ls-dialog {
+  background: var(--raised); color: var(--text); border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg); padding: var(--space-5); width: min(30rem, calc(100vw - 2rem));
+}
+.ls-dialog::backdrop { background: rgb(0 0 0 / 0.45); }
+.ls-form { display: flex; flex-direction: column; gap: var(--space-3); }
+.ls-form h3 { margin: 0; font-size: var(--text-lg); }
+.ls-form p { margin: 0; }
+.ls-name-label { display: flex; flex-direction: column; gap: var(--space-1); font-size: var(--text-sm); }
+.ls-name-input {
+  background: var(--sunken); color: var(--text); border: 1px solid var(--line-strong);
+  border-radius: var(--radius); padding: 0.45rem 0.6rem; font: inherit;
+}
+.ls-name-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ls-hint { font-size: var(--text-sm); }
+.ls-status { min-height: 1.3em; font-size: var(--text-sm); overflow-wrap: anywhere; }
+.ls-actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
 .bookmark-label-input {
   flex: 1; min-width: 0; background: var(--sunken); color: var(--text);
   border: 1px solid var(--line-strong); border-radius: var(--radius); padding: 0.4rem 0.6rem; font: inherit;
