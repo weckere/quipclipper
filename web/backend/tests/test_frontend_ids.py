@@ -54,6 +54,19 @@ def test_every_looked_up_id_exists():
 
 
 @needs_frontend
+def test_markup_the_script_looks_up_comes_before_the_script_tag():
+    """app.js runs as soon as its tag is parsed (no defer), and wires handlers at load:
+    an element below the tag is null then, the script stops, and the page is dead. The
+    LeadStinger dialog once sat below it (2026-10-20)."""
+    html = (FRONTEND / "index.html").read_text()
+    js = (FRONTEND / "app.js").read_text()
+    tag = html.index('<script src="app.js"')
+    after = set(_ID_ATTR.findall(html[tag:]))
+    late = sorted(_looked_up(js) & after - _created_by_script(js))
+    assert not late, f"ids app.js looks up are defined after its <script> tag: {late}"
+
+
+@needs_frontend
 def test_index_html_has_no_duplicate_ids():
     ids = Counter(_ID_ATTR.findall((FRONTEND / "index.html").read_text()))
     assert not [i for i, n in ids.items() if n > 1], f"duplicate ids: {[i for i, n in ids.items() if n > 1]}"
