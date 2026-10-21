@@ -50,7 +50,8 @@ exit with code 3.
   `{"error": {"code": ..., "message": ...}}`.
 - Jobs (clips, YouTube adds and downloads, subtitle backfills) are followed until
   they finish; `--no-wait` returns the job id at once, and `--out-dir DIR`
-  downloads the finished files. Ctrl-C cancels a job you're waiting on.
+  downloads the finished files. Ctrl-C cancels a job you're waiting on (a clip cut
+  that has started can't stop: it finishes on the server), and stops a batch.
 - `--safe` refuses every command marked ⚠ (it changes or deletes data). Use it for
   agents.
 - Batch commands read the `--json` output of another command on stdin, the way the
@@ -107,7 +108,7 @@ by default land where they always did.
 | 0 | OK |
 | 1 | Failed: a server error, a failed job, or no matches |
 | 2 | Usage error, or the server rejected the request as invalid |
-| 3 | No server configured, or the server can't be reached |
+| 3 | No server configured, the server can't be reached, or it redirects (use the URL it redirects to) |
 | 4 | The server refused the token |
 | 5 | Refused by `--safe` |
 
@@ -187,7 +188,7 @@ by default land where they always did.
 | `job.list` (`jobs`) | List recent jobs (clips, downloads, YouTube). |  | `GET /api/jobs` | Jobs popover |
 | `job.get` | Show one job. | `JOB_ID` | `GET /api/jobs/{job_id}` | Job progress polling |
 | `job.wait` | Wait for a job to finish. | `JOB_ID` `--out-dir` | (client) | Job progress polling |
-| `job.cancel` | Cancel a queued or running job, or forget a finished one. | `JOB_ID` | `DELETE /api/jobs/{job_id}` | Cancel / Dismiss in the Jobs popover; ✕ Cancel (folder subtitle fetch) |
+| `job.cancel` ⚠ | Cancel a queued or running job, or forget a finished one. | `JOB_ID` | `DELETE /api/jobs/{job_id}` | Cancel / Dismiss in the Jobs popover; ✕ Cancel (folder subtitle fetch) |
 | `job.download` | Download a finished job's file (all files if FILENAME is omitted). | `JOB_ID` `FILENAME` `--out-dir` | `GET /api/jobs/{job_id}/download/{filename}` | ⤓ link after a clip finishes |
 
 ## bookmark
@@ -196,7 +197,7 @@ by default land where they always did.
 |---|---|---|---|---|
 | `bookmark.list` | List bookmarks (all, or one file's). | `--path` | `GET /api/bookmarks` | Bookmarks view; item bookmark list |
 | `bookmark.add` | Save a range as a bookmark. | `PATH` `--start` `--end` `--label` `--before` `--after` `--sub-track` `--audio-track` `--channel-subset` `--cue` | `POST /api/bookmarks` | ★ Save bookmark; ★ on a search hit |
-| `bookmark.update` | Rename a bookmark or change its padding. | `BOOKMARK_ID` `--label` `--before` `--after` | `PATCH /api/bookmarks/{bookmark_id}` | Bookmark −/+ buffer |
+| `bookmark.update` ⚠ | Rename a bookmark or change its padding. | `BOOKMARK_ID` `--label` `--before` `--after` | `PATCH /api/bookmarks/{bookmark_id}` | Bookmark −/+ buffer |
 | `bookmark.delete` ⚠ | Delete a bookmark. | `BOOKMARK_ID` | `DELETE /api/bookmarks/{bookmark_id}` | Bookmark ✕ |
 | `bookmark.clear` ⚠ | Delete every bookmark. |  | `DELETE /api/bookmarks` | Clear all |
 | `bookmark.batch` | Bookmark one search hit per JSON line on stdin (pipe from search.folder --json). | `--path` | (client) | Bookmark selected |
@@ -207,7 +208,7 @@ by default land where they always did.
 |---|---|---|---|---|
 | `clips.list` | List finished clips and LeadStinger set files (a folder of the clips library, or everything under it), each with its metadata: source, line, show and episode, codec, channels, duration. | `FOLDER` `--recursive` `--q` `--kind` `--since` `--sort` | `GET /api/clips` | Clips view |
 | `clips.download` | Download a clip or set file from the clips library. | `CLIP_PATH` `--as` `--out-dir` | `GET /api/clips/download/{clip_path}` | Clip Download link |
-| `clips.backfill` | Give clips cut before metadata sidecars existed a best-effort one (ffprobe, the file name, Jellyfin); re-attach moved clips' sidecars and drop those of deleted clips. Safe to run again. | `--wait` `--out-dir` | `POST /api/clips/backfill` | — |
+| `clips.backfill` ⚠ | Give clips cut before metadata sidecars existed a best-effort one (ffprobe, the file name, Jellyfin); re-attach moved clips' sidecars and drop those of deleted clips. Safe to run again. | `--wait` `--out-dir` | `POST /api/clips/backfill` | — |
 
 ## leadstinger
 
@@ -224,6 +225,6 @@ by default land where they always did.
 |---|---|---|---|---|
 | `settings.list` | Show the CLI settings. |  | (client) | — |
 | `settings.get` | Show one CLI setting. | `KEY` | (client) | — |
-| `settings.set` | Change a CLI setting (empty value clears it). | `KEY` `VALUE` | (client) | Name field (clip bar); Subtitle languages (Settings) |
+| `settings.set` ⚠ | Change a CLI setting (empty value clears it). | `KEY` `VALUE` | (client) | Name field (clip bar); Subtitle languages (Settings) |
 
 ⚠ destructive: refused with `--safe`. ¹ local mode only.

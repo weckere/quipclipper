@@ -40,6 +40,7 @@ except ImportError:  # older typer sits on the real click
 
 from quipclipper import commands as reg
 from quipclipper.client import (
+    EXIT_REFUSED,
     EXIT_USAGE,
     CliError,
     Context,
@@ -110,7 +111,8 @@ def _main(
     local: bool = typer.Option(False, "--local", help="Run on local files even when a "
                                                       "server is configured."),
     json_out: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
-    safe: bool = typer.Option(False, "--safe", help="Refuse commands that delete data."),
+    safe: bool = typer.Option(False, "--safe", help="Refuse commands that change or delete "
+                                                    "data (marked ⚠). Use it for agents."),
 ):
     ctx.obj = make_context(server=server, local=local, json_out=json_out, safe=safe,
                            transport=TRANSPORT_OVERRIDE)
@@ -259,9 +261,19 @@ def _run_server(c: Context, cmd_id: str, values: dict[str, Any]) -> None:
     try:
         _reject_local_only(cmd, values)
         data = execute(c, cmd, values)
+    except OSError as exc:
+        _fail(c, CliError(str(exc), code="io"))
     except CliError as exc:
         _fail(c, exc)
     _print(c, cmd, data)
+    _exit_for(cmd, data)
+
+
+def _exit_for(cmd: reg.Command, data: Any) -> None:
+    """Exit 1 for a search with no matches, as a local search does (docs/CLI.md)."""
+    if cmd.id in ("search.item", "search.folder") and isinstance(data, dict) \
+            and not data.get("matches"):
+        raise typer.Exit(code=1)
 
 
 # --- output ---------------------------------------------------------------------------------
@@ -713,6 +725,8 @@ def clip(
     if template and not c.remote:
         template = resolve_template(template)  # an earlier default reads as today's
     if c.remote:
+        if kind == "video" and video.suffix.lower() in AUDIO_EXTS:
+            kind = "audio"  # as the server (and local mode) do, before picking lossless
         _run_server(c, "clip.create", {
             "query": query, "path": str(video), "start": start, "end": end,
             "match_index": index, "track": track, "cue_text": cue_text, "kind": kind,
@@ -727,7 +741,8 @@ def clip(
             "template": template, "default_sub_track": default_sub_track,
             "wait": wait, "out_dir": str(out_dir) if out_dir else None,
             "subs": subs, "langs": langs, "pick": pick, "out": out,
-            "hwaccel": hwaccel, "yes": False,
+            "hwaccel": hwaccel, "yes": False, "limit": limit, "min_score": min_score,
+            "max_span": max_span, "vaapi_device": vaapi_device,
         })
         return
     # An EPUB3 media-overlay book (e.g. Storyteller) is a self-contained
@@ -1125,6 +1140,9 @@ def _read_items(text: str) -> list[dict]:
     except ValueError:
         doc = None
     if doc is None:
+        if "\n" not in text:
+            raise CliError(f"stdin isn't JSON: {text[:80]!r}. Pipe in another command's "
+                           "--json output.", code="usage", exit_code=EXIT_USAGE)
         rows = []
         for line in text.splitlines():
             line = line.strip()
@@ -1179,6 +1197,10 @@ def _client_clip_batch(c: Context, v: dict) -> Any:
         try:
             done.append(wait_job(c, j["job_id"], out_dir=out_dir))
         except CliError as exc:
+            if exc.code == "interrupted":  # Ctrl-C stops the batch, not just one job
+                raise CliError(f"{exc} {len(done)} of {len(jobs)} were done; the rest "
+                               "may still run on the server (quipclipper jobs).",
+                               code="interrupted") from None
             failed.append({"job_id": j["job_id"], "error": str(exc)})
     result = {"jobs": done, "failed": failed}
     if failed:
@@ -1288,7 +1310,11 @@ def _leadstinger(v: dict, args: list[str], stdin: Optional[str] = None) -> Any:
     if proc.returncode != 0:
         detail = out or proc.stderr.strip() or f"exit {proc.returncode}"
         raise CliError(f"leadstinger-cli {args[0]} failed: {detail[:500]}", code="leadstinger")
-    lines = [json.loads(line) for line in out.splitlines() if line.strip()]
+    try:
+        lines = [json.loads(line) for line in out.splitlines() if line.strip()]
+    except ValueError:
+        raise CliError(f"leadstinger-cli {args[0]} answered something that isn't JSON: "
+                       f"{out[:200]!r}", code="leadstinger") from None
     return lines[0] if len(lines) == 1 else lines
 
 
@@ -1314,7 +1340,10 @@ def _client_leadstinger_send(c: Context, v: dict) -> Any:
         manifest = json.loads(zf.read("manifest.json"))
         zf.extractall(files)
     tiles = [t for s in manifest.get("sets", []) for t in s.get("tiles", [])]
+    root = files.resolve()
     paths = [str((files / t["file"]).resolve()) for t in tiles]
+    if not all(Path(x).is_relative_to(root) for x in paths):
+        raise CliError("the set file names a clip outside itself", code="leadstinger")
     added = _leadstinger(v, ["tile.add", "--params",
                              json.dumps({"paths": paths, "set": target_set})])
     ids = added.get("added", []) if isinstance(added, dict) else []
@@ -1426,6 +1455,8 @@ def _client_clip_nowplaying(c: Context, v: dict) -> Any:
                        code="not_found")
     values = {p.name: v.get(p.name) for p in reg._CLIP_OPTIONS}
     values["template"] = values.get("template") or c.settings.get("clip_template")
+    if values.get("lossless") is None:  # as `clip`: re-encode video (exact), copy audio
+        values["lossless"] = (values.get("kind") or "video") != "video"
     values.update(path=session["path"], start=lines[0]["start"], end=lines[-1]["end"],
                   cue_text=" ".join(x.get("text", "") for x in lines).strip() or None,
                   before=v.get("before"), after=v.get("after"),
@@ -1487,6 +1518,9 @@ def _run_client(c: Context, cmd: reg.Command, v: dict) -> Any:
 def run_command(c: Context, cmd: reg.Command, values: dict) -> Any:
     """Run any registry command from a values dict (used by generic commands and `run`)."""
     if cmd.mode == "client":
+        if cmd.destructive and c.safe:  # execute() checks server commands
+            raise CliError(f"{cmd.id} changes or deletes data; refused with --safe.",
+                           code="refused", exit_code=EXIT_REFUSED)
         return _run_client(c, cmd, values)
     _reject_local_only(cmd, values)
     return execute(c, cmd, values)
@@ -1536,9 +1570,12 @@ def _make_generic(cmd: reg.Command):
         c = _c(ctx)
         try:
             data = run_command(c, cmd, values)
+        except OSError as exc:
+            _fail(c, CliError(str(exc), code="io"))
         except CliError as exc:
             _fail(c, exc)
         _print(c, cmd, data)
+        _exit_for(cmd, data)
 
     fn.__signature__ = inspect.Signature(sig)
     fn.__annotations__ = {prm.name: prm.annotation for prm in sig}
@@ -1612,7 +1649,11 @@ def run_cmd(
 ):
     """Run a script of commands (one JSON object per line)."""
     c = _c(ctx)
-    text = sys.stdin.read() if script == "-" else Path(script).read_text()
+    try:
+        text = sys.stdin.read() if script == "-" else Path(script).read_text()
+    except OSError as exc:
+        _fail(c, CliError(f"Can't read {script}: {exc.strerror or exc}", code="usage",
+                          exit_code=EXIT_USAGE))
     failed = 0
     for n, line in enumerate(text.splitlines(), 1):
         line = line.strip()
@@ -1620,6 +1661,9 @@ def run_cmd(
             continue
         try:
             step = json.loads(line)
+            if not isinstance(step, dict) or not isinstance(step.get("params") or {}, dict):
+                raise CliError('each line is {"command": …, "params": {…}}', code="usage",
+                               exit_code=EXIT_USAGE)
             cmd_id = reg.SHORTCUTS.get(step["command"], step["command"])
             cmd = reg.BY_ID[cmd_id]
             if cmd.mode == "both" and not c.remote:

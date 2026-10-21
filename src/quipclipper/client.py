@@ -79,21 +79,38 @@ class Transport(Protocol):
                 body: Optional[dict], stream: bool = False) -> Response: ...
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Never follow a redirect: a followed one would carry the token to wherever
+    Location points, and an unfollowed one must not pass for success."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
 class UrllibTransport:
     """HTTP transport for a real server.
 
     Every request carries ``X-Quipclipper: 1`` (the CSRF header a browser sends),
     so a server with no API token configured still accepts writes. With a token
     it adds ``X-API-Key`` for the backend and ``Authorization: Basic api:<token>``
-    for the nginx password gate in front of it.
+    for the nginx password gate in front of it. Redirects are errors (see
+    :class:`_NoRedirect`). ``token_error`` is a token file that couldn't be read: it
+    fails the first request, so commands that never call the server still work.
     """
 
-    def __init__(self, base_url: str, token: Optional[str] = None, timeout: float = 600.0):
+    def __init__(self, base_url: str, token: Optional[str] = None, timeout: float = 600.0,
+                 token_error: Optional["CliError"] = None):
         self.base = base_url.rstrip("/")
         self.token = token
         self.timeout = timeout
+        self.token_error = token_error
 
     def request(self, method, path, query, body, stream=False):
+        if self.token_error is not None:
+            raise self.token_error
         url = self.base + path
         if query:
             url += "?" + urllib.parse.urlencode(query)
@@ -106,9 +123,13 @@ class UrllibTransport:
             headers["X-API-Key"] = self.token
             basic = base64.b64encode(f"api:{self.token}".encode()).decode()
             headers["Authorization"] = f"Basic {basic}"
-        req = urllib.request.Request(url, data=data, method=method, headers=headers)
         try:
-            resp = urllib.request.urlopen(req, timeout=self.timeout)
+            req = urllib.request.Request(url, data=data, method=method, headers=headers)
+        except ValueError as exc:  # no scheme, or not a URL at all
+            raise CliError(f"Not a server URL: {self.base} ({exc}); use e.g. "
+                           "https://quip.example", code="usage", exit_code=EXIT_USAGE) from None
+        try:
+            resp = _OPENER.open(req, timeout=self.timeout)
         except urllib.error.HTTPError as exc:
             return Response(exc.code, {k.lower(): v for k, v in exc.headers.items()},
                             exc.read())
@@ -171,7 +192,10 @@ def make_context(*, server: Optional[str], local: bool, json_out: bool, safe: bo
     url = server or os.environ.get("QC_URL") or settings.get("server")
     if url:
         ctx.server = url
-        ctx.transport = UrllibTransport(url, read_token(settings))
+        try:
+            ctx.transport = UrllibTransport(url, read_token(settings))
+        except CliError as exc:
+            ctx.transport = UrllibTransport(url, None, token_error=exc)
     return ctx
 
 
@@ -241,7 +265,17 @@ def build_request(cmd: Command, values: dict[str, Any]):
     return cmd.method, path, query, (body if has_body else None)
 
 
-def _error_from(resp: Response) -> CliError:
+# Requests whose 404 can mean "that path isn't on the server": the hint about --local
+# helps there, not for a job, a bookmark or "no such match".
+_PATH_ROUTES = ("/api/items", "/api/search", "/api/library", "/api/media")
+
+
+def _error_from(resp: Response, path: str = "") -> CliError:
+    if 300 <= resp.status < 400:
+        where = resp.headers.get("location") or "another URL"
+        return CliError(f"The server redirected to {where} (HTTP {resp.status}); use that "
+                        "address as --server / QC_URL.", code="redirect",
+                        exit_code=EXIT_NO_SERVER)
     try:
         detail = resp.json().get("detail")
     except Exception:  # noqa: BLE001 — a non-JSON error page
@@ -261,8 +295,10 @@ def _error_from(resp: Response) -> CliError:
     if resp.status == 422 or resp.status == 400:
         return CliError(message, code="bad_request", exit_code=EXIT_USAGE)
     if resp.status == 404:
-        return CliError(f"{message} (paths are resolved on the server; use --local for "
-                        "a file on this machine)", code="not_found")
+        if path.startswith(_PATH_ROUTES) or path == "/api/clip":
+            message += (" (paths are resolved on the server; use --local for a file on "
+                        "this machine)")
+        return CliError(message, code="not_found")
     return CliError(message, code=f"http_{resp.status}")
 
 
@@ -271,8 +307,8 @@ def call(ctx: Context, method: str, path: str, query=None, body=None, stream=Fal
         raise CliError("This command needs a quipclipper server: pass --server URL or "
                        "set QC_URL.", code="no_server", exit_code=EXIT_NO_SERVER)
     resp = ctx.transport.request(method, path, query or [], body, stream=stream)
-    if resp.status >= 400:
-        raise _error_from(resp)
+    if resp.status >= 300:
+        raise _error_from(resp, path)
     return resp
 
 
@@ -297,8 +333,11 @@ def execute(ctx: Context, cmd: Command, values: dict[str, Any]) -> Any:
         resp = call(ctx, method, path, query, body)
         name = _filename(resp, path)
         out = Path(values.get("out_dir") or ".").expanduser() / name
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_bytes(resp.body)
+        try:
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_bytes(resp.body)
+        except OSError as exc:
+            raise CliError(f"Can't save {out}: {exc.strerror or exc}", code="io") from None
         return {"saved": str(out), "size": len(resp.body)}
     resp = call(ctx, method, path, query, body)
     if "json" not in resp.content_type:
@@ -312,14 +351,21 @@ def execute(ctx: Context, cmd: Command, values: dict[str, Any]) -> Any:
 
 
 def _filename(resp: Response, path: str) -> str:
+    """The name to save a download as: the server's Content-Disposition, else the URL's
+    last segment. Only ever a bare name, so a reply can't write outside --out-dir."""
     cd = resp.headers.get("content-disposition", "")
+    name = ""
     for part in cd.split(";"):
         part = part.strip()
         if part.lower().startswith("filename*="):
-            return urllib.parse.unquote(part.split("''", 1)[-1])
+            name = urllib.parse.unquote(part.split("''", 1)[-1])
+            break
         if part.lower().startswith("filename="):
-            return part.split("=", 1)[1].strip('"')
-    return urllib.parse.unquote(path.rstrip("/").rsplit("/", 1)[-1]) or "download"
+            name = part.split("=", 1)[1].strip('"')
+    if not name:
+        name = urllib.parse.unquote(path.rstrip("/").rsplit("/", 1)[-1])
+    name = Path(name.replace("\\", "/")).name
+    return name if name not in ("", ".", "..") else "download"
 
 
 TERMINAL = ("done", "failed", "cancelled")
@@ -350,7 +396,9 @@ def wait_job(ctx: Context, job_id: str, *, out_dir: Optional[str] = None,
         try:
             call(ctx, "DELETE", path)
         except CliError as exc:
-            ctx.err(f"Couldn't cancel: {exc}")
+            # A running clip cut can't stop (409): it finishes on the server.
+            raise CliError(f"Interrupted; the job keeps running on the server ({exc}).",
+                           code="interrupted") from None
         raise CliError("Interrupted; job cancelled.", code="interrupted") from None
     if status == "failed":
         raise CliError(job.get("error") or "job failed", code="job_failed")

@@ -419,3 +419,31 @@ def test_cues_before_picks_the_line_at_or_before_the_playhead():
 def test_format_clock():
     assert cli.format_clock(65) == "1:05"
     assert cli.format_clock(3725.9) == "1:02:05"
+
+
+# --- review fixes (M18 review) ----------------------------------------------------------
+
+
+def test_stdin_that_isnt_json_is_a_usage_error_not_a_recursion():
+    from quipclipper.cli import _read_items
+    from quipclipper.client import CliError
+
+    with pytest.raises(CliError, match="isn't JSON") as exc:
+        _read_items("not json at all")
+    assert exc.value.exit_code == 2
+    with pytest.raises(CliError):
+        _read_items('{"path": "/a"}\n{"trunc')
+
+
+def test_settings_set_is_refused_with_safe(tmp_path):
+    from quipclipper.cli import main
+
+    assert main(["--safe", "settings.set", "server", "http://x"]) == 5
+
+
+def test_template_segments_fit_a_linux_file_name():
+    from quipclipper.naming import MAX_SEGMENT_BYTES, render_clip_template
+
+    out = render_clip_template("{cue}_{folder}", {"cue": "あ" * 80, "folder": "x" * 120})
+    assert len(out.encode()) <= MAX_SEGMENT_BYTES
+    out.encode().decode("utf-8")  # cut on a character boundary

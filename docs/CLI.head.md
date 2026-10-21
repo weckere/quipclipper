@@ -50,7 +50,8 @@ exit with code 3.
   `{"error": {"code": ..., "message": ...}}`.
 - Jobs (clips, YouTube adds and downloads, subtitle backfills) are followed until
   they finish; `--no-wait` returns the job id at once, and `--out-dir DIR`
-  downloads the finished files. Ctrl-C cancels a job you're waiting on.
+  downloads the finished files. Ctrl-C cancels a job you're waiting on (a clip cut
+  that has started can't stop: it finishes on the server), and stops a batch.
 - `--safe` refuses every command marked ⚠ (it changes or deletes data). Use it for
   agents.
 - Batch commands read the `--json` output of another command on stdin, the way the
@@ -107,7 +108,7 @@ by default land where they always did.
 | 0 | OK |
 | 1 | Failed: a server error, a failed job, or no matches |
 | 2 | Usage error, or the server rejected the request as invalid |
-| 3 | No server configured, or the server can't be reached |
+| 3 | No server configured, the server can't be reached, or it redirects (use the URL it redirects to) |
 | 4 | The server refused the token |
 | 5 | Refused by `--safe` |
 

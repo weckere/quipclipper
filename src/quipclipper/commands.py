@@ -382,6 +382,7 @@ COMMANDS: tuple[Command, ...] = (
             "DELETE", "/api/jobs/{job_id}",
             params=(Param("job_id", "str", "Job id.", where=PATH, main=True,
                           required=True),),
+            destructive=True,
             ui="Cancel / Dismiss in the Jobs popover; ✕ Cancel (folder subtitle fetch)"),
     Command("job.download", "Download a finished job's file (all files if FILENAME is "
             "omitted).", "GET", "/api/jobs/{job_id}/download/{filename}",
@@ -427,7 +428,7 @@ COMMANDS: tuple[Command, ...] = (
                     Param("label", "str", "New name.", where=BODY),
                     Param("before", "float", "New padding before.", where=BODY),
                     Param("after", "float", "New padding after.", where=BODY)),
-            ui="Bookmark −/+ buffer"),
+            destructive=True, ui="Bookmark −/+ buffer"),
     Command("bookmark.delete", "Delete a bookmark.", "DELETE",
             "/api/bookmarks/{bookmark_id}",
             params=(Param("bookmark_id", "str", "Bookmark id.", where=PATH, main=True,
@@ -470,7 +471,7 @@ COMMANDS: tuple[Command, ...] = (
     Command("clips.backfill", "Give clips cut before metadata sidecars existed a best-effort "
             "one (ffprobe, the file name, Jellyfin); re-attach moved clips' sidecars and "
             "drop those of deleted clips. Safe to run again.", "POST", "/api/clips/backfill",
-            params=_JOB_FOLLOW, response="job", ui="—"),
+            params=_JOB_FOLLOW, response="job", destructive=True, ui="—"),
 
     # --- LeadStinger (M14): hand clips to the soundboard ------------------------------------
     Command("leadstinger.set", "Make a LeadStinger set file (.lsset) from JSON lines on stdin: "
@@ -556,7 +557,8 @@ COMMANDS: tuple[Command, ...] = (
                           required=True),
                     Param("value", "str", "New value (omit to clear).", where=CLIENT,
                           default="", main=True)),
-            mode="client", ui="Name field (clip bar); Subtitle languages (Settings)"),
+            mode="client", destructive=True,
+            ui="Name field (clip bar); Subtitle languages (Settings)"),
 )
 
 BY_ID: dict[str, Command] = {c.id: c for c in COMMANDS}

@@ -116,6 +116,21 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 - `?as=flac` reports a conversion that times out (422) and keeps its FLAC copies under
   4 GB, two conversions at a time. A NUL byte in a path is a 400 and an infinite time a
   422 (both were 500s); a Jellyfin id with a trailing newline is refused.
+- CLI: a server that redirects (http → https) is an error naming the new address,
+  instead of a silent success; the token never follows a redirect. Text that isn't JSON
+  on a batch command's stdin is a usage error (it recursed until Python gave up). An
+  unreadable token file fails only commands that call the server, so `settings.set` can
+  fix it. Ctrl-C stops a whole `clip.batch`. A download keeps the server's file name
+  inside `--out-dir`.
+- CLI: `--safe` also refuses `job.cancel`, `bookmark.update`, `clips.backfill` and
+  `settings.set` (they change data). `clip.nowplaying` re-encodes video like `clip`
+  (it stream-copied); a server-mode `clip` of an audio file copies it like local mode
+  (it re-encoded to MP3), and refuses the local-only `--min-score`, `--max-span`,
+  `--limit` and `--vaapi-device` instead of ignoring them. A server-mode search with no
+  matches exits 1, as a local one does. Bad URLs, unreadable `run` scripts and
+  unwritable `--out-dir`s are errors, not tracebacks.
+- Clip names stay under the 255-byte file-name limit (a long non-Latin line plus a long
+  folder name could exceed it).
 - The Docker `web` image ships hls.js again (it fetches the pinned npm tarball, checked by
   its hash): without it, Chrome and Firefox fell back to the old ffmpeg pipe, where long
   files never started playing.

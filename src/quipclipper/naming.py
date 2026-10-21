@@ -71,7 +71,8 @@ def _number(value) -> str:
 def clip_template_context(video: Path, rng, cue_text: str,
                           meta: dict | None = None) -> dict[str, str]:
     """Resolve the placeholder values for a clip. Media-derived tokens (cue,
-    title, show, folder, source) are slugified; the rest are already filesystem-safe.
+    title, show, folder) are slugified; ``source`` is the file's own stem, which a
+    file name already makes safe (it can't hold ``/``); the rest are filesystem-safe.
 
     ``meta`` is what a media server knows about the file: ``title`` (the episode or
     movie title), ``show`` (the series), ``season``, ``episode`` and ``year`` (ints).
@@ -106,19 +107,26 @@ def clip_template_context(video: Path, rng, cue_text: str,
     return ctx
 
 
+MAX_SEGMENT_BYTES = 200
+
+
 def render_clip_template(template: str, ctx: dict[str, str]) -> str:
     """Render a clip path template into a safe relative path *without* extension.
 
     Unknown/absent tokens become empty. Per path segment, runs of separators
     left by dropped tokens are collapsed and edges trimmed; empty, ``.`` and
     ``..`` segments are dropped (callers must still check the result stays
-    inside their output folder). ``/`` yields subfolders."""
+    inside their output folder). ``/`` yields subfolders. A segment is cut to
+    :data:`MAX_SEGMENT_BYTES` of UTF-8, leaving room for a ``_2`` and an extension
+    under the 255-byte name limit of Linux file systems."""
     rendered = _TOKEN_RE.sub(lambda mt: ctx.get(mt.group(1), ""), template)
     segments = []
     for raw in rendered.split("/"):
         seg = re.sub(r"_{2,}", "_", raw)
         seg = re.sub(r"-{2,}", "-", seg)
         seg = seg.strip("_-. ")
+        if len(seg.encode()) > MAX_SEGMENT_BYTES:
+            seg = seg.encode()[:MAX_SEGMENT_BYTES].decode("utf-8", "ignore").rstrip("_-. ")
         if seg in ("", ".", ".."):
             continue
         segments.append(seg)

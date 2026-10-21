@@ -20,7 +20,14 @@ from fastapi.testclient import TestClient
 from quipclipper import cli
 from quipclipper import commands as reg
 from quipclipper.client import Response
-from quipclipper_web.app import BookmarkCreate, BookmarkUpdate, ClipRequest, create_app
+from quipclipper_web.app import (
+    BookmarkCreate,
+    BookmarkUpdate,
+    ClipRequest,
+    LeadStingerQuipRequest,
+    YouTubeAdd,
+    create_app,
+)
 from quipclipper_web.config import Settings
 
 FRONTEND = Path(__file__).resolve().parents[2] / "frontend" / "app.js"
@@ -100,6 +107,8 @@ def _wire_names(cmd: reg.Command, where: str) -> set[str]:
     ("clip.create", ClipRequest),
     ("bookmark.add", BookmarkCreate),
     ("bookmark.update", BookmarkUpdate),
+    ("youtube.add", YouTubeAdd),
+    ("leadstinger.quip", LeadStingerQuipRequest),
 ])
 def test_body_params_match_request_models(cmd_id, model):
     cmd = reg.BY_ID[cmd_id]
