@@ -244,3 +244,95 @@ def test_epub_stored_member_reads_in_place(tmp_path, media):
     assert inp.startswith("subfile,") and cleanup is None
     s = waveform.decode(inp, start=1.0, duration=0.01)
     assert len(s) == 480 and max(s) == pytest.approx(4096, abs=30)
+
+
+# --- overview builds: review fixes (M18 review) ---------------------------------------
+
+
+def _wait_state(store, key, want, timeout=15.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        st = store.status(key)
+        if st["state"] in want:
+            return st
+        time.sleep(0.05)
+    return store.status(key)
+
+
+def _fake_src(tmp_path, name="a.wav", duration=None):
+    f = tmp_path / name
+    f.write_bytes(b"x")
+    return peaks.AudioSource(input=str(f), basis=f"{f}|{name}", duration=duration)
+
+
+def test_overview_build_survives_a_flood_on_stderr(tmp_path, monkeypatch):
+    """A damaged file makes ffmpeg print more than a pipe holds; the build must not
+    deadlock on it (it read stderr only after stdout closed)."""
+    flood = ["sh", "-c", "head -c 300000 /dev/zero | tr '\\0' x >&2; head -c 32000 /dev/zero"]
+    monkeypatch.setattr(peaks.waveform, "decode_args", lambda *a, **k: flood)
+    store = peaks.PeakStore(tmp_path / "state")
+    src = _fake_src(tmp_path)
+    store.ensure(src)
+    assert _wait_state(store, src.key, {"ready", "error"})["state"] == "ready"
+    store.shutdown()
+
+
+def test_overview_build_that_stalls_is_killed(tmp_path, monkeypatch):
+    monkeypatch.setattr(peaks, "OVERVIEW_STALL", 0.2)
+    monkeypatch.setattr(peaks.waveform, "decode_args", lambda *a, **k: ["sleep", "30"])
+    store = peaks.PeakStore(tmp_path / "state")
+    src = _fake_src(tmp_path)
+    store.ensure(src)
+    st = _wait_state(store, src.key, {"ready", "error"}, timeout=10)
+    assert st["state"] == "error" and "no audio" in st["error"]
+    store.shutdown()
+
+
+def test_overview_that_cannot_be_saved_is_an_error_not_stuck_building(tmp_path, monkeypatch):
+    monkeypatch.setattr(peaks.waveform, "decode_args",
+                        lambda *a, **k: ["sh", "-c", "head -c 32000 /dev/zero"])
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "peaks").write_text("not a folder")
+    store = peaks.PeakStore(state)
+    src = _fake_src(tmp_path)
+    store.ensure(src)
+    assert _wait_state(store, src.key, {"ready", "error"})["state"] == "error"
+    store.shutdown()
+
+
+def test_overview_queue_serves_the_newest_and_drops_the_oldest(tmp_path, monkeypatch):
+    gate = tmp_path / "gate"
+    monkeypatch.setattr(
+        peaks.waveform, "decode_args",
+        lambda *a, **k: ["sh", "-c", f"while [ ! -e {gate} ]; do sleep 0.05; done; "
+                                     "head -c 3200 /dev/zero"])
+    store = peaks.PeakStore(tmp_path / "state")
+    srcs = [_fake_src(tmp_path, f"{i}.wav") for i in range(6)]
+    for s in srcs:
+        store.ensure(s)
+        time.sleep(0.05)
+    # 0 runs; 1 and 2 were dropped (only MAX_QUEUED wait); 5 is next.
+    assert store.status(srcs[0].key)["state"] == "building"
+    assert store.status(srcs[1].key)["state"] == "none"
+    gate.touch()
+    assert _wait_state(store, srcs[5].key, {"ready"})["state"] == "ready"
+    assert _wait_state(store, srcs[3].key, {"ready"})["state"] == "ready"
+    store.shutdown()
+
+
+def test_detail_peaks_put_short_audio_where_it_is(client, tmp_path, media):
+    """10 s of video with 6 s of audio: a 4-10 s window draws the audio in 4-6 s and
+    leaves 6-10 s flat, instead of stretching 2 s of samples over 6 s."""
+    src = media / "short-audio.mp4"
+    if not src.exists():
+        _ff("-f", "lavfi", "-i", "testsrc=size=64x48:rate=25:duration=10",
+            "-f", "lavfi", "-i", "sine=frequency=500:sample_rate=48000:duration=6",
+            "-c:v", "mpeg4", "-c:a", "aac", str(src))
+    r = client.get("/api/items/peaks", params={"path": str(src), "start": 4, "end": 10,
+                                               "bins": 60})
+    assert r.status_code == 200, r.text
+    pairs = _ints(r.json()["data"])
+    maxima = pairs[1::2]
+    assert min(maxima[:18]) > 1000      # 4.0-5.8 s: tone
+    assert max(maxima[22:]) == 0        # 6.2-10 s: no audio

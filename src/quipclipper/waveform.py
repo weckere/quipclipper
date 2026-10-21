@@ -264,10 +264,17 @@ def nearest_quiet(samples: Sequence[int], index: int, rate: float, *,
 # before the time they want (a whole multiple of ANCHOR_GRID seconds, less one for the
 # decoder to settle) and count samples from there.
 ANCHOR_GRID = 10
+# Pads the decode's start to the anchor: an audio stream that starts after it (a delay
+# in Matroska, TS audio behind the video) would otherwise be counted from its first
+# sample, not from the anchor's file time. A no-op when the audio is there already.
+ANCHOR_PAD = "aresample=first_pts=0"
 
 
 def anchor(t: float) -> float:
-    """The -ss a sample-exact decode reaching ``t`` starts from."""
+    """The -ss a sample-exact decode reaching ``t`` starts from. ``t`` is taken to the
+    microsecond first, so 30.0 and a 29.999999999999996 that arithmetic made of it
+    share an anchor."""
+    t = round(t, 6)
     return float(max(0, math.floor(t / ANCHOR_GRID) * ANCHOR_GRID - 1))
 
 
@@ -275,7 +282,7 @@ def anchored_trim(t: float, src_rate: int) -> tuple[float, int]:
     """``(anchor, samples)``: seek to the anchor, then skip this many samples (at the
     stream's own rate) to reach ``t``."""
     a = anchor(t)
-    return a, round((t - a) * src_rate)
+    return a, round((round(t, 6) - a) * src_rate)
 
 
 def anchored_start(t: float, src_rate: int) -> float:
@@ -291,7 +298,9 @@ def decode_args(source: str | Path, *, audio: int = 0, rate: int | None = None,
 
     With ``src_rate`` (the stream's own sample rate) the decode is anchored (see
     :func:`anchor`), the way an exact clip cut decodes, so a sample here is that
-    sample in the clip; without it, it seeks straight to ``start``."""
+    sample in the clip; without it, it seeks straight to ``start``. Either way the
+    first sample is at the seek's file time (or the file's start), however late the
+    audio stream itself starts."""
     cmd = ["ffmpeg", "-nostdin", "-v", "error", *input_flags]
     trim = None
     seek = start
@@ -303,8 +312,10 @@ def decode_args(source: str | Path, *, audio: int = 0, rate: int | None = None,
     if duration is not None:
         cmd += ["-t", f"{duration:.6f}"]
     cmd += ["-map", f"0:a:{audio}", "-vn", "-sn", "-dn"]
+    af = ANCHOR_PAD
     if trim:
-        cmd += ["-af", f"atrim=start_sample={trim},asetpts=PTS-STARTPTS"]
+        af += f",atrim=start_sample={trim},asetpts=PTS-STARTPTS"
+    cmd += ["-af", af]
     cmd += ["-ac", "1"]
     if rate:
         cmd += ["-ar", str(rate)]
@@ -381,14 +392,31 @@ def native_rate(source: str | Path, audio: int = 0, input_flags: Sequence[str] =
         return None
 
 
+def start_time(source: str | Path) -> float:
+    """The container's start time (0 when ffprobe can't tell). ffmpeg's -ss and the
+    player count from it; packet timestamps don't."""
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=start_time",
+             "-of", "csv=p=0", str(source)],
+            capture_output=True, text=True, timeout=20)
+        return float(r.stdout.strip().splitlines()[0])
+    except (subprocess.TimeoutExpired, OSError, ValueError, IndexError):
+        return 0.0
+
+
 def keyframes(source: str | Path, start: float, end: float) -> list[float]:
     """Video keyframe times in ``start..end`` (empty for audio, or when ffprobe fails).
-    A lossless (stream-copy) video cut can only start on one of these."""
+    A lossless (stream-copy) video cut can only start on one of these. Times are from
+    the file's start, as everywhere else (a TS starting at 1.4 s has its first
+    keyframe at 0, not 1.4)."""
+    offset = start_time(source)
     try:
         r = subprocess.run(
             ["ffprobe", "-v", "error", "-select_streams", "v:0",
              "-show_entries", "packet=pts_time,flags", "-of", "csv=p=0",
-             "-read_intervals", f"{max(0.0, start - 1):.3f}%{end:.3f}", str(source)],
+             "-read_intervals", f"{offset + max(0.0, start - 1):.3f}%{offset + end:.3f}",
+             str(source)],
             capture_output=True, text=True, timeout=20)
     except (subprocess.TimeoutExpired, OSError):
         return []
@@ -398,7 +426,7 @@ def keyframes(source: str | Path, start: float, end: float) -> list[float]:
         if "K" not in flags:
             continue
         try:
-            t = float(pts)
+            t = float(pts) - offset
         except ValueError:
             continue
         if start <= t <= end:

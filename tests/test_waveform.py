@@ -212,3 +212,73 @@ def test_decode_a_generated_sine(tmp_path):
     # ffmpeg's sine starts at phase 0: the cut lands on a crossing every 24 samples.
     assert abs(s[0]) < 200
     assert waveform.nearest_zero_crossing(s, 30, 24) in (24, 23, 25)
+
+
+def test_anchor_rounds_float_noise_away():
+    """A snap on a 10 s mark comes back as start - before = 29.999999999999996: it must
+    anchor where 30.0 does, or the cut and the snap decode from different anchors."""
+    assert waveform.anchor(30.0) == waveform.anchor(30.0 - 1e-12) == 29.0
+    assert waveform.anchored_trim(29.999999999999996, 48000) == (29.0, 48000)
+
+
+def test_decode_args_pad_the_start_to_file_time():
+    cmd = waveform.decode_args("/m/a.mkv", rate=8000)
+    assert cmd[cmd.index("-af") + 1] == "aresample=first_pts=0"
+    cmd = waveform.decode_args("/m/a.mkv", start=13.0, duration=1, src_rate=48000)
+    assert cmd[cmd.index("-af") + 1] == (
+        "aresample=first_pts=0,atrim=start_sample=192000,asetpts=PTS-STARTPTS")
+
+
+def _delayed_audio(path):
+    """20 s of video whose audio starts 0.5 s in (as an MKV audio delay does), with a
+    20 ms beep at every file time x.5 s."""
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-y", "-f", "lavfi",
+         "-i", "testsrc2=size=64x48:rate=25:duration=20", "-itsoffset", "0.5", "-f", "lavfi",
+         "-i", "aevalsrc='if(lt(mod(t,1),0.02),0.8*sin(2*PI*1000*t),0)':s=48000:d=19.5",
+         "-map", "0:v", "-map", "1:a", "-c:v", "libx264", "-g", "250", "-c:a", "flac",
+         str(path)], check=True)
+    return path
+
+
+def _first_beep(samples, rate=48000) -> float | None:
+    i = next((k for k, v in enumerate(samples) if abs(v) > 8000), None)
+    return None if i is None else round(i / rate, 3)
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize("start", [3.0, 13.0])
+def test_anchored_decode_counts_from_file_time_when_audio_starts_late(tmp_path, start):
+    """Below the first anchor there is no -ss: the decode must still start at file time
+    0, not at the delayed audio's first sample (a 0.5 s error before the fix)."""
+    src = _delayed_audio(tmp_path / "delayed.mkv")
+    t0 = waveform.anchored_start(start, 48000)
+    s = waveform.decode(src, rate=48000, start=t0, duration=1.0, src_rate=48000)
+    assert _first_beep(s) == 0.5
+    overview = waveform.decode(src, rate=48000)
+    assert _first_beep(overview) == 0.5
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize("start", [3.0, 13.0])
+def test_exact_cuts_keep_late_audio_in_sync(tmp_path, start):
+    from quipclipper.clip import ClipRange, cut_clip
+
+    src = _delayed_audio(tmp_path / "delayed.mkv")
+    for kind, lossless, codec, ext in (("audio", True, "wav", "wav"),
+                                       ("video", False, None, "mp4")):
+        out = cut_clip(src, ClipRange(start, start + 1.0), kind=kind, lossless=lossless,
+                       audio_codec=codec, out=tmp_path / f"cut-{kind}.{ext}")
+        assert _first_beep(waveform.decode(out, rate=48000)) == 0.5, kind
+
+
+@needs_ffmpeg
+def test_keyframes_count_from_the_file_start(tmp_path):
+    """A TS starts at 1.4 s: its keyframes (every 10 s) are at 0, 10, 20 as the player
+    and -ss count them, not at 1.4, 11.4, 21.4."""
+    src = tmp_path / "plain.ts"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi",
+                    "-i", "testsrc2=size=64x48:rate=25:duration=30", "-c:v", "libx264",
+                    "-g", "250", "-output_ts_offset", "1.4", str(src)], check=True)
+    assert waveform.start_time(src) > 1
+    assert waveform.keyframes(src, 5, 25) == pytest.approx([10.0, 20.0], abs=0.05)

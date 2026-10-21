@@ -90,6 +90,18 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   was made before the player could take it.
 - The CLI works with typer 0.27, which bundles its own click and no longer installs one;
   `typer>=0.24` replaces the `<0.27` pin (and the direct `click` dependency).
+- Exact cuts and the waveform stay in sync on files whose audio starts after the video
+  (an audio delay in Matroska, TS audio behind its video). Before, a cut starting in the
+  first 9 s of such a file had its audio early by the delay, and the waveform's overview
+  was drawn that much early everywhere.
+- The waveform overview no longer hangs on a damaged file (ffmpeg's error output filled
+  a pipe nobody read, which blocked every later overview until a restart), stops a
+  decode that stalls for 2 minutes, reports a build it couldn't save as failed instead
+  of building forever, and draws the file you just opened before older requests.
+- Zoomed-in waveform views draw audio where it is when it ends inside the window, instead
+  of stretching it across the whole window. Lossless-cut keyframe markers are in the
+  right place on files whose timestamps don't start at 0 (MPEG-TS).
+- A snapped in point on a whole 10 s mark cuts from the same anchor the snap decoded from.
 - The Docker `web` image ships hls.js again (it fetches the pinned npm tarball, checked by
   its hash): without it, Chrome and Firefox fell back to the old ffmpeg pipe, where long
   files never started playing.

@@ -404,7 +404,8 @@ def test_exact_cut_takes_audio_from_an_anchored_decode():
     assert args[second + 1] == "119.000000"           # anchor: floor(123/10)*10 - 1
     assert ["-map", "0:v:0?", "-map", "1:a:1"] == args[args.index("-map"):args.index("-map") + 4]
     trim = args[args.index("-filter:a:0") + 1]
-    assert trim == f"atrim=start_sample={round(4.456789 * 48000)},asetpts=PTS-STARTPTS"
+    assert trim == (f"aresample=first_pts=0,atrim=start_sample={round(4.456789 * 48000)},"
+                    "asetpts=PTS-STARTPTS")
     wav = _ffmpeg_args(source="/m/a.mkv", rng=rng, kind="audio", out=Path("/o.wav"),
                        lossless=True, fps=15, width=480, audio_codec="wav", audio_rates=[44100])
     assert wav.count("-i") == 1 and wav[wav.index("-ss") + 1] == "119.000000"

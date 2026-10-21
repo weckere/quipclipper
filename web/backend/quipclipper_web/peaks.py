@@ -22,11 +22,11 @@ import hashlib
 import os
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from array import array
 from collections import OrderedDict
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -41,6 +41,9 @@ DETAIL_RATE = 16000        # Hz for detail windows longer than that
 MAX_RATE = 48000
 MAX_BINS = 8192
 CACHE_LIMIT = 512 * 1024 * 1024  # bytes of overview files kept in the state dir
+OVERVIEW_STALL = 120.0     # seconds without audio from ffmpeg before a build is killed
+OVERVIEW_TIMEOUT = 3600.0  # seconds any one overview build may take
+MAX_QUEUED = 3             # overview builds waiting behind the running one
 
 
 @dataclass
@@ -101,7 +104,11 @@ def _status(b: _Build) -> dict:
 
 
 class PeakStore:
-    """Overview pyramids on disk plus a small in-memory LRU, built one at a time."""
+    """Overview pyramids on disk plus a small in-memory LRU, built one at a time.
+
+    Builds wait in a short queue served newest first: the file just opened is drawn
+    next, and opening many files in a row doesn't leave the current one behind all of
+    them (a dropped build is queued again when its file asks)."""
 
     def __init__(self, state_dir: Path, *, max_memory: int = 4,
                  cache_limit: int = CACHE_LIMIT) -> None:
@@ -112,10 +119,31 @@ class PeakStore:
         self._builds: dict[str, _Build] = {}
         self._rates: dict[str, int | None] = {}
         self._lock = threading.Lock()
-        self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="qc-peaks")
+        self._queue: list[tuple[AudioSource, _Build]] = []
+        self._wake = threading.Condition(self._lock)
+        self._proc: subprocess.Popen | None = None
+        self._closed = False
+        self._worker = threading.Thread(target=self._work, name="qc-peaks", daemon=True)
+        self._worker.start()
 
     def shutdown(self) -> None:
-        self._pool.shutdown(wait=False, cancel_futures=True)
+        with self._lock:
+            self._closed = True
+            self._queue.clear()
+            proc = self._proc
+            self._wake.notify_all()
+        if proc is not None and proc.poll() is None:
+            proc.kill()
+
+    def _work(self) -> None:
+        while True:
+            with self._lock:
+                while not self._queue and not self._closed:
+                    self._wake.wait()
+                if self._closed:
+                    return
+                src, b = self._queue.pop()  # newest first
+            self._build(src, b)
 
     def _file(self, key: str) -> Path:
         return self.dir / f"{key}.qcpk"
@@ -163,20 +191,31 @@ class PeakStore:
             if b is not None and (b.state != "error" or time.monotonic() - b.started < 60):
                 return _status(b)
             b = self._builds[key] = _Build()
-        self._pool.submit(self._build, src, b)
+            self._queue.append((src, b))
+            while len(self._queue) > MAX_QUEUED:
+                old, _ = self._queue.pop(0)
+                self._builds.pop(old.key, None)
+            self._wake.notify()
         return {"state": "queued", "progress": 0.0}
 
     def _build(self, src: AudioSource, b: _Build) -> None:
         b.state = "building"
+        b.started = time.monotonic()
+        tmp = None
         try:
             pyr = self._decode_overview(src, b)
+            self.dir.mkdir(parents=True, exist_ok=True)
+            fd, name = tempfile.mkstemp(dir=self.dir, prefix=f"{src.key}.", suffix=".tmp")
+            tmp = Path(name)
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(pyr.to_bytes())
+            os.replace(tmp, self._file(src.key))
+            tmp = None
         except Exception as exc:  # noqa: BLE001 - surfaced to the client as the build's error
             b.state, b.error = "error", str(exc) or exc.__class__.__name__
+            if tmp is not None:
+                tmp.unlink(missing_ok=True)
             return
-        self.dir.mkdir(parents=True, exist_ok=True)
-        tmp = self._file(src.key).with_suffix(".tmp")
-        tmp.write_bytes(pyr.to_bytes())
-        os.replace(tmp, self._file(src.key))
         self._remember(src.key, pyr)
         b.state, b.progress = "ready", 1.0
         with self._lock:
@@ -191,24 +230,50 @@ class PeakStore:
             kw = {}
             if hasattr(os, "nice"):
                 kw["preexec_fn"] = lambda: os.nice(10)  # behind playback and clip jobs
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kw)
-            try:
-                mins, maxs = array("h"), array("h")
-                expect = (src.duration or 0) * OVERVIEW_RATE
-                assert proc.stdout is not None
-                for lo, hi, total in waveform.stream_buckets(proc.stdout, OVERVIEW_BUCKET):
-                    mins.extend(lo)
-                    maxs.extend(hi)
-                    if expect:
-                        b.progress = min(0.99, total / expect)
-                err = proc.stderr.read().decode(errors="replace") if proc.stderr else ""
-                rc = proc.wait()
-            finally:
-                if proc.poll() is None:
-                    proc.kill()
-                    proc.wait()
+            # stderr to a file, not a pipe: a damaged file can print far more than a
+            # pipe holds while we read stdout, and ffmpeg would block on it for good.
+            with tempfile.TemporaryFile() as errf:
+                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errf, **kw)
+                with self._lock:
+                    self._proc = proc
+                last = [time.monotonic()]
+                done = threading.Event()
+
+                def watchdog() -> None:
+                    # A stalled read (a network source) or a decode that never ends.
+                    while not done.wait(min(5.0, OVERVIEW_STALL)):
+                        now = time.monotonic()
+                        if (now - last[0] > OVERVIEW_STALL
+                                or now - b.started > OVERVIEW_TIMEOUT):
+                            proc.kill()
+                            return
+
+                threading.Thread(target=watchdog, name="qc-peaks-watchdog",
+                                 daemon=True).start()
+                try:
+                    mins, maxs = array("h"), array("h")
+                    expect = (src.duration or 0) * OVERVIEW_RATE
+                    assert proc.stdout is not None
+                    for lo, hi, total in waveform.stream_buckets(proc.stdout, OVERVIEW_BUCKET):
+                        last[0] = time.monotonic()
+                        mins.extend(lo)
+                        maxs.extend(hi)
+                        if expect:
+                            b.progress = min(0.99, total / expect)
+                    rc = proc.wait()
+                finally:
+                    done.set()
+                    if proc.poll() is None:
+                        proc.kill()
+                        proc.wait()
+                    with self._lock:
+                        self._proc = None
+                errf.seek(0)
+                err = errf.read()[-4096:].decode(errors="replace")
             if rc != 0 or not mins:
                 lines = err.strip().splitlines()
+                if rc < 0 and not lines:
+                    lines = ["stopped: no audio for too long"]
                 raise RuntimeError("ffmpeg could not decode the audio"
                                    + (f": {lines[-1]}" if lines else ""))
             return waveform.PeakPyramid(mins, maxs, OVERVIEW_BUCKET, OVERVIEW_RATE)
@@ -217,7 +282,12 @@ class PeakStore:
                 cleanup()
 
     def _prune(self) -> None:
-        """Keep the overview files under the cache limit, oldest-used first."""
+        """Keep the overview files under the cache limit, oldest-used first, and drop
+        temp files a crashed build left behind."""
+        with contextlib.suppress(OSError):
+            for f in self.dir.glob("*.tmp"):
+                if time.time() - f.stat().st_mtime > 3600:
+                    f.unlink()
         try:
             files = [(f.stat().st_mtime, f.stat().st_size, f) for f in self.dir.glob("*.qcpk")]
         except OSError:
@@ -298,7 +368,10 @@ def peaks_response(store: PeakStore, src: AudioSource, start: float, end: float 
         if len(samples) <= bins:
             body.update(kind="samples", t0=round(t0, 9), count=len(samples), data=encode(samples))
         else:
-            body.update(kind="peaks", data=encode(waveform.bins(samples, bins)))
+            # Bin by where the samples are, not by how many came back: audio that ends
+            # before the window (or the file's video) leaves the rest of it flat.
+            body.update(kind="peaks", data=encode(waveform.bins(
+                samples, bins, first=(start - t0) * rate, per_bin=span * rate / bins)))
         if body["peak"] is None:
             body["peak"] = max(abs(min(samples)), abs(max(samples)))
     elif pyr is not None:
