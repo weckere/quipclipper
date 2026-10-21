@@ -62,7 +62,7 @@ pip install -e .            # or: pip install -e ".[dev]" for the test dependenc
 ```
 
 This installs the `quipclipper` command and the Python dependencies (`pysubs2`,
-`rapidfuzz`, `typer`, `click`). The web app is installed separately, with Docker or the
+`rapidfuzz`, `typer`). The web app is installed separately, with Docker or the
 NixOS module: see [`DEPLOY.md`](DEPLOY.md).
 
 ### Nix
@@ -215,7 +215,9 @@ Opening a file opens its workspace.
   focus it and use the arrow keys) and the fields follow; a negative value trims into the
   line. **Snap** pulls a dropped handle to the nearest **zero crossing** (on by default,
   once zoomed in to 10 s or closer, so the cut starts without a click), a **silence**, or a
-  **cue edge**. **▶ Selection**, **▶ 1 s from in** and **▶ 1 s to out** audition the cut.
+  **cue edge**. The zero crossing is the waveform's, which mixes every channel into one:
+  on a stereo or 5.1 track each channel can still be mid-swing there, so for a
+  multichannel FLAC/WAV cut, **silence** is the snap that avoids a click. **▶ Selection**, **▶ 1 s from in** and **▶ 1 s to out** audition the cut.
   A note says how the in point will be cut: on the sample with **Exact** on (or FLAC/WAV
   audio); on the keyframe before it for a lossless video copy; on a codec frame (20–30 ms)
   for passthrough audio.
@@ -501,7 +503,8 @@ inspiration and model is [LosslessCut](https://github.com/mifi/lossless-cut).
 This is the **default for audio**. For **video** the default is a frame-exact
 re-encode instead (matching the web app), because a lossless copy can only begin
 at a **keyframe** — ffmpeg seeks to the nearest keyframe at or before your start,
-so the clip begins a little earlier than requested (the **end is exact**). On a
+so the clip begins a little earlier than requested (with ffmpeg the **end is exact**;
+mkvmerge can only end on a keyframe too, so `auto` never uses it for video). On a
 long-GOP source (sparse keyframes, e.g. some BluRay encodes 8–10 s apart) that
 lead-in can be several seconds, hence the re-encode default. Pass `--lossless` for
 a near-instant byte-for-byte video copy (accepting the keyframe lead-in).
@@ -517,8 +520,7 @@ What `--lossless` preserves:
 
 A `--no-lossless` (re-encode) video clip is encoded to H.264 — on an Intel iGPU
 (Quick Sync / VAAPI) when one is detected, else software libx264; see `--hwaccel`.
-mkvmerge produces tighter lossless cuts than ffmpeg. GIF output is inherently a
-re-encode and ignores `--lossless`.
+GIF output is inherently a re-encode and ignores `--lossless`.
 
 ### Backends: ffmpeg and mkvmerge
 
@@ -527,15 +529,17 @@ quipclipper has two cutting backends:
 - **ffmpeg** — universal; used for gif, re-encodes (`--no-lossless`), channel
   splitting, and as a fallback when mkvmerge is unavailable.
 - **mkvmerge** ([MKVToolNix](https://mkvtoolnix.download/)) — used for lossless
-  audio/video cuts when installed. It splits losslessly and superbly: keeps every
-  track, chapter and attachment, never re-encodes, produces tighter cuts, and
+  audio cuts when installed (and video with `--backend mkvmerge`). It splits
+  losslessly: keeps every track, chapter and attachment, never re-encodes, and
   trims/time-shifts subtitles natively. Output is always Matroska (`.mkv` / `.mka`).
+  It can only end a video cut on a keyframe, so a clip of a long-GOP source runs on
+  past the line (a 3 s line became 22 s); `auto` cuts video with ffmpeg for that reason.
 
 `--backend` selects the strategy:
 
 | Value | Behaviour |
 |---|---|
-| `auto` (default) | Use mkvmerge for any lossless audio/video cut when it's installed (MKV and non-MKV sources); otherwise ffmpeg. |
+| `auto` (default) | Use mkvmerge for a lossless audio cut when it's installed (MKV and non-MKV sources); ffmpeg for everything else, lossless video included. The web app does the same. |
 | `mkvmerge` | Force mkvmerge. Lossless audio/video only — errors on gif, `--no-lossless`, or `--split-channels`. |
 | `ffmpeg` | Always use ffmpeg. |
 
@@ -702,7 +706,9 @@ picker and its search/index cache, so all paths agree on the default track.
 ### Output names and containers
 
 When `--out` is omitted, clips are auto-named next to the source as
-`<stem>_<HH-MM-SS_mmm>.<ext>`. The extension is chosen to hold the source streams
+`<stem>_<HH-MM-SS>.<ext>` (whole seconds; `_2`, `_3` … when that name is taken). With
+`--template` (or the `clip_template` setting) the name comes from the template instead,
+under `--out-dir` (default: the current folder); see [CLI.md](CLI.md). The extension is chosen to hold the source streams
 without transcoding:
 
 | Mode | Container |

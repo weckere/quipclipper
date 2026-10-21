@@ -44,9 +44,9 @@ Environment variables (mirrored by the NixOS module options):
 | `QC_BIND` | `127.0.0.1` | backend listen address |
 | `QC_PORT` | `8000` | backend listen port |
 | `QC_MAX_CONCURRENT_JOBS` | `2` | ffmpeg job cap |
-| `QC_PASSWORD` | (unset) | when set on the **nginx** service, gates the whole site with HTTP basic auth (also reported via `/api/config`) |
+| `QC_PASSWORD` | (unset) | when set on the **nginx** service, gates the whole site with HTTP basic auth (`/api/config` reports it as `auth_required` only when the **app** service has it too) |
 | `QC_USERNAME` | `quip` | basic-auth username (used only when `QC_PASSWORD` is set) |
-| `QC_SUBTITLE_LANGS` | `en` | ordered subtitle-language auto-select preference (comma-separated, e.g. `eng,spa`); UI Auto-lang box overrides per browser |
+| `QC_SUBTITLE_LANGS` | `en` | ordered subtitle-language auto-select preference (comma-separated, e.g. `eng,spa`); the web app's **Subtitle languages** setting overrides it per browser |
 | `QC_YTDLP_ARGS` | `--socket-timeout 10 --extractor-retries 1` | extra args prepended to every `yt-dlp` call (fail-fast so a hung YouTube endpoint doesn't stall a fetch for ~80s). Override to tune; set empty for yt-dlp's defaults |
 | `QC_YOUTUBE_DIR` | (unset) | where downloaded YouTube videos are written. Unset = private in the state dir. Set to a real folder (ideally under a media root) and a download lands as `<Title> [<id>].mp4` with a `.vtt` sidecar — a browsable, dialogue-searchable library item |
 | `QC_PUBLIC_URL` | (unset) | this server's base URL as other machines reach it (e.g. `https://quip.example`, a path prefix is fine). "Send to LeadStinger" puts it in the `leadstinger://quip` link LeadStinger downloads the clip from; never taken from the request. Unset = those links are off |
@@ -73,7 +73,7 @@ uses `h264_vaapi` (Quick Sync via VAAPI) — for both the **browser-preview** vi
 re-encode and the **clip output** re-encode (Exact / `--no-lossless`) — falling
 back to software `libx264` if the GPU encode fails. (Lossless cuts are stream
 copies, so they never hit the encoder.) Pass the device into the container to
-enable it (see the root README's Docker quick start). Override the node with
+enable it (see [`docs/DEPLOY.md`](../../docs/DEPLOY.md), "hardware video transcode"). Override the node with
 `QC_VAAPI_DEVICE` (e.g. a second GPU's `/dev/dri/renderD129`); set
 `LIBVA_DRIVER_NAME` (`iHD` for Gen8+ Intel) if libva doesn't auto-select.
 

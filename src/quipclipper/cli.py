@@ -838,8 +838,13 @@ def clip(
             typer.secho("mkvmerge not found on PATH. Install MKVToolNix.", fg="red", err=True)
             raise typer.Exit(code=2)
         use_mkvmerge = True
-    else:  # auto — prefer mkvmerge for any lossless audio/video cut when available
+    else:  # auto — mkvmerge for a lossless audio cut when available, as the server does
         use_mkvmerge = mkv_capable and mkvmerge_available()
+        # Not for lossless VIDEO: mkvmerge can only end a kept range on a keyframe, so on
+        # a long-GOP source it runs well past the cut (a 3 s line became 22 s). ffmpeg's
+        # copy ends exactly; the start still snaps to the keyframe before (207d7c8).
+        if use_mkvmerge and kind == "video":
+            use_mkvmerge = False
 
     # Remux-first only happens on the mkvmerge path and only adds value for
     # non-Matroska sources — an MKV is already a clean container, so cutting it

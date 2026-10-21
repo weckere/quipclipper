@@ -129,8 +129,8 @@ copied video stream cannot start mid-GOP and remain decodable.
 
 **What was learned during development:** With `-c copy`, a copy can only begin at a
 keyframe, so the output starts at the keyframe at or before the requested time and
-runs to (requested start + duration). The **end is exact**; the **start may include
-a small keyframe lead-in**. This matches LosslessCut's behaviour and is documented
+runs to (requested start + duration). With ffmpeg the **end is exact**; the **start
+may include a small keyframe lead-in**. This matches LosslessCut's behaviour and is documented
 as a feature (a little extra lead-in before a line is usually welcome).
 
 - `-t <duration>` is used rather than `-to <end>` because, combined with a
@@ -279,8 +279,10 @@ absent.
 containers) `mkvmerge --split parts:START-END`
 ([mkvmerge docs](https://mkvtoolnix.download/doc/mkvmerge.html)) is an excellent
 lossless splitter: it keeps every track, chapter and attachment, never re-encodes,
-produces tighter cuts than ffmpeg's keyframe seek, writes the output to the exact
-filename, and trims/shifts subtitles natively. During development it consistently
+writes the output to the exact filename, and trims/shifts subtitles natively. For
+**video** it can only end a kept range on a keyframe, so on a long-GOP source the clip
+runs well past the cut (207d7c8: a 3 s line became 22 s): the `auto` backend (server and
+CLI alike) uses it for lossless audio only and cuts lossless video with ffmpeg. During development it consistently
 produced cleaner results than the ffmpeg copy path (correct start timestamps,
 native subtitle handling, all tracks retained).
 

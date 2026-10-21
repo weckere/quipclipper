@@ -18,7 +18,7 @@ The repo ships a ready-to-edit [`docker-compose.example.yml`](../docker-compose.
 it, set your media paths, and `docker compose up -d`.
 
 Every release publishes prebuilt images to the GitHub Container Registry, tagged
-with the version (`0.1.1`), the minor series (`0.1`) and `latest`, so the simplest
+with the version (e.g. `0.2.0`), the minor series (`0.2`) and `latest`, so the simplest
 deploy just **pulls** them — no local build. Pin a version tag to choose when you
 upgrade, or follow `latest`. A minimal version:
 
@@ -133,7 +133,7 @@ host nginx (a VM test in CI exercises the whole flow).
 
 Add the flake as an input and pull the module into your host. The repository's
 default branch, `main`, is always the latest release; pin a tag
-(`github:weckere/quipclipper/v0.1.1`) to stay on one, or follow `dev` for work in
+(e.g. `github:weckere/quipclipper/v0.2.0`) to stay on one, or follow `dev` for work in
 progress. A minimal `flake.nix`:
 
 ```nix
@@ -242,9 +242,9 @@ won't create or fix permissions on it.
 
 The web app is two containers:
 
-- **app** — Python (FastAPI + Uvicorn) serving the API and the static frontend.
+- **app** — Python (FastAPI + Uvicorn) serving the API (the image holds no frontend).
   Runs the quipclipper engine for search and clipping via a thread-pool job queue.
-- **web** — Nginx reverse proxy handling static assets, large file downloads
+- **web** — Nginx serving the UI (its image holds the frontend and hls.js), large file downloads
   (clips), and forwarding API requests to the app.
 
 Media directories are mounted read-only. All file access is realpath-checked
@@ -260,7 +260,7 @@ changed in each release, and every release is on the
 
 | You want | Docker image tag | Flake URL |
 |---|---|---|
-| One exact release | `:0.1.1` | `github:weckere/quipclipper/v0.1.1` |
-| Fixes within a series | `:0.1` | (pin a tag and bump it) |
+| One exact release | `:X.Y.Z` (e.g. `:0.2.0`) | `github:weckere/quipclipper/vX.Y.Z` |
+| Fixes within a series | `:X.Y` (e.g. `:0.2`) | (pin a tag and bump it) |
 | The latest release | `:latest` | `github:weckere/quipclipper` (`main`) |
 | Work in progress | (build from `dev`) | `github:weckere/quipclipper/dev` |

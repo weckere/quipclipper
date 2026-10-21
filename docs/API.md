@@ -8,7 +8,9 @@ all over HTTP.
 - **Base URL:** wherever the app is served, e.g. `http://mediabox:8896`. All
   endpoints are under `/api/`.
 - **Format:** requests and responses are JSON (file downloads stream bytes).
-  Errors are `{"detail": "..."}` with a 4xx/5xx status.
+  Errors are `{"detail": "..."}` with a 4xx/5xx status; a request that fails
+  validation (a 422 from a parameter's limits) has `detail` as a list of
+  `{loc, msg, type}` field errors instead.
 - **Times** are seconds (floats); `*_ts` fields are `HH:MM:SS.mmm` strings.
 - **Paths** are in-container paths under a configured media root
   (`QC_MEDIA_ROOTS`), e.g. `/media/movies/Heat (1995)/Heat.mkv` — exactly the
@@ -24,8 +26,9 @@ basic auth. A programmatic client gets through it in one of two ways:
 - **API token as the basic-auth password** (recommended, one secret):
   set `QC_API_TOKEN`, then `curl -u api:<token>`. nginx accepts the built-in
   `api` user and the backend recognises the token.
-- **A normal basic-auth user** (`-u quip:<password>`) plus the token in a header
-  (below), if you'd rather not use the `api` user.
+- **A normal basic-auth user** (`-u quip:<password>`) plus the token as
+  `X-API-Key`, if you'd rather not use the `api` user. (Not `Bearer`: the gate
+  needs the `Authorization` header for its own basic auth.)
 
 If `QC_PASSWORD` is unset the site is open and no basic auth is needed.
 
@@ -40,8 +43,9 @@ If `QC_PASSWORD` is unset the site is open and no basic auth is needed.
 A recognised token marks the request as a **machine client**, which **exempts it
 from the CSRF header** below. An *explicit* but wrong `X-API-Key`/`Bearer` is
 rejected with `401`. Set several comma-separated tokens for rotation
-(`QC_API_TOKEN=old,new`); all are accepted (the `api` basic-auth user uses the
-first one).
+(`QC_API_TOKEN=old,new`); the backend accepts all of them, but the gate's `api`
+basic-auth user knows only the first, so behind the gate send a later one as
+`X-API-Key` with a normal user.
 
 **CSRF header (browser clients only).** State-changing requests
 (`POST`/`PUT`/`PATCH`/`DELETE`) that are **not** token-authenticated must carry
@@ -97,7 +101,8 @@ in the clip.
 - `source: "overview"`: from a peak pyramid built once per file, audio stream and mtime in the
   background (8 kHz mono, 20 ms buckets of min/max, cached in the state dir as
   `peaks/*.qcpk`, about 1.4 MB per 2-hour film, 512 MB kept in all). It serves spans over 2
-  minutes, and wider spans once built. Until then such a request answers **202** with
+  minutes, and, once built, shorter ones zoomed out to 40 ms or more per bin (`rate` is
+  then 8000). Until then such a request answers **202** with
   `kind: "pending"` and `overview: {state, progress}` (`queued`, `building`, `error`).
 - `source: "detail"`: a decode of just the span, for spans up to 2 minutes, at the stream's
   own rate (capped at 48 kHz) up to 15 s and 16 kHz beyond.
@@ -107,14 +112,17 @@ in the clip.
   are *anchored*: they seek to a whole 10 s mark less 1 s before the span and count samples
   from there, as an exact (re-encoded) clip cut does, so the drawing, `snapped` and the
   cut agree on the sample even where `-ss` alone wouldn't (DTS in Matroska carries
-  timestamps too coarse for it). `t0` is the sample nearest `start`.
+  timestamps too coarse for it). `t0` is the sample nearest `start`. Sample 0 of a
+  decode is at its file time even when the audio stream starts later than the video.
 - `peak`: the largest sample in the file (from the overview), else in the span.
 - `keyframes=true` (video, spans up to 60 s) adds `keyframes`: the times a lossless video cut
   can start at.
 
 **Snap** returns `{path, t, mode, radius, rate, found, snapped, delta}`. `mode=zero` (default
 radius 0.01 s, at most 0.5) finds the nearest sign change of the mono mix and returns the
-sample of the pair nearer zero (`value`); `mode=silence` (default radius 1 s, at most 10)
+sample of the pair nearer zero (`value`; on a stereo or surround stream the mix crosses
+zero where each channel need not, so a multichannel WAV/FLAC cut there can still click:
+`mode=silence` is the safer snap for those); `mode=silence` (default radius 1 s, at most 10)
 finds the nearest 20 ms window whose RMS is below `db` dBFS (default −45) and returns its
 centre (`level_db`); with none, `found` is false and `snapped` is the quietest point.
 
@@ -143,13 +151,18 @@ resolved stream URLs, so `split_channels` and `backend=mkvmerge` return 400 for
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/api/search?path=&query=&track=&limit=&min_score=&max_span=` | Rank dialogue matches in one file. |
-| GET | `/api/search/folder?path=&query=` | Search dialogue across a folder (repeat `path=` for several). |
-| GET | `/api/search/folder/index-status?path=` | How much of a folder's subtitles are cached: `{total, indexed, no_subs, skipped}`. `no_subs` counts files indexing found to have no subtitles at all (no sidecar, no text track); they are never offered for indexing. |
+| GET | `/api/search/folder?path=&query=&limit=` | Search dialogue across a folder (repeat `path=` for several; `yt:` and EPUB books count). |
+| GET | `/api/search/folder/index-status?path=` | How much of a folder's subtitles are cached: `{total, indexed, no_subs, skipped}`. `no_subs` counts files indexing found to have no subtitles at all (no sidecar, no text track); they are never offered for indexing. `skipped: true` means the folder holds over 500 media files, too many to index in one request (`no_subs` is left out, and `POST …/index` answers 400). |
 | POST | `/api/search/folder/index?path=&force=` | Pre-extract subtitles for a folder (streams progress). |
 
 `/api/search` returns `{query, count, matches: [{index, score, text, speaker,
 start, end, start_ts, end_ts, cue_count, link}]}`. The `index` is what you pass back as
-`match_index` when clipping. `link` (here, on `/api/search/folder` hits, bookmarks and
+`match_index` when clipping. `/api/search/folder` returns `{query, folders,
+files_scanned, capped, count, matches: [{file, path, score, text, speaker, start, end,
+start_ts, end_ts, cue_count, link}]}`: `limit` is the most matches per file (default 5,
+at most 20), and `capped: true` means it stopped after 500 files, so a line not found
+may be in a file it didn't search. Its hits have no `index`: clip one with its
+`path`, `start`, `end` and `text` as `cue_text`. `link` (here, on `/api/search/folder` hits, bookmarks and
 clips-library entries) is a [deep link](#deep-links) to that line, present only when
 `QC_PUBLIC_URL` is set.
 
@@ -435,6 +448,7 @@ server and nginx see only `/`:
 | `#/library?path=…` | A folder (no `path`: the library home). |
 | `#/search?q=…&scope=library` | Dialogue search across the whole library. |
 | `#/search?q=…&scope=folder&path=…` | Dialogue search in a folder (`path` repeats for several). |
+| `#/search?q=…&scope=item&path=…` | Search in one file: the workspace with its Matches tab. |
 | `#/item?path=…&t=…[&sel=A-B][&track=N]` | The workspace: seeks to `t` seconds, selects the lines covering `A`–`B`, shows subtitle track `N`. |
 | `#/bookmarks` | Every bookmark. |
 | `#/clips?folder=…` | The clips library (or one of its folders). |
@@ -445,7 +459,9 @@ to three decimals, e.g.
 `https://quip.example/#/item?path=/media/Movies/T2%20(1991)/T2.mkv&t=3621.2&sel=3621.2-3624.8`.
 A path outside the roots, or one that no longer exists, opens the library with a message
 instead. **Copy link** in the workspace (the selection, else the playhead) and on a search hit
-copies one; `GET /api/items/link` and the `link` fields build them from `QC_PUBLIC_URL`, and
+copies one. A link names lines, not a cut: `sel` is the unpadded range and selects the lines
+covering it, so Before / After and in and out points set on the waveform stay with the
+person who set them; `GET /api/items/link` and the `link` fields build them from `QC_PUBLIC_URL`, and
 the CLI's `item.link PATH --at T --sel A-B` prints one.
 
 ## `POST /api/clip` body

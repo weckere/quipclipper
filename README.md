@@ -84,8 +84,8 @@ The Docker images and the Nix packages include them. Releases are listed in
 ### Docker (GHCR images)
 
 Each release publishes two images, `ghcr.io/weckere/quipclipper-app` (the backend) and
-`ghcr.io/weckere/quipclipper-web` (nginx and the UI), tagged with the version (`0.1.1`),
-the series (`0.1`) and `latest`. Copy
+`ghcr.io/weckere/quipclipper-web` (nginx and the UI), tagged with the version (e.g.
+`0.2.0`), the series (`0.2`) and `latest`. Copy
 [`docker-compose.example.yml`](docker-compose.example.yml), set your media paths, and:
 
 ```bash
@@ -118,7 +118,7 @@ Sync, your own front proxy, Jellyfin, LeadStinger) are in
 ### The CLI on its own
 
 ```bash
-pip install "git+https://github.com/weckere/quipclipper@v0.1.1"
+pip install "git+https://github.com/weckere/quipclipper@main"   # main: the latest release
 # or with Nix: nix run github:weckere/quipclipper -- --help
 ```
 
@@ -234,8 +234,8 @@ nix develop                            # or a shell with everything, including f
 
 Work happens on the `dev` branch; `main` is always the latest release. Each change that
 users would notice adds a line to the Unreleased section of [CHANGELOG.md](CHANGELOG.md).
-`scripts/release.sh X.Y.Z` cuts a release: it bumps the version (only `pyproject.toml`
-holds it), dates the changelog, tags `vX.Y.Z` and moves `main`; the tag's workflow runs the
+`scripts/release.sh X.Y.Z` cuts a release: it bumps the version (only the two
+`pyproject.toml` files hold it; the backend's is a checked copy), dates the changelog, tags `vX.Y.Z` and moves `main`; the tag's workflow runs the
 tests, publishes the images and creates the GitHub Release. Every new web UI action needs a
 CLI command in `src/quipclipper/commands.py`: a parity test fails until it has one.
 

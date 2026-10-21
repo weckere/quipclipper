@@ -77,7 +77,8 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   1.4 MB per 2-hour film), or a decode of just the window for spans under 2 minutes, down
   to raw samples. `GET /api/items/snap` (`quipclipper item.snap`): the nearest zero
   crossing or quiet point to a time.
-- Re-encoded clips (Exact video, FLAC/WAV and MP3 audio) start on the sample: the audio
+- Re-encoded clips (Exact video, FLAC/WAV and MP3 audio) of a file on the server (not a
+  YouTube video that hasn't been downloaded) start on the sample: the audio
   is decoded from a fixed anchor before the start and trimmed by counting samples, the
   same way the waveform's detail views and snaps decode, so a cut placed on a zero
   crossing starts on it (before, a DTS track in Matroska could start a few ms off).
@@ -151,6 +152,9 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   spinner and stops smooth script scrolling; row posters no longer repeat the title
   to a screen reader; Reindex and Fetch subtitles are really disabled while they run;
   a re-index that fails says why.
+- CLI: a local `clip --lossless` of a video cuts with ffmpeg, as the web app does:
+  mkvmerge (which `auto` picked when installed) can only end on a keyframe, so a clip of
+  a long-GOP source ran on well past the line. mkvmerge still cuts lossless audio.
 - The Docker `web` image ships hls.js again (it fetches the pinned npm tarball, checked by
   its hash): without it, Chrome and Firefox fell back to the old ffmpeg pipe, where long
   files never started playing.

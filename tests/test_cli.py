@@ -222,8 +222,10 @@ def test_clip_video_lossless_flag_forces_copy(tmp_path, monkeypatch):
     cap = _stub_clip_backends(monkeypatch, tmp_path)
     res = runner.invoke(cli.app, ["clip", "x", "-v", str(v), "-t", "video", "--lossless", "--yes"])
     assert res.exit_code == 0, res.output
-    assert "mkvmerge" in cap  # explicit --lossless → stream copy
-    assert "cut_clip" not in cap
+    # explicit --lossless → an ffmpeg stream copy: mkvmerge would run on to the next
+    # keyframe past the end (the server's auto backend makes the same choice)
+    assert "mkvmerge" not in cap
+    assert cap["cut_clip"]["lossless"] is True
 
 
 def test_clip_video_reencode_uses_hardware_when_available(tmp_path, monkeypatch):
