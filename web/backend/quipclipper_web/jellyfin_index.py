@@ -27,7 +27,7 @@ from typing import Callable, Iterable, Iterator
 from quipclipper_web.jellyfin import JellyfinClient, JellyfinError, map_path
 
 INDEX_FILE = "jellyfin-index.json"
-INDEX_VERSION = 1
+INDEX_VERSION = 2  # 2: movies in collections are listed (CollapseBoxSetItems=false)
 REFRESH_EVERY = 3600.0  # seconds: an index older than this is rebuilt in the background
 PAGE_SIZE = 5000
 # After a failed build, wait this long before trying again on the next lookup.

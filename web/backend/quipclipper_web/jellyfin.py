@@ -100,6 +100,9 @@ class JellyfinClient:
         """One page of every movie, episode, track and audiobook, with what the index needs."""
         data = self.get("/Items", {
             "Recursive": "true", "IncludeItemTypes": INDEX_TYPES, "Fields": INDEX_FIELDS,
+            # Without this, movies in a collection come back as the collection (a BoxSet),
+            # so they'd be missing from the index.
+            "CollapseBoxSetItems": "false",
             "StartIndex": start, "Limit": limit, "EnableUserData": "false",
             "EnableTotalRecordCount": "false", "ImageTypeLimit": 1,
             "EnableImageTypes": "Primary,Thumb",

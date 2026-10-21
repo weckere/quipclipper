@@ -437,6 +437,8 @@ def test_the_index_is_read_in_pages(fake, tmp_path, media, monkeypatch):
     pages = [r[1] for r in fake.requests if r[1].get("Recursive")]
     assert [p["StartIndex"] for p in pages] == ["0", "2", "4"]
     assert pages[0]["IncludeItemTypes"] == "Movie,Episode,Audio,AudioBook"
+    # Movies in a collection are listed themselves, not as the collection.
+    assert pages[0]["CollapseBoxSetItems"] == "false"
     assert set(pages[0]["Fields"].split(",")) >= {
         "Path", "ProviderIds", "ParentIndexNumber", "IndexNumber", "SeriesName",
         "ProductionYear", "ImageTags"}
