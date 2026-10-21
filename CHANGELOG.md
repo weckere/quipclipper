@@ -23,6 +23,9 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 
 ### Fixed
 
+- A file played through the HLS transcode (AC3/DTS audio, HEVC in Firefox, …) now opens at
+  the line when you open a search hit, a bookmark or a link, instead of at 0:00: the seek
+  was made before the player could take it.
 - The CLI works with typer 0.27, which bundles its own click and no longer installs one;
   `typer>=0.24` replaces the `<0.27` pin (and the direct `click` dependency).
 
