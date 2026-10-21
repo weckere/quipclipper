@@ -2571,7 +2571,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         out["cursor"] = clipmeta.make_cursor(newest)
         out["etag"] = tag = clipmeta.etag(
             rows, (folder, recursive, q, kind, since, sort, out["folders"]))
-        if request.headers.get("if-none-match") == tag:
+        if clipmeta.etag_matches(request.headers.get("if-none-match"), tag):
             return Response(status_code=304, headers={"ETag": tag})
         return JSONResponse(out, headers={"ETag": tag})
 

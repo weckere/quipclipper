@@ -261,6 +261,17 @@ def etag(rows: list[tuple], params: tuple) -> str:
     return f'"{h.hexdigest()[:32]}"'
 
 
+def etag_matches(header: str | None, tag: str) -> bool:
+    """If-None-Match against our tag, weakly (RFC 9110): a proxy that compresses the reply
+    (nginx gzip) hands the client ``W/"…"``, and the header may list several tags."""
+    if not header:
+        return False
+    if header.strip() == "*":
+        return True
+    bare = tag.removeprefix("W/")
+    return any(t.strip().removeprefix("W/") == bare for t in header.split(","))
+
+
 # --- backfill ---------------------------------------------------------------------------
 
 

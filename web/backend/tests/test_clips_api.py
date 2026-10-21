@@ -252,6 +252,12 @@ def test_etag_answers_304_until_something_changes(tmp_path):
     assert first.json()["etag"] == tag
     same = client.get("/api/clips", params={"recursive": 1}, headers={"If-None-Match": tag})
     assert same.status_code == 304 and same.headers["etag"] == tag
+    # Weakly, as a compressing proxy (nginx gzip) hands it out, and in a list.
+    for header in (f"W/{tag}", f'"other", {tag}', "*"):
+        assert client.get("/api/clips", params={"recursive": 1},
+                          headers={"If-None-Match": header}).status_code == 304
+    assert client.get("/api/clips", params={"recursive": 1},
+                      headers={"If-None-Match": '"nope"'}).status_code == 200
     # Other params are another listing.
     other = client.get("/api/clips", params={"recursive": 1, "kind": "set"},
                        headers={"If-None-Match": tag})
