@@ -203,8 +203,9 @@ by default land where they always did.
 
 | Command | What it does | Arguments | API | Web UI |
 |---|---|---|---|---|
-| `clips.list` | List finished clips (a folder of the clips library). | `FOLDER` | `GET /api/clips` | Clips view |
-| `clips.download` | Download a clip from the clips library. | `CLIP_PATH` `--out-dir` | `GET /api/clips/download/{clip_path}` | Clip Download link |
+| `clips.list` | List finished clips and LeadStinger set files (a folder of the clips library, or everything under it), each with its metadata: source, line, show and episode, codec, channels, duration. | `FOLDER` `--recursive` `--q` `--kind` `--since` `--sort` | `GET /api/clips` | Clips view |
+| `clips.download` | Download a clip or set file from the clips library. | `CLIP_PATH` `--as` `--out-dir` | `GET /api/clips/download/{clip_path}` | Clip Download link |
+| `clips.backfill` | Give clips cut before metadata sidecars existed a best-effort one (ffprobe, the file name, Jellyfin); re-attach moved clips' sidecars and drop those of deleted clips. Safe to run again. | `--wait` `--out-dir` | `POST /api/clips/backfill` | — |
 
 ## leadstinger
 

@@ -610,6 +610,15 @@ def test_clip_names_use_jellyfin_titles(fake, tmp_path, known):
     out = _clip(c, ep, "{show}/S{season}E{episode}_{title}_{year}")
     assert out.relative_to(clips).as_posix() == (
         "Star_Trek_The_Next_Generation/S03E26_The_Best_of_Both_Worlds_1990.mkv")
+    # The clip's metadata sidecar keeps what Jellyfin knows (M18, the clips API).
+    from quipclipper_web import clipmeta
+    jf = clipmeta.read(out)["jellyfin"]
+    assert {k: jf[k] for k in ("show", "season", "episode", "title", "year")} == {
+        "show": "Star Trek: The Next Generation", "season": 3, "episode": 26,
+        "title": "The Best of Both Worlds", "year": 1990}
+    assert jf["type"] == "Episode" and jf["id"]
+    # And the sidecar is hidden from the scan of the clips library.
+    assert clipmeta.sidecar_path(out).name.startswith(".")
 
 
 def test_the_default_name_doesnt_move(fake, tmp_path, known):

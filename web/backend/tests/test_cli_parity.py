@@ -118,7 +118,7 @@ def test_query_and_path_params_match_routes(tmp_path):
             cmd = by_route.get(reg.route_key(m, r.path))
             if cmd is None:
                 continue
-            q = {p.name for p in r.dependant.query_params}
+            q = {p.alias for p in r.dependant.query_params}  # the wire name (?as=)
             pp = {p.name for p in r.dependant.path_params}
             if _wire_names(cmd, reg.QUERY) != q:
                 problems.append((cmd.id, "query", sorted(q), sorted(_wire_names(cmd, reg.QUERY))))

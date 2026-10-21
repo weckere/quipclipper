@@ -182,7 +182,10 @@ def test_a_second_set_with_the_same_name_is_numbered(tmp_path):
         for _ in range(2):
             assert _wait(client, client.post("/api/leadstinger/set", json=body).json()["job_id"])[
                 "status"] == "done"
-    assert sorted(p.name for p in (clips / "LeadStinger").iterdir()) == ["Borg 2.lsset", "Borg.lsset"]
+    names = sorted(p.name for p in (clips / "LeadStinger").iterdir())
+    # Each set has its hidden metadata sidecar beside it (M18).
+    assert names == [".Borg 2.lsset.qc.json", ".Borg.lsset.qc.json", "Borg 2.lsset",
+                     "Borg.lsset"]
 
 
 def test_a_whole_clips_library_file_is_cut_without_padding_or_trims(tmp_path):

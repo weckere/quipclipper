@@ -221,6 +221,17 @@ class JellyfinIndex:
         self.refresh_if_stale()
         return self._folders.get(os.path.normpath(str(path)))
 
+    def by_stem(self):
+        """A lookup from a file's stem to ``(path, entry)``, for the stems only one file
+        in the index has: the clips backfill finds an old clip's source by the name in
+        its folder or file name."""
+        self.refresh_if_stale()
+        found: dict[str, tuple[str, dict] | None] = {}
+        for path, entry in self._files.items():
+            stem = os.path.splitext(os.path.basename(path))[0]
+            found[stem] = None if stem in found else (path, entry)
+        return found.get
+
     def status(self) -> dict:
         return {
             "built": _iso(self.built),

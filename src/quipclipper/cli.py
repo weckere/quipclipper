@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import keyword
 import os
 import re
 import shutil
@@ -316,6 +317,9 @@ def _fmt_job(job: dict) -> None:
         typer.echo(f"  file: {f.get('name')} ({human_size(f.get('size', 0))})")
     for s in job.get("saved") or []:
         typer.secho(f"  saved {s}", fg="green")
+    result = job.get("result")
+    if isinstance(result, dict) and "link" not in result:  # e.g. clips.backfill's counts
+        typer.echo("  " + ", ".join(f"{k} {v}" for k, v in result.items()))
     if job.get("error"):
         typer.secho(f"  error: {job['error']}", fg="red")
     if job.get("job_id") and not job.get("id"):
@@ -335,11 +339,20 @@ def _fmt_bookmarks(data: dict) -> None:
 
 
 def _fmt_clips(data: dict) -> None:
-    for f in data.get("folders") or []:
-        typer.echo(f"📁 {f}")
+    if not data.get("recursive"):
+        for f in data.get("folders") or []:
+            typer.echo(f"📁 {f}")
     for clip in data.get("clips") or []:
-        typer.echo(f"   {clip.get('name')}  ({human_size(clip.get('size', 0))})  "
-                   f"{typer.style(clip.get('path', ''), dim=True)}")
+        icon = {"audio": "🎵", "video": "🎬", "gif": "🎞", "set": "🗂"}.get(clip.get("kind"), "  ")
+        meta = clip.get("meta") or {}
+        dur = meta.get("duration")
+        extra = f"{dur:.1f}s, " if isinstance(dur, (int, float)) else ""
+        name = clip.get("clip") or clip.get("name")
+        title = clip.get("title")
+        said = f"  “{title}”" if title and meta.get("cue") else ""
+        typer.echo(f"{icon} {name}  ({extra}{human_size(clip.get('size', 0))}){said}")
+    if data.get("cursor"):
+        typer.secho(f"cursor {data['cursor']} (--since for what's added after this)", dim=True)
 
 
 def _fmt_script(data: Any) -> None:
@@ -431,7 +444,7 @@ _FORMATTERS = {
     "library.browse": _fmt_entries, "library.find": _fmt_entries,
     "search.item": _fmt_matches, "search.folder": _fmt_matches,
     "job.get": _fmt_job, "job.wait": _fmt_job, "job.list": _fmt_jobs,
-    "clip.create": _fmt_job, "clip.nowplaying": _fmt_job, "youtube.add": _fmt_job, "youtube.download": _fmt_job,
+    "clip.create": _fmt_job, "clip.nowplaying": _fmt_job, "clips.backfill": _fmt_job, "youtube.add": _fmt_job, "youtube.download": _fmt_job,
     "item.fetch-subs": _fmt_job, "index.fetch-subs": _fmt_job,
     "bookmark.list": _fmt_bookmarks, "clips.list": _fmt_clips,
     "item.script": _fmt_script, "item.info": _fmt_item, "server.health": _fmt_health,
@@ -1512,11 +1525,14 @@ def _typer_default(p: reg.Param):
 def _make_generic(cmd: reg.Command):
     sig = [inspect.Parameter("ctx", inspect.Parameter.KEYWORD_ONLY,
                              annotation=typer.Context)]
+    # A wire name that is a Python keyword (clips.download's "as") gets a trailing _.
+    py = {p.name: p.name + "_" if keyword.iskeyword(p.name) else p.name for p in cmd.params}
     for p in cmd.params:
-        sig.append(inspect.Parameter(p.name, inspect.Parameter.KEYWORD_ONLY,
+        sig.append(inspect.Parameter(py[p.name], inspect.Parameter.KEYWORD_ONLY,
                                      default=_typer_default(p), annotation=_annotation(p)))
 
     def fn(ctx: typer.Context, **values):
+        values = {name: values[py_name] for name, py_name in py.items() if py_name in values}
         c = _c(ctx)
         try:
             data = run_command(c, cmd, values)

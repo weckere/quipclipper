@@ -21,6 +21,25 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 - With `QC_PUBLIC_URL` set, search hits, bookmarks and clips carry a `link` field, and
   `GET /api/items/link` / `quipclipper item.link PATH --at T --sel A-B` build one.
 
+### Clips library API for LeadStinger (M18)
+
+- Every clip and LeadStinger set quipclipper writes into the clips library gets a hidden
+  `.<name>.qc.json` metadata sidecar: source, line, padding, where the line sits in the
+  clip, cue text, kind, codec, channels, duration, and Jellyfin's show, season, episode,
+  title and year. `quipclipper clips.backfill` (`POST /api/clips/backfill`) gives older
+  clips a best-effort one from ffprobe, the file name and Jellyfin, re-attaches sidecars of
+  clips moved outside quipclipper and drops those of deleted clips.
+- `GET /api/clips` / `clips.list` gains `recursive`, `q` (`--query`: every word in the
+  line, title, show or file name), `kind` (audio, video, gif, set), `sort=newest`, and a
+  `since` cursor with an ETag (`If-None-Match` answers 304) for cheap polling. Entries carry
+  `clip`, `kind`, `title`, `modified`, `flac_url` and their metadata (`meta`); set files
+  (`.lsset`) are listed as `kind: "set"`, and the Clips view shows them as download rows.
+  The fields are a versioned contract, `quipclipper.clips/1`:
+  [docs/API.md](https://github.com/weckere/quipclipper/blob/main/docs/API.md#clips-library-contract).
+- `GET /api/clips/download/{path}?as=flac` / `clips.download --as flac`: the clip as a
+  full-mix FLAC keeping every channel (cached until the clip changes), so LeadStinger needs
+  no ffmpeg for quipclipper clips.
+
 ### Jellyfin titles and artwork (M18)
 
 - With Jellyfin set up, clip names can use what Jellyfin knows about the file: `{title}` is

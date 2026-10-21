@@ -64,7 +64,7 @@ from quipclipper.mkv import (
 from quipclipper.search import search as engine_search
 from quipclipper.subtitles import AUDIO_EXTS, VIDEO_EXTS, find_sidecar, load_subtitles
 from quipclipper_web import (
-    __version__, deeplinks, epub_items, jellyfin, jellyfin_index, library, lslink, lsset, media,
+    __version__, clipmeta, deeplinks, epub_items, jellyfin, jellyfin_index, library, lslink, lsset, media,
     youtube_items,
 )
 from quipclipper_web.bookmarks import BookmarkStore
@@ -92,8 +92,8 @@ def _is_media_file(p: Path) -> bool:
     return ext in AUDIO_EXTS and find_sidecar(p) is not None
 
 
-# Output extensions a finished clip can have (for listing the clips library).
-_CLIP_EXTS = (".mkv", ".mka", ".mp4", ".m4v", ".webm", ".gif", ".wav", ".flac", ".ogg", ".mp3")
+# The clips listing's contract with LeadStinger (docs/API.md); bump on a breaking change.
+CLIPS_CONTRACT = "quipclipper.clips/1"
 
 # Upper bound on how many media files a single recursive folder operation
 # (indexing, folder dialogue search) will touch. The nginx-side timeout is 600s,
@@ -383,6 +383,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     bookmarks = BookmarkStore(settings.state_dir)
     sub_cache = SubtitleCache(settings.state_dir, default_langs=settings.subtitle_langs)
     yt_store = youtube_items.YouTubeStore(settings.state_dir, download_dir=settings.youtube_dir)
+    flac_cache = clipmeta.FlacCache(settings.state_dir)
     # video id -> last download / add job id, so a repeat POST returns the
     # in-flight job instead of queueing a duplicate.
     active_downloads: dict[str, str] = {}
@@ -1753,7 +1754,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # --- clipping & jobs -------------------------------------------------------
 
-    def _plan_clip(req: ClipRequest, out_dir: Path | None = None):
+    def _write_sidecars(paths: list[Path], meta: dict) -> None:
+        """The metadata sidecar of each file a cut wrote into the clips library (M18).
+        A failure is logged, never the cut's: the clip is already there."""
+        clips_root = settings.clips_dir.resolve()
+        for p in paths:
+            try:
+                if not Path(p).resolve().is_relative_to(clips_root):
+                    continue
+                info = clipmeta.probe(Path(p))
+                split = {"split": True} if len(paths) > 1 else {}
+                clipmeta.write(Path(p), {**meta, **info, **split,
+                                         "size": Path(p).stat().st_size})
+            except Exception as exc:  # noqa: BLE001
+                clipmeta.log.warning("clip metadata for %s: %s", p, exc)
+
+    def _plan_clip(req: ClipRequest, out_dir: Path | None = None,
+                   meta_extra: dict | None = None):
         """Validate a clip request and return ``(label, do_cut, title)`` without running it.
 
         ``title`` is the source's display name (the movie or show, see clean_title).
@@ -1762,6 +1779,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ``out_dir`` the clip is written there (flat, by the template's file name)
         instead of the clips library: the LeadStinger set job cuts into a staging
         folder and zips the result. Raises HTTPException for a bad request.
+
+        A clip written into the clips library gets its metadata sidecar (clipmeta);
+        ``meta_extra`` overrides its fields (Send to LeadStinger knows the real line).
         """
         # An EPUB segment clips from the extracted chapter audio (always audio);
         # `name_source` drives the naming template (book/chapter, not the cache
@@ -1863,6 +1883,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                             detail="Could not determine file duration for a whole-file clip.",
                         )
                 rng = ClipRange(start=max(0.0, req.start - req.before), end=end + req.after)
+                line_start, line_end = req.start, end
                 label = f"{req.kind} clip {format_timestamp(req.start)}–{format_timestamp(end)}"
             elif req.query:
                 try:
@@ -1879,6 +1900,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 m = matches[req.match_index]
                 cue_text = m.text
                 rng = compute_range(m, before=req.before, after=req.after)
+                line_start, line_end = m.start, m.end
                 label = f"{req.kind} clip: \"{req.query}\" → {m.text[:60]}"
             else:
                 raise HTTPException(
@@ -1970,9 +1992,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # so they pass the extensionless base.
             # Jellyfin's titles for a library file it knows (M18); synthetic YouTube and
             # EPUB sources, and files it doesn't know, keep the parsed names.
-            jf_meta = None
+            jf_meta = jf_entry = None
             if jf_index is not None and name_source is None and isinstance(video, Path):
-                jf_meta = jellyfin_index.naming_meta(jf_index.lookup(video))
+                jf_entry = jf_index.lookup(video)
+                jf_meta = jellyfin_index.naming_meta(jf_entry)
             ctx = _clip_template_context(name_source or video, rng, cue_text, jf_meta)
             template = resolve_template(req.template)
             rel = _render_clip_template(template, ctx) or ctx["timestamp"] or "clip"
@@ -2032,7 +2055,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # gif) hit the encoder. cut_clip falls back to libx264 if it fails.
             _hw_encode = (not req.lossless) and req.kind == "video" and _vaapi_h264_available()
 
-            def do_cut(_job) -> list[Path]:
+            # The sidecar (clipmeta, docs/API.md "Clips library contract"): times are
+            # the source's, trim is the line inside the clip (a lossless video cut
+            # starts on the keyframe before, so there it is approximate).
+            _meta = {
+                "kind": req.kind, "origin": "clip",
+                "source": {
+                    "path": req.path, "name": clean_title(name_source or video),
+                    "url": (yt_meta or {}).get("webpage_url"),
+                },
+                "line": {"start": round(line_start, 3), "end": round(line_end, 3)},
+                "clip": {"start": round(rng.start, 3), "end": round(rng.end, 3)},
+                "padding": {"before": round(max(0.0, line_start - rng.start), 3),
+                            "after": round(max(0.0, rng.end - line_end), 3)},
+                "trim": {"start": round(max(0.0, line_start - rng.start), 3),
+                         "end": round(line_end - rng.start, 3)},
+                "cue": cue_text or None,
+                "lossless": req.lossless, "audio_format": req.audio_format,
+                "jellyfin": clipmeta.jellyfin_fields(jf_entry),
+                **(meta_extra or {}),
+            }
+
+            def do_cut(job) -> list[Path]:
+                written = _cut(job)
+                _write_sidecars(written, _meta)
+                return written
+
+            def _cut(_job) -> list[Path]:
                 try:
                     if _split_channels:
                         return split_audio_channels(
@@ -2110,7 +2159,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             staging_root.mkdir(parents=True, exist_ok=True)
             staging = Path(tempfile.mkdtemp(prefix="set-", dir=staging_root))
             try:
-                tiles, files, sources = [], [], []
+                tiles, files, sources, items_meta = [], [], [], []
                 for i, item in enumerate(items, 1):
                     if job.cancel_requested:
                         return []
@@ -2142,6 +2191,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         f"{Path(item.path).stem}{where} · quipclipper")
                     tiles.append((arcname, title, trim, notes))
                     files.append((arcname, written[0]))
+                    items_meta.append({
+                        "title": title, "notes": notes,
+                        "source": {"path": item.path, "name": source_title},
+                        "line": (None if whole else {"start": item.start, "end": item.end}),
+                        "padding": {"before": before, "after": 0.0 if whole else item.after},
+                        "trim_start": trim.start, "trim_end": trim.end,
+                    })
                 set_name = lsset.safe_name(req.name or lsset.auto_set_name(sources),
                                            fallback="quipclipper")
                 # Clips live in a folder named after the set inside the zip.
@@ -2153,6 +2209,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 out_dir.mkdir(parents=True, exist_ok=True)
                 out = lsset.unique_path(out_dir / f"{set_name}{lsset.EXTENSION}")
                 lsset.write_lsset(out, lsset.build_manifest(set_name, tiles), files)
+                try:
+                    clipmeta.write(out, {"kind": "set", "origin": "leadstinger.set",
+                                         "name": set_name, "items": items_meta,
+                                         "size": out.stat().st_size})
+                except OSError as exc:
+                    clipmeta.log.warning("set metadata for %s: %s", out, exc)
                 job.progress = f"{n}/{n}"
                 return [out]
             finally:
@@ -2210,7 +2272,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             start=cut.start, end=cut.end, before=0.0, after=0.0, cue_text=title or "",
             template="{source}_{timestamp}_{cue}", embed_subs=False,
         )
-        label, do_cut, _source = _plan_clip(clip_req, out_dir=settings.clips_dir / "LeadStinger")
+        line_meta = {
+            "origin": "leadstinger.quip", "cue": title or None, "set": set_name,
+            "line": {"start": round(req.start, 3), "end": round(req.end, 3)},
+            "padding": {"before": round(cut.line_start, 3),
+                        "after": round(max(0.0, cut.end - cut.start - cut.line_end), 3)},
+            "trim": {"start": cut.line_start, "end": cut.line_end},
+        }
+        label, do_cut, _source = _plan_clip(clip_req, out_dir=settings.clips_dir / "LeadStinger",
+                                             meta_extra=line_meta)
 
         def send(job) -> list[Path]:
             written = do_cut(job)
@@ -2403,65 +2473,163 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # --- clips library -----------------------------------------------------------
 
     @app.get("/api/clips")
-    def list_clips(folder: str | None = None) -> dict:
-        """Browse the clips directory. With folder=, list clips inside that subfolder."""
+    def list_clips(
+        request: Request,
+        folder: str | None = None,
+        recursive: bool = False,
+        q: str | None = Query(None, max_length=200),
+        kind: str | None = Query(None, pattern="^(audio|video|gif|set)$"),
+        since: str | None = Query(None, max_length=40),
+        sort: str = Query("name", pattern="^(name|newest)$"),
+    ):
+        """Browse the clips library: one folder's subfolders, clips and set files, or the
+        whole tree under it with ``recursive``; ``q``/``kind``/``since`` filter it.
+
+        Each entry carries its metadata sidecar (``meta``). ``cursor`` is the newest
+        file's time: pass it back as ``since`` for only what was added after it.
+        ``etag`` (also the ETag header; If-None-Match answers 304) changes with any
+        file or sidecar in the listing. docs/API.md, "Clips library contract", is the
+        contract LeadStinger builds on."""
+        since_ns = None
+        if since:
+            try:
+                since_ns = clipmeta.parse_cursor(since)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
         base = settings.clips_dir
+        out = {"contract": CLIPS_CONTRACT, "folder": folder, "recursive": recursive,
+               "folders": [], "clips": [], "count": 0}
         if not base.is_dir():
-            return {"clips": [], "folders": []}
+            out["cursor"] = since or clipmeta.make_cursor(0)
+            out["etag"] = clipmeta.etag([], ())
+            return out
+        root = base.resolve()
         if folder:
             target = (base / folder).resolve()
-            if not target.is_relative_to(base.resolve()):
+            if not target.is_relative_to(root):
                 raise HTTPException(status_code=403, detail="Path outside clips dir.")
             if not target.is_dir():
                 raise HTTPException(status_code=404, detail="Folder not found.")
         else:
-            target = base
+            target = root
 
-        # Dot-files are never clips: macOS leaves "._name" AppleDouble files (a few KB of
-        # metadata, with the clip's own extension) on SMB shares, like the library hides.
-        def _is_clip(f: Path) -> bool:
-            return not f.name.startswith(".") and f.is_file() and f.suffix.lower() in _CLIP_EXTS
-
-        def _has_clip(d: Path) -> bool:
-            try:
-                return any(_is_clip(f) for f in d.iterdir())
-            except OSError:
-                return False
-
-        # Only show subfolders that actually contain clips — empty folders left
-        # behind after deleting their clips shouldn't clutter the library.
-        folders = sorted(
+        # Only show subfolders that hold clips or sets: empty folders left behind
+        # after deleting their clips shouldn't clutter the library.
+        out["folders"] = sorted(
             d.name for d in target.iterdir()
-            if not d.name.startswith(".") and d.is_dir() and _has_clip(d)
+            if not d.name.startswith(".") and d.is_dir() and clipmeta.has_listed(d)
         )
         # When a front proxy serves the clips dir directly (QC_CLIPS_URL_PREFIX,
         # e.g. "/clips"), point downloads there so large files bypass uvicorn.
         dl_base = settings.clips_url_prefix or "/api/clips/download"
-        clips = sorted(
-            [
-                _with_link({
-                    "name": f.name,
-                    "path": str(f.resolve()),
-                    "size": f.stat().st_size,
-                    "folder": folder or "",
-                    "download_url": f"{dl_base}/{quote(((folder + '/') if folder else '') + f.name)}",
-                    "stream_url": f"/api/clips/stream/{quote(((folder + '/') if folder else '') + f.name)}",
-                }, _item_link(str(f.resolve())))
-                for f in target.iterdir()
-                if _is_clip(f)
-            ],
-            key=lambda c: c["name"],
-        )
-        return {"folder": folder, "folders": folders, "clips": clips}
+        newest = since_ns or 0
+        clips, rows = [], []
+        for f in clipmeta.scan(base, target, recursive):
+            try:
+                st = f.stat()
+            except OSError:
+                continue
+            meta = clipmeta.read(f)
+            k = clipmeta.kind_of(f, meta)
+            rel = f.relative_to(root).as_posix()
+            if kind and k != kind:
+                continue
+            if q and not clipmeta.matches_query(clipmeta.search_text(f, rel, meta), q):
+                continue
+            newest = max(newest, st.st_mtime_ns)
+            if since_ns is not None and st.st_mtime_ns <= since_ns:
+                continue
+            try:
+                sc_ns = clipmeta.sidecar_path(f).stat().st_mtime_ns
+            except OSError:
+                sc_ns = 0
+            rows.append((rel, st.st_size, st.st_mtime_ns, sc_ns))
+            playable = k != "set"
+            entry = {
+                "name": f.name,
+                "path": str(f.resolve()),
+                "size": st.st_size,
+                "folder": rel.rpartition("/")[0],
+                "clip": rel,
+                "kind": k,
+                "title": clipmeta.title_for(f, meta),
+                "mtime": st.st_mtime,
+                "modified": clipmeta._iso(st.st_mtime),
+                "download_url": f"{dl_base}/{quote(rel)}",
+                "stream_url": f"/api/clips/stream/{quote(rel)}" if playable else None,
+                "flac_url": (f"/api/clips/download/{quote(rel)}?as=flac"
+                             if k in ("audio", "video") else None),
+                "meta": meta,
+            }
+            clips.append(_with_link(entry, _item_link(str(f.resolve())) if playable else None))
+        if sort == "newest":
+            clips.sort(key=lambda c: (-c["mtime"], c["clip"]))
+        else:
+            clips.sort(key=lambda c: c["clip"])
+        out["clips"] = clips
+        out["count"] = len(clips)
+        out["cursor"] = clipmeta.make_cursor(newest)
+        out["etag"] = tag = clipmeta.etag(
+            rows, (folder, recursive, q, kind, since, sort, out["folders"]))
+        if request.headers.get("if-none-match") == tag:
+            return Response(status_code=304, headers={"ETag": tag})
+        return JSONResponse(out, headers={"ETag": tag})
+
+    @app.post("/api/clips/backfill")
+    def clips_backfill() -> dict:
+        """Give old clips their metadata sidecars (a job; its ``result`` counts them).
+
+        ffprobe for codec, channels and duration, the file name for the source, line and
+        timestamp, and Jellyfin for a source it can find by that name. Also re-attaches
+        sidecars whose clip moved and deletes those whose clip is gone, and drops the
+        FLAC copies of deleted clips. Safe to run again: clips with a sidecar are kept."""
+        def run(job) -> list[Path]:
+            by_stem = jf_index.by_stem() if jf_index is not None else None
+            stats = clipmeta.backfill(
+                settings.clips_dir, jellyfin_by_stem=by_stem,
+                cancelled=lambda: job.cancel_requested,
+                progress=lambda p: setattr(job, "progress", p))
+            root = settings.clips_dir.resolve()
+            live = {f.relative_to(root).as_posix()
+                    for f in clipmeta.scan(settings.clips_dir, root, True)}
+            stats["flac_pruned"] = flac_cache.prune(live)
+            job.result = stats
+            return []
+
+        job = jobs.submit(run, label="Clip metadata backfill")
+        return {"job_id": job.id, "status": job.status.value}
 
     @app.get("/api/clips/download/{clip_path:path}")
-    def download_saved_clip(clip_path: str) -> FileResponse:
-        """Download a clip from the clips library."""
+    def download_saved_clip(
+        clip_path: str,
+        as_: str | None = Query(None, alias="as", pattern="^flac$"),
+    ) -> FileResponse:
+        """Download a clip or set file from the clips library.
+
+        ``as=flac`` converts a clip (no cut) to a full-mix FLAC keeping its channels
+        (D-024's format; the first audio stream), cached until the clip changes; a FLAC
+        clip comes as it is. A set file or a GIF has no FLAC: 400."""
         target = (settings.clips_dir / clip_path).resolve()
         if not target.is_relative_to(settings.clips_dir.resolve()):
             raise HTTPException(status_code=403, detail="Path outside clips dir.")
         if not target.is_file():
             raise HTTPException(status_code=404, detail="Clip not found.")
+        if as_ == "flac":
+            k = clipmeta.kind_of(target, clipmeta.read(target))
+            if k == "set":
+                raise HTTPException(status_code=400,
+                                    detail="A set file downloads as it is (no ?as=).")
+            if k == "gif":
+                raise HTTPException(status_code=400, detail="A GIF has no audio.")
+            if target.suffix.lower() != ".flac":
+                rel = target.relative_to(settings.clips_dir.resolve()).as_posix()
+                try:
+                    flac = flac_cache.get(target, rel)
+                except RuntimeError as exc:
+                    raise HTTPException(status_code=422,
+                                        detail=f"Can't convert this clip to FLAC: {exc}")
+                return FileResponse(flac, media_type="audio/flac",
+                                    filename=f"{target.stem}.flac")
         mime = _BROWSER_MIME.get(target.suffix.lower(), "application/octet-stream")
         return FileResponse(target, media_type=mime, filename=target.name)
 

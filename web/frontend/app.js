@@ -3311,9 +3311,13 @@ async function browseClips(folder, { fromLink = false } = {}) {
     return;
   }
 
+  // LeadStinger set files (.lsset) are listed too (M18): download-only rows.
+  const sets = data.clips.filter((c) => c.kind === "set");
+  const clipRows = data.clips.filter((c) => c.kind !== "set");
   if (data.clips.length) {
     const bytes = data.clips.reduce((n, c) => n + c.size, 0);
-    $("clips-count").textContent = `${plural(data.clips.length, "clip")} · ${fmtSize(bytes)}`;
+    const counts = [clipRows.length ? plural(clipRows.length, "clip") : "", sets.length ? plural(sets.length, "set") : ""];
+    $("clips-count").textContent = `${counts.filter(Boolean).join(" · ")} · ${fmtSize(bytes)}`;
   }
   for (const f of data.folders) {
     const li = document.createElement("li");
@@ -3329,7 +3333,19 @@ async function browseClips(folder, { fromLink = false } = {}) {
     list.appendChild(li);
   }
 
-  for (const c of data.clips) {
+  for (const c of sets) {
+    const li = document.createElement("li");
+    li.className = "entry set";
+    const tiles = (c.meta && Array.isArray(c.meta.items)) ? c.meta.items.length : null;
+    li.innerHTML =
+      `<span class="icon-wrap"><svg class="icon" aria-hidden="true"><use href="#i-leadstinger"/></svg></span>` +
+      `<span class="label clip-name">${escapeHtml(c.name)}</span>` +
+      `<span class="chips"><span class="badge">LeadStinger set${tiles != null ? ` · ${plural(tiles, "tile")}` : ""}</span><span class="badge">${fmtSize(c.size)}</span></span>` +
+      `<a class="download-link clip-dl" data-action="clips.download" href="${escapeHtml(c.download_url)}" download title="Download this set file to open in LeadStinger" aria-label="Download ${escapeHtml(c.name)}">Download</a>`;
+    list.appendChild(li);
+  }
+
+  for (const c of clipRows) {
     const li = document.createElement("li");
     li.className = "entry video";
     const size = c.size > 1048576
@@ -3367,7 +3383,7 @@ async function browseClips(folder, { fromLink = false } = {}) {
   }
 
   // Batch export bar only when there are clips to select.
-  if (data.clips.length) $("clips-batch").hidden = false;
+  if (clipRows.length) $("clips-batch").hidden = false;
   refocus(had, list.querySelector(".entry-main, .clip-open") || $("clips-title"));
 }
 

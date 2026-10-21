@@ -140,9 +140,10 @@ where `status` is `queued|running|done|failed|cancelled`, `files` is
 ### Clips library
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/clips?folder=` | List finished clips (optionally within a subfolder). Each has a `link` that opens it in the workspace (with `QC_PUBLIC_URL`). |
-| GET | `/api/clips/download/{path}` | Download a finished clip. |
-| GET | `/api/clips/stream/{path}` | Stream a finished clip. |
+| GET | `/api/clips?folder=&recursive=&q=&kind=&since=&sort=` | List the clips library: a folder's subfolders, clips and set files, or everything under it, each with its metadata. Each clip has a `link` that opens it in the workspace (with `QC_PUBLIC_URL`). The fields are a versioned contract: [Clips library contract](#clips-library-contract). |
+| GET | `/api/clips/download/{path}?as=flac` | Download a clip or set file; `as=flac` converts a clip to a full-mix FLAC first. |
+| GET | `/api/clips/stream/{path}` | Stream a finished clip (HTTP Range works, for previews). |
+| POST | `/api/clips/backfill` | Give clips cut before sidecars existed their metadata (job). |
 
 ### LeadStinger set files
 | Method | Path | Purpose |
@@ -274,6 +275,110 @@ seconds after the last one, so a batch is one scan and new clips show up on the 
 | PATCH/DELETE | `/api/bookmarks/{id}` | Edit / delete one. `DELETE /api/bookmarks` clears all. |
 | GET | `/api/health` | Liveness + tool presence (no auth-secret required), and `jellyfin` (Now playing, titles and artwork configured). |
 | GET | `/api/config` | Non-secret config the UI needs, including `public_url` (`QC_PUBLIC_URL`, or `null` when Send to LeadStinger links are off) and `jellyfin` (true when Now playing is configured). |
+
+## Clips library contract
+
+**Version `quipclipper.clips/1`** (the listing's `contract` field). LeadStinger's
+QuipClipper browser builds on it, so within a version fields are only ever added: a client
+ignores fields it doesn't know, and a removal or a change of meaning bumps the version.
+Authentication is the API token as everywhere ([above](#authentication)); nothing here
+writes except the backfill.
+
+### `GET /api/clips`
+
+| Param | Default | Meaning |
+|---|---|---|
+| `folder` | the library's top | A folder of the clips library (relative; it can't leave the library: 403). |
+| `recursive` | `false` | `true`/`1`: every clip and set under `folder`, not just its own files. |
+| `q` | — | Only entries with **every word** of it (case-insensitive, `_` counts as a space) in the file name or path, the line (`meta.cue`), the source's name, the Jellyfin show or title, a set's name or its tiles' titles. |
+| `kind` | — | `audio`, `video`, `gif` or `set`. |
+| `since` | — | A `cursor` from an earlier listing: only entries added after it. A malformed cursor is 400. |
+| `sort` | `name` | `name` (by path in the library) or `newest` (newest first). |
+
+The reply (an `ETag` header carries `etag`; send it back as `If-None-Match` and an unchanged
+listing answers `304` with no body):
+
+| Field | Meaning |
+|---|---|
+| `contract` | `"quipclipper.clips/1"`. |
+| `folder`, `recursive` | As asked. |
+| `folders` | The folder's own subfolders that hold clips or sets (names). |
+| `clips` | The entries (below), sorted by `sort`. |
+| `count` | How many entries. |
+| `cursor` | `v1.<n>`: the newest entry's time (the newest file of this listing's `folder`/`recursive`/`q`/`kind`, never older than `since`). Pass it as `since` to poll for new clips. It follows the file's modification time, so a re-cut clip counts as new; writing or backfilling a sidecar doesn't. |
+| `etag` | Changes when any listed file or its sidecar changes (or the folders do). |
+
+Each entry:
+
+| Field | Meaning |
+|---|---|
+| `name` | The file name. |
+| `clip` | Its path in the clips library: what `/api/clips/download/{path}` and `/api/clips/stream/{path}` take. |
+| `folder` | The folder it is in, relative to the library (`""` at the top). |
+| `kind` | `audio`, `video`, `gif` or `set` (a LeadStinger `.lsset` set file). |
+| `title` | A display title: the line (`meta.cue`) for a clip, the set's name for a set, else the file name with `_` as spaces. |
+| `size`, `mtime`, `modified` | Bytes; modification time (Unix seconds, and ISO 8601 UTC). |
+| `download_url` | The file (as it is). With `QC_CLIPS_URL_PREFIX` it points at the front proxy. |
+| `stream_url` | Inline playback with Range; `null` for a set. |
+| `flac_url` | `/api/clips/download/{clip}?as=flac` for `audio` and `video` clips, else `null`. |
+| `link` | A deep link that opens the clip in the workspace (with `QC_PUBLIC_URL`; not for sets). |
+| `path` | The file's path on the server. |
+| `meta` | The clip's metadata sidecar (below), or `null` when it has none yet. |
+
+### The metadata sidecar
+
+Every file quipclipper writes into the clips library (a clip job, a batch export,
+clip.nowplaying, Send to LeadStinger, a set file) gets `.<file name>.qc.json` beside it.
+It's a dot-file, so listings, the library browser and Jellyfin skip it. Clips cut before
+sidecars existed get one from `POST /api/clips/backfill` (`clips.backfill`), marked
+`"backfilled": true`; fields it can't know are `null` or missing, so treat every field but
+`schema`, `version`, `file`, `kind` and `created` as optional.
+
+| Field | Meaning |
+|---|---|
+| `schema`, `version` | `"quipclipper.clip-meta"`, `1`. A new version only adds fields. |
+| `file` | The clip's file name. |
+| `kind` | `audio`, `video`, `gif` or `set`. |
+| `origin` | `clip` (a clip job), `leadstinger.quip` (Send to LeadStinger), `leadstinger.set`, or `backfill`. |
+| `created` | When it was cut (ISO 8601 UTC). |
+| `source` | `{path, name, url}`: the source as quipclipper names it (a library path, a `yt:` or EPUB ref), its display name (the movie or show), and a YouTube page URL. Backfill adds `stem`, the source name read from the clip's folder or file name. |
+| `line` | `{start, end}`: the line's span in the source, in seconds. |
+| `clip` | `{start, end}`: the span cut from the source (the line plus its padding). |
+| `padding` | `{before, after}`: seconds of handle audio either side of the line. |
+| `trim` | `{start, end}`: where the line sits inside the clip file, in seconds. Use it as `quip.import`'s `start`/`end`. (A lossless video cut starts on the keyframe before, so for those it is approximate.) |
+| `cue` | The line's text. |
+| `codec`, `channels`, `sample_rate`, `video_codec`, `duration` | From ffprobe after the cut (the first audio stream). |
+| `jellyfin` | `{id, type, show, season, episode, title, year}` when Jellyfin knows the source, else `null`. |
+| `lossless`, `audio_format`, `set`, `split`, `size` | The cut's options, the LeadStinger set a sent line went to, whether a channel split wrote it, its size in bytes. |
+| `name`, `items` | Sets only: the set's name and its tiles (`title`, `notes`, `source`, `line`, `padding`, `trim_start`, `trim_end`). |
+| `parsed` | Backfill only: `{season, episode, year}` read from the names. |
+
+### `GET /api/clips/download/{path}?as=flac`
+
+Converts the clip (no cut) to FLAC in D-024's format: the first audio stream, every
+channel kept (a 5.1 clip stays 5.1), `audio/flac`, saved as `<stem>.flac`. The result is
+cached in the state folder by the clip's path, modification time and size, so a second
+download is instant and a re-cut clip converts again (its old copy is deleted). A FLAC clip
+comes as it is. A set file or a GIF is `400`; a clip ffmpeg can't convert (no audio) is
+`422`. The same path checks as without `as` (outside the library: 403).
+
+### `POST /api/clips/backfill`
+
+A job (follow it at `/api/jobs/{id}`). For every clip and set without a sidecar it writes
+one from ffprobe, the file name (source, timestamp, line) and, when the source's name
+matches one file Jellyfin knows, Jellyfin's show and episode. A sidecar left behind by a
+clip moved outside quipclipper is re-attached to the file with the same name and size; one
+whose clip is gone is deleted, and so are FLAC copies of deleted clips. The job's `result`
+counts them (`clips`, `written`, `kept`, `reattached`, `pruned`, `jellyfin`, `errors`,
+`flac_pruned`). Safe to run again.
+
+```bash
+# Everything new since the last poll, newest first, with its metadata
+curl -s -u "api:$TOKEN" "$BASE/api/clips?recursive=1&sort=newest&since=$CURSOR" \
+  | jq '.cursor, (.clips[] | {clip, kind, title, show: .meta.jellyfin.show, trim: .meta.trim})'
+# A clip as FLAC for LeadStinger
+curl -s -u "api:$TOKEN" -OJ "$BASE/api/clips/download/LeadStinger/a_00-01-05_Engage.mka?as=flac"
+```
 
 ## Deep links
 

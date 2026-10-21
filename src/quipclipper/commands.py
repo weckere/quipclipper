@@ -415,17 +415,35 @@ COMMANDS: tuple[Command, ...] = (
             mode="client", ui="Bookmark selected"),
 
     # --- clips library ---------------------------------------------------------------------
-    Command("clips.list", "List finished clips (a folder of the clips library).",
+    Command("clips.list", "List finished clips and LeadStinger set files (a folder of the "
+            "clips library, or everything under it), each with its metadata: source, line, "
+            "show and episode, codec, channels, duration.",
             "GET", "/api/clips",
-            params=(Param("folder", "str", "Subfolder of the clips library.", main=True),),
+            params=(Param("folder", "str", "Subfolder of the clips library.", main=True),
+                    Param("recursive", "bool", "Everything under the folder, not just its "
+                          "own files.", default=False, flags=("-r",)),
+                    Param("q", "str", "Only entries whose line, title, show or file name "
+                          "has every word of this.", flags=("--query",)),
+                    Param("kind", "str", "Only this kind of entry.",
+                          choices=("audio", "video", "gif", "set")),
+                    Param("since", "str", "Only entries added after this cursor (the "
+                          "cursor of an earlier listing)."),
+                    Param("sort", "str", "Order: by path, or newest first.", default="name",
+                          choices=("name", "newest"))),
             ui="Clips view"),
-    Command("clips.download", "Download a clip from the clips library.", "GET",
+    Command("clips.download", "Download a clip or set file from the clips library.", "GET",
             "/api/clips/download/{clip_path}",
             params=(Param("clip_path", "str", "Path inside the clips library.", where=PATH,
                           main=True, required=True),
+                    Param("as", "str", "Convert the clip (no cut) to a full-mix FLAC "
+                          "keeping its channels; not for set files.", choices=("flac",)),
                     Param("out_dir", "str", "Folder to save into.", where=CLIENT,
                           default=".")),
             response="file", ui="Clip Download link"),
+    Command("clips.backfill", "Give clips cut before metadata sidecars existed a best-effort "
+            "one (ffprobe, the file name, Jellyfin); re-attach moved clips' sidecars and "
+            "drop those of deleted clips. Safe to run again.", "POST", "/api/clips/backfill",
+            params=_JOB_FOLLOW, response="job", ui="—"),
 
     # --- LeadStinger (M14): hand clips to the soundboard ------------------------------------
     Command("leadstinger.set", "Make a LeadStinger set file (.lsset) from JSON lines on stdin: "
