@@ -303,11 +303,9 @@ async function applyRoute(hash, { focus = false } = {}) {
   } finally {
     routeRestoring = false;
   }
-  // Back / Forward: focus lands on the new view's heading (as the skip link would take it).
-  if (focus) {
-    const a = document.activeElement;
-    if (!a || a === document.body || !(a.isConnected && a.offsetParent !== null)) skipTarget()[0].focus();
-  }
+  // Back / Forward: focus lands on the new view's heading (where the skip link would take
+  // it), even when the control that had it is still on screen, like a top-bar link.
+  if (focus) skipTarget()[0].focus();
 }
 
 /** A search URL: the folder (or library) first, then the search, as the search box runs it. */
