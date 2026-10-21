@@ -547,7 +547,9 @@ input[type="checkbox"].switch:disabled { cursor: default; }
   animation: clip-spin 0.7s linear infinite;
 }
 @keyframes clip-spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .clip-spinner { animation-duration: 2.4s; } }
+@media (prefers-reduced-motion: reduce) {
+  .clip-spinner, .jobs-pill.running .jobs-dot, .job-state-running .job-mark { animation-duration: 2.4s; }
+}
 /* Download button (matches the icon-button size, accented to stand out). */
 .clip-dl-mini {
   display: inline-flex; align-items: center; justify-content: center;
@@ -590,11 +592,13 @@ input[type="checkbox"].switch:disabled { cursor: default; }
 /* ---- bookmarks ------------------------------------------------------------------------------ */
 .bookmarks-list { list-style: none; margin: 0; padding: 0; }
 .bookmark-item {
-  display: flex; align-items: center; gap: 0.6rem;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 0.6rem;
   padding: 0.45rem 0.6rem; border-radius: var(--radius);
 }
 .bookmark-item:hover { background: var(--raised); }
-.bookmark-label { flex: 1; font-size: 0.9rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The name keeps at least 8rem: in a narrow pane (a phone, the side panel) the padding
+   fields and buttons wrap under it instead of squeezing it to nothing. */
+.bookmark-label { flex: 1 1 8rem; font-size: 0.9rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bookmark-range {
   font-size: 0.8rem; color: var(--dim); white-space: nowrap;
   font-family: var(--font-mono); font-variant-numeric: tabular-nums;
@@ -678,7 +682,7 @@ footer { padding: 2rem 1.25rem; font-size: 0.8rem; }
   background: none; border: none; padding: 0; font-family: inherit;
 }
 .reindex-link:hover { color: var(--accent-text); text-decoration: underline; }
-.reindex-link.disabled { opacity: 0.5; cursor: default; pointer-events: none; }
+.reindex-link:disabled { opacity: 0.5; cursor: default; }
 .reindex-status { font-size: 0.8rem; }
 
 /* ---- subtitle script view ------------------------------------------------------------------- */
@@ -967,6 +971,8 @@ footer { padding: 2rem 1.25rem; font-size: 0.8rem; }
   .dialogue-hit:hover .hit-actions .mark-icon-btn, .dialogue-hit:focus-within .hit-actions .mark-icon-btn,
   .dialogue-hit.focus .hit-actions .mark-icon-btn { opacity: 1; }
 }
+/* Only beside the list (previewMQ in app.js); narrower, a click on a hit opens it. */
+@media (max-width: 1249.98px) { .hit-preview { display: none; } }
 .hit-preview {
   position: sticky; top: 5rem; padding: 1rem 1.1rem;
   background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg);

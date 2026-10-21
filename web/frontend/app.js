@@ -58,6 +58,7 @@ function stopPlayer() {
   // so a background poll can't yank the user back in or drive a stale player.
   if (itemListeners) { itemListeners.abort(); itemListeners = null; }
   currentItem = null;
+  scriptLoadId++;  // a script still loading for the old item must not land anywhere
   wfHide();
   destroyYtEmbed();
   destroyHls();
@@ -245,6 +246,12 @@ function parseRoute(hash) {
 
 const routeLink = (hash) => location.origin + location.pathname + hash;
 
+/** Whether the page shows `view` with `key` = `value` (null: the parameter absent). */
+function showingRoute(view, key, value) {
+  const r = parseRoute(location.hash);
+  return !!r && r.view === view && (r.params.get(key) || null) === (value || null);
+}
+
 // While a URL is being restored (on load, Back/Forward), views replace the history entry
 // instead of pushing one, so restoring doesn't grow the history.
 let routeRestoring = false;
@@ -399,6 +406,10 @@ async function browse(path, { fromLink = false } = {}) {
   $("route-note").hidden = true;
   currentBrowsePath = path;
   dialogueSearchScope = null;
+  // One listing at a time: a slower browse, name filter or dialogue search started
+  // before this one must not land in it.
+  clearTimeout(librarySearchTimer);
+  const myId = ++librarySearchId;
   refreshNowPlaying();  // the Now playing card shows on the library home only
   const list = $("entries");
   list.innerHTML = "";
@@ -429,10 +440,12 @@ async function browse(path, { fromLink = false } = {}) {
   try {
     data = await getJSON("/api/library/browse" + (path ? qp(path) : ""));
   } catch (err) {
+    if (myId !== librarySearchId) return false;
     if (fromLink && path) { await linkFailed(err); return false; }
     list.innerHTML = `<li class="error">Could not browse: ${escapeHtml(err.message)}</li>`;
     return false;
   }
+  if (myId !== librarySearchId) return false;  // a newer listing is on screen
 
   renderBreadcrumb(path);
   renderRootsRail(path);
@@ -494,12 +507,12 @@ function jfArtUrl(art, w) {
     `&w=${Math.round(w * 2)}` + (art.tag ? `&tag=${encodeURIComponent(art.tag)}` : "");
 }
 
-/** A lazy-loaded poster (or a 16:9 still when `art.wide`), its alt text naming what it shows. */
-function jfArtHtml(art, title, className) {
+/** A lazy-loaded poster (or a 16:9 still when `art.wide`) on a row. Decorative (empty
+ *  alt): the row it sits in already says the title, which "Poster: <title>" only repeated. */
+function jfArtHtml(art, className) {
   const wide = !!art.wide;
-  const alt = `${wide ? "Still" : "Poster"}: ${title || "artwork"}`;
   return `<img class="jf-art${wide ? " wide" : ""} ${className}" src="${escapeHtml(jfArtUrl(art, wide ? 64 : 32))}"` +
-    ` alt="${escapeHtml(alt)}" loading="lazy" decoding="async" width="${wide ? 64 : 32}" height="${wide ? 36 : 48}">`;
+    ` alt="" loading="lazy" decoding="async" width="${wide ? 64 : 32}" height="${wide ? 36 : 48}">`;
 }
 
 /** A poster that fails to load goes back to `fallback` (the row's icon), or away. */
@@ -539,7 +552,7 @@ function renderEntries(entries) {
       title: e.is_book ? "Open this book's chapters" : intoFolder ? "Open this folder"
         : "Open in the workspace: play it, read its script, cut a clip",
       html: `<span class="icon-wrap${art ? " has-art" : ""}">` +
-        `${art ? jfArtHtml(art, e.jellyfin.title || e.name, "entry-art") : iconSvg(icon)}</span>` +
+        `${art ? jfArtHtml(art, "entry-art") : iconSvg(icon)}</span>` +
         `<span class="label">${escapeHtml(e.name)}</span>` +
         `<span class="chips">${chips}</span>` + (intoFolder ? `<span class="go">${iconSvg("chevron-r")}</span>` : ""),
     });
@@ -682,7 +695,9 @@ async function addYouTubeUrl() {
       input.value = "";
       status.hidden = true;
       btn.disabled = false;
-      browse("yt:");  // the new entry appears in the listing
+      // The new entry appears in the listing, if the user is still looking at it: a
+      // background job never pulls them away from what they're doing now.
+      if (showingRoute("library", "path", "yt:")) browse("yt:");
     } else if (j.status === "failed" || j.status === "cancelled") {
       clearInterval(poll);
       status.textContent = `Could not add: ${j.error || "see server logs"}`;
@@ -799,6 +814,8 @@ async function dialogueSearch(query, folders) {
   const status = $("dialogue-search-status");
   status.textContent = "Searching subtitles…";
   status.hidden = false;
+  clearTimeout(librarySearchTimer);
+  const myId = ++librarySearchId;  // a browse or filter after this one wins
 
   const pathParams = folders.map((f) => `path=${encodeURIComponent(f)}`).join("&");
   const url = `/api/search/folder?${pathParams}&query=${encodeURIComponent(query)}`;
@@ -806,10 +823,12 @@ async function dialogueSearch(query, folders) {
   try {
     data = await getJSON(url);
   } catch (err) {
+    if (myId !== librarySearchId) return;
     list.innerHTML = `<li class="error">Dialogue search failed: ${escapeHtml(err.message)}</li>`;
     status.hidden = true;
     return;
   }
+  if (myId !== librarySearchId) return;  // the user went elsewhere meanwhile
 
   status.textContent = `${data.count} match${data.count !== 1 ? "es" : ""} across ${data.files_scanned} file${data.files_scanned !== 1 ? "s" : ""}`;
 
@@ -915,6 +934,13 @@ function highlightMatch(text, query) {
 // The preview panel needs room beside the list.
 const previewMQ = window.matchMedia("(min-width: 1250px)");
 const previewOn = () => previewMQ.matches;
+// Narrowed past the breakpoint (a window resized, an iPad turned): the panel has no room,
+// and a click on a hit now opens it instead, so put the preview away.
+previewMQ.addEventListener("change", () => {
+  if (previewOn()) return;
+  $("hit-preview").hidden = true;
+  document.querySelectorAll(".dialogue-hit.focus").forEach((li) => li.classList.remove("focus"));
+});
 const cueCache = new Map();  // path -> cues, so moving between hits of one file is instant
 let previewToken = 0;
 
@@ -982,7 +1008,14 @@ function pollHitClip(jobId, statusEl) {
         statusEl.innerHTML = `<span class="job-failed" title="${escapeHtml(job.error || "failed")}">✗</span>`;
       }
     })
-    .catch(() => { if (statusEl.isConnected) setTimeout(() => pollHitClip(jobId, statusEl), 2000); });
+    .catch((err) => {
+      if (!statusEl.isConnected) return;
+      if (err.status === 404) {  // cleared from the Jobs list
+        statusEl.innerHTML = '<span class="muted" title="This job was cleared from the Jobs list">–</span>';
+        return;
+      }
+      setTimeout(() => pollHitClip(jobId, statusEl), 2000);
+    });
 }
 
 // Save a single search hit as a bookmark (keeping its dialogue for {cue} + label).
@@ -1092,6 +1125,11 @@ async function streamFolderIndex(folder, force, onProgress) {
   let url = `/api/search/folder/index?path=${encodeURIComponent(folder)}`;
   if (force) url += "&force=true";
   const resp = await apiFetch(url, { method: "POST" });
+  if (!resp.ok) {  // e.g. a folder over the index cap (400)
+    let detail = `${resp.status}`;
+    try { detail = (await resp.json()).detail || detail; } catch {}
+    throw new Error(detail);
+  }
   const reader = resp.body.getReader();
   const decoder = new TextDecoder();
   while (true) {
@@ -1116,17 +1154,22 @@ $("index-btn").addEventListener("click", async () => {
   const text = $("index-card-text");
   setIndexBusy(true);
   text.textContent = "Indexing…";
+  // A status region: busy while the per-file progress ticks by, so a screen reader
+  // hears the outcome rather than every file.
+  text.setAttribute("aria-busy", "true");
   try {
     await streamFolderIndex(folder, false, (d, t, name) => {
       if (currentBrowsePath !== folder) return;  // user moved on; the work continues server-side
       text.textContent = `Indexing ${d}/${t}: ${name}`;
       setIndexBar(d / t);
     });
-  } catch {
-    if (currentBrowsePath === folder) text.textContent = "Indexing failed.";
+  } catch (err) {
+    text.removeAttribute("aria-busy");
+    if (currentBrowsePath === folder) text.textContent = `Indexing failed: ${err.message}`;
     setIndexBusy(false);
     return;
   }
+  text.removeAttribute("aria-busy");
   setIndexBusy(false);
   if (currentBrowsePath === folder) checkFolderIndex(folder);
 });
@@ -1148,8 +1191,8 @@ $("reindex-folder-btn").addEventListener("click", async () => {
     }
     status.textContent = "Reindexed.";
     if (currentBrowsePath && !dialogueSearchScope) checkFolderIndex(currentBrowsePath);
-  } catch {
-    status.textContent = "Reindex failed.";
+  } catch (err) {
+    status.textContent = `Reindex failed: ${err.message}`;
   }
   setIndexBusy(false);
 });
@@ -1208,7 +1251,8 @@ $("ss-reindex").addEventListener("click", async () => {
   if (!currentItem) return;
   const btn = $("ss-reindex");
   const status = $("ss-reindex-status");
-  btn.classList.add("disabled");
+  if (btn.disabled) return;
+  btn.disabled = true;
   status.hidden = false;
   status.textContent = "Reindexing…";
   try {
@@ -1216,6 +1260,7 @@ $("ss-reindex").addEventListener("click", async () => {
       `/api/items/subtitles/reindex?path=${encodeURIComponent(currentItem.path)}`, {},
     );
     status.textContent = `Reindexed (${data.cues} cues).`;
+    cueCache.delete(currentItem.path);  // the search preview shows the new lines too
     // Reload the script and subtitle track so the new subs show immediately.
     const track = getSelectedTrack();
     loadScript(currentItem.path, track);
@@ -1223,7 +1268,7 @@ $("ss-reindex").addEventListener("click", async () => {
   } catch (err) {
     status.textContent = `Reindex failed: ${err.message}`;
   }
-  btn.classList.remove("disabled");
+  btn.disabled = false;
 });
 
 /** Wire the per-item "Fetch subtitles from YouTube" action (backfill). Runs as
@@ -1232,8 +1277,8 @@ function wireFetchSubs(path) {
   const btn = $("ss-fetch-subs");
   const status = $("ss-fetch-subs-status");
   btn.onclick = async () => {
-    if (!currentItem || currentItem.path !== path) return;
-    btn.classList.add("disabled");
+    if (!currentItem || currentItem.path !== path || btn.disabled) return;
+    btn.disabled = true;
     status.hidden = false;
     status.textContent = "Fetching subtitles from YouTube…";
     let job;
@@ -1241,25 +1286,33 @@ function wireFetchSubs(path) {
       job = await postJSON(`/api/media/fetch-subs?path=${encodeURIComponent(path)}`, {});
     } catch (err) {
       status.textContent = `Failed: ${err.message}`;
-      btn.classList.remove("disabled");
+      btn.disabled = false;
       return;
     }
     const poll = setInterval(async () => {
-      const resp = await apiFetch(`/api/jobs/${encodeURIComponent(job.job_id)}`);
-      if (!resp.ok) { if (resp.status === 404) clearInterval(poll); return; }
+      const resp = await apiFetch(`/api/jobs/${encodeURIComponent(job.job_id)}`).catch(() => null);
+      if (!resp) return;  // offline for a moment: try again
+      if (!resp.ok) {
+        if (resp.status === 404) {  // cleared from the Jobs list
+          clearInterval(poll);
+          status.textContent = "";
+          btn.disabled = false;
+        }
+        return;
+      }
       const j = await resp.json();
       if (j.status === "done") {
         clearInterval(poll);
         if (j.progress === "none") {
           status.textContent = "YouTube has no subtitles for this video.";
-          btn.classList.remove("disabled");
+          btn.disabled = false;
         } else if (currentItem && currentItem.path === path) {
           openItem(currentItem.path, currentItem.name, {});  // reload so the script/search light up
         }
-      } else if (j.status === "failed") {
+      } else if (j.status === "failed" || j.status === "cancelled") {
         clearInterval(poll);
-        status.textContent = `Failed: ${j.error || "see server logs"}`;
-        btn.classList.remove("disabled");
+        status.textContent = j.status === "cancelled" ? "Cancelled." : `Failed: ${j.error || "see server logs"}`;
+        btn.disabled = false;
       }
     }, 1500);
   };
@@ -1387,6 +1440,7 @@ function setVideoReencodeNote(on) {
 
 let currentItem = null;
 let transcodeOffset = 0;  // ffmpeg -ss offset for current transcode segment
+let keyframeProbe = 0;     // generation of the transcode keyframe probes (newest wins)
 // Per-item listeners on the persistent #player / seek slider are scoped to this
 // controller; openItem aborts the previous one so they're removed, not just
 // neutralized — a previous item's loop can't drive the new player.
@@ -1541,6 +1595,7 @@ async function openItem(path, name, opts) {
   $("mark-range-display").innerHTML = "";
   $("mark-save").disabled = true;
   closeBookmarkLabel();
+  scriptLoadId++;  // the previous item's script, still loading, must not land here
   scriptCues = [];
   scriptActiveIdx = -1;
   $("script-wrap").hidden = true;
@@ -1676,14 +1731,19 @@ async function openItem(path, name, opts) {
     // the requested time.  Query the actual keyframe position so we can
     // shift subtitles accurately and keep the seek bar in sync.
     if (startTime > 0) {
+      // Only the newest probe of this item may set the offset: an older seek's answer,
+      // or one that lands after another item opened, would shift that player's clock.
+      const probe = ++keyframeProbe;
+      const current = () => !signal.aborted && probe === keyframeProbe;
       getJSON(`/api/media/keyframe?path=${encodeURIComponent(path)}&time=${startTime}`)
         .then((kf) => {
+          if (!current()) return;
           transcodeOffset = kf.actual;
           loadSubtitleTrack(path, getSelectedTrack(), kf.actual);
         })
         .catch(() => {
           // Fall back to requested time if probe fails
-          loadSubtitleTrack(path, getSelectedTrack(), startTime);
+          if (current()) loadSubtitleTrack(path, getSelectedTrack(), startTime);
         });
     } else {
       loadSubtitleTrack(path, getSelectedTrack(), 0);
@@ -1847,6 +1907,7 @@ async function openItem(path, name, opts) {
   // Arrow keys step in seconds (1 s, Shift 10 s), not in the range's 0.1 % steps, and the
   // reload waits for the keys to stop.
   let sliderSeekTimer = null;
+  signal.addEventListener("abort", () => clearTimeout(sliderSeekTimer));
   seekSlider.addEventListener("keydown", (e) => {
     const [lo, hi] = seekBounds();
     const step = seekKeyStep(e, lo, hi);
@@ -2025,10 +2086,7 @@ async function openItem(path, name, opts) {
   if (pendingCueSelect && pendingCueSelect.start != null && $("ss-subs").hidden) {
     const { start, end } = pendingCueSelect;
     pendingCueSelect = null;
-    clipRangeStart = start;
-    clipRangeEnd = end;
-    showClipTarget(true);
-    $("clip-range-display").textContent = `${formatTime(start)} – ${formatTime(end)} (${(end - start).toFixed(1)}s)`;
+    showFreeRange(start, end);
   }
 
   autoScope();
@@ -2041,13 +2099,7 @@ async function openItem(path, name, opts) {
 
   // When opening a clip from the clips library, pre-select the whole file
   // so the clip options are immediately ready for re-export.
-  if (selectWholeClip && info.duration) {
-    clipRangeStart = 0;
-    clipRangeEnd = info.duration;
-    showClipTarget(true);
-    $("clip-range-display").textContent =
-      `Entire file — 0:00.0 – ${formatTime(info.duration)} (${info.duration.toFixed(1)}s)`;
-  }
+  if (selectWholeClip && info.duration) showFreeRange(0, info.duration, "Entire file");
 
   // Apply pending bookmark clip (when navigating from bookmarks browser)
   if (bookmarkClip) useBookmarkForClip(bookmarkClip);
@@ -2201,6 +2253,11 @@ function getSelectedChan() {
   return sel.value;
 }
 
+/** "smooth", unless the user asked for reduced motion (a script() call overrides the CSS). */
+const scrollBehavior = () =>
+  matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+
+let itemSearchId = 0;  // generation of the in-video search (doSearch)
 async function doSearch(query, { focus = true } = {}) {
   if (!currentItem || !query) return;
 
@@ -2214,14 +2271,20 @@ async function doSearch(query, { focus = true } = {}) {
   let url = `/api/search${qp(currentItem.path)}&query=${encodeURIComponent(query)}`;
   const track = getSelectedTrack();
   if (track !== null) url += `&track=${track}`;
+  // The item and this search may be replaced while it runs: only the newest search of
+  // the item still open may fill the Matches tab.
+  const item = currentItem, mine = ++itemSearchId;
+  const stale = () => mine !== itemSearchId || currentItem !== item;
 
   let data;
   try {
     data = await getJSON(url);
   } catch (err) {
+    if (stale()) return;
     results.innerHTML = `<li class="error">Search failed: ${escapeHtml(err.message)}</li>`;
     return;
   }
+  if (stale()) return;
 
   setTabCount("matches", data.matches.length);
   const n = data.matches.length;
@@ -2672,7 +2735,7 @@ function selectCueRange(start, end) {
     const rowRect = row.getBoundingClientRect();
     list.scrollTo({
       top: list.scrollTop + (rowRect.top - listRect.top) - listRect.height / 2,
-      behavior: "smooth",
+      behavior: scrollBehavior(),
     });
     setTimeout(() => { scriptProgScroll = false; }, 600);
   }
@@ -2725,7 +2788,7 @@ function updateScript() {
         const listRect = list.getBoundingClientRect();
         const rowRect = row.getBoundingClientRect();
         const targetTop = list.scrollTop + (rowRect.top - listRect.top) - listRect.height / 3;
-        list.scrollTo({ top: targetTop, behavior: "smooth" });
+        list.scrollTo({ top: targetTop, behavior: scrollBehavior() });
         setTimeout(() => { scriptProgScroll = false; }, 600);
       }
     }
@@ -2997,6 +3060,10 @@ function formatSpan(s) {
 function wfHide() {
   wf.path = null;
   wf.req++;
+  wf.snapSeq++;  // a snap still on its way belongs to the item being left
+  clearTimeout(wf.nudgeTimer);
+  wf.pointers.clear();
+  wf.drag = null;
   clearTimeout(wf.loadTimer);
   clearTimeout(wf.pollTimer);
   cancelAnimationFrame(wf.raf);
@@ -3020,7 +3087,7 @@ function wfReset(path, info, primaryVideo) {
     fps: (primaryVideo && primaryVideo.frame_rate) || 0, lastHead: null,
   });
   $("waveform").hidden = false;
-  $("wf-note").textContent = "";
+  wfNote("");
   wfCutNote();
   wfViewChanged();
   setTimeout(wfLoad, 0);  // after openItem fills the stream selector (the audio stream)
@@ -3127,17 +3194,19 @@ async function wfLoad() {
   }
   const ov = body.overview || {};
   if (resp.status === 202) {
-    // The overview is still being built: say how far along, and ask again shortly.
-    $("wf-note").textContent = ov.state === "error"
-      ? `The waveform overview failed: ${ov.error || "ffmpeg error"}.`
+    // The overview is still being built: say how far along, and ask again shortly. A
+    // failed build stops asking (the server retries it when the view next asks).
+    const failed = ov.state === "error";
+    wfNote(failed ? `The waveform overview failed: ${ov.error || "ffmpeg error"}.`
       : `Building the waveform overview… ${Math.round((ov.progress || 0) * 100)}% ` +
-        "(zoom in under 2 minutes to see the audio now).";
-    wf.pollTimer = setTimeout(wfLoad, 1500);
+        "(zoom in under 2 minutes to see the audio now).", !failed);
+    if (!failed) wf.pollTimer = setTimeout(wfLoad, 1500);
     wfDraw();
     return;
   }
-  $("wf-note").textContent = ov.state === "queued" || ov.state === "building"
-    ? `Building the waveform overview… ${Math.round((ov.progress || 0) * 100)}%` : "";
+  const building = ov.state === "queued" || ov.state === "building";
+  wfNote(building ? `Building the waveform overview… ${Math.round((ov.progress || 0) * 100)}%` : "",
+    building);
   const data = { ...body, values: b64ToInt16(body.data) };
   wf.data = data;
   if (data.source === "overview" && data.peak) wf.filePeak = data.peak;
@@ -3149,6 +3218,15 @@ async function wfLoad() {
   if (ov.state === "queued" || ov.state === "building") {
     wf.pollTimer = setTimeout(() => { if (wf.path && !wf.filePeak) wfLoad(); }, 3000);
   }
+}
+
+/** The strip's status line. While `busy` (progress ticking by) its region is aria-busy, so
+ *  a screen reader waits for the outcome instead of reading every percentage. */
+function wfNote(text, busy = false) {
+  const note = $("wf-note");
+  note.textContent = text;
+  if (busy) note.setAttribute("aria-busy", "true");
+  else note.removeAttribute("aria-busy");
 }
 
 /** Say what the cut will do with the in point: frame/sample exact, keyframe, or codec frame. */
@@ -3412,9 +3490,9 @@ function wfMoveHandle(k, t) {
 
 /** Before / After changed (typed or by a handle): refresh everything that shows the range. */
 function padsChanged() {
+  if (!wf.fromHandle) wf.snapSeq++;  // typed Before / After: a pending snap is stale
   if (hasClipRange()) { updateClipUI(); return; }
-  const sel = wfSel();
-  if (sel) $("clip-range-display").textContent = `${formatTime(sel[0])} – ${formatTime(sel[1])} (${(sel[1] - sel[0]).toFixed(1)}s)`;
+  if (clipTargetOn && clipRangeStart != null) renderFreeRange();
   wfOnSelection();
 }
 
@@ -3480,6 +3558,7 @@ function wfHandleKey(e, k) {
   const d = { ArrowRight: step, ArrowUp: step, ArrowLeft: -step, ArrowDown: -step, PageUp: 1, PageDown: -1 }[e.key];
   if (d === undefined) return;
   e.preventDefault();
+  wf.snapSeq++;  // a drag's snap still on its way would undo this nudge
   wfMoveHandle(k, sel[k] + d);
   wfReveal(wfSel()[k]);
   // A nudge stays a nudge: no silence snap, and the zero-crossing snap only reaches 1 ms.
@@ -3741,11 +3820,6 @@ function wireBmBufferControls(li, bm, onSaved) {
 }
 
 function useBookmarkForClip(bm) {
-  clipRangeStart = bm.start;
-  clipRangeEnd = bm.end;
-  // No cue is selected in the script for a bookmark-loaded range, so remember the
-  // bookmark's dialogue for the {cue} naming token (makeClip falls back to it).
-  loadedBookmarkCue = bm.cue || null;
   // Restore the bookmark's saved buffer into the inputs (B16).
   $("clip-before").value = bm.before ?? 0;
   $("clip-after").value = bm.after ?? 0;
@@ -3754,11 +3828,47 @@ function useBookmarkForClip(bm) {
   restoreSelect("ss-subs", bm.sub_track);
   restoreSelect("ss-audio", bm.audio_track);
   restoreSelect("ss-chan", bm.channel_subset);
+  showFreeRange(bm.start, bm.end, `"${bm.label}"`);
+  // No cue is selected in the script for a bookmark-loaded range, so remember the
+  // bookmark's dialogue for the {cue} naming token (makeClip falls back to it).
+  loadedBookmarkCue = bm.cue || null;
+}
+
+/** Select a range that isn't made of script lines (a bookmark, a whole clip, a link's
+ *  span in a file without subtitles): it replaces any line selection, and shows where
+ *  a line selection does, padded by Before / After. */
+function showFreeRange(start, end, label) {
+  clipFirst = -1;
+  clipLast = -1;
+  loadedBookmarkCue = null;
+  clipRangeStart = start;
+  clipRangeEnd = end;
+  freeRangeLabel = label || "";
   showClipTarget(true);
-  const bs = Math.max(0, bm.start - (bm.before || 0));
-  const be = bm.end + (bm.after || 0);
+  renderFreeRange();
+  updateScriptHighlight();
+  if (pb) pb.refreshSeekBar();
+  updatePlaybackUI();
+}
+let freeRangeLabel = "";
+
+/** Show the loaded free range (see showFreeRange) with its padding. */
+function renderFreeRange() {
+  const sel = wfSel() || [clipRangeStart, clipRangeEnd];
+  const text = `${formatTime(sel[0])} – ${formatTime(sel[1])}`;
+  const dur = `(${(sel[1] - sel[0]).toFixed(1)}s)`;
+  const el = $("mark-range-display");
+  el.innerHTML =
+    (freeRangeLabel ? `<span>${escapeHtml(freeRangeLabel)} —</span> ` : "") +
+    `<span class="range-times">${text}</span> <span>${dur}</span>` +
+    ` <button type="button" class="mark-clear-inline" title="Clear the selection" aria-label="Clear selection">×</button>`;
+  el.querySelector(".mark-clear-inline").onclick = () => {
+    clipRangeStart = clipRangeEnd = null;
+    loadedBookmarkCue = null;
+    clearClip();
+  };
   $("clip-range-display").textContent =
-    `"${bm.label}" — ${formatTime(bs)} – ${formatTime(be)}`;
+    `${freeRangeLabel ? freeRangeLabel + " — " : ""}${text} ${dur}`;
 }
 
 /** Set a <select> to a saved value if that option exists, firing change. */
@@ -3934,12 +4044,24 @@ function pollClipJob(jobId, row) {
             href: `/api/jobs/${jobId}/download/${encodeURIComponent(first.name)}`, name: first.name });
           else setClipIndicator("hidden");
         }
+      } else if (job.status === "cancelled") {
+        statusEl.innerHTML = '<span class="muted">Cancelled</span>';
+        if (isLatest) setClipIndicator("hidden");
       } else {
         statusEl.innerHTML = `<span class="job-failed">Failed: ${escapeHtml(job.error || "unknown error")}</span>`;
         if (isLatest) setClipIndicator("failed", { error: job.error });
       }
     })
-    .catch(() => { if (row.isConnected) setTimeout(() => pollClipJob(jobId, row), 2000); });
+    .catch((err) => {
+      if (!row.isConnected) return;
+      if (err.status === 404) {  // cleared from the Jobs list
+        row.querySelector(".clip-made-status").innerHTML =
+          '<span class="muted">Cleared from the Jobs list</span>';
+        if (jobId === activeJobId) setClipIndicator("hidden");
+        return;
+      }
+      setTimeout(() => pollClipJob(jobId, row), 2000);
+    });
 }
 
 $("clip-btn").onclick = makeClip;
@@ -4389,17 +4511,24 @@ function pollBatch(jobIds, statusEl, onDone) {
   const total = jobIds.length;
   if (!total) { statusEl.textContent = ""; if (onDone) onDone(); return; }
   const tick = async () => {
-    let done = 0, failed = 0;
+    // A job cleared from the Jobs list (404) or cancelled is finished as far as this
+    // bar is concerned: count it, or the bar waits for it forever.
+    let done = 0, failed = 0, gone = 0;
     for (const id of jobIds) {
       try {
         const j = await getJSON(`/api/jobs/${id}`);
         if (j.status === "done") done++;
         else if (j.status === "failed") failed++;
-      } catch {}
+        else if (j.status === "cancelled") gone++;
+      } catch (err) {
+        if (err.status === 404) gone++;
+      }
     }
-    if (done + failed >= total) {
-      statusEl.textContent = failed
-        ? `${done}/${total} exported, ${failed} failed`
+    if (done + failed + gone >= total) {
+      const extra = [failed && `${failed} failed`, gone && `${gone} cancelled or cleared`]
+        .filter(Boolean).join(", ");
+      statusEl.textContent = extra
+        ? `${done}/${total} exported, ${extra}`
         : `${done}/${total} exported ✓ — see the Clips library`;
       if (onDone) onDone();
     } else {
@@ -4448,6 +4577,7 @@ $("clips-batch-export").onclick = () => {
     // restore the status text the refresh would otherwise wipe.
     () => {
       const msg = $("clips-batch-status").textContent;
+      if (!showingRoute("clips", "folder", currentClipsFolder)) return;  // the user moved on
       browseClips(currentClipsFolder).then(() => {
         $("clips-batch-status").textContent = msg;
       });
@@ -4573,7 +4703,17 @@ async function runLeadStingerBatch(prefix, onDone) {
   }
   const tick = async () => {
     let j;
-    try { j = await getJSON(`/api/jobs/${job.job_id}`); } catch { setTimeout(tick, 1500); return; }
+    try {
+      j = await getJSON(`/api/jobs/${job.job_id}`);
+    } catch (err) {
+      if (err.status === 404) {  // cleared from the Jobs list
+        status.textContent = "LeadStinger set cleared from the Jobs list.";
+        btn.disabled = false;
+        return;
+      }
+      setTimeout(tick, 1500);
+      return;
+    }
     if (j.status === "done" && j.files && j.files.length) {
       const file = j.files[0].name;
       const href = `/api/jobs/${encodeURIComponent(job.job_id)}/download/${encodeURIComponent(file)}`;
@@ -4662,7 +4802,12 @@ async function sendLeadStingerLink(it, status) {
     for (;;) {
       await new Promise((r) => setTimeout(r, 1000));
       let j;
-      try { j = await getJSON(`/api/jobs/${job.job_id}`); } catch { continue; }
+      try {
+        j = await getJSON(`/api/jobs/${job.job_id}`);
+      } catch (err) {
+        if (err.status === 404) throw new Error("the job was cleared from the Jobs list");
+        continue;
+      }
       if (j.status === "done" && j.result && j.result.link) {
         launchLeadStinger(j.result.link, status, what);
         return;
@@ -4789,11 +4934,16 @@ $("scope-menu").addEventListener("click", (e) => {
 });
 
 let searching = false;
+let searchRun = 0;  // generation of runGlobalSearch: only the newest clears the busy state
 async function runGlobalSearch() {
   const query = $("global-search-input").value.trim();
-  if (!query || searching) return;
+  if (!query) return;
+  // A new search supersedes one still running (its results are dropped when they
+  // arrive), so Back / Forward to a search during one isn't swallowed.
+  const run = ++searchRun;
   searching = true;
   $("global-search").classList.add("busy");
+  let browsed = false;
   try {
     if (searchScope === "item" && currentItem) {
       await doSearch(query);
@@ -4806,6 +4956,7 @@ async function runGlobalSearch() {
     if (currentView !== "browser" || (wholeLibrary && currentBrowsePath !== null)) {
       if (!wholeLibrary && !goTo && !wantedFolders) return;
       await browse(goTo);
+      browsed = true;
       searchScope = wholeLibrary ? "library" : "folder";
       updateScopeUI();
     }
@@ -4813,12 +4964,15 @@ async function runGlobalSearch() {
     const folders = wholeLibrary ? mediaRoots.slice()
       : (currentView === "browser" && dialogueSearchScope) || [currentBrowsePath].filter(Boolean);
     if (!folders.length) return;
+    // The folder browse() just showed is a step of this search, not a page of its own.
     setRoute(routeHash("search", wholeLibrary ? { q: query, scope: "library" }
-      : { q: query, scope: "folder", path: folders }));
+      : { q: query, scope: "folder", path: folders }), { replace: browsed });
     await dialogueSearch(query, folders);
   } finally {
-    searching = false;
-    $("global-search").classList.remove("busy");
+    if (run === searchRun) {
+      searching = false;
+      $("global-search").classList.remove("busy");
+    }
   }
 }
 
@@ -4896,7 +5050,7 @@ function renderNowPlaying() {
     li.className = "nowplaying-row";
     const who = [s.device, s.user].filter(Boolean).map(escapeHtml).join(" · ");
     const at = formatTimeWhole(s.position || 0);
-    li.innerHTML = (s.art ? jfArtHtml(s.art, nowPlayingTitle(s), "nowplaying-art") : "") +
+    li.innerHTML = (s.art ? jfArtHtml(s.art, "nowplaying-art") : "") +
       `<div class="nowplaying-what"><strong>${escapeHtml(nowPlayingTitle(s))}</strong>` +
       `<span class="muted">${who} · ${s.paused ? "paused" : "playing"} at ${at}</span>` +
       (s.path ? "" : `<span class="muted">${escapeHtml(s.note || "")}</span>`) +
@@ -5035,13 +5189,18 @@ function toggleJobs(open, restore) {
   jobsOpen = show;
   setPopover(pop, $("jobs-pill"), show, restore);
   if (show && !was) { toggleScopeMenu(false); toggleSettings(false); renderJobsList(); refreshJobs(); focusFirstIn(pop); }
-  scheduleJobs();
+  // Only an open or close changes the poll rate: every click on the page closes the
+  // popover, and rescheduling then would keep pushing the next poll back.
+  if (show !== was) scheduleJobs();
 }
 
 // --- popovers (Jobs, Settings): focus moves in, Tab stays in, Esc closes and returns focus --
 
 const FOCUSABLE = 'button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), [tabindex="0"]';
-const focusables = (root) => [...root.querySelectorAll(FOCUSABLE)].filter((n) => !n.closest("[hidden]") && n.offsetParent !== null);
+// Out of the Tab order (tabindex -1: a radio group's unchecked radios) doesn't count, or
+// Shift+Tab off the checked radio slips past a trap that thinks "System" comes first.
+const focusables = (root) => [...root.querySelectorAll(FOCUSABLE)].filter((n) =>
+  !n.closest("[hidden]") && n.offsetParent !== null && n.getAttribute("tabindex") !== "-1");
 
 function focusFirstIn(pop) {
   const first = focusables(pop)[0];
@@ -5209,16 +5368,19 @@ document.addEventListener("visibilitychange", () => {
 let appConfig = {};
 let mediaRoots = [];  // absolute media-root paths, for breadcrumb segmentation
 
+/** Config and media roots, which the first view needs (the breadcrumb's clickable
+ *  segments, Send to LeadStinger buttons): the page routes once they're in. The health
+ *  line in the footer arrives when it does. */
 async function loadStatus() {
-  try {
-    const h = await getJSON("/api/health");
+  getJSON("/api/health").then((h) => {
     const tools = Object.entries(h.tools)
       .map(([k, v]) => `${v ? "✓" : "✗"} ${k}`)
       .join("  ");
     $("status").textContent = `${h.service} v${h.version} — ${tools}`;
-  } catch (err) {
+  }).catch((err) => {
     $("status").textContent = `backend unreachable: ${err.message}`;
-  }
+  });
+  const roots = getJSON("/api/library/roots").catch(() => null);
   // Load config (subtitle_langs, hw_encode, etc.)
   try {
     appConfig = await getJSON("/api/config");
@@ -5231,11 +5393,11 @@ async function loadStatus() {
     refreshNowPlaying();
   } catch {}
   // Load media roots so the breadcrumb can offer clickable path segments.
-  try {
-    const r = await getJSON("/api/library/roots");
+  const r = await roots;
+  if (r) {
     mediaRoots = r.roots || [];
     renderRootsRail(currentBrowsePath);
-  } catch {}
+  }
 }
 
 // The skip link goes to whatever the page is showing: the workspace, the results, the list.
@@ -5278,6 +5440,5 @@ function currentParent() {
   return i > 0 ? p.slice(0, i) : null;
 }
 
-loadStatus();
-applyRoute(location.hash);
+loadStatus().finally(() => applyRoute(location.hash));
 refreshJobs().then(scheduleJobs);

@@ -131,6 +131,26 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   unwritable `--out-dir`s are errors, not tracebacks.
 - Clip names stay under the 255-byte file-name limit (a long non-Latin line plus a long
   folder name could exceed it).
+- Web app: opening another file while a script was still loading could put the old
+  file's lines (and its selection) into the new one, so a clip was cut at the wrong
+  times. Slow folder listings, filters, dialogue searches, in-video searches, keyframe
+  probes and waveform snaps no longer land in whatever you opened since.
+- Web app: Clip on a bookmark (and a whole clip from the Clips library) shows its range
+  where a line selection shows, replacing the selection instead of hiding behind it; a
+  bookmark's line names the clip.
+- Web app: batch exports, Send to LeadStinger and clip rows stop waiting on a job
+  cleared from the Jobs list or cancelled; a YouTube add or a Clips export finishing in
+  the background no longer drags you back to its page; a search started from the
+  workspace leaves one history entry, and Back/Forward to a search isn't lost while one
+  runs; a link opened cold has a clickable breadcrumb and Send to LeadStinger buttons.
+- Web app: on a phone, the workspace's bookmark rows wrap instead of hiding their names;
+  the search preview goes away when the window gets too narrow for it; a failed
+  waveform overview stops polling; Shift+Tab can't leave the Settings dialog; clicking
+  around no longer stalls the Jobs pill; screen readers hear the outcome of indexing
+  and of the waveform overview, not every percentage; reduced motion slows every
+  spinner and stops smooth script scrolling; row posters no longer repeat the title
+  to a screen reader; Reindex and Fetch subtitles are really disabled while they run;
+  a re-index that fails says why.
 - The Docker `web` image ships hls.js again (it fetches the pinned npm tarball, checked by
   its hash): without it, Chrome and Firefox fell back to the old ffmpeg pipe, where long
   files never started playing.
