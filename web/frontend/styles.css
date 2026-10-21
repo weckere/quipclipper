@@ -276,7 +276,7 @@ select {
   padding: 0.55rem 0; border-top: 1px solid var(--line);
 }
 .nowplaying-row:first-child { border-top: 0; }
-.nowplaying-what { flex: 1 1 16rem; min-width: 0; display: flex; flex-direction: column; gap: 0.1rem; }
+.nowplaying-what { flex: 1 1 12rem; min-width: 0; display: flex; flex-direction: column; gap: 0.1rem; }
 .nowplaying-what strong { font-weight: 600; overflow-wrap: anywhere; }
 .nowplaying-what .muted { font-size: 0.85rem; }
 
@@ -747,8 +747,23 @@ footer { padding: 2rem 1.25rem; font-size: 0.8rem; }
 .workspace { margin-top: 0.9rem; }
 .ws-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem; margin-bottom: 0.8rem; }
 .ws-head .back { margin: 0; }
-.ws-title { flex: 1 1 14rem; min-width: 0; }
+.ws-title { flex: 1 1 14rem; min-width: 0; display: flex; align-items: flex-start; gap: 0.8rem; }
+.ws-title-text { flex: 1; min-width: 0; }
 .ws-title h2 { margin: 0; font-size: 1.5rem; line-height: 1.25; }
+/* Jellyfin artwork (M18): a fixed box, so a poster loading late never moves the text. */
+.jf-art {
+  flex-shrink: 0; display: block; object-fit: cover; border-radius: 4px;
+  background: var(--raised); box-shadow: 0 0 0 1px var(--line);
+}
+.item-art { width: 4rem; height: 6rem; }
+.item-art.wide { width: 8rem; height: 4.5rem; }
+.item-jf-title { font-weight: 500; overflow-wrap: anywhere; margin-bottom: 0.1rem; }
+.entry .icon-wrap.has-art { width: 2rem; justify-content: center; }
+.entry-art { width: 2rem; height: 3rem; }
+.entry-art.wide { width: 4rem; height: 2.25rem; }
+.entry .icon-wrap.has-art:has(.wide) { width: 4rem; }
+.nowplaying-art { width: 2.5rem; height: 3.75rem; }
+.nowplaying-art.wide { width: 5rem; height: 2.8rem; }
 .workspace .item-filename { margin: 0; }
 .workspace .stream-selector { margin: 0; justify-content: flex-end; }
 .ws-grid {
@@ -1057,6 +1072,10 @@ input[type="checkbox"]:not(.switch) { width: 1rem; height: 1rem; }
 /* Reflow (SC 1.4.10): usable at 320 px wide, i.e. 1280 px at 400 % zoom, with no sideways
    scrolling. The nav tightens, the map's bars may thin below a pixel. */
 .dm-bars i { min-width: 0; }
+@media (max-width: 600px) {
+  .item-art { width: 3rem; height: 4.5rem; }
+  .item-art.wide { width: 5.5rem; height: 3.1rem; }
+}
 @media (max-width: 480px) {
   .dm-bars { gap: 0; }
   .key-hint { display: none; }

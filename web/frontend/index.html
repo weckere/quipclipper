@@ -184,7 +184,7 @@
               <option value="wav">WAV</option>
             </select>
           </label>
-          <label class="batch-template-label" title="Output path for each clip. A leading folder (e.g. MyBatch/...) puts them all in one folder. Tokens: {source} {timestamp} {end} {duration} {cue} {title} {year} {season} {episode} {date}">Name <input id="search-batch-template" class="clip-template-input" type="text" autocomplete="off" spellcheck="false" placeholder="{source}/{timestamp}_{cue}_{title}" /></label>
+          <label class="batch-template-label" title="Output path for each clip. A leading folder (e.g. MyBatch/...) puts them all in one folder. Tokens: {source} {timestamp} {end} {duration} {cue} {title} {show} {folder} {year} {season} {episode} {date}; {title}, {show}, {season}, {episode} and {year} come from Jellyfin when it knows the file">Name <input id="search-batch-template" class="clip-template-input" type="text" autocomplete="off" spellcheck="false" placeholder="{source}/{timestamp}_{cue}_{folder}" /></label>
         </div>
       </div>
         <p id="browser-empty" class="muted" hidden>Nothing here.</p>
@@ -223,7 +223,7 @@
               <option value="wav">WAV</option>
             </select>
           </label>
-          <label class="batch-template-label" title="Output path for each clip. A leading folder (e.g. MyBatch/...) puts them all in one folder. Tokens: {source} {timestamp} {end} {duration} {cue} {title} {year} {season} {episode} {date}">Name <input id="clips-batch-template" class="clip-template-input" type="text" autocomplete="off" spellcheck="false" placeholder="{source}/{timestamp}_{cue}_{title}" /></label>
+          <label class="batch-template-label" title="Output path for each clip. A leading folder (e.g. MyBatch/...) puts them all in one folder. Tokens: {source} {timestamp} {end} {duration} {cue} {title} {show} {folder} {year} {season} {episode} {date}; {title}, {show}, {season}, {episode} and {year} come from Jellyfin when it knows the file">Name <input id="clips-batch-template" class="clip-template-input" type="text" autocomplete="off" spellcheck="false" placeholder="{source}/{timestamp}_{cue}_{folder}" /></label>
         </div>
       </div>
       </section>
@@ -260,7 +260,7 @@
               <option value="wav">WAV</option>
             </select>
           </label>
-          <label class="batch-template-label" title="Output path for each clip. A leading folder (e.g. MyBatch/...) puts them all in one folder. Tokens: {source} {timestamp} {end} {duration} {cue} {title} {year} {season} {episode} {date}">Name <input id="bm-batch-template" class="clip-template-input" type="text" autocomplete="off" spellcheck="false" placeholder="{source}/{timestamp}_{cue}_{title}" /></label>
+          <label class="batch-template-label" title="Output path for each clip. A leading folder (e.g. MyBatch/...) puts them all in one folder. Tokens: {source} {timestamp} {end} {duration} {cue} {title} {show} {folder} {year} {season} {episode} {date}; {title}, {show}, {season}, {episode} and {year} come from Jellyfin when it knows the file">Name <input id="bm-batch-template" class="clip-template-input" type="text" autocomplete="off" spellcheck="false" placeholder="{source}/{timestamp}_{cue}_{folder}" /></label>
         </div>
       </div>
       </section>
@@ -270,8 +270,13 @@
         <div class="ws-head">
           <button type="button" id="back" data-action="library.browse" class="back" title="Back to the folder this file is in"><span aria-hidden="true">←</span> Back</button>
           <div class="ws-title">
-            <h2 id="item-name" tabindex="-1"></h2>
-            <div id="item-filename" class="item-filename muted"></div>
+            <!-- Jellyfin's poster for this file, when it knows it (M18). -->
+            <img id="item-art" class="jf-art item-art" alt="" decoding="async" hidden />
+            <div class="ws-title-text">
+              <h2 id="item-name" tabindex="-1"></h2>
+              <div id="item-jf-title" class="item-jf-title" hidden></div>
+              <div id="item-filename" class="item-filename muted"></div>
+            </div>
           </div>
           <div id="stream-selector" data-action="item.info" class="stream-selector" hidden>
             <label class="ss-field" id="ss-subs-field">Subtitles
@@ -376,15 +381,20 @@
                 <div class="clip-range" id="clip-range-display"></div>
                 <label class="clip-template-label">Name
                   <input id="clip-template" data-action="settings.set" class="clip-template-input" type="text" title="Where the clip is saved, as a path made of tokens; / makes subfolders" autocomplete="off" spellcheck="false"
-                         placeholder="{source}/{timestamp}_{cue}_{title}" />
+                         placeholder="{source}/{timestamp}_{cue}_{folder}" />
                 </label>
                 <details class="clip-template-help muted">
                   <summary title="The tokens a clip name can use">Tokens</summary>
                   <code>/</code> makes subfolders. Tokens:
                   <code>{source}</code> <code>{timestamp}</code> <code>{end}</code>
                   <code>{duration}</code> <code>{cue}</code> <code>{title}</code>
+                  <code>{show}</code> <code>{folder}</code>
                   <code>{year}</code> <code>{season}</code> <code>{episode}</code>
-                  <code>{date}</code>. Empty tokens are dropped.
+                  <code>{date}</code>. Empty tokens are dropped. With Jellyfin,
+                  <code>{title}</code> is the episode's or movie's real title and
+                  <code>{show}</code>, <code>{season}</code>, <code>{episode}</code>,
+                  <code>{year}</code> come from it too; <code>{folder}</code> is the
+                  show or movie folder's name.
                 </details>
               </div>
             </div>

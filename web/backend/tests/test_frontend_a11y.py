@@ -236,3 +236,18 @@ def test_make_activatable_rows_get_hover_text():
     assert calls, "app.js no longer calls makeActivatable; move this guard with it"
     bad = [c for c in calls if "," not in c]
     assert not bad, f"makeActivatable calls without a title: {bad}"
+
+
+@needs_frontend
+def test_every_image_has_alt_text_and_templates_load_lazily():
+    """Jellyfin artwork (M18): each <img> says what it shows (alt), and the ones app.js builds
+    for list rows load lazily, so a long folder doesn't fetch every poster at once."""
+    html = (FRONTEND / "index.html").read_text(encoding="utf-8")
+    js = _js()
+    imgs = re.findall(r"<img\b[^>]*>", html) + re.findall(r"<img\b[^`]*?>", js)
+    assert imgs, "no <img> in the frontend; move this guard with the artwork"
+    assert not [i for i in imgs if not re.search(r"\balt=", i)], "an <img> without alt"
+    templates = re.findall(r"<img\b[^`]*?>", js)
+    assert not [i for i in templates if 'loading="lazy"' not in i], "a row image not lazy"
+    # The header's image is filled in by script: it gets its alt text there.
+    assert re.search(r'\$\("item-art"\)', js) and re.search(r"img\.alt\s*=\s*`", js)

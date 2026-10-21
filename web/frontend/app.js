@@ -480,6 +480,37 @@ function makeActivatable(node, title, role = "button") {
 /** An icon from the sprite in index.html. */
 const iconSvg = (name) => `<svg class="icon" aria-hidden="true"><use href="#i-${name}"/></svg>`;
 
+// --- Jellyfin artwork (M18) ---------------------------------------------------
+//
+// Library rows, the workspace and Now playing carry `jellyfin.art` / `art` ({id, type,
+// tag, wide}) when Jellyfin knows the file. The image comes through the server's proxy
+// (GET /api/jellyfin/image/{id}), which keeps the API key there; with its tag the
+// browser caches it for good.
+
+/** The proxy URL for an artwork entry, `w` CSS pixels wide (asked for at 2x). */
+function jfArtUrl(art, w) {
+  return `/api/jellyfin/image/${encodeURIComponent(art.id)}?type=${encodeURIComponent(art.type || "Primary")}` +
+    `&w=${Math.round(w * 2)}` + (art.tag ? `&tag=${encodeURIComponent(art.tag)}` : "");
+}
+
+/** A lazy-loaded poster (or a 16:9 still when `art.wide`), its alt text naming what it shows. */
+function jfArtHtml(art, title, className) {
+  const wide = !!art.wide;
+  const alt = `${wide ? "Still" : "Poster"}: ${title || "artwork"}`;
+  return `<img class="jf-art${wide ? " wide" : ""} ${className}" src="${escapeHtml(jfArtUrl(art, wide ? 64 : 32))}"` +
+    ` alt="${escapeHtml(alt)}" loading="lazy" decoding="async" width="${wide ? 64 : 32}" height="${wide ? 36 : 48}">`;
+}
+
+/** A poster that fails to load goes back to `fallback` (the row's icon), or away. */
+function jfArtFallback(root, fallback) {
+  for (const img of root.querySelectorAll("img.jf-art")) {
+    img.addEventListener("error", () => {
+      if (fallback) img.outerHTML = fallback;
+      else img.remove();
+    }, { once: true });
+  }
+}
+
 function renderEntries(entries) {
   const list = $("entries");
   list.innerHTML = "";
@@ -496,6 +527,8 @@ function renderEntries(entries) {
     const intoFolder = e.is_dir || e.is_book;
     li.className = "entry " + (intoFolder ? "dir" : "video");
     const icon = e.is_dir ? "folder" : e.is_book ? "book" : e.is_youtube ? "youtube" : e.is_audio ? "music" : "film";
+    // Jellyfin's poster (a show, season or movie folder) or still (an episode) when it knows it.
+    const art = e.jellyfin && e.jellyfin.art;
     let chips = (!intoFolder && e.has_sidecar) ? '<span class="badge">sub</span>' : "";
     // A locally downloaded YouTube video plays/cuts from the server's own copy.
     if (e.is_youtube && e.downloaded) chips += '<span class="badge" title="Downloaded to the server">on server</span>';
@@ -504,10 +537,13 @@ function renderEntries(entries) {
       className: "entry-main",
       title: e.is_book ? "Open this book's chapters" : intoFolder ? "Open this folder"
         : "Open in the workspace: play it, read its script, cut a clip",
-      html: `<span class="icon-wrap">${iconSvg(icon)}</span><span class="label">${escapeHtml(e.name)}</span>` +
+      html: `<span class="icon-wrap${art ? " has-art" : ""}">` +
+        `${art ? jfArtHtml(art, e.jellyfin.title || e.name, "entry-art") : iconSvg(icon)}</span>` +
+        `<span class="label">${escapeHtml(e.name)}</span>` +
         `<span class="chips">${chips}</span>` + (intoFolder ? `<span class="go">${iconSvg("chevron-r")}</span>` : ""),
     });
     if (intoFolder) main.dataset.action = "library.browse";
+    if (art) jfArtFallback(main, iconSvg(icon));
     main.onclick = () => (intoFolder ? browse(e.path) : openItem(e.path, e.name));
     li.appendChild(main);
     // A YouTube item row gets a remove button (forgets the video + transcript).
@@ -1422,6 +1458,36 @@ function cleanItemName(path, fileName) {
   return parent || fileName;
 }
 
+/** The workspace header's poster and Jellyfin title line ("S03E26 · The Best of Both
+ *  Worlds", or a movie's title and year), or neither when Jellyfin doesn't know the file. */
+function showItemArtwork(jf) {
+  const img = $("item-art");
+  const line = $("item-jf-title");
+  const two = (n) => String(n).padStart(2, "0");
+  let text = "";
+  if (jf && jf.type === "Episode") {
+    const se = jf.season != null && jf.episode != null ? `S${two(jf.season)}E${two(jf.episode)}` : "";
+    text = [se, jf.title].filter(Boolean).join(" · ");
+  } else if (jf && jf.title) {
+    text = jf.title + (jf.year ? ` (${jf.year})` : "");
+  }
+  line.textContent = text;
+  line.hidden = !text;
+  // The file's own artwork: an episode's still, a movie's poster.
+  const art = jf && jf.art;
+  if (!art) {
+    img.hidden = true;
+    img.removeAttribute("src");
+    img.alt = "";
+    return;
+  }
+  img.classList.toggle("wide", !!art.wide);
+  img.onerror = () => { img.hidden = true; };
+  img.alt = `${art.wide ? "Still" : "Poster"}: ${jf.show && jf.type === "Episode" ? `${jf.show}, ${text}` : (jf.title || "artwork")}`;
+  img.src = jfArtUrl(art, art.wide ? 128 : 64);
+  img.hidden = false;
+}
+
 async function openItem(path, name, opts) {
   const { searchQuery, seekTo: seekTarget, selectWholeClip, markRange, track, fromLink } = opts || {};
   const had = document.activeElement;
@@ -1444,6 +1510,7 @@ async function openItem(path, name, opts) {
   const signal = itemListeners.signal;
   $("item-name").textContent = cleanItemName(path, name);
   $("item-filename").textContent = name;
+  showItemArtwork(null);
   refocus(had, $("item-name"));  // a keyboard user lands on the workspace's title
   $("stream-selector").hidden = true;
   $("preview-note").textContent = "";
@@ -1494,6 +1561,7 @@ async function openItem(path, name, opts) {
   // item's view (and a clip would be cut from the wrong file). The per-item
   // listeners below are already signal-scoped; these direct assignments are not.
   if (signal.aborted) return;
+  showItemArtwork(info.jellyfin || null);
 
   const player = $("player");
   player.style.aspectRatio = "";  // back to the default box until this item's dims load
@@ -3134,8 +3202,14 @@ function pollClipJob(jobId, row) {
 $("clip-btn").onclick = makeClip;
 
 // --- clip name template (B9) ------------------------------------------------
-const DEFAULT_CLIP_TEMPLATE = "{source}/{timestamp}_{cue}_{title}";
+// {folder} is the name {title} gave before titles came from Jellyfin (D-032), so a
+// default-named clip lands where it always did; the old default reads as this one.
+const DEFAULT_CLIP_TEMPLATE = "{source}/{timestamp}_{cue}_{folder}";
+const LEGACY_CLIP_TEMPLATES = ["{source}/{timestamp}_{cue}_{title}"];
 const CLIP_TEMPLATE_KEY = "qc_clip_template";
+if (LEGACY_CLIP_TEMPLATES.includes((localStorage.getItem(CLIP_TEMPLATE_KEY) || "").trim())) {
+  localStorage.removeItem(CLIP_TEMPLATE_KEY);
+}
 
 /** The effective name template for a given input field: its value, else the
  *  remembered one, then the default. Used by both single and batch clips. */
@@ -4067,7 +4141,7 @@ function renderNowPlaying() {
     li.className = "nowplaying-row";
     const who = [s.device, s.user].filter(Boolean).map(escapeHtml).join(" · ");
     const at = formatTimeWhole(s.position || 0);
-    li.innerHTML =
+    li.innerHTML = (s.art ? jfArtHtml(s.art, nowPlayingTitle(s), "nowplaying-art") : "") +
       `<div class="nowplaying-what"><strong>${escapeHtml(nowPlayingTitle(s))}</strong>` +
       `<span class="muted">${who} · ${s.paused ? "paused" : "playing"} at ${at}</span>` +
       (s.path ? "" : `<span class="muted">${escapeHtml(s.note || "")}</span>`) +
@@ -4077,6 +4151,7 @@ function renderNowPlaying() {
         ` aria-label="Open ${escapeHtml(nowPlayingTitle(s))} at ${at}">Open at ${at}</button>` : "");
     const open = li.querySelector("button");
     if (open) open.onclick = () => openNowPlaying(s);
+    jfArtFallback(li, null);
     list.appendChild(li);
   }
   if (hadIdx >= 0) {

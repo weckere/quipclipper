@@ -35,6 +35,9 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   key stays there; sizes capped, cached by the browser.
 - After a clip or a LeadStinger set lands in the clips folder, Jellyfin scans the library
   that holds it (debounced), so new clips show up on the TV.
+- Posters from Jellyfin on the library rows it knows (shows, seasons, movies, episode
+  stills), in the workspace header (with the episode's real title under the show) and on
+  the Now playing card; lazy-loaded, with alt text. The Name help lists the new tokens.
 
 ### Fixed
 
