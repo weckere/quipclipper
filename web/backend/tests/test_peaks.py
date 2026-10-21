@@ -94,6 +94,16 @@ def test_peaks_zoomed_to_samples(client, media):
     assert abs(s[0]) < 50 and abs(s[24]) < 50
 
 
+def test_detail_windows_start_on_the_sample_grid(client, media):
+    """A window asked for between two samples starts on the nearer one, and says so, so
+    the display, the snap and the cut agree on which sample is where."""
+    r = client.get("/api/items/peaks", params={
+        "path": str(media / "sine.wav"), "start": 1.0 + 0.3 / 48000, "end": 1.001, "bins": 100})
+    assert r.json()["t0"] == 1.0
+    full = waveform.decode(media / "sine.wav", start=1.0, duration=0.001)
+    assert list(_ints(r.json()["data"])[:20]) == list(full[:20])
+
+
 def test_peaks_long_file_builds_the_overview_then_serves_it(client, media):
     path = str(media / "long.wav")
     r = client.get("/api/items/peaks", params={"path": path, "bins": 500})

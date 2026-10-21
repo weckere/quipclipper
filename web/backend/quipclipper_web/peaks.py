@@ -249,10 +249,15 @@ class PeakStore:
         return min(rate or MAX_RATE, MAX_RATE)
 
     def decode_window(self, src: AudioSource, start: float, duration: float, rate: int):
+        """``(samples, t0)``: ``duration`` seconds decoded from ``t0``, which is ``start``
+        moved onto the sample grid. A seek between two samples starts on whichever the
+        decoder rounds to (PCM and AAC: the nearer; DTS: not always), so every decode,
+        snap and cut asks for a time on the grid, and they all agree on the sample."""
+        t0 = round(start * rate) / rate
         inp, cleanup = src.open()
         try:
-            return waveform.decode(inp, audio=src.audio, rate=rate, start=start,
-                                   duration=duration, input_flags=src.input_flags)
+            return waveform.decode(inp, audio=src.audio, rate=rate, start=t0,
+                                   duration=duration, input_flags=src.input_flags), t0
         finally:
             if cleanup:
                 cleanup()
@@ -282,12 +287,12 @@ def peaks_response(store: PeakStore, src: AudioSource, start: float, end: float 
     if use_detail:
         native = store.native_rate(src)
         rate = native if span <= DETAIL_FULL_RATE_MAX else min(native, DETAIL_RATE)
-        samples = store.decode_window(src, start, span, rate)
+        samples, t0 = store.decode_window(src, start, span, rate)
         if not samples:
             raise RuntimeError("No audio in that window.")
         body.update(source="detail", rate=rate)
         if len(samples) <= bins:
-            body.update(kind="samples", t0=start, count=len(samples), data=encode(samples))
+            body.update(kind="samples", t0=round(t0, 9), count=len(samples), data=encode(samples))
         else:
             body.update(kind="peaks", data=encode(waveform.bins(samples, bins)))
         if body["peak"] is None:
@@ -317,11 +322,11 @@ def snap(store: PeakStore, src: AudioSource, t: float, mode: str, radius: float 
     if src.duration:
         end = min(end, src.duration)
     rate = store.native_rate(src) if mode == "zero" else min(store.native_rate(src), DETAIL_RATE)
-    samples = store.decode_window(src, start, max(end - start, 1 / rate), rate)
+    samples, t0 = store.decode_window(src, start, max(end - start, 1 / rate), rate)
     out: dict = {"t": t, "mode": mode, "radius": r, "rate": rate, "audio": src.audio}
     if not samples:
         return {**out, "found": False, "snapped": t, "delta": 0.0}
-    index = round((t - start) * rate)
+    index = round((t - t0) * rate)
     if mode == "zero":
         i = waveform.nearest_zero_crossing(samples, index, round(r * rate))
         found = i is not None
@@ -332,5 +337,5 @@ def snap(store: PeakStore, src: AudioSource, t: float, mode: str, radius: float 
         i, level, found = waveform.nearest_quiet(samples, index, rate, threshold_db=threshold_db)
         out["level_db"] = round(level, 1) if level != float("-inf") else None
         out["threshold_db"] = threshold_db
-    snapped = round(start + i / rate, 6)
+    snapped = round(t0 + i / rate, 6)
     return {**out, "found": found, "snapped": snapped, "delta": round(snapped - t, 6)}

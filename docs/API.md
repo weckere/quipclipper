@@ -103,7 +103,9 @@ in the clip.
   own rate (capped at 48 kHz) up to 15 s and 16 kHz beyond.
 - `kind: "peaks"`: `data` is base64 little-endian int16, `bins` interleaved (min, max) pairs
   (full scale ±32768). `kind: "samples"`: zoomed past one sample per bin, `data` is the raw
-  mono samples, `count` of them, the first at `t0`, `rate` apart.
+  mono samples, `count` of them, the first at `t0`, `rate` apart. Detail decodes and snaps
+  start on the sample grid (`t0` is `start` rounded to the nearest sample), so the drawing,
+  `snapped` and a cut from it agree on the sample.
 - `peak`: the largest sample in the file (from the overview), else in the span.
 - `keyframes=true` (video, spans up to 60 s) adds `keyframes`: the times a lossless video cut
   can start at.
