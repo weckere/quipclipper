@@ -89,7 +89,7 @@ def test_ffmpeg_args_lossless_audio_copies_all_audio_streams():
     assert "-map" in args and "0:a" in args
     assert "0:a:0" not in args
     # duration, not absolute end time
-    assert "-t" in args and args[args.index("-t") + 1] == "3.000"
+    assert "-t" in args and args[args.index("-t") + 1] == "3.000000"
 
 
 def test_ffmpeg_args_lossless_video_copies_all_av_and_subtitle_streams():

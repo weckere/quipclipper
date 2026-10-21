@@ -349,6 +349,7 @@ class StreamInfo:
     forced: bool = False
     hearing_impaired: bool = False
     attached_pic: bool = False  # a still cover-art image (mp3/m4a), not real video
+    frame_rate: float | None = None  # video only: frames per second (avg_frame_rate)
 
     @property
     def selector(self) -> str:
@@ -375,7 +376,7 @@ def list_streams(video_path: str | Path) -> list[StreamInfo]:
     cmd = [
         "ffprobe", "-v", "error",
         "-show_entries",
-        "stream=codec_type,codec_name,channels,channel_layout"
+        "stream=codec_type,codec_name,channels,channel_layout,avg_frame_rate"
         ":stream_tags=language,title"
         ":stream_disposition=forced,hearing_impaired,attached_pic",
         "-of", "json", _argv_path(video_path),
@@ -414,9 +415,20 @@ def list_streams(video_path: str | Path) -> list[StreamInfo]:
                 forced=bool(disp.get("forced")),
                 hearing_impaired=bool(disp.get("hearing_impaired")),
                 attached_pic=bool(disp.get("attached_pic")),
+                frame_rate=_frame_rate(s.get("avg_frame_rate")) if kind == "video" else None,
             )
         )
     return infos
+
+
+def _frame_rate(value: str | None) -> float | None:
+    """ffprobe's ``avg_frame_rate`` ("24000/1001") as a float, or None for "0/0"."""
+    try:
+        num, _, den = (value or "").partition("/")
+        rate = float(num) / float(den or 1)
+    except (ValueError, ZeroDivisionError):
+        return None
+    return round(rate, 3) if rate > 0 else None
 
 
 def extract_embedded(video_path: str | Path, stream_index: int) -> list[Cue]:

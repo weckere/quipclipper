@@ -65,7 +65,7 @@ from quipclipper.search import search as engine_search
 from quipclipper.subtitles import AUDIO_EXTS, VIDEO_EXTS, find_sidecar, load_subtitles
 from quipclipper_web import (
     __version__, clipmeta, deeplinks, epub_items, jellyfin, jellyfin_index, library, lslink, lsset, media,
-    youtube_items,
+    peaks, youtube_items,
 )
 from quipclipper_web.bookmarks import BookmarkStore
 from quipclipper_web.config import Settings
@@ -384,6 +384,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     sub_cache = SubtitleCache(settings.state_dir, default_langs=settings.subtitle_langs)
     yt_store = youtube_items.YouTubeStore(settings.state_dir, download_dir=settings.youtube_dir)
     flac_cache = clipmeta.FlacCache(settings.state_dir)
+    peak_store = peaks.PeakStore(settings.state_dir)
     # video id -> last download / add job id, so a repeat POST returns the
     # in-flight job instead of queueing a duplicate.
     active_downloads: dict[str, str] = {}
@@ -399,6 +400,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         jobs.shutdown()
         dl_jobs.shutdown()
         yt_jobs.shutdown()
+        peak_store.shutdown()
 
     app = FastAPI(title="quipclipper-web", version=__version__, lifespan=lifespan)
     app.state.settings = settings
@@ -840,6 +842,97 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"path": path, "at": at if at is not None else (rng[0] if rng else None),
                 "sel": list(rng) if rng else None, "track": track,
                 "link": _item_link(path, at, rng, track)}
+
+    # --- waveform (M18) ------------------------------------------------------
+
+    _durations: dict[str, float | None] = {}
+
+    def _audio_source(path: str, audio: int) -> peaks.AudioSource:
+        """Where ffmpeg reads ``path``'s audio stream ``a:audio``, with the same source
+        resolution and path checks as the other item endpoints."""
+        vid = youtube_items.parse_ref(path)
+        if vid is not None:
+            try:
+                meta = yt_store.meta(vid)
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail=str(exc))
+            except RuntimeError as exc:
+                raise HTTPException(status_code=500, detail=str(exc))
+            local = yt_store.video_path(vid)
+            if local is None:
+                # Not downloaded: decode the resolved stream (the audio half of a DASH pair).
+                try:
+                    video_url, audio_url = youtube_items.resolve_stream_urls(meta["webpage_url"])
+                except RuntimeError as exc:
+                    raise HTTPException(status_code=502, detail=str(exc))
+                return peaks.AudioSource(
+                    input=audio_url or video_url, basis=f"yt:{vid}", audio=0,
+                    input_flags=("-reconnect", "1", "-reconnect_streamed", "1",
+                                 "-reconnect_delay_max", "5"),
+                    duration=meta.get("duration"))
+            p = local
+        else:
+            epub_ref, seg = epub_items.parse_ref(path)
+            if seg is not None:
+                ep = _resolve(epub_ref)
+                if not ep.is_file():
+                    raise HTTPException(status_code=404, detail=f"Not found: {epub_ref}")
+                try:
+                    epub_items.segment_cues(ep, seg)  # the segment exists
+                except (IndexError, ValueError) as exc:
+                    raise HTTPException(status_code=404, detail=str(exc))
+                return peaks.AudioSource(
+                    input="", basis=f"{peaks.file_basis(ep)}#seg={seg}", audio=0,
+                    make_input=lambda: epub_items.segment_audio_input(ep, seg))
+            p = _resolve_any(path)
+            if not p.is_file():
+                raise HTTPException(status_code=404, detail=f"Not found: {path}")
+        basis = peaks.file_basis(p)
+        if basis not in _durations:
+            _durations[basis] = media.probe_duration(p)
+        return peaks.AudioSource(input=str(p), basis=basis, audio=audio,
+                                 duration=_durations[basis], video_input=str(p))
+
+    @app.get("/api/items/peaks")
+    def item_peaks(
+        path: str = Query(...),
+        start: float = Query(0.0, ge=0),
+        end: float | None = Query(None, gt=0),
+        bins: int = Query(1000, ge=1, le=peaks.MAX_BINS),
+        audio: int = Query(0, ge=0),
+        keyframes: bool = Query(False),
+    ) -> JSONResponse:
+        """Waveform peaks of ``start..end`` in ``bins`` (min, max) pairs, as base64
+        int16. Long windows come from the cached overview (202 while it builds), short
+        ones from a decode of just that window, down to raw samples."""
+        src = _audio_source(path, audio)
+        try:
+            status, body = peaks.peaks_response(peak_store, src, start, end, bins, keyframes)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        except RuntimeError as exc:  # no such audio stream, or ffmpeg failed
+            raise HTTPException(status_code=422, detail=str(exc))
+        body["path"] = path
+        return JSONResponse(body, status_code=status)
+
+    @app.get("/api/items/snap")
+    def item_snap(
+        path: str = Query(...),
+        t: float = Query(..., ge=0),
+        mode: str = Query("zero", pattern="^(zero|silence)$"),
+        radius: float | None = Query(None, gt=0, le=10),
+        db: float = Query(-45.0, ge=-120, le=0),
+        audio: int = Query(0, ge=0),
+    ) -> dict:
+        """The nearest zero crossing (``mode=zero``) or quiet point (RMS below ``db``
+        dBFS, ``mode=silence``) to ``t`` within ``radius`` seconds."""
+        src = _audio_source(path, audio)
+        try:
+            body = peaks.snap(peak_store, src, t, mode, radius, db)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        body["path"] = path
+        return body
 
     @app.get("/api/items/subtitles")
     def subtitles(

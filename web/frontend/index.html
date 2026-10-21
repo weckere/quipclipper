@@ -316,7 +316,39 @@
               <div id="dialogue-map-bars" class="dm-bars"></div>
               <div id="dialogue-map-sel" class="dm-sel" hidden></div>
               <div id="dialogue-map-head" class="dm-head"></div>
+              <div id="dialogue-map-view" class="dm-view" hidden></div>
               <div class="dm-scale"><span>0:00</span><span id="dialogue-map-total"></span></div>
+            </div>
+            <!-- The waveform strip (M18): a zoomable window of the audio with the selection's
+                 in and out handles, the subtitle lines as spans, the playhead and keyframes. -->
+            <div id="waveform" class="waveform" hidden>
+              <div class="wf-toolbar">
+                <div class="wf-group" role="group" aria-label="Waveform zoom">
+                  <button type="button" id="wf-zoom-out" data-action="item.peaks" class="wf-btn" title="Zoom out (-)" aria-label="Zoom out"><span aria-hidden="true">−</span></button>
+                  <button type="button" id="wf-zoom-in" data-action="item.peaks" class="wf-btn" title="Zoom in (+), down to 20 ms across; Ctrl/⌘-scroll or pinch zooms at the pointer" aria-label="Zoom in"><span aria-hidden="true">+</span></button>
+                  <button type="button" id="wf-zoom-sel" class="wf-btn" title="Fit the selection in the strip">Fit selection</button>
+                  <button type="button" id="wf-zoom-all" class="wf-btn" title="Show the whole file">Whole</button>
+                  <span id="wf-span" class="wf-span"></span>
+                </div>
+                <div class="wf-group" role="group" aria-label="Snap the handles">
+                  <span class="wf-label">Snap</span>
+                  <label class="checkbox-label" title="Snap a dragged handle to the nearest zero crossing, so the cut starts without a click (when zoomed in to 10 s or closer)"><input id="wf-snap-zero" data-action="item.snap" class="switch" type="checkbox" checked /> Zero crossing</label>
+                  <label class="checkbox-label" title="Snap a dragged handle to the nearest quiet point (below −45 dBFS) close by"><input id="wf-snap-silence" data-action="item.snap" class="switch" type="checkbox" /> Silence</label>
+                  <label class="checkbox-label" title="Snap a dragged handle to a subtitle line's start or end when it comes close"><input id="wf-snap-cue" class="switch" type="checkbox" checked /> Cue edge</label>
+                </div>
+                <div class="wf-group" role="group" aria-label="Audition">
+                  <button type="button" id="wf-play-sel" class="wf-btn" title="Play the selection from the in point to the out point">▶ Selection</button>
+                  <button type="button" id="wf-play-in" class="wf-btn" title="Play the first second after the in point">▶ 1 s from in</button>
+                  <button type="button" id="wf-play-out" class="wf-btn" title="Play the last second before the out point">▶ 1 s to out</button>
+                </div>
+              </div>
+              <div id="wf-stage" class="wf-stage" title="Click to play from here, drag to pan, Ctrl/⌘-scroll or pinch to zoom">
+                <canvas id="wf-canvas" aria-hidden="true"></canvas>
+                <div id="wf-head" class="wf-head" hidden></div>
+                <div id="wf-in" class="wf-handle wf-in" role="slider" tabindex="0" aria-label="In point" title="In point: drag it, or ← → 10 ms (Shift 100 ms, Alt one frame); [ and ] jump between the handles" hidden><span class="wf-grip" aria-hidden="true"></span></div>
+                <div id="wf-out" class="wf-handle wf-out" role="slider" tabindex="0" aria-label="Out point" title="Out point: drag it, or ← → 10 ms (Shift 100 ms, Alt one frame); [ and ] jump between the handles" hidden><span class="wf-grip" aria-hidden="true"></span></div>
+              </div>
+              <p class="wf-notes"><span id="wf-cut-note"></span> <span id="wf-note" role="status"></span></p>
             </div>
             <div id="playback-controls" class="playback-controls">
               <button type="button" id="pb-restart" class="pb-btn" title="Play from the start of the selection, or of the file" aria-label="Restart"><span aria-hidden="true">⏮</span></button>
@@ -365,8 +397,8 @@
             </form>
             <div id="clip-options" class="clip-options">
               <div class="marks-buffer" title="Padding added around the selection — applied to preview, bookmark and clip">
-                <label>Before <input id="clip-before" type="number" title="Seconds of audio/video kept before the line" value="0" min="0" max="60" step="0.5" /></label>
-                <label>After <input id="clip-after" type="number" title="Seconds of audio/video kept after the line" value="0" min="0" max="60" step="0.5" /></label>
+                <label>Before <input id="clip-before" type="number" title="Seconds kept before the line (negative trims into it); the waveform's in handle moves it" value="0" min="-60" max="60" step="0.5" /></label>
+                <label>After <input id="clip-after" type="number" title="Seconds kept after the line (negative trims into it); the waveform's out handle moves it" value="0" min="-60" max="60" step="0.5" /></label>
               </div>
               <label class="segmented video-only-opt" title="Cut video with its audio, or the audio only"><input id="clip-audio-only" type="checkbox" aria-label="Audio only" /><span class="seg seg-off">Video</span><span class="seg seg-on">Audio only</span></label>
               <label class="checkbox-label video-only-opt" title="Re-encode video to H.264 so the clip is frame-exact. Uncheck for a lossless (stream-copy) video clip — but that can only start on a keyframe, so on long-GOP sources it begins several seconds before the line. Audio is always cut frame-exact."><input id="clip-exact" class="switch" type="checkbox" checked /> Exact (re-encode)</label>

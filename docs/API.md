@@ -72,6 +72,8 @@ FastAPI publishes the live schema, served behind the same gate:
 | GET | `/api/library/search?query=&path=` | Filename search across the library (or under `path`). |
 | GET | `/api/items?path=&langs=` | Probe one media item: streams, duration, subtitle tracks. |
 | GET | `/api/items/link?path=&at=&sel=&track=` | A [deep link](#deep-links) that opens the file in the web app at `at` seconds with `sel` (`START-END`) selected: `{path, at, sel, track, link}`. 503 without `QC_PUBLIC_URL`; the path is checked like `/api/items` (403 outside the roots, 404 missing). |
+| GET | `/api/items/peaks?path=&start=&end=&bins=&audio=&keyframes=` | [Waveform](#waveform-peaks-and-snap) peaks of `start..end` on audio stream `a:audio`, mixed to mono. 202 while the overview of a long span is still being built. |
+| GET | `/api/items/snap?path=&t=&mode=&radius=&db=&audio=` | The nearest zero crossing (`mode=zero`) or quiet point (`mode=silence`) to `t`: where a cut starts cleanly. |
 | GET | `/api/items/subtitles?path=&track=&offset=&fmt=` | Subtitles as WebVTT (`fmt=vtt`, default) or JSON cues `{start, end, text, speaker}` (`fmt=json` — what the script view uses). |
 | POST | `/api/items/subtitles/reindex?path=` | Rebuild the subtitle cache for one file. |
 | POST | `/api/media/fetch-subs?path=` | Backfill one YouTube-sourced library video's subtitles (async job — poll `job_id`). The video's id is read from its `[<id>]` filename or a sibling `.info.json`; a `.vtt` sidecar is written next to it. 400 = no id found or the folder is read-only (needs `writableMediaRoots`). Job `progress` ends `ok`/`skipped`/`none`. |
@@ -80,6 +82,37 @@ FastAPI publishes the live schema, served behind the same gate:
 Both backfill endpoints appear in the UI only for YouTube-sourced videos in
 **writable** roots. `/api/items` flags such a file with `youtube_id` and
 `backfill_writable: true` so the frontend can offer the action.
+
+### Waveform: peaks and snap
+
+`/api/items/peaks` and `/api/items/snap` take a library file, a `yt:<id>` ref (the download
+when there is one, else the resolved stream) or an `<epub>#seg=N` segment, with the same
+path checks as `/api/items` (403 outside the roots, 404 missing, 422 with no such audio
+stream). Both decode with ffmpeg, seeking the way a clip cut does, so a time here is a time
+in the clip.
+
+**Peaks** (`bins` 1–8192, default 1000; `end` defaults to the end of the file) returns
+`{path, start, end, bins, audio, duration, rate, source, kind, data, peak, overview}`:
+
+- `source: "overview"`: from a peak pyramid built once per file, audio stream and mtime in the
+  background (8 kHz mono, 20 ms buckets of min/max, cached in the state dir as
+  `peaks/*.qcpk`, about 1.4 MB per 2-hour film, 512 MB kept in all). It serves spans over 2
+  minutes, and wider spans once built. Until then such a request answers **202** with
+  `kind: "pending"` and `overview: {state, progress}` (`queued`, `building`, `error`).
+- `source: "detail"`: a decode of just the span, for spans up to 2 minutes, at the stream's
+  own rate (capped at 48 kHz) up to 15 s and 16 kHz beyond.
+- `kind: "peaks"`: `data` is base64 little-endian int16, `bins` interleaved (min, max) pairs
+  (full scale ±32768). `kind: "samples"`: zoomed past one sample per bin, `data` is the raw
+  mono samples, `count` of them, the first at `t0`, `rate` apart.
+- `peak`: the largest sample in the file (from the overview), else in the span.
+- `keyframes=true` (video, spans up to 60 s) adds `keyframes`: the times a lossless video cut
+  can start at.
+
+**Snap** returns `{path, t, mode, radius, rate, found, snapped, delta}`. `mode=zero` (default
+radius 0.01 s, at most 0.5) finds the nearest sign change of the mono mix and returns the
+sample of the pair nearer zero (`value`); `mode=silence` (default radius 1 s, at most 10)
+finds the nearest 20 ms window whose RMS is below `db` dBFS (default −45) and returns its
+centre (`level_db`); with none, `found` is false and `snapped` is the quietest point.
 
 ### YouTube sources
 

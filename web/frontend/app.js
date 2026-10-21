@@ -58,6 +58,7 @@ function stopPlayer() {
   // so a background poll can't yank the user back in or drive a stale player.
   if (itemListeners) { itemListeners.abort(); itemListeners = null; }
   currentItem = null;
+  wfHide();
   destroyYtEmbed();
   destroyHls();
   const player = $("player");
@@ -1522,6 +1523,7 @@ async function openItem(path, name, opts) {
   $("clips-made-list").innerHTML = "";
   resetItemTabs();
   $("dialogue-map").hidden = true;
+  wfHide();
   setClipIndicator("hidden");
   activeJobId = null;
   clipRangeStart = null;
@@ -1640,6 +1642,7 @@ async function openItem(path, name, opts) {
   const seekDurLabel = $("transcode-duration");
   let probedDuration = info.duration || 0;
   currentDuration = probedDuration;  // module-level, for the buffered preview range
+  wfReset(path, info, primaryVideo);
 
   let firstLoad = true;
   // `autoplay`: undefined → play unless this is the very first load; or an
@@ -2307,8 +2310,21 @@ function selectedLineCount() {
 // Buffer (before/after padding) — part of the selection (B16). The previewed /
 // looped range is the cue range expanded by the buffer (clamped to the file).
 let currentDuration = 0;  // set per item in openItem (probed duration)
-function clipPadBefore() { const v = parseFloat($("clip-before").value); return v > 0 ? v : 0; }
-function clipPadAfter() { const v = parseFloat($("clip-after").value); return v > 0 ? v : 0; }
+// Negative padding trims into the line (the waveform's handles can go inside it).
+function clipPadBefore() { const v = parseFloat($("clip-before").value); return Number.isFinite(v) ? v : 0; }
+function clipPadAfter() { const v = parseFloat($("clip-after").value); return Number.isFinite(v) ? v : 0; }
+
+/** The range as the server takes it: padding within 0-60 s. A negative pad, or one over
+ *  60 s, moves start / end instead, so the cut lands on the same in and out points. */
+function wireRange(start, end) {
+  const fold = (pad) => Math.min(60, Math.max(0, pad));
+  let before = clipPadBefore(), after = clipPadAfter();
+  start = Math.max(0, start - (before - fold(before)));
+  end += after - fold(after);
+  before = fold(before);
+  after = fold(after);
+  return { start: round6(start), end: round6(end), before: round6(before), after: round6(after) };
+}
 /** Buffered start of the previewed clip (cue start − before, clamped ≥ 0). */
 function bufStart() { const s = clipStart(); return s === null ? null : Math.max(0, s - clipPadBefore()); }
 /** Buffered end of the previewed clip (cue end + after, clamped ≤ duration). */
@@ -2385,6 +2401,7 @@ function updateClipUI() {
   // Reflect the new range on the seek bar and playback controls.
   if (pb) pb.refreshSeekBar();
   updatePlaybackUI();
+  wfOnSelection();
 }
 
 function formatTime(s) {
@@ -2446,10 +2463,7 @@ async function saveBookmark() {
     await postJSON("/api/bookmarks", {
       path: currentItem.path,
       label: label || defaultLabel,
-      start: s,
-      end: e,
-      before: clipPadBefore(),
-      after: clipPadAfter(),
+      ...wireRange(s, e),
       sub_track: t != null ? parseInt(t) : null,
       audio_track: getSelectedAudio(),
       channel_subset: getSelectedChan(),
@@ -2472,7 +2486,7 @@ $("bookmark-label-input").addEventListener("keydown", (ev) => {
 
 // Before/After buffer inputs (B16): re-render the previewed range live.
 ["clip-before", "clip-after"].forEach((id) =>
-  $(id).addEventListener("input", () => { if (hasClipRange()) updateClipUI(); })
+  $(id).addEventListener("input", padsChanged)
 );
 
 // --- subtitle script view ---------------------------------------------------
@@ -2834,6 +2848,7 @@ function renderDialogueMap() {
   map.hidden = false;
   updateMapSelection();
   updateMapPlayhead();
+  if (wf.path) wfViewChanged();
 }
 
 function updateMapSelection() {
@@ -2894,13 +2909,742 @@ $("dialogue-map").addEventListener("click", (e) => {
   const dur = mapDuration();
   const r = $("dialogue-map-bars").getBoundingClientRect();
   if (!dur || !r.width) return;
-  seekTo(Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * dur);
+  const t = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * dur;
+  if (wf.path) { const span = wfSpan(); wfSetView(t - span / 2, t + span / 2); }
+  seekTo(t);
 });
 $("dialogue-map").addEventListener("mousemove", (e) => {
   const dur = mapDuration();
   const r = $("dialogue-map-bars").getBoundingClientRect();
   if (dur && r.width) $("dialogue-map").title = "Seek to " + formatTimeWhole(Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * dur);
 });
+
+// --- waveform strip (M18): exact in and out points ------------------------------------
+//
+// The script and the dialogue map make the rough selection; this strip sets the exact cut.
+// It shows a window of the file, from the whole runtime down to ~20 ms across, drawn from
+// GET /api/items/peaks (item.peaks): a cached overview for long windows, a decode of just
+// the window for short ones, raw samples at the deepest zoom. The in and out handles are
+// the selection's padded start and end, so dragging one rewrites Before / After (negative
+// when it trims into the line). Snapping asks GET /api/items/snap (item.snap).
+
+const WF_MIN_SPAN = 0.02;     // s across the strip at the deepest zoom
+const WF_ZOOM_STEP = 2;       // per button press or + / - key
+const WF_ZERO_SPAN = 10;      // s: zero-crossing snap applies at this zoom or closer
+const WF_CUE_SNAP_PX = 8;     // cue-edge snap reach while dragging
+const WF_CUE_LANE = 18;       // px: subtitle spans along the top
+const WF_RULER = 16;          // px: time ruler along the bottom
+const WF_DEFAULT_FPS = 25;    // the Alt-nudge frame when the source has no video
+
+const wf = {
+  path: null, audio: 0, dur: 0, fps: 0, hasVideo: false,
+  view: [0, 0],      // seconds shown
+  data: null,        // the last peaks response for (roughly) this view
+  base: null,        // the whole-file response: drawn while a closer one loads
+  filePeak: 0,       // largest sample in the file (from the overview), int16 units
+  keyframes: null,   // {start, end, times} for the last window that listed them
+  req: 0, loadTimer: null, pollTimer: null,
+  drag: null,        // {kind: "in"|"out"|"pan"|"pinch", ...}
+  pointers: new Map(),
+  snapSeq: 0,
+  fromHandle: false, // the selection change came from a handle: don't move the view
+  raf: 0, lastHead: null, nudgeTimer: null,
+  auditionEnd: null, auditionTimer: null,
+};
+let clipTargetOn = false;  // showClipTarget's state: a range is ready to clip
+
+const wfSpan = () => wf.view[1] - wf.view[0];
+const wfWidth = () => $("wf-stage").clientWidth || 1;
+const wfX = (t) => ((t - wf.view[0]) / wfSpan()) * wfWidth();
+const wfT = (x) => wf.view[0] + (x / wfWidth()) * wfSpan();
+const round6 = (v) => Math.round(v * 1e6) / 1e6;
+
+/** The selection's unpadded range: the selected lines, else a loaded bookmark or link range. */
+function wfAnchor() {
+  if (hasClipRange()) return [clipStart(), clipEnd()];
+  if (clipTargetOn && clipRangeStart != null && clipRangeEnd != null) return [clipRangeStart, clipRangeEnd];
+  return null;
+}
+
+/** [in, out]: the anchor widened (or narrowed) by Before / After, or null. */
+function wfSel() {
+  const a = wfAnchor();
+  if (!a) return null;
+  const i = Math.max(0, a[0] - clipPadBefore());
+  let o = a[1] + clipPadAfter();
+  if (wf.dur) o = Math.min(wf.dur, o);
+  return [i, Math.max(o, i + 0.001)];
+}
+
+/** Time with as many decimals as the zoom calls for: "1:02.345". */
+function formatTimePrecise(s, decimals) {
+  const neg = s < 0;
+  s = Math.abs(s);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = (s % 60).toFixed(decimals).padStart(decimals ? decimals + 3 : 2, "0");
+  const out = h > 0 ? `${h}:${String(m).padStart(2, "0")}:${sec}` : `${m}:${sec}`;
+  return neg ? "-" + out : out;
+}
+const wfDecimals = () => (wfSpan() <= 0.5 ? 4 : wfSpan() <= 5 ? 3 : wfSpan() <= 60 ? 2 : 1);
+
+function formatSpan(s) {
+  if (s < 1) return `${Math.round(s * 1000)} ms`;
+  if (s < 60) return `${s.toFixed(s < 10 ? 2 : 1)} s`;
+  return formatTimeWhole(s);
+}
+
+function wfHide() {
+  wf.path = null;
+  wf.req++;
+  clearTimeout(wf.loadTimer);
+  clearTimeout(wf.pollTimer);
+  cancelAnimationFrame(wf.raf);
+  wf.raf = 0;
+  wf.auditionEnd = null;
+  clearInterval(wf.auditionTimer);
+  $("waveform").hidden = true;
+  $("dialogue-map-view").hidden = true;
+}
+
+/** A new item: show its whole runtime and start loading peaks. */
+function wfReset(path, info, primaryVideo) {
+  wfHide();
+  const dur = info.duration || 0;
+  if (!dur) return;
+  // A negative pad is one line's exact trim (a handle pulled inside it), not a preference.
+  ["clip-before", "clip-after"].forEach((id) => { if (parseFloat($(id).value) < 0) $(id).value = "0"; });
+  Object.assign(wf, {
+    path, dur, view: [0, dur], data: null, base: null, filePeak: 0, keyframes: null,
+    audio: getSelectedAudio() ?? 0, hasVideo: !!primaryVideo,
+    fps: (primaryVideo && primaryVideo.frame_rate) || 0, lastHead: null,
+  });
+  $("waveform").hidden = false;
+  $("wf-note").textContent = "";
+  wfCutNote();
+  wfViewChanged();
+  setTimeout(wfLoad, 0);  // after openItem fills the stream selector (the audio stream)
+  wf.raf = requestAnimationFrame(wfTick);
+}
+
+/** Show `a..b` (clamped to the file, at least WF_MIN_SPAN wide). */
+function wfSetView(a, b) {
+  const dur = wf.dur;
+  let span = Math.max(WF_MIN_SPAN, Math.min(dur, b - a));
+  a = Math.max(0, Math.min(dur - span, a));
+  wf.view = [a, a + span];
+  wfViewChanged();
+  clearTimeout(wf.loadTimer);
+  wf.loadTimer = setTimeout(wfLoad, 120);
+}
+
+function wfViewChanged() {
+  const [a, b] = wf.view;
+  $("wf-span").textContent = `${formatSpan(b - a)} across`;
+  $("wf-zoom-in").disabled = b - a <= WF_MIN_SPAN + 1e-9;
+  $("wf-zoom-out").disabled = $("wf-zoom-all").disabled = a <= 0 && b >= wf.dur - 1e-6;
+  // The dialogue map outlines the window the strip shows.
+  const view = $("dialogue-map-view");
+  const whole = a <= 0 && b >= wf.dur - 1e-6;
+  view.hidden = $("dialogue-map").hidden || whole;
+  if (!view.hidden) {
+    view.style.setProperty("--f", String(a / wf.dur));
+    view.style.setProperty("--w", String(Math.max(0.003, (b - a) / wf.dur)));
+  }
+  wfDraw();
+}
+
+/** Zoom by `factor` (>1 closer) keeping time `at` where it is on screen. */
+function wfZoom(factor, at) {
+  const [a, b] = wf.view;
+  const span = b - a;
+  if (at == null) at = wfFocusTime();
+  const next = Math.max(WF_MIN_SPAN, Math.min(wf.dur, span / factor));
+  const f = span ? (at - a) / span : 0.5;
+  wfSetView(at - f * next, at - f * next + next);
+}
+
+/** What + / - zoom around: a focused handle, else the playhead when it's in view, else the middle. */
+function wfFocusTime() {
+  const sel = wfSel();
+  const act = document.activeElement;
+  if (sel && act === $("wf-in")) return sel[0];
+  if (sel && act === $("wf-out")) return sel[1];
+  const t = playerTime();
+  if (t >= wf.view[0] && t <= wf.view[1]) return t;
+  return (wf.view[0] + wf.view[1]) / 2;
+}
+
+/** Bring the selection into view with a margin (when it changes from the script, a bookmark…). */
+function wfFollowSelection() {
+  const sel = wfSel();
+  if (!sel || !wf.path) return;
+  const margin = Math.max(0.15, (sel[1] - sel[0]) * 0.25);
+  wfSetView(sel[0] - margin, sel[1] + margin);
+}
+
+/** The selection changed: redraw, and move the view to it unless a handle did it. */
+function wfOnSelection() {
+  if (!wf.path) return;
+  if (!wf.fromHandle) wfFollowSelection();
+  wfDraw();
+}
+
+// --- loading ---------------------------------------------------------------------------------
+
+function b64ToInt16(s) {
+  const bin = atob(s);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new Int16Array(bytes.buffer, 0, bytes.length >> 1);
+}
+
+async function wfLoad() {
+  clearTimeout(wf.pollTimer);
+  if (!wf.path) return;
+  const audio = getSelectedAudio() ?? 0;
+  if (audio !== wf.audio) Object.assign(wf, { audio, base: null, data: null, filePeak: 0 });
+  const [a, b] = wf.view;
+  // Under ~170 ms ask for every sample (the server sends raw samples when they fit in bins).
+  const bins = b - a <= 0.17 ? 8192
+    : Math.max(16, Math.min(8192, Math.round(wfWidth() * Math.min(2, window.devicePixelRatio || 1))));
+  const kf = wf.hasVideo && b - a <= 60;
+  const req = ++wf.req;
+  const url = `/api/items/peaks${qp(wf.path)}&start=${a.toFixed(6)}&end=${b.toFixed(6)}` +
+    `&bins=${bins}&audio=${audio}${kf ? "&keyframes=true" : ""}`;
+  let resp, body;
+  try {
+    resp = await apiFetch(url);
+    body = await resp.json();
+  } catch {
+    if (req === wf.req) $("wf-note").textContent = "Couldn't load the waveform.";
+    return;
+  }
+  if (req !== wf.req || !wf.path) return;  // superseded by a newer view or item
+  if (!resp.ok) {
+    $("wf-note").textContent = `No waveform: ${body.detail || resp.status}`;
+    return;
+  }
+  const ov = body.overview || {};
+  if (resp.status === 202) {
+    // The overview is still being built: say how far along, and ask again shortly.
+    $("wf-note").textContent = ov.state === "error"
+      ? `The waveform overview failed: ${ov.error || "ffmpeg error"}.`
+      : `Building the waveform overview… ${Math.round((ov.progress || 0) * 100)}% ` +
+        "(zoom in under 2 minutes to see the audio now).";
+    wf.pollTimer = setTimeout(wfLoad, 1500);
+    wfDraw();
+    return;
+  }
+  $("wf-note").textContent = ov.state === "queued" || ov.state === "building"
+    ? `Building the waveform overview… ${Math.round((ov.progress || 0) * 100)}%` : "";
+  const data = { ...body, values: b64ToInt16(body.data) };
+  wf.data = data;
+  if (data.source === "overview" && data.peak) wf.filePeak = data.peak;
+  if (data.start <= 0 && data.end >= wf.dur - 0.05) wf.base = data;
+  if (body.keyframes) wf.keyframes = { start: data.start, end: data.end, times: body.keyframes };
+  wfCutNote();
+  wfDraw();
+  // Keep asking while the overview builds, so zooming out later is instant.
+  if (ov.state === "queued" || ov.state === "building") {
+    wf.pollTimer = setTimeout(() => { if (wf.path && !wf.filePeak) wfLoad(); }, 3000);
+  }
+}
+
+/** Say what the cut will do with the in point: frame/sample exact, keyframe, or codec frame. */
+function wfCutNote() {
+  const note = $("wf-cut-note");
+  if (!wf.path) { note.textContent = ""; return; }
+  const audioOut = currentItem && (currentItem.audioOnly || $("clip-audio-only").checked);
+  const fmt = $("clip-format").value;
+  if (!audioOut && wf.hasVideo) {
+    note.textContent = $("clip-exact").checked
+      ? "Exact is on: the clip starts on the in point."
+      : "Lossless video starts on a keyframe (◆): the clip begins at the keyframe before the in point.";
+  } else {
+    note.textContent = fmt === "lossless"
+      ? "Passthrough audio starts on a codec frame (about 20–30 ms); choose FLAC or WAV to start on the sample."
+      : `${fmt.toUpperCase()} starts on the in point, to the sample.`;
+  }
+}
+
+// --- drawing ---------------------------------------------------------------------------------
+
+function wfColors() {
+  const cs = getComputedStyle($("waveform"));
+  const v = (n) => cs.getPropertyValue(n).trim();
+  return {
+    wave: v("--dim"), faint: v("--faint"), line: v("--line"), strong: v("--line-strong"),
+    accent: v("--accent"), soft: v("--accent-soft"), text: v("--text"), raised: v("--raised"),
+    head: v("--playhead"),
+  };
+}
+
+/** The response that best covers the view: the latest one if it does, else the whole file. */
+function wfSource() {
+  const [a, b] = wf.view;
+  const d = wf.data;
+  const covers = d && d.start <= a + 1e-6 && d.end >= b - 1e-6;
+  if (covers) return d;
+  return wf.base || d;
+}
+
+function wfDraw() {
+  if (!wf.path) return;
+  const stage = $("wf-stage");
+  const canvas = $("wf-canvas");
+  const w = stage.clientWidth, h = stage.clientHeight;
+  if (!w || !h) return;
+  const dpr = window.devicePixelRatio || 1;
+  if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+  }
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  const c = wfColors();
+  const [a, b] = wf.view;
+  const span = b - a;
+  const top = WF_CUE_LANE, bottom = h - WF_RULER;
+  const mid = (top + bottom) / 2, half = (bottom - top) / 2 - 2;
+
+  // Selection: shaded between the handles.
+  const sel = wfSel();
+  if (sel) {
+    ctx.fillStyle = c.soft;
+    const x0 = Math.max(0, wfX(sel[0])), x1 = Math.min(w, wfX(sel[1]));
+    if (x1 > x0) ctx.fillRect(x0, 0, x1 - x0, bottom);
+  }
+
+  // Subtitle lines as labelled spans along the top.
+  ctx.font = `11px ${getComputedStyle(document.body).fontFamily}`;
+  ctx.textBaseline = "middle";
+  for (const cue of scriptCues) {
+    if (cue.synthetic || cue.end < a || cue.start > b) continue;
+    const x0 = wfX(cue.start), x1 = wfX(cue.end);
+    const l = Math.max(0, x0), r = Math.min(w, x1);
+    if (r - l < 0.5) continue;
+    ctx.fillStyle = c.raised;
+    ctx.fillRect(l, 2, r - l, WF_CUE_LANE - 4);
+    ctx.fillStyle = c.strong;
+    if (x0 >= 0) ctx.fillRect(x0, 2, 1, WF_CUE_LANE - 4);
+    if (x1 <= w) ctx.fillRect(x1 - 1, 2, 1, WF_CUE_LANE - 4);
+    if (r - l > 24) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(l + 3, 0, r - l - 6, WF_CUE_LANE);
+      ctx.clip();
+      ctx.fillStyle = c.text;
+      ctx.fillText((cue.speaker ? cue.speaker + ": " : "") + cue.text.replace(/\s+/g, " "), l + 4, WF_CUE_LANE / 2);
+      ctx.restore();
+    }
+    // Faint cue edges down through the wave, so you see where the line sits in the sound.
+    ctx.fillStyle = c.line;
+    if (x0 >= 0) ctx.fillRect(x0, top, 1, bottom - top);
+    if (x1 <= w) ctx.fillRect(x1 - 1, top, 1, bottom - top);
+  }
+
+  // Centre line, then the wave.
+  ctx.fillStyle = c.line;
+  ctx.fillRect(0, Math.round(mid), w, 1);
+  const src = wfSource();
+  if (src) {
+    // Auto-gain to the view, but never more than 24 dB above the file's loudest peak, so
+    // room tone doesn't fill the strip.
+    const vals = src.values;
+    let vmax = 1;
+    if (src.kind === "samples") {
+      for (let i = 0; i < vals.length; i++) vmax = Math.max(vmax, Math.abs(vals[i]));
+    } else {
+      const n = vals.length >> 1, s0 = src.start, s1 = src.end;
+      const i0 = Math.max(0, Math.floor(((a - s0) / (s1 - s0)) * n));
+      const i1 = Math.min(n, Math.ceil(((b - s0) / (s1 - s0)) * n));
+      for (let i = i0; i < i1; i++) vmax = Math.max(vmax, -vals[2 * i], vals[2 * i + 1]);
+    }
+    if (wf.filePeak) vmax = Math.max(vmax, wf.filePeak / 16);
+    const scale = half / vmax;
+    ctx.fillStyle = c.wave;
+    ctx.strokeStyle = c.wave;
+    if (src.kind === "samples") {
+      const rate = src.rate, t0 = src.t0;
+      const pxPer = w / (span * rate);
+      ctx.lineWidth = 1.25;
+      ctx.beginPath();
+      const first = Math.max(0, Math.floor((a - t0) * rate) - 1);
+      const last = Math.min(vals.length - 1, Math.ceil((b - t0) * rate) + 1);
+      for (let i = first; i <= last; i++) {
+        const x = wfX(t0 + i / rate), y = mid - vals[i] * scale;
+        if (i === first) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+      if (pxPer >= 5) {  // single samples are far enough apart to show as dots
+        for (let i = first; i <= last; i++) {
+          ctx.beginPath();
+          ctx.arc(wfX(t0 + i / rate), mid - vals[i] * scale, 1.8, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    } else {
+      const n = vals.length >> 1, s0 = src.start, s1 = src.end;
+      const per = (s1 - s0) / n;
+      for (let x = 0; x < w; x++) {
+        const t0 = a + (x / w) * span, t1 = a + ((x + 1) / w) * span;
+        let i0 = Math.floor((t0 - s0) / per), i1 = Math.floor((t1 - s0) / per);
+        if (i1 <= i0) i1 = i0 + 1;
+        i0 = Math.max(0, i0); i1 = Math.min(n, i1);
+        if (i0 >= i1) continue;
+        let lo = 0, hi = 0;
+        for (let i = i0; i < i1; i++) { lo = Math.min(lo, vals[2 * i]); hi = Math.max(hi, vals[2 * i + 1]); }
+        const y0 = mid - hi * scale, y1 = mid - lo * scale;
+        ctx.fillRect(x, y0, 1, Math.max(1, y1 - y0));
+      }
+    }
+  }
+
+  // Keyframes (lossless video cuts start on one), as small diamonds on the ruler.
+  const kf = wf.keyframes;
+  if (wf.hasVideo && kf && kf.start <= a + 1e-6 && kf.end >= b - 1e-6) {
+    ctx.fillStyle = c.accent;
+    for (const t of kf.times) {
+      const x = wfX(t);
+      if (x < -4 || x > w + 4) continue;
+      ctx.beginPath();
+      ctx.moveTo(x, bottom - 1); ctx.lineTo(x + 4, bottom + 3); ctx.lineTo(x, bottom + 7); ctx.lineTo(x - 4, bottom + 3);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+
+  // Ruler: ticks at a round step, labelled at a precision that fits the zoom.
+  ctx.fillStyle = c.strong;
+  ctx.fillRect(0, bottom, w, 1);
+  const steps = [0.0001, 0.0002, 0.0005, 0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5,
+    1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600];
+  const step = steps.find((s) => (s / span) * w >= 80) || 3600;
+  const dec = step >= 1 ? 0 : Math.min(4, Math.ceil(-Math.log10(step) - 1e-9));
+  ctx.fillStyle = c.faint;
+  ctx.textBaseline = "alphabetic";
+  ctx.font = `10px ${getComputedStyle(document.body).getPropertyValue("--font-mono") || "monospace"}`;
+  for (let t = Math.ceil(a / step) * step; t <= b + 1e-9; t += step) {
+    const x = Math.round(wfX(t));
+    ctx.fillRect(x, bottom, 1, 4);
+    if (x > 2 && x < w - 40) ctx.fillText(dec ? formatTimePrecise(t, dec) : formatTimeWhole(t), x + 3, h - 3);
+  }
+
+  wfPlaceHandles();
+  wfPlaceHead(true);
+}
+
+/** Put the handles where the selection's ends are (pinned to an edge when off screen). */
+function wfPlaceHandles() {
+  const sel = wfSel();
+  const w = wfWidth();
+  [["wf-in", 0], ["wf-out", 1]].forEach(([id, k]) => {
+    const node = $(id);
+    node.hidden = !sel;
+    if (!sel) return;
+    const t = sel[k];
+    const x = wfX(t);
+    node.style.left = `${Math.max(0, Math.min(w, x))}px`;
+    node.classList.toggle("off-left", x < 0);
+    node.classList.toggle("off-right", x > w);
+    const a = wfAnchor();
+    const pad = k === 0 ? a[0] - t : t - a[1];
+    const rel = Math.abs(pad) < 0.0005 ? "on the line's edge"
+      : `${Math.abs(pad).toFixed(3)} s ${(k === 0) === (pad > 0) ? "outside" : "inside"} the line`;
+    node.setAttribute("aria-valuemin", "0");
+    node.setAttribute("aria-valuemax", wf.dur.toFixed(3));
+    node.setAttribute("aria-valuenow", t.toFixed(3));
+    node.setAttribute("aria-valuetext", `${k === 0 ? "In" : "Out"} ${formatTimePrecise(t, 3)}, ${rel}`);
+  });
+}
+
+function wfPlaceHead(force) {
+  const t = playerTime();
+  if (!force && t === wf.lastHead) return;
+  wf.lastHead = t;
+  const head = $("wf-head");
+  const x = wfX(t);
+  head.hidden = x < 0 || x > wfWidth();
+  head.style.left = `${x}px`;
+}
+
+/** Each frame: move the playhead, and page the view along while playing. */
+function wfTick() {
+  if (!wf.path) return;
+  wf.raf = requestAnimationFrame(wfTick);
+  if (document.hidden || $("waveform").hidden) return;
+  const t = playerTime();
+  const playing = ytEmbed ? ytEmbedPlaying() : !$("player").paused;
+  const [a, b] = wf.view;
+  if (playing && !wf.drag && wf.lastHead != null && wf.lastHead <= b && t > b && t < b + (b - a)) {
+    wfSetView(b, b + (b - a));  // the playhead ran off the right edge: next page
+  }
+  wfPlaceHead(false);
+}
+
+// --- moving the handles --------------------------------------------------------------------
+
+function wfSetPad(id, v) {
+  $(id).value = String(round6(v));
+}
+
+/** Move the in (k=0) or out (k=1) point to `t`, rewriting Before / After to match. */
+function wfMoveHandle(k, t) {
+  const a = wfAnchor();
+  const sel = wfSel();
+  if (!a || !sel) return;
+  if (k === 0) {
+    t = Math.max(0, Math.min(sel[1] - 0.005, t));
+    wfSetPad("clip-before", a[0] - t);
+  } else {
+    t = Math.min(wf.dur || Infinity, Math.max(sel[0] + 0.005, t));
+    wfSetPad("clip-after", t - a[1]);
+  }
+  wf.fromHandle = true;
+  try {
+    padsChanged();
+  } finally {
+    wf.fromHandle = false;
+  }
+}
+
+/** Before / After changed (typed or by a handle): refresh everything that shows the range. */
+function padsChanged() {
+  if (hasClipRange()) { updateClipUI(); return; }
+  const sel = wfSel();
+  if (sel) $("clip-range-display").textContent = `${formatTime(sel[0])} – ${formatTime(sel[1])} (${(sel[1] - sel[0]).toFixed(1)}s)`;
+  wfOnSelection();
+}
+
+/** The nearest cue edge within reach of `t` (in px), else `t`. */
+function wfCueSnap(t) {
+  if (!$("wf-snap-cue").checked) return t;
+  const reach = (WF_CUE_SNAP_PX / wfWidth()) * wfSpan();
+  let best = t, dist = reach;
+  for (const c of scriptCues) {
+    if (c.synthetic) continue;
+    for (const e of [c.start, c.end]) {
+      if (Math.abs(e - t) < dist) { dist = Math.abs(e - t); best = e; }
+    }
+  }
+  return best;
+}
+
+const wfZeroOn = () => $("wf-snap-zero").checked && wfSpan() <= WF_ZERO_SPAN;
+
+/** Snap `t` on the server: to the nearest quiet point (Silence), then zero crossing. */
+async function wfServerSnap(t, { zeroRadius, silence = $("wf-snap-silence").checked } = {}) {
+  let out = t;
+  const base = `/api/items/snap${qp(wf.path)}&audio=${wf.audio}`;
+  if (silence) {
+    const radius = Math.max(0.05, Math.min(1, (24 / wfWidth()) * wfSpan()));
+    try {
+      const r = await getJSON(`${base}&t=${out.toFixed(6)}&mode=silence&radius=${radius.toFixed(4)}`);
+      if (r.found) out = r.snapped;
+    } catch { /* keep the unsnapped time */ }
+  }
+  if (wfZeroOn()) {
+    try {
+      const r = await getJSON(`${base}&t=${out.toFixed(6)}&mode=zero` +
+        (zeroRadius ? `&radius=${zeroRadius}` : ""));
+      if (r.found) out = r.snapped;
+    } catch { /* keep it */ }
+  }
+  return out;
+}
+
+/** After a drag or a nudge: snap the handle, unless it has moved again meanwhile. */
+async function wfSnapHandle(k, opts = {}) {
+  const sel = wfSel();
+  const silence = opts.silence ?? $("wf-snap-silence").checked;
+  if (!sel || (!silence && !wfZeroOn())) return;
+  const seq = ++wf.snapSeq;
+  const t = await wfServerSnap(sel[k], opts);
+  if (seq !== wf.snapSeq || !wfSel()) return;
+  if (Math.abs(t - wfSel()[k]) > 1e-7) wfMoveHandle(k, t);
+}
+
+function wfAnnounceHandle(k) {
+  const sel = wfSel();
+  if (sel) announce(`${k === 0 ? "In" : "Out"} point ${formatTimePrecise(sel[k], 3)}`);
+}
+
+/** ← → nudge 10 ms, Shift 100 ms, Alt one frame; Page Up/Down 1 s. */
+function wfHandleKey(e, k) {
+  const sel = wfSel();
+  if (!sel) return;
+  const frame = 1 / (wf.fps || WF_DEFAULT_FPS);
+  const step = e.altKey ? frame : e.shiftKey ? 0.1 : 0.01;
+  const d = { ArrowRight: step, ArrowUp: step, ArrowLeft: -step, ArrowDown: -step, PageUp: 1, PageDown: -1 }[e.key];
+  if (d === undefined) return;
+  e.preventDefault();
+  wfMoveHandle(k, sel[k] + d);
+  wfReveal(wfSel()[k]);
+  // A nudge stays a nudge: no silence snap, and the zero-crossing snap only reaches 1 ms.
+  clearTimeout(wf.nudgeTimer);
+  wf.nudgeTimer = setTimeout(() => {
+    wfSnapHandle(k, { zeroRadius: 0.001, silence: false }).then(() => wfAnnounceHandle(k));
+  }, 250);
+}
+
+/** Pan so `t` is on screen (with a little room). */
+function wfReveal(t) {
+  const [a, b] = wf.view, span = b - a, room = span * 0.1;
+  if (t < a + room) wfSetView(t - room, t - room + span);
+  else if (t > b - room) wfSetView(t + room - span, t + room);
+}
+
+/** [ and ]: focus the in or out handle, bringing it into view. */
+function wfJumpTo(k) {
+  const sel = wfSel();
+  if (!sel) return;
+  wfReveal(sel[k]);
+  $(k === 0 ? "wf-in" : "wf-out").focus();
+}
+
+// --- audition ---------------------------------------------------------------------------------
+
+/** Play `a..b` once and stop. A 20 ms timer watches the end (it keeps running in a
+ *  background tab, unlike animation frames), once playback has actually got there. */
+function wfAudition(a, b) {
+  if (!pb) return;
+  clearInterval(wf.auditionTimer);
+  wf.auditionEnd = b;
+  let started = false;
+  wf.auditionTimer = setInterval(() => {
+    const t = playerTime();
+    if (!wf.path || wf.auditionEnd !== b) { clearInterval(wf.auditionTimer); return; }
+    if (!started) { started = t >= a - 0.05 && t < b; return; }
+    if (t >= b) {
+      clearInterval(wf.auditionTimer);
+      wf.auditionEnd = null;
+      pb.pause();
+    }
+  }, 20);
+  seekTo(Math.max(0, a));
+}
+
+$("wf-play-sel").onclick = () => { const s = wfSel(); if (s) wfAudition(s[0], s[1]); };
+$("wf-play-in").onclick = () => { const s = wfSel(); if (s) wfAudition(s[0], Math.min(s[1], s[0] + 1)); };
+$("wf-play-out").onclick = () => { const s = wfSel(); if (s) wfAudition(Math.max(s[0], s[1] - 1), s[1]); };
+
+// --- zoom and pan -----------------------------------------------------------------------------
+
+$("wf-zoom-in").onclick = () => wfZoom(WF_ZOOM_STEP);
+$("wf-zoom-out").onclick = () => wfZoom(1 / WF_ZOOM_STEP);
+$("wf-zoom-sel").onclick = () => (wfSel() ? wfFollowSelection() : wfSetView(0, wf.dur));
+$("wf-zoom-all").onclick = () => wfSetView(0, wf.dur);
+["wf-snap-zero", "wf-snap-silence", "wf-snap-cue"].forEach((id) => $(id).addEventListener("change", wfDraw));
+["clip-exact", "clip-format", "clip-audio-only"].forEach((id) => $(id).addEventListener("change", wfCutNote));
+$("ss-audio").addEventListener("change", () => { wf.base = null; wfLoad(); });
+
+$("wf-stage").addEventListener("wheel", (e) => {
+  if (!wf.path) return;
+  e.preventDefault();
+  const r = $("wf-stage").getBoundingClientRect();
+  if (e.ctrlKey || e.metaKey) {  // Ctrl/⌘-wheel, and a trackpad pinch, zoom at the pointer
+    wfZoom(Math.exp(-e.deltaY * 0.01), wfT(e.clientX - r.left));
+  } else {
+    const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+    const dt = (d / wfWidth()) * wfSpan();
+    wfSetView(wf.view[0] + dt, wf.view[1] + dt);
+  }
+}, { passive: false });
+
+function wfPointerX(e) { return e.clientX - $("wf-stage").getBoundingClientRect().left; }
+
+$("wf-stage").addEventListener("pointerdown", (e) => {
+  if (!wf.path || (e.pointerType === "mouse" && e.button !== 0)) return;
+  const handle = e.target.closest(".wf-handle");
+  wf.pointers.set(e.pointerId, wfPointerX(e));
+  $("wf-stage").setPointerCapture(e.pointerId);
+  if (wf.pointers.size === 2) {
+    // Two fingers: pinch to zoom around their midpoint.
+    const [x1, x2] = [...wf.pointers.values()];
+    wf.drag = { kind: "pinch", dist: Math.max(8, Math.abs(x2 - x1)), view: [...wf.view],
+      at: wfT((x1 + x2) / 2), f: (x1 + x2) / 2 / wfWidth() };
+    return;
+  }
+  if (handle) {
+    e.preventDefault();
+    const k = handle.id === "wf-in" ? 0 : 1;
+    handle.focus();
+    if (pb) pb.pause();
+    wf.snapSeq++;  // a pending snap must not move the handle out from under the drag
+    wf.drag = { kind: "handle", k, grab: wfX(wfSel()[k]) - wfPointerX(e) };
+  } else {
+    wf.drag = { kind: "pan", x: wfPointerX(e), view: [...wf.view], moved: false };
+  }
+});
+
+$("wf-stage").addEventListener("pointermove", (e) => {
+  if (!wf.drag || !wf.pointers.has(e.pointerId)) {
+    if (wf.path && !e.target.closest(".wf-handle")) {
+      $("wf-stage").title = `${formatTimePrecise(wfT(wfPointerX(e)), wfDecimals())}: click to play from here, drag to pan, ` +
+        "Ctrl/⌘-scroll or pinch to zoom";
+    }
+    return;
+  }
+  wf.pointers.set(e.pointerId, wfPointerX(e));
+  const d = wf.drag;
+  if (d.kind === "pinch" && wf.pointers.size >= 2) {
+    const [x1, x2] = [...wf.pointers.values()];
+    const factor = Math.max(8, Math.abs(x2 - x1)) / d.dist;
+    const span = Math.max(WF_MIN_SPAN, Math.min(wf.dur, (d.view[1] - d.view[0]) / factor));
+    wfSetView(d.at - d.f * span, d.at - d.f * span + span);
+  } else if (d.kind === "handle") {
+    wfMoveHandle(d.k, wfCueSnap(wfT(wfPointerX(e) + d.grab)));
+  } else if (d.kind === "pan") {
+    const dx = wfPointerX(e) - d.x;
+    if (Math.abs(dx) > 4) d.moved = true;
+    if (!d.moved) return;
+    const dt = (-dx / wfWidth()) * (d.view[1] - d.view[0]);
+    wfSetView(d.view[0] + dt, d.view[1] + dt);
+  }
+});
+
+function wfPointerEnd(e) {
+  if (!wf.pointers.has(e.pointerId)) return;
+  wf.pointers.delete(e.pointerId);
+  const d = wf.drag;
+  if (!d) return;
+  if (d.kind === "pinch") {
+    if (wf.pointers.size === 0) wf.drag = null;
+    else wf.drag = { kind: "pan", x: [...wf.pointers.values()][0], view: [...wf.view], moved: true };
+    return;
+  }
+  wf.drag = null;
+  if (d.kind === "handle") {
+    wfSnapHandle(d.k).then(() => wfAnnounceHandle(d.k));
+  } else if (d.kind === "pan" && !d.moved && e.type === "pointerup") {
+    seekTo(Math.max(0, Math.min(wf.dur, wfT(wfPointerX(e)))));  // a click plays from there
+  }
+}
+$("wf-stage").addEventListener("pointerup", wfPointerEnd);
+$("wf-stage").addEventListener("pointercancel", wfPointerEnd);
+
+$("wf-in").addEventListener("keydown", (e) => wfHandleKey(e, 0));
+$("wf-out").addEventListener("keydown", (e) => wfHandleKey(e, 1));
+
+// + / - zoom and [ / ] jump to the handles, anywhere in the workspace but a text field.
+document.addEventListener("keydown", (e) => {
+  if (currentView !== "item" || !wf.path || e.ctrlKey || e.metaKey || e.altKey) return;
+  const t = e.target;
+  if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+  const act = { "+": () => wfZoom(WF_ZOOM_STEP), "=": () => wfZoom(WF_ZOOM_STEP),
+    "-": () => wfZoom(1 / WF_ZOOM_STEP), "[": () => wfJumpTo(0), "]": () => wfJumpTo(1) }[e.key];
+  if (!act) return;
+  e.preventDefault();
+  act();
+});
+
+new ResizeObserver(() => { if (wf.path) { wfDraw(); clearTimeout(wf.loadTimer); wf.loadTimer = setTimeout(wfLoad, 200); } })
+  .observe($("wf-stage"));
+// Redraw in the other theme's colours.
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", wfDraw);
+new MutationObserver(wfDraw).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 
 // --- bookmarks --------------------------------------------------------------
 
@@ -3047,6 +3791,8 @@ let loadedBookmarkCue = null;  // {cue} fallback when a bookmark range is loaded
 function showClipTarget(on) {
   $("clip-btn").disabled = !on;
   $("clip-name-row").hidden = !on;
+  clipTargetOn = on;
+  wfOnSelection();
 }
 
 // Map a channel-group label from the stream selector to a clip split category.
@@ -3099,8 +3845,6 @@ async function makeClip() {
     path: currentItem.path,
     kind,
     lossless: !reencodeVideo && fmt === "lossless",
-    before: parseFloat($("clip-before").value) || 0,
-    after: parseFloat($("clip-after").value) || 0,
     backend: "auto",
     embed_subs: kind === "video",  // implicit (B17): always embed for video
     split_channels: splitCh,
@@ -3116,8 +3860,7 @@ async function makeClip() {
     template: clipTemplate(),
   };
 
-  body.start = clipRangeStart;
-  body.end = clipRangeEnd;
+  Object.assign(body, wireRange(clipRangeStart, clipRangeEnd));
   // The first selected cue's dialogue drives the {cue} naming token.
   // The {cue} naming token: the selected cue's dialogue, or — when a bookmark
   // range is loaded (no cue selected in the script) — the bookmark's saved cue.
@@ -3853,10 +4596,8 @@ async function runLeadStingerBatch(prefix, onDone) {
 async function makeLeadStingerClip() {
   const cue = (selectedCueText() || (clipFirst < 0 ? loadedBookmarkCue : "") || "").trim();
   const item = {
-    path: currentItem.path, start: clipRangeStart, end: clipRangeEnd,
+    path: currentItem.path, ...wireRange(clipRangeStart, clipRangeEnd),
     title: cue || undefined,
-    before: parseFloat($("clip-before").value) || 0,
-    after: parseFloat($("clip-after").value) || 0,
   };
   const what = cue
     ? `"${cue.length > 60 ? cue.slice(0, 57) + "…" : cue}"`
@@ -3948,10 +4689,8 @@ async function sendLeadStingerClip() {
   setClipIndicator("processing");
   try {
     const data = await postJSON("/api/leadstinger/quip", {
-      path: currentItem.path, start: clipRangeStart, end: clipRangeEnd,
+      path: currentItem.path, ...wireRange(clipRangeStart, clipRangeEnd),
       title: cue || undefined,
-      before: parseFloat($("clip-before").value) || 0,
-      after: parseFloat($("clip-after").value) || 0,
     });
     activeJobId = data.job_id;
     pollClipJob(data.job_id, addClipRow(data.job_id, label));

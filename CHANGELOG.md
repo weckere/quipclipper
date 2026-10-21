@@ -58,6 +58,28 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   stills), in the workspace header (with the episode's real title under the show) and on
   the Now playing card; lazy-loaded, with alt text. The Name help lists the new tokens.
 
+### Waveform for exact cue points (M18)
+
+- A zoomable waveform under the player, from the whole file down to 20 ms across (single
+  samples): **−**/**+** buttons and keys, Ctrl/⌘-scroll, a trackpad or two-finger pinch; drag
+  or scroll to pan. The dialogue map above it is now a slim overview with the window
+  outlined. Subtitle lines are drawn as labelled spans, with the playhead, and keyframes
+  (◆) on video: a lossless video cut starts on the keyframe before the in point, and the
+  strip says so.
+- The selection's in and out points are draggable handles (sliders for the keyboard: ← →
+  10 ms, Shift 100 ms, Alt one frame; **[** and **]** jump between them). They are the
+  Before / After padding, which can now go negative to trim into a line.
+- **Snap** to the nearest zero crossing (on by default, when zoomed in to 10 s or closer),
+  to a quiet point, or to a line's start or end. **Audition**: play the selection, the
+  first second after the in point, or the last second before the out point.
+- `GET /api/items/peaks` (`quipclipper item.peaks`): min/max peaks of any span, from an
+  overview built once per file in the background and cached in the state dir (about
+  1.4 MB per 2-hour film), or a decode of just the window for spans under 2 minutes, down
+  to raw samples. `GET /api/items/snap` (`quipclipper item.snap`): the nearest zero
+  crossing or quiet point to a time.
+- Clips seek to the microsecond (was the millisecond), so a cut placed on a zero crossing
+  starts on it.
+
 ### Fixed
 
 - A file played through the HLS transcode (AC3/DTS audio, HEVC in Firefox, …) now opens at

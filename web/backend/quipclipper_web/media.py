@@ -89,6 +89,8 @@ def stream_dict(s: StreamInfo) -> dict:
         "attached_pic": s.attached_pic,
         "label": s.label(),
     }
+    if s.kind == "video":
+        d["frame_rate"] = s.frame_rate  # the waveform's one-frame nudge
     # For multichannel audio, the selectable channel groups (front/center/lfe/
     # side/back) so the stream selector can offer a channel subset (B17). Derived
     # ONLY from a recognized channel-layout tag — never guessed from the channel

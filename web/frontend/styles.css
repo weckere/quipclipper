@@ -815,7 +815,7 @@ footer { padding: 2rem 1.25rem; font-size: 0.8rem; }
   position: relative; margin: 0.6rem 0 0; padding: 10px 12px 0; cursor: pointer;
   background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg);
 }
-.dm-bars { display: flex; align-items: flex-end; gap: 1px; height: 44px; }
+.dm-bars { display: flex; align-items: flex-end; gap: 1px; height: 24px; }
 .dm-bars i { flex: 1; min-width: 1px; background: var(--faint); opacity: 0.85; border-radius: 1px; }
 .dm-bars i.empty { height: 3px; opacity: 0.3; }
 .dm-sel {
@@ -831,6 +831,55 @@ footer { padding: 2rem 1.25rem; font-size: 0.8rem; }
   display: flex; justify-content: space-between; padding: 4px 0;
   font: 0.7rem var(--font-mono); color: var(--faint);
 }
+/* The window the waveform strip shows, outlined on the map. */
+.dm-view {
+  position: absolute; top: 3px; bottom: 19px; min-width: 3px; pointer-events: none;
+  left: calc(12px + (100% - 24px) * var(--f, 0)); width: calc((100% - 24px) * var(--w, 1));
+  border: 1.5px solid var(--text); border-radius: 3px;
+}
+
+/* waveform strip (M18) */
+.waveform {
+  margin: 0.5rem 0 0; padding: 8px 10px 6px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg);
+}
+.wf-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 1rem; margin-bottom: 6px; }
+.wf-group { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 0.6rem; }
+.wf-group .checkbox-label { font-size: 0.8rem; color: var(--dim); }
+.wf-label { font-size: 0.75rem; color: var(--faint); text-transform: uppercase; letter-spacing: 0.04em; }
+.wf-btn {
+  background: var(--raised); color: var(--text); border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm); padding: 0.15rem 0.55rem; min-height: 26px; min-width: 26px;
+  font: inherit; font-size: 0.8rem; cursor: pointer;
+}
+.wf-btn:hover:not(:disabled) { border-color: var(--accent-text); }
+.wf-btn:disabled { opacity: 0.45; cursor: default; }
+.wf-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.wf-span { font: 0.75rem var(--font-mono); color: var(--faint); font-variant-numeric: tabular-nums; }
+.wf-stage {
+  position: relative; height: 128px; cursor: grab; touch-action: pan-y;
+  background: var(--sunken); border-radius: var(--radius-sm); overflow: hidden;
+  user-select: none; -webkit-user-select: none;
+}
+.wf-stage:active { cursor: grabbing; }
+.wf-stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.wf-head { position: absolute; top: 0; bottom: 16px; width: 2px; margin-left: -1px; background: var(--playhead); pointer-events: none; }
+.wf-handle {
+  position: absolute; top: 0; bottom: 16px; width: 2px; margin-left: -1px; background: var(--accent);
+  cursor: ew-resize; touch-action: none; outline: none;
+}
+/* A wide invisible grab area, and a visible grip at the bottom for fingers. */
+.wf-handle::before { content: ""; position: absolute; top: 0; bottom: 0; left: -10px; width: 22px; }
+.wf-grip {
+  position: absolute; bottom: 0; width: 14px; height: 26px; background: var(--accent);
+  border: 1px solid var(--accent-ink); border-radius: 3px;
+}
+.wf-in .wf-grip { left: 0; border-top-left-radius: 0; border-bottom-left-radius: 0; }
+.wf-out .wf-grip { right: 0; border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.wf-handle:focus-visible .wf-grip { outline: 2px solid var(--text); outline-offset: 1px; }
+.wf-handle:focus-visible { box-shadow: 0 0 0 1px var(--text); }
+.wf-handle.off-left, .wf-handle.off-right { opacity: 0.55; }
+.wf-notes { margin: 4px 0 0; font-size: 0.75rem; color: var(--dim); min-height: 1em; }
 
 /* clip bar */
 .ws-clip .marks-header { flex-wrap: wrap; row-gap: 0.4rem; }
@@ -1066,7 +1115,7 @@ input[type="checkbox"]:not(.switch) { width: 1rem; height: 1rem; }
   .dialogue-hit .hit-actions .mark-icon-btn { opacity: 1; }
   .btn.ghost, .jobs-pill, .root-link, .clips-nav-link, .tab { color: var(--text); }
   .script-line.active, .script-line.in-range { border-left-width: 5px; }
-  .panel, .index-card, .batch-bar, .dialogue-map, .hit-preview { border-color: var(--line-strong); }
+  .panel, .index-card, .batch-bar, .dialogue-map, .waveform, .hit-preview { border-color: var(--line-strong); }
 }
 
 /* Reflow (SC 1.4.10): usable at 320 px wide, i.e. 1280 px at 400 % zoom, with no sideways
@@ -1078,6 +1127,9 @@ input[type="checkbox"]:not(.switch) { width: 1rem; height: 1rem; }
 }
 @media (max-width: 480px) {
   .dm-bars { gap: 0; }
+  .wf-stage { height: 112px; }
+  .wf-toolbar { gap: 0.4rem 0.6rem; }
+  .wf-grip { width: 18px; height: 32px; }
   .key-hint { display: none; }
   .app-nav { gap: 0; flex-wrap: wrap; }
   .clips-nav-link { padding: 0.3rem 0.45rem; font-size: 0.85rem; }

@@ -1,0 +1,214 @@
+"""Peak and snap maths (quipclipper.waveform) on synthetic signals."""
+
+from __future__ import annotations
+
+import math
+import random
+import shutil
+import subprocess
+from array import array
+
+import pytest
+
+from quipclipper import waveform
+
+needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="needs ffmpeg")
+
+RATE = 48000
+
+
+def sine(freq: float, seconds: float, rate: int = RATE, amp: float = 0.5,
+         phase: float = 0.0) -> array:
+    n = round(seconds * rate)
+    return array("h", (round(amp * 32767 * math.sin(2 * math.pi * freq * i / rate + phase))
+                       for i in range(n)))
+
+
+def noise(n: int, seed: int = 1) -> array:
+    rnd = random.Random(seed)
+    return array("h", (rnd.randint(-32768, 32767) for _ in range(n)))
+
+
+def brute(samples, a: int, b: int) -> tuple[int, int]:
+    s = samples[a:b]
+    return min(s), max(s)
+
+
+# --- buckets and the pyramid ------------------------------------------------------
+
+
+def test_minmax_buckets_short_last_bucket():
+    mins, maxs = waveform.minmax_buckets(array("h", [1, -2, 3, 4, -5]), 2)
+    assert list(mins) == [-2, 3, -5]
+    assert list(maxs) == [1, 4, -5]
+
+
+def test_pyramid_levels_shrink_by_factor_to_one():
+    pyr = waveform.PeakPyramid.from_samples(noise(10_000), 10, RATE)
+    sizes = [len(lo) for lo, _ in pyr.levels]
+    assert sizes[0] == 1000
+    assert sizes[-1] == 1
+    assert all(b == math.ceil(a / waveform.FACTOR) for a, b in zip(sizes, sizes[1:]))
+
+
+def test_pyramid_peak_is_the_largest_magnitude():
+    data = noise(5000)
+    pyr = waveform.PeakPyramid.from_samples(data, 16, RATE)
+    assert pyr.peak() == max(abs(min(data)), abs(max(data)))
+    assert waveform.PeakPyramid.from_samples(array("h", [0] * 64), 16, RATE).peak() == 0
+
+
+@pytest.mark.parametrize("count", [1, 7, 100, 1000])
+def test_pyramid_bins_match_brute_force_on_whole_buckets(count):
+    data = noise(64 * 4096, seed=count)
+    bucket = 64
+    pyr = waveform.PeakPyramid.from_samples(data, bucket, RATE)
+    out = pyr.bins(0.0, len(data) / RATE, count)
+    assert len(out) == 2 * count
+    per_bin = len(data) / bucket / count
+    for i in range(count):
+        # Bin i covers whole level-0 buckets floor(i*per_bin)..floor((i+1)*per_bin).
+        a = math.floor(i * per_bin) * bucket
+        b = max(math.floor((i + 1) * per_bin), math.floor(i * per_bin) + 1) * bucket
+        assert (out[2 * i], out[2 * i + 1]) == brute(data, a, b)
+
+
+def test_pyramid_bins_window_outside_audio_is_flat():
+    pyr = waveform.PeakPyramid.from_samples(sine(100, 1.0), 160, RATE)
+    out = pyr.bins(5.0, 6.0, 10)
+    assert list(out) == [0] * 20
+
+
+def test_pyramid_bytes_round_trip():
+    pyr = waveform.PeakPyramid.from_samples(noise(20_000), 160, 8000)
+    back = waveform.PeakPyramid.from_bytes(pyr.to_bytes())
+    assert back.bucket == 160 and back.rate == 8000 and back.entries == pyr.entries
+    assert back.levels[0] == pyr.levels[0]
+    assert back.bins(0, 2.5, 50) == pyr.bins(0, 2.5, 50)
+
+
+def test_pyramid_bytes_rejects_garbage_and_truncation():
+    with pytest.raises(ValueError):
+        waveform.PeakPyramid.from_bytes(b"NOPE 1 2 3\n")
+    data = waveform.PeakPyramid.from_samples(noise(1000), 10, RATE).to_bytes()
+    with pytest.raises(ValueError):
+        waveform.PeakPyramid.from_bytes(data[:-3])
+
+
+# --- raw-sample bins -----------------------------------------------------------------
+
+
+def test_bins_of_a_sine_reach_its_amplitude():
+    s = sine(1000, 0.1, amp=0.5)  # 100 cycles
+    out = waveform.bins(s, 10)
+    for i in range(10):
+        assert out[2 * i] == pytest.approx(-16384, abs=60)
+        assert out[2 * i + 1] == pytest.approx(16384, abs=60)
+
+
+def test_bins_zoomed_past_one_sample_repeat_samples():
+    s = array("h", [10, -20, 30])
+    out = waveform.bins(s, 6)
+    assert list(out) == [10, 10, 10, 10, -20, -20, -20, -20, 30, 30, 30, 30]
+
+
+# --- zero crossings ----------------------------------------------------------------------
+
+
+def test_zero_crossings_of_a_sine_are_where_the_maths_says():
+    # 1 kHz at 48 kHz with a quarter-sample phase shift: no exact zeros, a sign change
+    # every 24 samples, between sample 24k and 24k+1 (k >= 1).
+    s = sine(1000, 0.05, phase=-2 * math.pi * 1000 * 0.25 / RATE)
+    for target in (30, 100, 500, 1000):
+        i = waveform.nearest_zero_crossing(s, target, 24)
+        assert i is not None
+        k = round(i / 24)
+        assert i in (24 * k, 24 * k + 1)
+        assert abs(s[i]) <= abs(s[24 * k + (1 if i == 24 * k else 0)])
+        assert abs(i - target) <= 12
+
+
+def test_zero_crossing_picks_the_smaller_side_and_exact_zero():
+    assert waveform.nearest_zero_crossing(array("h", [500, 400, -100, -300]), 0, 10) == 2
+    assert waveform.nearest_zero_crossing(array("h", [500, 50, -400, -300]), 3, 10) == 1
+    assert waveform.nearest_zero_crossing(array("h", [5, 3, 0, 2, 7]), 4, 10) == 2
+
+
+def test_zero_crossing_ties_go_earlier():
+    s = array("h", [-1, 0, 5, 9, 5, 0, -1])
+    assert waveform.nearest_zero_crossing(s, 3, 5) == 1
+
+
+def test_zero_crossing_none_within_radius():
+    s = array("h", [100] * 50 + [-100] * 50)
+    assert waveform.nearest_zero_crossing(s, 10, 20) is None
+    assert waveform.nearest_zero_crossing(s, 10, 40) == 49
+    assert waveform.nearest_zero_crossing(array("h"), 0, 10) is None
+
+
+# --- quiet points -------------------------------------------------------------------------------
+
+
+def test_nearest_quiet_finds_the_gap_nearest_the_target():
+    rate = 16000
+    loud = sine(440, 0.3, rate=rate, amp=0.5)
+    gap = array("h", [0] * round(0.1 * rate))
+    s = loud + gap + loud + gap + loud  # gaps at 0.3-0.4 s and 0.7-0.8 s
+    i, level, quiet = waveform.nearest_quiet(s, round(0.62 * rate), rate)
+    assert quiet
+    assert 0.7 <= i / rate <= 0.8
+    assert level == float("-inf")
+    i, _, quiet = waveform.nearest_quiet(s, round(0.2 * rate), rate)
+    assert quiet and 0.3 <= i / rate <= 0.4
+
+
+def test_nearest_quiet_without_silence_returns_the_quietest():
+    rate = 16000
+    s = sine(440, 0.2, rate=rate, amp=0.6) + sine(440, 0.2, rate=rate, amp=0.05) \
+        + sine(440, 0.2, rate=rate, amp=0.6)
+    i, level, quiet = waveform.nearest_quiet(s, 0, rate, threshold_db=-60)
+    assert not quiet
+    assert 0.2 <= i / rate <= 0.4
+    assert level == pytest.approx(20 * math.log10(0.05 / math.sqrt(2)), abs=1.0)
+
+
+def test_rms_db_of_full_scale_sine():
+    assert waveform.rms_db(sine(1000, 0.1, amp=1.0)) == pytest.approx(-3.01, abs=0.05)
+    assert waveform.rms_db(array("h", [0, 0])) == float("-inf")
+
+
+# --- decoding --------------------------------------------------------------------------
+
+
+def test_decode_args_seek_before_input_with_microseconds():
+    cmd = waveform.decode_args("/m/a.mkv", audio=2, rate=8000, start=1.2345678, duration=0.5)
+    assert cmd[cmd.index("-ss") + 1] == "1.234568"
+    assert cmd.index("-ss") < cmd.index("-i")
+    assert cmd[cmd.index("-map") + 1] == "0:a:2"
+    assert cmd[cmd.index("-ar") + 1] == "8000"
+    assert cmd[-2:] == ["pcm_s16le", "-"] or cmd[-1] == "-"
+
+
+def test_stream_buckets_matches_minmax_buckets():
+    import io
+    data = noise(10_000)
+    got_lo, got_hi = array("h"), array("h")
+    total = 0
+    for lo, hi, total in waveform.stream_buckets(io.BytesIO(data.tobytes()), 160, 1000):
+        got_lo.extend(lo)
+        got_hi.extend(hi)
+    lo, hi = waveform.minmax_buckets(data, 160)
+    assert (got_lo, got_hi, total) == (lo, hi, len(data))
+
+
+@needs_ffmpeg
+def test_decode_a_generated_sine(tmp_path):
+    src = tmp_path / "sine.wav"
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i",
+                    "sine=frequency=1000:sample_rate=48000:duration=2", str(src)], check=True)
+    s = waveform.decode(src, start=0.5, duration=0.25)
+    assert len(s) == 12000
+    assert waveform.native_rate(src) == 48000
+    # ffmpeg's sine starts at phase 0: the cut lands on a crossing every 24 samples.
+    assert abs(s[0]) < 200
+    assert waveform.nearest_zero_crossing(s, 30, 24) in (24, 23, 25)

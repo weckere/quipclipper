@@ -365,13 +365,13 @@ def _ffmpeg_args(
 ) -> list[str]:
     head = ["ffmpeg", "-y", "-v", "error"]
     url_flags = _URL_INPUT_FLAGS if _is_url(source) else []
-    inputs = url_flags + ["-ss", f"{rng.start:.3f}", "-i", _argv_path(source)]
+    inputs = url_flags + ["-ss", f"{rng.start:.6f}", "-i", _argv_path(source)]
     # A separate audio stream fetched alongside a video-only source (a DASH pair,
     # e.g. resolved YouTube stream URLs): second input, seeked to the same spot.
     aux_input = None
     if aux_audio is not None:
         aux_flags = _URL_INPUT_FLAGS if _is_url(aux_audio) else []
-        inputs += aux_flags + ["-ss", f"{rng.start:.3f}", "-i", _argv_path(aux_audio)]
+        inputs += aux_flags + ["-ss", f"{rng.start:.6f}", "-i", _argv_path(aux_audio)]
         aux_input = 1
     subs_input = None
     if kind == "video" and lossless and embed_subs is not None:
@@ -380,7 +380,7 @@ def _ffmpeg_args(
         # is unreliable, and these timestamps already align with the output.
         inputs += ["-i", _argv_path(embed_subs)]
         subs_input = 2 if aux_input is not None else 1
-    dur = ["-t", f"{rng.duration:.3f}"]
+    dur = ["-t", f"{rng.duration:.6f}"]
     out_arg = _argv_path(out)
 
     if kind == "gif":
@@ -659,8 +659,8 @@ def split_audio_channels(
         )
         args = [
             "ffmpeg", "-y", "-v", "error",
-            "-ss", f"{rng.start - preroll:.3f}", "-i", _argv_path(source),
-            "-ss", f"{preroll:.3f}", "-t", f"{rng.duration:.3f}",
+            "-ss", f"{rng.start - preroll:.6f}", "-i", _argv_path(source),
+            "-ss", f"{preroll:.6f}", "-t", f"{rng.duration:.6f}",
             "-map", f"0:a:{audio_index}",
             "-filter:a", pan, "-c:a", encoder, _argv_path(target),
         ]

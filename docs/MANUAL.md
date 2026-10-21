@@ -205,7 +205,20 @@ Opening a file opens its workspace.
   change playback and what the clip contains (the subtitle you pick becomes the clip's
   default track).
 - **The dialogue map** under the player shows where the talking is over the whole file:
-  the selection in amber, the playhead in blue. Click it to seek.
+  the selection in amber, the playhead in blue, and the waveform's window outlined. Click
+  it to seek.
+- **The waveform** under it sets the exact cut. It shows the sound of a window of the file,
+  from the whole runtime down to 20 ms (single samples): zoom with **−** / **+** (or the
+  keys), Ctrl/⌘-scroll or a pinch; drag or scroll to pan; click to play from there. The
+  subtitle lines run along the top as labelled spans, and on video the keyframes show as ◆.
+  The selection's **in and out handles** are the Before / After padding: drag one (or
+  focus it and use the arrow keys) and the fields follow; a negative value trims into the
+  line. **Snap** pulls a dropped handle to the nearest **zero crossing** (on by default,
+  once zoomed in to 10 s or closer, so the cut starts without a click), a **silence**, or a
+  **cue edge**. **▶ Selection**, **▶ 1 s from in** and **▶ 1 s to out** audition the cut.
+  A note says how the in point will be cut: on the sample with **Exact** on (or FLAC/WAV
+  audio); on the keyframe before it for a lossless video copy; on a codec frame (20–30 ms)
+  for passthrough audio.
 - **The transport**: back to the start, play/pause, **Loop selection**, and the
   selection's range.
 - **The script** on the right lists every line. Click a line to seek; hover (or focus)
@@ -264,6 +277,9 @@ The web app aims at WCAG 2.2 AA.
   script is one tab stop: **↑ ↓** (and Page Up/Down, Home/End) move between lines,
   **Enter** plays from a line, **S** and **E** set the selection's start and end. The
   dialogue map and the seek bar are sliders: the arrow keys step 1 s (Shift: 10 s).
+  The waveform's in and out handles are sliders too: **← →** move one 10 ms (Shift 100 ms,
+  Alt one frame, Page Up/Down 1 s), **[** and **]** jump between them, **+** and **−**
+  zoom.
 - Jobs and Settings are dialogs: focus moves in, **Esc** closes them and returns focus.
   When a folder, a file or a page opens, focus moves to it.
 - One polite announcement says when a job finishes or fails, what the selection now is,

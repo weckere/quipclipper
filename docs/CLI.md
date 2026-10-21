@@ -146,6 +146,8 @@ by default land where they always did.
 | `item.reindex` | Re-read a file's subtitles (or re-fetch a YouTube transcript), clearing its cache. | `PATH` | `POST /api/items/subtitles/reindex` | ↻ Reindex subtitles (item) |
 | `item.fetch-subs` | Fetch subtitles from YouTube for one library video. | `PATH` `--wait` `--out-dir` | `POST /api/media/fetch-subs` | ⬇ Fetch subtitles from YouTube (item) |
 | `item.link` | A link that opens a file in the web app at a moment, with a range selected (needs QC_PUBLIC_URL on the server). | `PATH` `--at` `--sel` `--track` | `GET /api/items/link` | Copy link (workspace selection; search hit) |
+| `item.peaks` | Waveform peaks of a span: min/max pairs as base64 int16 (raw samples when zoomed past one per bin). Long spans come from a cached overview built in the background (202 while it builds). | `PATH` `--start` `--end` `--bins` `--audio` `--keyframes` | `GET /api/items/peaks` | Waveform strip (workspace): drawing, zoom and pan |
+| `item.snap` | The nearest zero crossing or quiet point to a time: where to put a cut so it starts without a click. | `PATH` `--t` `--mode` `--radius` `--db` `--audio` | `GET /api/items/snap` | Waveform strip: Snap to zero crossing / silence while dragging a handle |
 
 ## search
 

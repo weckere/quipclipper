@@ -250,3 +250,25 @@ def segment_clip_name_source(epub: Path, index: int) -> Path:
     seg = _segment(book, index)
     chapter = seg.title or f"Part {seg.index + 1}"
     return epub.parent / chapter / f"{book.title or epub.stem}.mka"
+
+
+def segment_audio_input(epub: Path, index: int):
+    """An ffmpeg input for a segment's audio, and what to call once done with it.
+
+    A stored (uncompressed) member is read in place through ffmpeg's ``subfile``
+    protocol, so seeking costs nothing and nothing is written; a compressed one is
+    extracted to a temp file that the cleanup deletes."""
+    member = _segment(book_for(epub), index).audio
+    with zipfile.ZipFile(epub) as z:
+        info = z.getinfo(member)
+        if info.compress_type == zipfile.ZIP_STORED:
+            with open(epub, "rb") as f:
+                f.seek(info.header_offset)
+                local = f.read(30)
+            if local[:4] == b"PK\x03\x04":
+                name_len = int.from_bytes(local[26:28], "little")
+                extra_len = int.from_bytes(local[28:30], "little")
+                start = info.header_offset + 30 + name_len + extra_len
+                return f"subfile,,start,{start},end,{start + info.file_size},,:{epub}", None
+    tmp = extract_segment_temp(epub, index)
+    return str(tmp), lambda: tmp.unlink(missing_ok=True)

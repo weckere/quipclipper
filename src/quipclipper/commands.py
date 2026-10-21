@@ -212,6 +212,33 @@ COMMANDS: tuple[Command, ...] = (
                           "(e.g. 61.2-64.8)."),
                     Param("track", "int", "Subtitle track (s:N) to show.")),
             ui="Copy link (workspace selection; search hit)"),
+    Command("item.peaks", "Waveform peaks of a span: min/max pairs as base64 int16 (raw "
+            "samples when zoomed past one per bin). Long spans come from a cached overview "
+            "built in the background (202 while it builds).", "GET", "/api/items/peaks",
+            params=(Param("path", "str", "Media file, yt:<id> or <epub>#seg=N.", main=True,
+                          required=True),
+                    Param("start", "float", "Span start in seconds.", default=0.0),
+                    Param("end", "float", "Span end in seconds. Default: the end of the file."),
+                    Param("bins", "int", "How many min/max pairs (1-8192).", default=1000),
+                    Param("audio", "int", "Audio stream (a:N).", default=0),
+                    Param("keyframes", "bool", "Also list the video keyframes in the span "
+                          "(spans up to 60 s): where a lossless cut can start.",
+                          default=False)),
+            ui="Waveform strip (workspace): drawing, zoom and pan"),
+    Command("item.snap", "The nearest zero crossing or quiet point to a time: where to put "
+            "a cut so it starts without a click.", "GET", "/api/items/snap",
+            params=(Param("path", "str", "Media file, yt:<id> or <epub>#seg=N.", main=True,
+                          required=True),
+                    Param("t", "float", "Time in seconds.", required=True, flags=("--at",)),
+                    Param("mode", "str", "zero: nearest zero crossing; silence: nearest point "
+                          "where the level drops below --db.", default="zero",
+                          choices=("zero", "silence")),
+                    Param("radius", "float", "How far to look, in seconds. Default: 0.01 for "
+                          "zero, 1 for silence."),
+                    Param("db", "float", "Quiet threshold in dBFS (silence mode).",
+                          default=-45.0),
+                    Param("audio", "int", "Audio stream (a:N).", default=0)),
+            ui="Waveform strip: Snap to zero crossing / silence while dragging a handle"),
 
     # --- search ------------------------------------------------------------------------
     Command("search.item", "Search one file's dialogue.", "GET", "/api/search",
