@@ -487,5 +487,8 @@ def test_cli_flag_for_a_keyword_param():
     assert res.exit_code == 0, res.output
     assert seen["id"] == "clips.download" and seen["as"] == "flac"
     assert seen["clip_path"] == "a.mka"
-    res = CliRunner().invoke(cli.app, ["clips.list", "--help"])
-    assert "--query" in res.output and "--since" in res.output and "--recursive" in res.output
+    import typer
+
+    listing = typer.main.get_command(cli.app).commands["clips.list"]
+    opts = {o for p in listing.params for o in getattr(p, "opts", [])}
+    assert {"--recursive", "--query", "--kind", "--since", "--sort"} <= opts
