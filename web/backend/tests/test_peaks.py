@@ -204,6 +204,26 @@ def test_exact_cut_starts_on_the_snapped_crossing(client, media, tmp_path):
     assert list(clip[:64]) == pytest.approx(list(ref[:64]), abs=2)
 
 
+def test_exact_cut_matches_the_snap_on_dts_in_matroska(client, media, tmp_path):
+    """DTS in Matroska carries timestamps too coarse for -ss to land on the same sample
+    twice; the anchored decode still makes the snap and the cut agree to the sample."""
+    src = media / "dts.mkv"
+    if not src.exists():
+        r = subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+                            "sine=frequency=330:sample_rate=48000:duration=14",
+                            "-ac", "2", "-c:a", "dca", "-strict", "-2", str(src)])
+        if r.returncode != 0:
+            pytest.skip("this ffmpeg can't encode DTS")
+    for t in (3.21234, 9.996, 12.71877):
+        snap = client.get("/api/items/snap", params={"path": str(src), "t": t}).json()
+        assert snap["found"], snap
+        s = snap["snapped"]
+        out = cut_clip(src, ClipRange(s, s + 0.2), kind="audio", lossless=False,
+                       audio_codec="wav", out=tmp_path / f"c{t}.wav")
+        clip = waveform.decode(out)
+        assert abs(clip[0] - snap["value"]) <= 2, (t, list(clip[:4]), snap)
+
+
 def test_epub_stored_member_reads_in_place(tmp_path, media):
     epub = tmp_path / "book.epub"
     with zipfile.ZipFile(epub, "w") as z:

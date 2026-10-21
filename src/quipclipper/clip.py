@@ -26,6 +26,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from quipclipper import waveform
 from quipclipper.models import Cue, Match, format_timestamp
 
 # The render node used for VAAPI / Intel Quick Sync hardware H.264 encoding.
@@ -362,7 +363,14 @@ def _ffmpeg_args(
     video_encoder: str = "libx264",
     vaapi_device: str | None = None,
     aux_audio: str | None = None,
+    audio_rates: list[int] | None = None,
 ) -> list[str]:
+    """The ffmpeg command for one cut.
+
+    ``audio_rates`` (the sample rates of the audio streams the clip keeps, in output
+    order) makes a re-encoded cut sample-exact: the audio is decoded from the anchor
+    before the start and trimmed by counting samples (:func:`waveform.anchor`), as the
+    waveform's snaps decode, while the video keeps its own frame-exact seek."""
     head = ["ffmpeg", "-y", "-v", "error"]
     url_flags = _URL_INPUT_FLAGS if _is_url(source) else []
     inputs = url_flags + ["-ss", f"{rng.start:.6f}", "-i", _argv_path(source)]
@@ -383,6 +391,17 @@ def _ffmpeg_args(
     dur = ["-t", f"{rng.duration:.6f}"]
     out_arg = _argv_path(out)
 
+    anchored = (bool(audio_rates) and aux_audio is None and kind != "gif"
+                and (not lossless or audio_codec is not None))
+    audio_in: list[str] = []
+    trims: list[str] = []
+    if anchored:
+        a0 = waveform.anchor(rng.start)
+        audio_in = url_flags + (["-ss", f"{a0:.6f}"] if a0 > 0 else []) + ["-i", _argv_path(source)]
+        for j, rate in enumerate(audio_rates or ()):
+            trims += [f"-filter:a:{j}",
+                      f"atrim=start_sample={round((rng.start - a0) * rate)},asetpts=PTS-STARTPTS"]
+
     if kind == "gif":
         # Scale and cap fps; height -1 preserves aspect ratio. Always re-encoded.
         vf = f"fps={fps},scale={width}:-1:flags=lanczos"
@@ -395,6 +414,8 @@ def _ffmpeg_args(
         # or a:0). ffmpeg writes WAVE_FORMAT_EXTENSIBLE with the channel mask.
         enc = FULLMIX_AUDIO[audio_codec][0]
         idx = audio_indices[0] if audio_indices else 0
+        if anchored:
+            return head + audio_in + dur + ["-map", f"0:a:{idx}"] + trims + ["-c:a", enc, out_arg]
         return head + inputs + dur + ["-map", f"0:a:{idx}", "-c:a", enc, out_arg]
 
     if lossless:
@@ -424,10 +445,19 @@ def _ffmpeg_args(
 
     # re-encode (no subtitle handling here — that is a lossless feature)
     if kind == "audio":
+        if anchored:
+            maps = _audio_map_args(audio_indices, optional=False) if audio_indices else ["-map", "0:a:0"]
+            return head + audio_in + dur + maps + trims + [out_arg]
         maps = _audio_map_args(audio_indices, optional=False) if audio_indices else ["-vn"]
         return head + inputs + dur + maps + [out_arg]
     if aux_input is not None:
         maps = ["-map", "0:v:0", "-map", f"{aux_input}:a:0"]
+    elif anchored:
+        # Video from input 0 (seeked to the start), audio from input 1 (anchored).
+        inputs = inputs + audio_in
+        maps = ["-map", "0:v:0?"] + [m.replace("0:a", "1:a", 1) if m.startswith("0:a") else m
+                                      for m in _audio_map_args(audio_indices, optional=True)]
+        maps += trims
     else:
         maps = ["-map", "0:v:0?"] + _audio_map_args(audio_indices, optional=True)
     if video_encoder == "h264_vaapi":
@@ -533,6 +563,14 @@ def cut_clip(
             if embed_subs is not None:
                 sub_count += 1
 
+    # A re-encoded cut starts on the sample (see _ffmpeg_args): it needs the sample rate
+    # of each audio stream it keeps. Local files only: a URL probe is slow, and a
+    # DASH pair's audio is a second input already.
+    audio_rates = None
+    if (not is_url and aux_audio is None and kind != "gif"
+            and (not lossless or audio_codec is not None)):
+        audio_rates = _kept_audio_rates(source, kind, audio_indices, audio_codec)
+
     def build(enc: str, dev: str | None) -> list[str]:
         return _ffmpeg_args(
             source=source, rng=rng, kind=kind, out=out, lossless=lossless, fps=fps,
@@ -540,6 +578,7 @@ def cut_clip(
             audio_codec=audio_codec,
             default_sub_index=default_sub_track, sub_count=sub_count,
             video_encoder=enc, vaapi_device=dev, aux_audio=aux_audio,
+            audio_rates=audio_rates,
         )
     try:
         try:
@@ -562,6 +601,29 @@ def cut_clip(
         if embed_subs is not None:
             embed_subs.unlink(missing_ok=True)
     return out
+
+
+def _kept_audio_rates(source: str | Path, kind: str, audio_indices: list[int] | None,
+                      audio_codec: str | None) -> list[int] | None:
+    """Sample rates of the audio streams a re-encoded cut keeps, in output order, or None
+    when that can't be known (no probe, or an audio cut that leaves ffmpeg to pick one of
+    several streams)."""
+    try:
+        rates = [int(s["sample_rate"]) for s in _probe_streams(source, "a", fields="sample_rate")]
+    except (KeyError, ValueError, TypeError):
+        return None
+    if not rates:
+        return None
+    if kind == "audio" and audio_codec is not None:
+        idx = audio_indices[0] if audio_indices else 0
+        return [rates[idx]] if idx < len(rates) else None
+    if audio_indices:
+        if any(i >= len(rates) for i in audio_indices):
+            return None
+        return [rates[i] for i in audio_indices]
+    if kind == "audio":
+        return rates[:1] if len(rates) == 1 else None
+    return rates  # video keeps every audio stream
 
 
 # --- surround channel split --------------------------------------------------

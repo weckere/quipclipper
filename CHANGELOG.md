@@ -77,8 +77,11 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   1.4 MB per 2-hour film), or a decode of just the window for spans under 2 minutes, down
   to raw samples. `GET /api/items/snap` (`quipclipper item.snap`): the nearest zero
   crossing or quiet point to a time.
-- Clips seek to the microsecond (was the millisecond), and the waveform's detail views and
-  snaps decode from the sample grid, so a cut placed on a zero crossing starts on it.
+- Re-encoded clips (Exact video, FLAC/WAV and MP3 audio) start on the sample: the audio
+  is decoded from a fixed anchor before the start and trimmed by counting samples, the
+  same way the waveform's detail views and snaps decode, so a cut placed on a zero
+  crossing starts on it (before, a DTS track in Matroska could start a few ms off).
+  Seeks are to the microsecond (was the millisecond).
 
 ### Fixed
 

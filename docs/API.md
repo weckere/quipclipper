@@ -104,8 +104,10 @@ in the clip.
 - `kind: "peaks"`: `data` is base64 little-endian int16, `bins` interleaved (min, max) pairs
   (full scale ±32768). `kind: "samples"`: zoomed past one sample per bin, `data` is the raw
   mono samples, `count` of them, the first at `t0`, `rate` apart. Detail decodes and snaps
-  start on the sample grid (`t0` is `start` rounded to the nearest sample), so the drawing,
-  `snapped` and a cut from it agree on the sample.
+  are *anchored*: they seek to a whole 10 s mark less 1 s before the span and count samples
+  from there, as an exact (re-encoded) clip cut does, so the drawing, `snapped` and the
+  cut agree on the sample even where `-ss` alone wouldn't (DTS in Matroska carries
+  timestamps too coarse for it). `t0` is the sample nearest `start`.
 - `peak`: the largest sample in the file (from the overview), else in the span.
 - `keyframes=true` (video, spans up to 60 s) adds `keyframes`: the times a lossless video cut
   can start at.

@@ -386,9 +386,33 @@ def test_cut_clip_falls_back_to_software_when_hw_encode_fails(tmp_path):
             video_encoder="h264_vaapi", vaapi_device="/dev/dri/renderD128",
         )
     assert result == out
-    assert len(calls) == 2
-    assert "h264_vaapi" in calls[0]   # tried the iGPU first
-    assert "libx264" in calls[1]      # then fell back to the CPU
+    cuts = [c for c in calls if c[0] == "ffmpeg"]  # (the rest are ffprobe)
+    assert len(cuts) == 2
+    assert "h264_vaapi" in cuts[0]   # tried the iGPU first
+    assert "libx264" in cuts[1]      # then fell back to the CPU
+
+
+def test_exact_cut_takes_audio_from_an_anchored_decode():
+    """A re-encoded cut seeks the video to the start, but decodes the audio from the
+    anchor before it and counts samples, as the waveform's snaps do (M18)."""
+    rng = ClipRange(123.456789, 125.0)
+    args = _ffmpeg_args(source="/m/a.mkv", rng=rng, kind="video", out=Path("/o.mp4"),
+                        lossless=False, fps=15, width=480, audio_indices=[1],
+                        audio_rates=[48000])
+    assert args[args.index("-ss") + 1] == "123.456789"
+    second = args.index("-ss", args.index("-ss") + 1)
+    assert args[second + 1] == "119.000000"           # anchor: floor(123/10)*10 - 1
+    assert ["-map", "0:v:0?", "-map", "1:a:1"] == args[args.index("-map"):args.index("-map") + 4]
+    trim = args[args.index("-filter:a:0") + 1]
+    assert trim == f"atrim=start_sample={round(4.456789 * 48000)},asetpts=PTS-STARTPTS"
+    wav = _ffmpeg_args(source="/m/a.mkv", rng=rng, kind="audio", out=Path("/o.wav"),
+                       lossless=True, fps=15, width=480, audio_codec="wav", audio_rates=[44100])
+    assert wav.count("-i") == 1 and wav[wav.index("-ss") + 1] == "119.000000"
+    assert f"atrim=start_sample={round(4.456789 * 44100)}" in wav[wav.index("-filter:a:0") + 1]
+    # Stream copies can't trim samples: unchanged.
+    copy = _ffmpeg_args(source="/m/a.mkv", rng=rng, kind="video", out=Path("/o.mkv"),
+                        lossless=True, fps=15, width=480, audio_rates=[48000])
+    assert copy.count("-i") == 1 and "-filter:a:0" not in copy
 
 
 def test_group_channels_5_1():

@@ -232,32 +232,36 @@ class PeakStore:
 
     # --- detail ---------------------------------------------------------------
 
-    def native_rate(self, src: AudioSource) -> int:
-        """The stream's sample rate, capped at 48 kHz (probed once per source)."""
+    def source_rate(self, src: AudioSource) -> int | None:
+        """The stream's own sample rate (probed once per source), or None if unknown."""
         with self._lock:
-            known = src.key in self._rates
-            rate = self._rates.get(src.key)
-        if not known:
-            inp, cleanup = src.open()
-            try:
-                rate = waveform.native_rate(inp, src.audio, src.input_flags)
-            finally:
-                if cleanup:
-                    cleanup()
-            with self._lock:
-                self._rates[src.key] = rate
-        return min(rate or MAX_RATE, MAX_RATE)
+            if src.key in self._rates:
+                return self._rates[src.key]
+        inp, cleanup = src.open()
+        try:
+            rate = waveform.native_rate(inp, src.audio, src.input_flags)
+        finally:
+            if cleanup:
+                cleanup()
+        with self._lock:
+            self._rates[src.key] = rate
+        return rate
+
+    def native_rate(self, src: AudioSource) -> int:
+        """The stream's sample rate, capped at 48 kHz."""
+        return min(self.source_rate(src) or MAX_RATE, MAX_RATE)
 
     def decode_window(self, src: AudioSource, start: float, duration: float, rate: int):
-        """``(samples, t0)``: ``duration`` seconds decoded from ``t0``, which is ``start``
-        moved onto the sample grid. A seek between two samples starts on whichever the
-        decoder rounds to (PCM and AAC: the nearer; DTS: not always), so every decode,
-        snap and cut asks for a time on the grid, and they all agree on the sample."""
-        t0 = round(start * rate) / rate
+        """``(samples, t0)``: ``duration`` seconds decoded from ``t0``, the sample nearest
+        ``start``. The decode is anchored (:func:`quipclipper.waveform.anchor`), as an
+        exact clip cut decodes, so the drawing, a snap and the cut agree on the sample."""
+        sr = self.source_rate(src)
+        t0 = waveform.anchored_start(start, sr) if sr else round(start * rate) / rate
         inp, cleanup = src.open()
         try:
             return waveform.decode(inp, audio=src.audio, rate=rate, start=t0,
-                                   duration=duration, input_flags=src.input_flags), t0
+                                   duration=duration, input_flags=src.input_flags,
+                                   src_rate=sr), t0
         finally:
             if cleanup:
                 cleanup()
@@ -332,6 +336,14 @@ def snap(store: PeakStore, src: AudioSource, t: float, mode: str, radius: float 
         found = i is not None
         if i is None:
             i = min(max(index, 0), len(samples) - 1)
+        elif waveform.anchor(t0 + i / rate) != waveform.anchor(t0):
+            # The crossing lies past an anchor boundary, where a cut decodes from the next
+            # anchor: look again in that decode, within a few samples.
+            t1 = t0 + i / rate
+            near, u0 = store.decode_window(src, t1, 8 / rate, rate)
+            j = waveform.nearest_zero_crossing(near, round((t1 - u0) * rate), 3) if near else None
+            if j is not None:
+                samples, t0, i = near, u0, j
         out["value"] = samples[i]
     else:
         i, level, found = waveform.nearest_quiet(samples, index, rate, threshold_db=threshold_db)

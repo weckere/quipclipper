@@ -256,21 +256,56 @@ def nearest_quiet(samples: Sequence[int], index: int, rate: float, *,
 
 # --- decoding --------------------------------------------------------------------
 
+# Where a sample-exact decode starts: ffmpeg's -ss trims audio by the frames' timestamps,
+# which some sources (DTS in Matroska) carry too coarsely, so two decodes seeked to
+# different times can disagree by a few ms on which sample is where. A decode that starts
+# at the same -ss is always the same, though, and within it counting samples is exact. So
+# the waveform's detail views, the snaps and the exact clip cuts all seek to the anchor
+# before the time they want (a whole multiple of ANCHOR_GRID seconds, less one for the
+# decoder to settle) and count samples from there.
+ANCHOR_GRID = 10
+
+
+def anchor(t: float) -> float:
+    """The -ss a sample-exact decode reaching ``t`` starts from."""
+    return float(max(0, math.floor(t / ANCHOR_GRID) * ANCHOR_GRID - 1))
+
+
+def anchored_trim(t: float, src_rate: int) -> tuple[float, int]:
+    """``(anchor, samples)``: seek to the anchor, then skip this many samples (at the
+    stream's own rate) to reach ``t``."""
+    a = anchor(t)
+    return a, round((t - a) * src_rate)
+
+
+def anchored_start(t: float, src_rate: int) -> float:
+    """The time an anchored decode reaching for ``t`` actually starts at (on the sample grid)."""
+    a, n = anchored_trim(t, src_rate)
+    return a + n / src_rate
+
 
 def decode_args(source: str | Path, *, audio: int = 0, rate: int | None = None,
                 start: float | None = None, duration: float | None = None,
-                input_flags: Sequence[str] = ()) -> list[str]:
+                input_flags: Sequence[str] = (), src_rate: int | None = None) -> list[str]:
     """ffmpeg arguments that write one audio stream as s16le mono to stdout.
 
-    ``-ss`` before ``-i`` with a decode is sample-accurate, the same seek the
-    clip cutter uses, so a time here is a time there."""
+    With ``src_rate`` (the stream's own sample rate) the decode is anchored (see
+    :func:`anchor`), the way an exact clip cut decodes, so a sample here is that
+    sample in the clip; without it, it seeks straight to ``start``."""
     cmd = ["ffmpeg", "-nostdin", "-v", "error", *input_flags]
-    if start:
-        cmd += ["-ss", f"{start:.6f}"]
+    trim = None
+    seek = start
+    if start and src_rate:
+        seek, trim = anchored_trim(start, src_rate)
+    if seek:
+        cmd += ["-ss", f"{seek:.6f}"]
     cmd += ["-i", str(source)]
     if duration is not None:
         cmd += ["-t", f"{duration:.6f}"]
-    cmd += ["-map", f"0:a:{audio}", "-vn", "-sn", "-dn", "-ac", "1"]
+    cmd += ["-map", f"0:a:{audio}", "-vn", "-sn", "-dn"]
+    if trim:
+        cmd += ["-af", f"atrim=start_sample={trim},asetpts=PTS-STARTPTS"]
+    cmd += ["-ac", "1"]
     if rate:
         cmd += ["-ar", str(rate)]
     return cmd + ["-f", "s16le", "-acodec", "pcm_s16le", "-"]
@@ -288,11 +323,13 @@ def _to_array(raw: bytes) -> array:
 
 def decode(source: str | Path, *, audio: int = 0, rate: int | None = None,
            start: float | None = None, duration: float | None = None,
-           input_flags: Sequence[str] = (), timeout: float = 120) -> array:
-    """Decode a span of one audio stream to mono s16 samples."""
+           input_flags: Sequence[str] = (), src_rate: int | None = None,
+           timeout: float = 120) -> array:
+    """Decode a span of one audio stream to mono s16 samples (anchored with ``src_rate``)."""
     try:
         r = subprocess.run(decode_args(source, audio=audio, rate=rate, start=start,
-                                       duration=duration, input_flags=input_flags),
+                                       duration=duration, input_flags=input_flags,
+                                       src_rate=src_rate),
                            capture_output=True, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(f"ffmpeg took over {timeout:.0f} s to decode the audio") from exc
