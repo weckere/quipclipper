@@ -10,6 +10,8 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-21
+
 ### Deep links (M18)
 
 - Every view has a URL (`#/library`, `#/search`, `#/item`, `#/bookmarks`, `#/clips`,
@@ -287,5 +289,6 @@ The first version, before releases were tagged. Highlights:
   guard, and an optional password gate.
 - **Deployment:** a Nix flake and NixOS module (with a VM test), and Docker images on GHCR.
 
-[Unreleased]: https://github.com/weckere/quipclipper/compare/v0.1.1...dev
+[Unreleased]: https://github.com/weckere/quipclipper/compare/v0.2.0...dev
+[0.2.0]: https://github.com/weckere/quipclipper/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/weckere/quipclipper/releases/tag/v0.1.1
