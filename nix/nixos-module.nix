@@ -437,7 +437,8 @@ in
       unitConfig.RequiresMountsFor =
         [ (toString cfg.clipsDir) ]
         ++ map toString cfg.mediaRoots
-        ++ map toString cfg.writableMediaRoots;
+        ++ map toString cfg.writableMediaRoots
+        ++ lib.optional ytDirOwnBind (toString cfg.youtubeDir);
 
       environment = {
         # The app treats read-only and writable roots the same for browsing;
@@ -613,6 +614,16 @@ in
           extraConfig = ''
             proxy_buffering off;
             proxy_read_timeout 180s;
+          '';
+        };
+        # Clips library downloads: `?as=flac` converts the clip before the first
+        # byte (FlacCache, up to 900 s for a long multichannel clip), and a clip
+        # can be large, so stream it unbuffered and wait as long as that.
+        locations."/api/clips/download" = {
+          proxyPass = proxyTarget;
+          extraConfig = ''
+            proxy_buffering off;
+            proxy_read_timeout 900s;
           '';
         };
         # Transcode stream — a long-running live ffmpeg StreamingResponse feeding

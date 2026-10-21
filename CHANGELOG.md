@@ -90,6 +90,17 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   was made before the player could take it.
 - The CLI works with typer 0.27, which bundles its own click and no longer installs one;
   `typer>=0.24` replaces the `<0.27` pin (and the direct `click` dependency).
+- The Docker `web` image ships hls.js again (it fetches the pinned npm tarball, checked by
+  its hash): without it, Chrome and Firefox fell back to the old ffmpeg pipe, where long
+  files never started playing.
+- nginx (NixOS module and the Docker image) waits up to 15 minutes on
+  `/api/clips/download` and streams it unbuffered, so the first `?as=flac` download of a
+  long clip isn't cut off at 60 s.
+- The NixOS module waits for `youtubeDir`'s mount, like the clips and media folders.
+- `scripts/release.sh` refuses versions with leading zeros and a changelog whose Unreleased
+  section holds only headings, puts the files back when a step fails (the dry run too),
+  and when the push fails says how to retry it rather than leaving a half-published
+  release. Release notes keep code blocks and tables intact.
 
 ## [0.1.1] - 2026-10-19
 

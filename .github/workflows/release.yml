@@ -7,6 +7,10 @@ on:
   push:
     tags: ["v*"]
 
+# Jobs that publish ask for more themselves (images: packages, release: contents).
+permissions:
+  contents: read
+
 jobs:
   check:
     runs-on: ubuntu-latest

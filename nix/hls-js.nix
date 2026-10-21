@@ -4,8 +4,9 @@
 # Pinned by hash from the npm registry rather than vendored into the repo: a
 # 543 KB minified blob in git history is something no reviewer can meaningfully
 # diff, whereas a hash pins exactly which upstream bytes are being served. The
-# devShell symlinks the result into web/frontend/vendor/ so the dev server (which
-# serves that directory straight off disk) has it too.
+# devShell copies the result into web/frontend/vendor/ so the dev server (which
+# serves that directory straight off disk) has it too, and web/nginx/Dockerfile
+# fetches the same tarball by the same hash (tests/test_packaging.py checks).
 { lib, fetchurl, stdenvNoCC }:
 
 let

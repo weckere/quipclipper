@@ -19,7 +19,7 @@ stdenvNoCC.mkDerivation {
     runHook preInstall
     mkdir -p "$out"
     cp -r ./* "$out/"
-    # vendor/ is gitignored in the checkout (the devShell symlinks it there for
+    # vendor/ is gitignored in the checkout (the devShell copies it there for
     # the dev server), so it must be installed from the pin here.
     install -Dm444 ${hls-js}/hls.min.js "$out/vendor/hls.min.js"
     install -Dm444 ${hls-js}/LICENSE "$out/vendor/hls.min.js.LICENSE"

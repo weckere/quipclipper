@@ -25,7 +25,7 @@ for a in "$@"; do
 done
 [ "${#args[@]}" -eq 1 ] || die "usage: scripts/release.sh [--dry-run] X.Y.Z"
 version=${args[0]#v}
-[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "not a version: ${args[0]} (want X.Y.Z)"
+[[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || die "not a version: ${args[0]} (want X.Y.Z)"
 tag="v$version"
 
 cd "$(git rev-parse --show-toplevel)"
@@ -54,13 +54,16 @@ newest=$(printf '%s\n%s\n' "$current" "$version" | sort -t. -k1,1n -k2,2n -k3,3n
 
 grep -q '^## \[Unreleased\]' CHANGELOG.md || die "CHANGELOG.md has no ## [Unreleased] section"
 unreleased=$(awk '/^## \[Unreleased\]/ { on = 1; next } on && /^## / { exit } on' CHANGELOG.md \
-  | grep -v '^\[' | grep -c '[^[:space:]]' || true)
+  | grep -v -e '^\[' -e '^#' | grep -c '[^[:space:]]' || true)
 [ "$unreleased" -gt 0 ] || die "CHANGELOG.md's Unreleased section is empty: nothing to release"
 
 previous_tag=$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || true)
 today=$(date +%Y-%m-%d)
 
 # --- changes ----------------------------------------------------------------
+# Until the release commit exists, any exit (a failed step, or the dry run's end)
+# puts the three files back, so a failure never leaves the tree dirty.
+trap 'git checkout --quiet -- pyproject.toml web/backend/pyproject.toml CHANGELOG.md' EXIT
 sed -i.bak -E "1,/^version = \"[^\"]*\"/s/^version = \"[^\"]*\"/version = \"$version\"/" \
   pyproject.toml web/backend/pyproject.toml
 rm -f pyproject.toml.bak web/backend/pyproject.toml.bak
@@ -88,15 +91,23 @@ grep -q "^## \[$version\] - $today" CHANGELOG.md || die "failed to date CHANGELO
 git --no-pager diff --stat
 if [ "$dry_run" = 1 ]; then
   git --no-pager diff
-  git checkout -- pyproject.toml web/backend/pyproject.toml CHANGELOG.md
   echo "release: dry run of $tag ok (from ${previous_tag:-the start}); nothing committed or pushed"
   exit 0
 fi
 
 # --- commit, tag, push ------------------------------------------------------
 git commit --quiet -m "release: $tag" -- pyproject.toml web/backend/pyproject.toml CHANGELOG.md
+trap - EXIT
 git tag -a "$tag" -m "quipclipper $version"
-git push --atomic origin HEAD:refs/heads/dev HEAD:refs/heads/main "refs/tags/$tag"
+# The push is atomic: on failure nothing reached origin, but dev and the tag moved
+# here. Don't push dev alone (that publishes the release commit without main or
+# the tag): retry the same push, or undo the local release.
+if ! git push --atomic origin HEAD:refs/heads/dev HEAD:refs/heads/main "refs/tags/$tag"; then
+  die "the push failed and nothing was published. Retry it with
+  git push --atomic origin HEAD:refs/heads/dev HEAD:refs/heads/main refs/tags/$tag
+or undo the local release with
+  git tag -d $tag && git reset --hard origin/dev"
+fi
 
 echo "release: $tag pushed (dev, main, tag)."
 echo "  Release workflow: https://github.com/weckere/quipclipper/actions/workflows/release.yml"
