@@ -31,6 +31,8 @@ needs_frontend = pytest.mark.skipif(not (FRONTEND / "app.js").exists(),
 NOT_A_CONTROL: dict[str, str] = {
     "server.config": "read once on start (loadStatus); nothing on screen to click",
     "job.wait": "CLI-side composition of job.get; the UI polls job.get",
+    "jellyfin.lookup": "read-only: library rows, the workspace and Now playing show what it "
+                       "returns (posters, titles); nothing to click",
 }
 
 # Commands that more than one control carries, so a single surviving marker would hide a dropped

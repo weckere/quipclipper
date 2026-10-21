@@ -53,6 +53,7 @@ from quipclipper.naming import (
     clean_title,
     clip_template_context,
     render_clip_template,
+    resolve_template,
     slugify,
 )
 from quipclipper.mkv import (
@@ -63,7 +64,8 @@ from quipclipper.mkv import (
 from quipclipper.search import search as engine_search
 from quipclipper.subtitles import AUDIO_EXTS, VIDEO_EXTS, find_sidecar, load_subtitles
 from quipclipper_web import (
-    __version__, deeplinks, epub_items, jellyfin, library, lslink, lsset, media, youtube_items,
+    __version__, deeplinks, epub_items, jellyfin, jellyfin_index, library, lslink, lsset, media,
+    youtube_items,
 )
 from quipclipper_web.bookmarks import BookmarkStore
 from quipclipper_web.config import Settings
@@ -340,9 +342,36 @@ def _api_token_status(request: Request, tokens: frozenset[str]) -> str | None:
     return None
 
 
+# Images the Jellyfin proxy passes on: raster formats only, so a crafted image (an SVG
+# with script) can never run as this site's page.
+_IMAGE_TYPES = frozenset({"image/jpeg", "image/png", "image/webp", "image/gif"})
+_IMAGE_MAX_WIDTH = 800  # px: the widest artwork the UI asks for, at 2x
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
-    jobs = JobRegistry(max_workers=settings.max_concurrent_jobs)
+
+    # Jellyfin titles and artwork (M18): the path index, and a library scan after
+    # clips land. Both exist only with Jellyfin configured.
+    def _jf_client() -> jellyfin.JellyfinClient:
+        return jellyfin.JellyfinClient(settings.jellyfin_url, settings.jellyfin_api_key)
+
+    jf_index = jf_refresher = None
+    if settings.jellyfin_enabled:
+        jf_index = jellyfin_index.JellyfinIndex(
+            settings.state_dir, _jf_client, settings.jellyfin_path_map, settings.media_roots)
+        jf_refresher = jellyfin_index.LibraryRefresher(
+            _jf_client, settings.clips_dir, settings.jellyfin_path_map)
+
+    def _clips_landed(job) -> None:
+        """A clip job finished: if it wrote into the clips folder, Jellyfin scans it soon."""
+        if jf_refresher is None:
+            return
+        clips_root = settings.clips_dir.resolve()
+        if any(Path(p).resolve().is_relative_to(clips_root) for p in job.result_paths):
+            jf_refresher.poke()
+
+    jobs = JobRegistry(max_workers=settings.max_concurrent_jobs, on_done=_clips_landed)
     # Full-video downloads run for up to an hour each — give them their own
     # single-worker pool so they can never starve the clip workers.
     dl_jobs = JobRegistry(max_workers=1)
@@ -361,7 +390,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @contextlib.asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        if jf_index is not None:
+            jf_index.refresh_if_stale()  # build (or freshen) the path index in the background
         yield
+        if jf_refresher is not None:
+            jf_refresher.cancel()
         jobs.shutdown()
         dl_jobs.shutdown()
         yt_jobs.shutdown()
@@ -443,14 +476,107 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not settings.jellyfin_enabled:
             raise HTTPException(status_code=503, detail="Jellyfin isn't configured "
                                 "(QC_JELLYFIN_URL and an API key).")
-        client = jellyfin.JellyfinClient(settings.jellyfin_url, settings.jellyfin_api_key)
+        client = _jf_client()
         try:
             raw = client.sessions()
         except jellyfin.JellyfinError as exc:
             raise HTTPException(status_code=502, detail=str(exc))
-        return {"sessions": jellyfin.now_playing(
+        sessions = jellyfin.now_playing(
             raw, settings.jellyfin_path_map, settings.media_roots,
-            item_path=client.item_path)}
+            item_path=client.item_path)
+        for s in sessions:  # the item's own artwork; else what the index has for the file
+            if s.get("art") is None and s.get("path") and jf_index is not None:
+                known = jf_index.lookup(s["path"])
+                s["art"] = known.get("art") if known else None
+        return {"sessions": sessions}
+
+    def _jf_required() -> jellyfin_index.JellyfinIndex:
+        if jf_index is None:
+            raise HTTPException(status_code=503, detail="Jellyfin isn't configured "
+                                "(QC_JELLYFIN_URL and an API key).")
+        return jf_index
+
+    def _jf_known(p: Path, is_dir: bool | None = None) -> dict | None:
+        """Jellyfin's poster and title for a library row or an item (M18), when it knows
+        the file or folder. Never asks Jellyfin: it reads the index."""
+        if jf_index is None:
+            return None
+        if is_dir is None:
+            is_dir = p.is_dir()
+        known = jf_index.folder(p) if is_dir else jf_index.lookup(p)
+        if not known:
+            return None
+        out = {k: known.get(k) for k in ("id", "type", "title", "show", "season", "episode",
+                                          "year", "art") if known.get(k) is not None}
+        return out or None
+
+    def _with_jf(entries: list[dict]) -> list[dict]:
+        if jf_index is None:
+            return entries
+        for e in entries:
+            if e.get("is_youtube") or not e.get("path") or "#seg=" in e["path"]:
+                continue
+            known = _jf_known(Path(e["path"]), bool(e.get("is_dir")))
+            if known:
+                e["jellyfin"] = known
+        return entries
+
+    @app.get("/api/jellyfin/lookup")
+    def jellyfin_lookup(path: str = Query(...)) -> dict:
+        """What Jellyfin knows about a library file or folder: its item id, title,
+        series, season, episode, year, provider ids and artwork. ``item`` is null for
+        a file Jellyfin doesn't know (its clip names use the parsed values)."""
+        index = _jf_required()
+        p = _resolve(path)
+        if not p.exists():
+            raise HTTPException(status_code=404, detail=f"Not found: {path}")
+        item = index.folder(p) if p.is_dir() else index.lookup(p)
+        meta = None
+        if p.is_file():
+            ctx = clip_template_context(p, ClipRange(start=0.0, end=0.0), "",
+                                        jellyfin_index.naming_meta(item))
+            meta = {k: ctx[k] for k in ("title", "show", "season", "episode", "year",
+                                        "folder")}
+        return {"path": str(p), "known": item is not None, "item": item,
+                "naming": meta, "index": index.status()}
+
+    @app.post("/api/jellyfin/index")
+    def jellyfin_reindex() -> dict:
+        """Rebuild the path index from Jellyfin now (it is rebuilt hourly on its own),
+        and report its size. Waits for a rebuild already running."""
+        index = _jf_required()
+        try:
+            return {"index": index.build()}
+        except jellyfin.JellyfinError as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+
+    @app.get("/api/jellyfin/image/{item_id}")
+    def jellyfin_image(
+        item_id: str,
+        type: str = Query("Primary", pattern="^(Primary|Thumb)$"),
+        w: int = Query(300, ge=16),
+        tag: str | None = Query(None),
+    ) -> Response:
+        """A Jellyfin item's poster (Primary) or still (Thumb), scaled to at most ``w``
+        pixels wide (capped), through this server so the API key never reaches the
+        browser. With ``tag`` (the image's version) it is cached for good."""
+        _jf_required()
+        if not jellyfin_index.ITEM_ID_RE.match(item_id):
+            raise HTTPException(status_code=422, detail="Not a Jellyfin item id.")
+        if tag is not None and not jellyfin_index.ITEM_ID_RE.match(tag):
+            raise HTTPException(status_code=422, detail="Not a Jellyfin image tag.")
+        try:
+            body, ctype = _jf_client().image(item_id, type, min(w, _IMAGE_MAX_WIDTH), tag)
+        except jellyfin.JellyfinError as exc:
+            if exc.status == 404:
+                raise HTTPException(status_code=404, detail="Jellyfin has no such image.")
+            raise HTTPException(status_code=502, detail=str(exc))
+        if ctype not in _IMAGE_TYPES or len(body) > jellyfin.MAX_IMAGE_BYTES:
+            raise HTTPException(status_code=502, detail="Jellyfin sent something that "
+                                "isn't a poster.")
+        cache = "private, max-age=31536000, immutable" if tag else "private, max-age=86400"
+        return Response(body, media_type=ctype, headers={
+            "Cache-Control": cache, "X-Content-Type-Options": "nosniff"})
 
     # --- library browsing ----------------------------------------------------
 
@@ -514,7 +640,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=str(exc))
         except NotADirectoryError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
-        out = [library.entry_dict(e) for e in entries]
+        out = _with_jf([library.entry_dict(e) for e in entries])
         if not path:
             # Root listing: the YouTube pseudo-folder rides along after the roots.
             out.append(youtube_items.folder_entry())
@@ -534,7 +660,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 raise HTTPException(status_code=403, detail=str(exc))
         else:
             entries = library.search(query, settings.media_roots, max_results=limit)
-        return {"query": query, "count": len(entries), "entries": [library.entry_dict(e) for e in entries]}
+        return {"query": query, "count": len(entries),
+                "entries": _with_jf([library.entry_dict(e) for e in entries])}
 
     # --- YouTube sources -------------------------------------------------------
     # A pasted watch URL becomes a persistent virtual item (ref "yt:<id>") whose
@@ -669,6 +796,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if yid is not None:
                 info["youtube_id"] = yid
                 info["backfill_writable"] = os.access(p.parent, os.W_OK)
+        known = _jf_known(p, False)
+        if known:
+            info["jellyfin"] = known  # title, series, poster (M18)
         return info
 
     @app.get("/api/items/link")
@@ -1838,8 +1968,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # subfolders; absent tokens (e.g. {cue} on non-search clips) are dropped.
             # Split-channel clips get a per-channel suffix appended by the splitter,
             # so they pass the extensionless base.
-            ctx = _clip_template_context(name_source or video, rng, cue_text)
-            template = (req.template or "").strip() or DEFAULT_CLIP_TEMPLATE
+            # Jellyfin's titles for a library file it knows (M18); synthetic YouTube and
+            # EPUB sources, and files it doesn't know, keep the parsed names.
+            jf_meta = None
+            if jf_index is not None and name_source is None and isinstance(video, Path):
+                jf_meta = jellyfin_index.naming_meta(jf_index.lookup(video))
+            ctx = _clip_template_context(name_source or video, rng, cue_text, jf_meta)
+            template = resolve_template(req.template)
             rel = _render_clip_template(template, ctx) or ctx["timestamp"] or "clip"
             clips_root = (out_dir or settings.clips_dir).resolve()
             if out_dir is not None:

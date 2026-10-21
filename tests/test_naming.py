@@ -6,6 +6,7 @@ from quipclipper.naming import (
     clean_title,
     clip_template_context,
     render_clip_template,
+    resolve_template,
 )
 
 
@@ -26,3 +27,43 @@ def test_render_drops_traversal_and_empty_tokens():
 
 def test_clean_title_steps_past_season():
     assert clean_title(Path("/shows/TNG/Season 4/ep.mkv")) == "TNG"
+
+
+def _rng():
+    return ClipRange(start=1678.4, end=1683.0)
+
+
+TNG = Path("/shows/Star Trek - The Next Generation/Season 3/Star.Trek.TNG.S03E26.mkv")
+
+
+def test_media_server_values_replace_the_parsed_ones():
+    meta = {"title": "The Best of Both Worlds (1)", "show": "Star Trek: The Next Generation",
+            "season": 3, "episode": 26, "year": 1990}
+    ctx = clip_template_context(TNG, _rng(), "Mr. Worf, fire!", meta)
+    assert render_clip_template("{show}/S{season}E{episode}_{title}_{year}", ctx) == (
+        "Star_Trek_The_Next_Generation/S03E26_The_Best_of_Both_Worlds_1_1990")
+    assert ctx["folder"] == "Star_Trek_-_The_Next_Generation"
+
+
+def test_missing_or_odd_media_server_values_keep_the_parsed_ones():
+    meta = {"title": "", "show": None, "season": True, "episode": "26", "year": 99999}
+    ctx = clip_template_context(TNG, _rng(), "", meta)
+    parsed = clip_template_context(TNG, _rng(), "")
+    assert ctx == parsed
+    assert (parsed["title"], parsed["show"], parsed["season"], parsed["episode"]) == (
+        "Star_Trek_-_The_Next_Generation", "Star_Trek_-_The_Next_Generation", "03", "26")
+
+
+def test_a_title_cant_add_folders():
+    ctx = clip_template_context(TNG, _rng(), "", {"title": "../../etc/passwd"})
+    assert render_clip_template("{title}", ctx) == "etcpasswd"
+
+
+def test_the_default_names_a_clip_as_the_earlier_default_did():
+    ctx = clip_template_context(TNG, _rng(), "Fire!", {"title": "Real Title", "show": "Show"})
+    old = "{source}/{timestamp}_{cue}_{title}"
+    assert resolve_template(old) == resolve_template(None) == resolve_template(" ") \
+        == DEFAULT_CLIP_TEMPLATE
+    assert render_clip_template(resolve_template(old), ctx) == (
+        "Star.Trek.TNG.S03E26/00-27-58_Fire_Star_Trek_-_The_Next_Generation")
+    assert resolve_template("{title}") == "{title}"

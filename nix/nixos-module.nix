@@ -108,8 +108,9 @@ in
           Jellyfin's base URL, as this host reaches it (`QC_JELLYFIN_URL`). With
           `apiKeyFile`, it turns on "Now playing": the library page lists what each
           Jellyfin client is playing, and one tap opens that file in the workspace at
-          the playhead (CLI: `nowplaying`, `clip.nowplaying`). Jellyfin is used for
-          nothing else; media is still read from the media roots. `null` = off.
+          the playhead (CLI: `nowplaying`, `clip.nowplaying`); and Jellyfin's titles
+          and posters on library rows and in clip names, plus a scan of the clips
+          library after each clip. Media is still read from the media roots. `null` = off.
         '';
       };
 
@@ -136,8 +137,9 @@ in
           Jellyfin's paths → the same folders here (`QC_JELLYFIN_PATH_MAP`). Jellyfin
           reports the paths it sees, which inside a container are its mount points,
           not the host's. The longest matching prefix wins; a mapped path must still
-          be inside `mediaRoots`/`writableMediaRoots`. Leave empty when Jellyfin runs
-          on this host and sees the same paths.
+          be inside `mediaRoots`/`writableMediaRoots` to open, except the clips
+          library's folder (map it to `clipsDir` so new clips are scanned). Leave
+          empty when Jellyfin runs on this host and sees the same paths.
         '';
       };
     };

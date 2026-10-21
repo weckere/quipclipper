@@ -1,10 +1,11 @@
 """Jellyfin "Now playing" (M15): what is playing on each Jellyfin client, and where.
 
-quipclipper reads media from disk, so Jellyfin is used for one thing only: its live
+quipclipper reads media from disk, so Jellyfin is used for what only it knows: its live
 sessions (``GET /Sessions``) and their playheads, so the web app can open the file a TV
-is playing at the moment it is at (D-025). The server's API key authenticates; there is
-no user sign-in. Jellyfin reports its own paths (inside its container), and the path map
-turns them into media-root paths.
+is playing at the moment it is at (D-025), and since M18 its titles and artwork (see
+``jellyfin_index``) and a library scan after a clip lands. The server's API key
+authenticates; there is no user sign-in. Jellyfin reports its own paths (inside its
+container), and the path map turns them into media-root paths.
 
 ``urllib`` keeps this free of an HTTP client dependency (httpx is test-only).
 """
@@ -12,6 +13,7 @@ turns them into media-root paths.
 from __future__ import annotations
 
 import json
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -21,6 +23,7 @@ from typing import Any, Callable
 
 from quipclipper_web import library
 
+_HEX32 = re.compile(r"^[0-9a-f]{32}$")  # a Jellyfin item id or image tag
 TICKS = 10_000_000  # Jellyfin ticks per second
 ACTIVE_WITHIN = 600  # seconds: sessions seen this recently
 # A playing client reports its position every ~10 s. Between reports the playhead is
@@ -29,8 +32,20 @@ ACTIVE_WITHIN = 600  # seconds: sessions seen this recently
 MAX_EXTRAPOLATE = 30.0
 
 
+# The path index (M18): one listing of every playable item, read in pages.
+INDEX_TYPES = "Movie,Episode,Audio,AudioBook"
+INDEX_FIELDS = ("Path,ProviderIds,ParentIndexNumber,IndexNumber,SeriesName,ProductionYear,"
+                "ImageTags")
+INDEX_TIMEOUT = 120.0  # a page of thousands of items takes Jellyfin a few seconds
+MAX_IMAGE_BYTES = 4 * 1024 * 1024  # a scaled poster is ~50 KB; anything past this is refused
+
+
 class JellyfinError(Exception):
     """Jellyfin could not be reached or answered with an error."""
+
+    def __init__(self, message: str, status: int | None = None):
+        super().__init__(message)
+        self.status = status  # Jellyfin's HTTP status, when it answered
 
 
 class JellyfinClient:
@@ -39,21 +54,71 @@ class JellyfinClient:
         self.api_key = api_key
         self.timeout = timeout
 
-    def get(self, path: str, query: dict[str, Any] | None = None) -> Any:
+    def _open(self, method: str, path: str, query: dict[str, Any] | None = None, *,
+              timeout: float | None = None, accept: str = "application/json"):
         qs = ("?" + urllib.parse.urlencode(query)) if query else ""
-        req = urllib.request.Request(self.url + path + qs, headers={
+        req = urllib.request.Request(self.url + path + qs, method=method, headers={
             "Authorization": f'MediaBrowser Token="{self.api_key}"',
-            "Accept": "application/json",
+            "Accept": accept,
         })
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                return json.loads(resp.read().decode("utf-8") or "null")
+            return urllib.request.urlopen(req, timeout=timeout or self.timeout)
         except urllib.error.HTTPError as exc:
             hint = " (check the API key)" if exc.code in (401, 403) else ""
-            raise JellyfinError(f"Jellyfin answered {exc.code}{hint}") from exc
+            raise JellyfinError(f"Jellyfin answered {exc.code}{hint}", status=exc.code) from exc
         except (urllib.error.URLError, OSError, ValueError) as exc:
             reason = getattr(exc, "reason", exc)
             raise JellyfinError(f"Jellyfin is unreachable at {self.url}: {reason}") from exc
+
+    def get(self, path: str, query: dict[str, Any] | None = None, *,
+            timeout: float | None = None) -> Any:
+        try:
+            with self._open("GET", path, query, timeout=timeout) as resp:
+                return json.loads(resp.read().decode("utf-8") or "null")
+        except (OSError, ValueError) as exc:  # a reply cut off or not JSON
+            raise JellyfinError(f"Jellyfin sent a bad reply: {exc}") from exc
+
+    def post(self, path: str, query: dict[str, Any] | None = None) -> None:
+        with self._open("POST", path, query) as resp:
+            resp.read()
+
+    def image(self, item_id: str, image_type: str, max_width: int,
+              tag: str | None = None) -> tuple[bytes, str]:
+        """One of an item's images, scaled to at most ``max_width``: (bytes, content type)."""
+        query: dict[str, Any] = {"maxWidth": max_width, "quality": 85}
+        if tag:
+            query["tag"] = tag
+        try:
+            with self._open("GET", f"/Items/{item_id}/Images/{image_type}", query,
+                            accept="image/*") as resp:
+                ctype = resp.headers.get_content_type()
+                return resp.read(MAX_IMAGE_BYTES + 1), ctype
+        except OSError as exc:
+            raise JellyfinError(f"Jellyfin sent a bad reply: {exc}") from exc
+
+    def items_page(self, start: int, limit: int) -> list[dict]:
+        """One page of every movie, episode, track and audiobook, with what the index needs."""
+        data = self.get("/Items", {
+            "Recursive": "true", "IncludeItemTypes": INDEX_TYPES, "Fields": INDEX_FIELDS,
+            "StartIndex": start, "Limit": limit, "EnableUserData": "false",
+            "EnableTotalRecordCount": "false", "ImageTypeLimit": 1,
+            "EnableImageTypes": "Primary,Thumb",
+        }, timeout=INDEX_TIMEOUT)
+        items = (data.get("Items") or []) if isinstance(data, dict) else []
+        return [i for i in items if isinstance(i, dict)]
+
+    def virtual_folders(self) -> list[dict]:
+        """Jellyfin's libraries: name, ``ItemId`` and the folders (``Locations``) in each."""
+        data = self.get("/Library/VirtualFolders")
+        return [f for f in data if isinstance(f, dict)] if isinstance(data, list) else []
+
+    def refresh_library(self, library_id: str) -> None:
+        """Scan one library for new and changed files (Jellyfin's "Scan library")."""
+        self.post(f"/Items/{library_id}/Refresh", {
+            "Recursive": "true", "MetadataRefreshMode": "Default",
+            "ImageRefreshMode": "Default", "ReplaceAllMetadata": "false",
+            "ReplaceAllImages": "false",
+        })
 
     def sessions(self) -> list[dict]:
         data = self.get("/Sessions", {"activeWithinSeconds": ACTIVE_WITHIN})
@@ -99,6 +164,19 @@ def _parse_time(value: Any) -> datetime | None:
 
 def _seconds(ticks: Any) -> float | None:
     return round(ticks / TICKS, 3) if isinstance(ticks, (int, float)) else None
+
+
+def session_art(item: dict) -> dict | None:
+    """The poster for a playing item: the series' for an episode, else its own."""
+    def art(item_id, tag):
+        ok = all(isinstance(v, str) and _HEX32.match(v) for v in (item_id, tag))
+        return {"id": item_id, "type": "Primary", "tag": tag} if ok else None
+    if item.get("Type") == "Episode":
+        found = art(item.get("SeriesId"), item.get("SeriesPrimaryImageTag"))
+        if found:
+            return found
+    return (art(item.get("Id"), (item.get("ImageTags") or {}).get("Primary"))
+            or art(item.get("AlbumId"), item.get("AlbumPrimaryImageTag")))
 
 
 def now_playing(
@@ -165,6 +243,7 @@ def now_playing(
             "jellyfin_path": jf_path,
             "path": path,
             "note": note,
+            "art": session_art(item),
         })
     out.sort(key=lambda r: r["reported_at"] or "", reverse=True)
     return out

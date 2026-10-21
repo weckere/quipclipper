@@ -112,7 +112,8 @@ _CLIP_OPTIONS = (
     Param("include_lfe", "bool", "Include the LFE channel when splitting.", where=BODY,
           default=True, negative="--no-lfe"),
     Param("template", "str", "Output name template, e.g. "
-          "'{source}/{timestamp}_{cue}_{title}'. Default: the settings value.",
+          "'{show}/S{season}E{episode}_{title}_{timestamp}' (tokens in docs/CLI.md). "
+          "Default: the settings value, else '{source}/{timestamp}_{cue}_{folder}'.",
           where=BODY),
     Param("default_sub_track", "int", "Subtitle track (s:N) to mark as the default "
           "in the saved video clip.", where=BODY),
@@ -327,6 +328,15 @@ COMMANDS: tuple[Command, ...] = (
     Command("jellyfin.sessions", "What each Jellyfin client is playing: device, title, "
             "playhead and the file in the library.", "GET", "/api/jellyfin/sessions",
             shortcut="nowplaying", ui="Now playing card (library) and scope (search box)"),
+    Command("jellyfin.lookup", "What Jellyfin knows about a library file or folder: its "
+            "title, series, season, episode, year, ids and artwork, and the values its "
+            "clip names get.", "GET", "/api/jellyfin/lookup",
+            params=(Param("path", "str", "File or folder under the media roots.", main=True,
+                          required=True),),
+            ui="Posters and titles on library rows, the workspace header and Now playing"),
+    Command("jellyfin.reindex", "Rebuild the path index from Jellyfin now (it is rebuilt "
+            "hourly on its own), e.g. after adding media.", "POST", "/api/jellyfin/index",
+            ui="—"),
 
     # --- jobs ------------------------------------------------------------------------------
     Command("job.list", "List recent jobs (clips, downloads, YouTube).", "GET", "/api/jobs",
@@ -522,8 +532,8 @@ UI_SETTINGS: dict[str, str] = {
     "qc_sub_langs": "sub_langs",
 }
 
-# API routes no command covers, and why. All are playback: the browser's player
-# streams media from them, which has no meaning on a command line.
+# API routes no command covers, and why. Playback (the browser's player streams media
+# from them) and presentation (artwork) have no meaning on a command line.
 EXEMPT_ROUTES: dict[tuple[str, str], str] = {
     ("GET", "/api/media"): "playback: raw media stream for the player",
     ("GET", "/api/media/keyframe"): "playback: seek alignment for the player",
@@ -532,6 +542,8 @@ EXEMPT_ROUTES: dict[tuple[str, str], str] = {
     ("GET", "/api/media/hls/{token}/{name}"): "playback: HLS segments for the player",
     ("GET", "/api/clips/stream/{clip_path}"): "playback: inline clip stream "
                                               "(clips.download saves the same file)",
+    ("GET", "/api/jellyfin/image/{item_id}"): "presentation: a poster for the browser "
+                                              "(jellyfin.lookup names the image)",
 }
 # Web UI preferences with no CLI meaning.
 EXEMPT_UI_SETTINGS: dict[str, str] = {

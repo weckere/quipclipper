@@ -225,14 +225,54 @@ more; a paused client is exact. `path` is the file under the media roots
 (`QC_JELLYFIN_PATH_MAP` turns Jellyfin's paths into them), or `null` with a `note` saying
 why. Sessions with nothing playing are left out. To clip the line just heard, take the
 cue at or before `position` from `/api/items/subtitles` and `POST /api/clip` it; the CLI's
-`clip.nowplaying` does exactly that.
+`clip.nowplaying` does exactly that. Each session also has `art`, its poster
+(`{"id", "type", "tag"}`, the series' for an episode; see the image proxy below), or `null`.
+
+### Titles and artwork (Jellyfin)
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/jellyfin/lookup?path=` | What Jellyfin knows about a library file or folder, and the values its clip names get. |
+| POST | `/api/jellyfin/index` | Rebuild the path index now; returns `{index}` (its status, as below). |
+| GET | `/api/jellyfin/image/{item_id}?type=Primary\|Thumb&w=&tag=` | An item's poster (`Primary`) or still (`Thumb`), at most `w` px wide (default 300, capped at 800), through the server so the API key stays there. |
+
+The server keeps a **path index**: one listing of every movie, episode, track and
+audiobook in Jellyfin (`GET /Items?Recursive=true`, read in pages of 5,000), mapped
+through `QC_JELLYFIN_PATH_MAP` onto the media roots and cached in
+`QC_STATE_DIR/jellyfin-index.json`. It is built when the server starts and rebuilt in the
+background once an hour old; lookups never wait for Jellyfin. A file it doesn't hold
+(Jellyfin hasn't scanned it, or its folder has no path map entry) gets the names parsed
+from its path, as before.
+
+```json
+{"path": "/srv/shows/Star Trek TNG/Season 3/S03E26.mkv", "known": true,
+ "item": {"id": "a41…", "type": "Episode", "title": "The Best of Both Worlds",
+   "show": "Star Trek: The Next Generation", "season": 3, "episode": 26, "year": 1990,
+   "provider_ids": {"Tvdb": "…", "Imdb": "…"}, "jellyfin_path": "/shows/Star Trek TNG/Season 3/S03E26.mkv",
+   "art": {"id": "a41…", "type": "Primary", "tag": "21d…", "wide": true}},
+ "naming": {"title": "The_Best_of_Both_Worlds", "show": "Star_Trek_The_Next_Generation",
+   "season": "03", "episode": "26", "year": "1990", "folder": "Star_Trek_TNG"},
+ "index": {"built": "2026-10-21T01:00:00Z", "files": 25992, "folders": 2711, "building": false, "error": null}}
+```
+
+For a folder, `item` is the show, season or movie it holds (`type` `Series`, `Season` or
+`Movie`) and `naming` is `null`. `art.wide` marks a 16:9 still rather than a 2:3 poster.
+The same `{id, type, title, …, art}` rides on library rows (`/api/library/browse`,
+`/api/library/search`) and `/api/items` as `jellyfin`, when Jellyfin knows the file or
+folder. The image proxy takes Jellyfin item ids and image tags (32 hex digits) only, passes
+on JPEG, PNG, WebP and GIF only, and with `tag` is cached by the browser for good (a new
+image gets a new tag); without it, for a day.
+
+**The clips library scan:** with a Jellyfin library whose folder is the clips folder (or
+holds it; it needs a path map entry like the media folders), each clip or LeadStinger set
+that lands there asks Jellyfin to scan that library (`POST /Items/{id}/Refresh`), ten
+seconds after the last one, so a batch is one scan and new clips show up on the TV.
 
 ### Bookmarks & meta
 | Method | Path | Purpose |
 |---|---|---|
 | GET/POST | `/api/bookmarks` | List (optionally filtered by `?path=`) / create bookmarks. |
 | PATCH/DELETE | `/api/bookmarks/{id}` | Edit / delete one. `DELETE /api/bookmarks` clears all. |
-| GET | `/api/health` | Liveness + tool presence (no auth-secret required), and `jellyfin` (Now playing configured). |
+| GET | `/api/health` | Liveness + tool presence (no auth-secret required), and `jellyfin` (Now playing, titles and artwork configured). |
 | GET | `/api/config` | Non-secret config the UI needs, including `public_url` (`QC_PUBLIC_URL`, or `null` when Send to LeadStinger links are off) and `jellyfin` (true when Now playing is configured). |
 
 ## Deep links
@@ -286,7 +326,7 @@ CLI).
 | `embed_subs` | `true` | Mux the sidecar subtitle into a lossless video clip. |
 | `default_sub_track` | — | Subtitle track (s:N) to mark as the default in the saved video clip. |
 | `chapters` | `true` | Keep chapters (mkvmerge). |
-| `template` | default | Output-name template, `{source}/{timestamp}_{cue}_{title}`. |
+| `template` | default | Output-name template; default `{source}/{timestamp}_{cue}_{folder}`. Tokens, and which come from Jellyfin: [docs/CLI.md](CLI.md#settings). |
 
 ## Worked example: find a line and cut an audio clip
 

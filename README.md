@@ -174,10 +174,12 @@ once with the API token; from the CLI it is `leadstinger.quip`, `leadstinger.lin
 Watching something on Jellyfin and hear a line worth keeping? With `QC_JELLYFIN_URL` and
 an API key set, a **Now playing** card on the library lists what each client is playing,
 and **Open at 12:34** opens the file in the workspace with the line just heard selected:
-nothing to search for. Jellyfin is only asked what is playing; quipclipper still reads and
-cuts the media from its own folders. From the CLI: `quipclipper nowplaying` and
-`quipclipper clip.nowplaying -t audio`. Setup and path mapping:
-[docs/MANUAL.md](docs/MANUAL.md#now-playing-jellyfin).
+nothing to search for. Jellyfin's posters show on the library and in the workspace, clip
+names can use the episode's real title (`{show}/S{season}E{episode}_{title}`), and new
+clips are scanned into a Jellyfin clips library so they show up on the TV. quipclipper
+still reads and cuts the media from its own folders. From the CLI: `quipclipper
+nowplaying`, `quipclipper clip.nowplaying -t audio` and `quipclipper jellyfin.lookup PATH`.
+Setup and path mapping: [docs/MANUAL.md](docs/MANUAL.md#now-playing-jellyfin).
 
 ## Accessibility
 

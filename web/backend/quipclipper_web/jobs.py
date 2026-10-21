@@ -81,8 +81,11 @@ class JobRegistry:
     # registry doesn't grow unboundedly on a long-running server.
     MAX_FINISHED_AGE = 24 * 3600
 
-    def __init__(self, max_workers: int = 2) -> None:
+    def __init__(self, max_workers: int = 2,
+                 on_done: Callable[[Job], None] | None = None) -> None:
         self._pool = ThreadPoolExecutor(max_workers=max_workers)
+        # Called (on the worker thread) after each job that finishes as done.
+        self._on_done = on_done
         self._jobs: dict[str, Job] = {}
         self._futures: dict[str, Future] = {}
         self._lock = threading.Lock()
@@ -162,3 +165,8 @@ class JobRegistry:
             job.status = Status.failed
         finally:
             job.finished = time.time()
+        if job.status == Status.done and self._on_done is not None:
+            try:
+                self._on_done(job)
+            except Exception:
+                pass  # a follow-up (e.g. a Jellyfin library scan) never fails the job

@@ -21,6 +21,21 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 - With `QC_PUBLIC_URL` set, search hits, bookmarks and clips carry a `link` field, and
   `GET /api/items/link` / `quipclipper item.link PATH --at T --sel A-B` build one.
 
+### Jellyfin titles and artwork (M18)
+
+- With Jellyfin set up, clip names can use what Jellyfin knows about the file: `{title}` is
+  the episode's or movie's real title, plus `{show}`, `{season}`, `{episode}` and `{year}`.
+  A file Jellyfin doesn't know keeps the names parsed from its path. The default template is
+  now `{source}/{timestamp}_{cue}_{folder}`, where `{folder}` is what `{title}` used to
+  give, and the old default is read as it, so default-named clips land where they always did.
+- The server keeps a path index of everything in Jellyfin (cached in the state dir, rebuilt
+  hourly, or now with `quipclipper jellyfin.reindex`); `quipclipper jellyfin.lookup PATH`
+  (`GET /api/jellyfin/lookup`) shows what Jellyfin knows about a file or folder.
+- `GET /api/jellyfin/image/{item_id}`: posters and stills through the server, so the API
+  key stays there; sizes capped, cached by the browser.
+- After a clip or a LeadStinger set lands in the clips folder, Jellyfin scans the library
+  that holds it (debounced), so new clips show up on the TV.
+
 ### Fixed
 
 - A file played through the HLS transcode (AC3/DTS audio, HEVC in Firefox, …) now opens at

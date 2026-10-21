@@ -78,9 +78,27 @@ per-browser preferences.
 | `sub_langs` | Default subtitle languages (the web app's Subtitle languages setting). |
 | `out_dir` | Default `--out-dir` for finished jobs. |
 
-Clip name templates use `{timestamp}`, `{end}`, `{duration}`, `{cue}`, `{title}`,
-`{source}`, `{year}`, `{season}`, `{episode}` and `{date}`; `/` makes subfolders.
-The server's default is `{source}/{timestamp}_{cue}_{title}`.
+Clip name templates use these tokens; `/` makes subfolders, and a token with no value
+is dropped along with the separators around it.
+
+| Token | Value |
+|---|---|
+| `{timestamp}`, `{end}` | The clip's start and end, as `HH-MM-SS` |
+| `{duration}` | Its length in whole seconds |
+| `{cue}` | The line of dialogue (first 80 characters) |
+| `{title}` | The episode's or movie's title from Jellyfin; else the folder name |
+| `{show}` | The series from Jellyfin (a movie's title for a movie); else the folder name |
+| `{season}`, `{episode}` | Two digits, from Jellyfin; else from an `S03E26` in the file name |
+| `{year}` | The production year from Jellyfin; else a year in the file name |
+| `{folder}` | The folder name: the show folder past a `Season N` folder, or the movie's |
+| `{source}` | The source file's name without its extension |
+| `{date}` | Today, as `YYYY-MM-DD` |
+
+The Jellyfin values need Jellyfin on the server (`jellyfin.lookup PATH` shows what it
+knows about a file); a file Jellyfin doesn't know, and a local-mode cut, use the
+parsed values. The server's default is `{source}/{timestamp}_{cue}_{folder}`. The
+earlier default `{source}/{timestamp}_{cue}_{title}` is read as it, so clips named
+by default land where they always did.
 
 ## Exit codes
 

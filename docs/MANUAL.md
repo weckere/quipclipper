@@ -47,6 +47,7 @@ code is built the way it is, see [`DESIGN_NOTES.md`](DESIGN_NOTES.md).
   - [EPUB3 audiobooks (experimental)](#epub3-audiobooks-experimental)
   - [Sending clips to LeadStinger](#sending-clips-to-leadstinger)
   - [Now playing (Jellyfin)](#now-playing-jellyfin)
+  - [Titles, posters and the clips library (Jellyfin)](#titles-posters-and-the-clips-library-jellyfin)
 - [Architecture](#architecture)
 - [Development](#development)
 - [Troubleshooting](#troubleshooting)
@@ -222,8 +223,12 @@ Opening a file opens its workspace.
   pinned to the bottom of the screen and its options behind **Options**.
 
 Clips are cut as jobs; the Jobs list shows them, and finished clips land in the clips
-library, filed by the Name template (by default `{source}/{timestamp}_{cue}_{title}`: a
-folder per source file).
+library, filed by the Name template (by default `{source}/{timestamp}_{cue}_{folder}`: a
+folder per source file). With Jellyfin set up, `{title}`, `{show}`, `{season}`,
+`{episode}` and `{year}` are what Jellyfin knows (the episode's real title, the series
+name), so `{show}/S{season}E{episode}_{title}` files a TNG clip as
+`Star_Trek_The_Next_Generation/S03E26_The_Best_of_Both_Worlds.mkv`; every token is in
+[docs/CLI.md](CLI.md#settings).
 
 ### Bookmarks and clips
 
@@ -822,8 +827,8 @@ set file instead (see [`CLI.md`](CLI.md)).
 
 Watching something on a Jellyfin client and hear a line worth keeping? quipclipper can
 ask Jellyfin what is playing and open that file at the playhead, so there is nothing to
-search for. Jellyfin is used for this alone: quipclipper still reads the media from its
-own media roots and cuts it itself.
+search for. quipclipper still reads the media from its own media roots and cuts it
+itself; Jellyfin only says what is playing and, below, what each file is called.
 
 **In the web app**, a **Now playing** card at the top of the library lists each Jellyfin
 client that is playing or paused: the title, the device and user, and the position. It
@@ -865,6 +870,39 @@ started, which is the one you just heard.
    nowhere, or outside the media roots, shows on the card as not in the library.
 
 `GET /api/health` and `/api/config` report `jellyfin: true` once the URL and key are set.
+
+### Titles, posters and the clips library (Jellyfin)
+
+With Jellyfin set up, quipclipper also learns what Jellyfin knows about each file:
+
+- **Posters.** Library rows for the shows, seasons, movies and episodes Jellyfin knows
+  show its poster (an episode shows its still), and so do the workspace header (with the
+  episode's real title under it) and the Now playing card. A folder or file Jellyfin
+  doesn't know keeps its icon. The images come through quipclipper's server, so the API
+  key never reaches the browser.
+- **Clip names.** In the Name template, `{title}` is the episode's or movie's real title,
+  and `{show}`, `{season}`, `{episode}` and `{year}` come from Jellyfin too:
+  `{show}/S{season}E{episode}_{title}` files a clip as
+  `Star_Trek_The_Next_Generation/S03E26_The_Best_of_Both_Worlds.mkv`. A file Jellyfin
+  doesn't know gets the names parsed from its path. The default name (`…_{folder}`) is
+  the same as before.
+- **New clips on the TV.** When a clip or a LeadStinger set lands in the clips folder,
+  quipclipper asks Jellyfin to scan the library that holds it, ten seconds after the last
+  one, so the clip is there on the TV without waiting for Jellyfin's own scan.
+
+What Jellyfin knows comes from an index of its whole library, kept in the state dir and
+rebuilt every hour (a 25,000-item library takes about 15 seconds; quipclipper keeps
+working from the old index meanwhile). After adding media, Jellyfin's own scan picks it
+up, and the next rebuild brings it here; `quipclipper jellyfin.reindex` does it now.
+`quipclipper jellyfin.lookup PATH` shows what Jellyfin knows about a file or folder and
+the values its clip names get.
+
+**For the clips library**, add the clips folder to Jellyfin as a library (a *Home videos*
+library suits clips: no metadata lookups), mount it into Jellyfin's container if it runs
+in one, and add it to the path map like the media folders
+(`QC_JELLYFIN_PATH_MAP=…:/clips=/srv/clips`, or `jellyfin.pathMap."/clips"`). quipclipper
+finds the library by its folder. Without one, clips still work; they just wait for
+Jellyfin's own scan.
 
 ---
 

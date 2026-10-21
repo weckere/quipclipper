@@ -78,7 +78,7 @@ from quipclipper.mkv import (
     mkvmerge_available,
 )
 from quipclipper.models import Match
-from quipclipper.naming import clip_template_context, render_clip_template
+from quipclipper.naming import clip_template_context, render_clip_template, resolve_template
 from quipclipper.search import search
 from quipclipper.subtitles import (
     AUDIO_EXTS,
@@ -381,6 +381,40 @@ def _fmt_sessions(data: dict) -> None:
         typer.secho(f"  {r.get('path') or r.get('note')}", dim=True)
 
 
+def _fmt_jf_index(index: dict) -> str:
+    if index.get("error"):
+        return f"index: {index['error']}"
+    built = index.get("built") or "not built yet"
+    return (f"index: {index.get('files', 0)} files, {index.get('folders', 0)} folders, "
+            f"built {built}" + (" (rebuilding)" if index.get("building") else ""))
+
+
+def _fmt_lookup(data: dict) -> None:
+    item = data.get("item")
+    if not item:
+        typer.echo(f"Jellyfin doesn't know {data.get('path')}.")
+    else:
+        what = item.get("title") or "?"
+        if item.get("type") == "Episode" and item.get("show"):
+            what = (f"{item['show']} S{item.get('season') or 0:02d}"
+                    f"E{item.get('episode') or 0:02d} {what}")
+        year = f" ({item['year']})" if item.get("year") else ""
+        typer.echo(f"{item.get('type') or 'Item'} {item.get('id')}: {what}{year}")
+        ids = "  ".join(f"{k}={v}" for k, v in (item.get("provider_ids") or {}).items())
+        if ids:
+            typer.echo(f"  {ids}")
+        if item.get("jellyfin_path"):
+            typer.secho(f"  {item['jellyfin_path']}", dim=True)
+    naming = data.get("naming")
+    if naming:
+        typer.echo("  names: " + "  ".join(f"{{{k}}}={v}" for k, v in naming.items() if v))
+    typer.secho("  " + _fmt_jf_index(data.get("index") or {}), dim=True)
+
+
+def _fmt_reindex(data: dict) -> None:
+    typer.echo(_fmt_jf_index(data.get("index") or {}))
+
+
 def _fmt_settings(data: dict) -> None:
     values = data.get("settings", data)
     if data.get("file"):
@@ -401,7 +435,8 @@ _FORMATTERS = {
     "item.fetch-subs": _fmt_job, "index.fetch-subs": _fmt_job,
     "bookmark.list": _fmt_bookmarks, "clips.list": _fmt_clips,
     "item.script": _fmt_script, "item.info": _fmt_item, "server.health": _fmt_health,
-    "jellyfin.sessions": _fmt_sessions, "item.link": _fmt_link,
+    "jellyfin.sessions": _fmt_sessions, "jellyfin.lookup": _fmt_lookup,
+    "jellyfin.reindex": _fmt_reindex, "item.link": _fmt_link,
     "settings.list": _fmt_settings, "settings.get": _fmt_settings,
     "settings.set": _fmt_settings,
 }
@@ -635,7 +670,7 @@ def clip(
         help="Mux the subtitle file into video clips (lossless). Embedded video subs are always kept.",
     ),
     default_sub_track: Optional[int] = typer.Option(None, "--default-sub-track", help="Subtitle track (s:N) to mark as the default in a video clip. Server mode."),
-    template: Optional[str] = typer.Option(None, "--template", help="Output name template, e.g. '{source}/{timestamp}_{cue}_{title}' (tokens in docs/CLI.md). Default: the clip_template setting."),
+    template: Optional[str] = typer.Option(None, "--template", help="Output name template, e.g. '{show}/S{season}E{episode}_{title}_{timestamp}' (tokens in docs/CLI.md). Default: the clip_template setting."),
     before: float = typer.Option(2.0, "--before", "-b", help="Seconds of padding before the line."),
     after: float = typer.Option(2.0, "--after", "-a", help="Seconds of padding after the line."),
     index: int = typer.Option(0, "--index", "-i", "--match-index", help="Which ranked match to cut (0 = best). Ignored with --pick."),
@@ -662,6 +697,8 @@ def clip(
         typer.secho("Give a dialogue QUERY or --start.", fg="red", err=True)
         raise typer.Exit(code=2)
     template = (template or "").strip() or c.settings.get("clip_template") or None
+    if template and not c.remote:
+        template = resolve_template(template)  # an earlier default reads as today's
     if c.remote:
         _run_server(c, "clip.create", {
             "query": query, "path": str(video), "start": start, "end": end,
