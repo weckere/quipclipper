@@ -328,7 +328,9 @@ def test_as_flac_converts_once_and_again_when_the_clip_changes(tmp_path):
     assert "-ac" not in cmd  # every channel kept (D-024)
     cached = list((tmp_path / "state" / "clips-flac").rglob("*.flac"))
     assert len(cached) == 1
-    # A re-cut (new mtime) converts again and drops the old copy.
+    # A re-cut (new mtime) converts again and drops the old copy, once it's an hour
+    # old (a younger one may still be on its way to a client).
+    os.utime(cached[0], (time.time() - 7200, time.time() - 7200))
     clip.write_bytes(b"matroska v2")
     os.utime(clip, (time.time() + 10, time.time() + 10))
     with patch.object(clipmeta.subprocess, "run", side_effect=_fake_ffmpeg(calls)):
@@ -498,3 +500,110 @@ def test_cli_flag_for_a_keyword_param():
     listing = typer.main.get_command(cli.app).commands["clips.list"]
     opts = {o for p in listing.params for o in getattr(p, "opts", [])}
     assert {"--recursive", "--query", "--kind", "--since", "--sort"} <= opts
+
+
+# --- review fixes (M18 review) ----------------------------------------------------------
+
+
+@pytest.mark.parametrize("ext", ["m4a", "ac3", "eac3", "opus", "dts", "thd", "mka", "wav"])
+def test_every_extension_a_cut_writes_is_listed_and_keeps_its_sidecar(tmp_path, ext):
+    """A lossless audio cut is codec-matched (an AAC line is .m4a): it must be listed,
+    and the backfill must not take its sidecar for an orphan."""
+    client, _, clips = _client(tmp_path)
+    f = _clip(clips, f"LeadStinger/yt_00-01-02_hello.{ext}")
+    clipmeta.write(f, {"kind": "audio", "origin": "clip"})
+    listing = client.get("/api/clips", params={"recursive": 1}).json()
+    assert [(c["name"], c["kind"]) for c in listing["clips"]] == [(f.name, "audio")]
+    assert client.get("/api/clips").json()["folders"] == ["LeadStinger"]
+    with patch.object(clipmeta, "probe", return_value=PROBE):
+        stats = clipmeta.backfill(clips)
+    assert stats["pruned"] == 0 and clipmeta.read(f) is not None
+
+
+def test_a_clip_shows_up_only_once_it_and_its_sidecar_are_written(tmp_path):
+    """A `since` poll during a cut must neither list the half-written file nor list it
+    without metadata and move the cursor past it."""
+    client, media, clips = _client(tmp_path)
+    src = media / "a.mkv"
+    src.write_bytes(b"")
+    seen: dict = {}
+    cursor = client.get("/api/clips", params={"recursive": 1}).json()["cursor"]
+
+    def probe_and_peek(path):
+        # The cut is done and the sidecar about to be written: a poll now sees nothing.
+        seen["during"] = client.get("/api/clips", params={"recursive": 1}).json()
+        return PROBE
+
+    with patch("quipclipper_web.app.cut_clip", side_effect=_fake_cut), \
+            patch("quipclipper_web.app.probe_audio_streams", return_value=["flac"]), \
+            patch.object(clipmeta, "probe", side_effect=probe_and_peek):
+        resp = client.post("/api/clip", json={
+            "path": str(src), "start": 1.0, "end": 2.0, "kind": "audio",
+            "audio_format": "flac", "cue_text": "Engage."})
+        assert _wait(client, resp.json()["job_id"])["status"] == "done"
+    assert seen["during"]["clips"] == []
+    new = client.get("/api/clips", params={"recursive": 1, "since": cursor}).json()
+    assert len(new["clips"]) == 1 and new["clips"][0]["meta"]["cue"] == "Engage."
+
+
+def test_a_clip_published_after_a_newer_cursor_still_counts_as_new(tmp_path):
+    client, _, clips = _client(tmp_path)
+    late = _clip(clips, "a/late.flac", mtime=time.time() - 60)  # ffmpeg finished a minute ago
+    with clipmeta.writing(late):
+        _clip(clips, "a/other.flac")
+        cursor = client.get("/api/clips", params={"recursive": 1}).json()["cursor"]
+        clipmeta.publish([late])
+    new = client.get("/api/clips", params={"recursive": 1, "since": cursor}).json()
+    assert [c["name"] for c in new["clips"]] == ["late.flac"]
+
+
+def test_nul_bytes_and_infinite_times_are_client_errors(tmp_path):
+    client, media, _ = _client(tmp_path, QC_PUBLIC_URL="https://quip.example")
+    for url in ("/api/clips/download/a%00b", "/api/clips/stream/a%00b",
+                "/api/clips?folder=a%00b", "/api/leadstinger/link?clip=a%00",
+                "/api/items/peaks?path=a%00b"):
+        assert client.get(url).status_code == 400, url
+    (media / "a.wav").write_bytes(b"")
+    for url in (f"/api/items/snap?path={media}/a.wav&t=inf",
+                f"/api/items/link?path={media}/a.wav&at=inf",
+                f"/api/items/peaks?path={media}/a.wav&end=nan"):
+        assert client.get(url).status_code == 422, url
+
+
+def test_a_symlinked_folder_out_of_the_library_is_not_listed(tmp_path):
+    client, _, clips = _client(tmp_path)
+    outside = tmp_path / "outside"
+    _clip(outside, "x.flac")
+    (clips / "linkdir").symlink_to(outside, target_is_directory=True)
+    _clip(clips, "real/y.flac")
+    assert client.get("/api/clips").json()["folders"] == ["real"]
+
+
+def test_etag_ignores_the_order_a_share_lists_files_in():
+    rows = [("a", 1, 2, 3), ("b", 4, 5, 6)]
+    assert clipmeta.etag(rows, ("x",)) == clipmeta.etag(rows[::-1], ("x",))
+
+
+def test_flac_conversion_that_times_out_is_a_422_and_leaves_no_part_file(tmp_path):
+    client, _, clips = _client(tmp_path)
+    _clip(clips, "a.mka")
+    with patch("quipclipper_web.clipmeta.subprocess.run",
+               side_effect=subprocess.TimeoutExpired("ffmpeg", 900)):
+        r = client.get("/api/clips/download/a.mka", params={"as": "flac"})
+    assert r.status_code == 422 and "900" in r.json()["detail"]
+    assert not list((tmp_path / "state" / "clips-flac").rglob("*.part"))
+
+
+def test_flac_cache_keeps_under_its_limit(tmp_path):
+    cache = clipmeta.FlacCache(tmp_path / "state", limit=10)
+    clips = tmp_path / "clips"
+
+    def fake_ffmpeg(cmd, **_kw):
+        Path(cmd[-1]).write_bytes(b"f" * 6)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    with patch("quipclipper_web.clipmeta.subprocess.run", side_effect=fake_ffmpeg):
+        first = cache.get(_clip(clips, "a.mka"), "a.mka")
+        time.sleep(0.01)
+        second = cache.get(_clip(clips, "b.mka"), "b.mka")
+    assert second.is_file() and not first.exists()

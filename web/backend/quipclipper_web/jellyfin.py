@@ -23,7 +23,7 @@ from typing import Any, Callable
 
 from quipclipper_web import library
 
-_HEX32 = re.compile(r"^[0-9a-f]{32}$")  # a Jellyfin item id or image tag
+_HEX32 = re.compile(r"[0-9a-f]{32}\Z")  # a Jellyfin item id or image tag
 TICKS = 10_000_000  # Jellyfin ticks per second
 ACTIVE_WITHIN = 600  # seconds: sessions seen this recently
 # A playing client reports its position every ~10 s. Between reports the playhead is

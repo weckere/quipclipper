@@ -167,12 +167,13 @@ clips-library entries) is a [deep link](#deep-links) to that line, present only 
 | POST | `/api/clip` | Start a clip job (JSON body, see below). Returns `{job_id, status}`. |
 | GET | `/api/jobs` | Recent jobs. |
 | GET | `/api/jobs/{id}` | One job's status/result: `files` it wrote (`{name, size, clip}`, where `clip` is the file's path in the clips library, as `/api/clips/download/{clip}` takes it) and, for some jobs, a `result` object (the link of a Send to LeadStinger job). |
-| DELETE | `/api/jobs/{id}` | Cancel a queued job / prune a finished one → `{cancelled}`; a running job that can stop (folder subtitle backfill) → `{cancelling}`; any other running job → 409. |
+| DELETE | `/api/jobs/{id}` | Cancel a queued job / prune a finished one → `{cancelled}`; a running job that can stop (folder subtitle backfill, a LeadStinger set, the clips backfill) → `{cancelling}`; any other running job (a clip cut) → 409, and it finishes. |
 | GET | `/api/jobs/{id}/download/{filename}` | Download a finished clip by name. |
 
-A job is `{id, status, label, created[, progress, started, finished, elapsed, files, error]}`
+A job is `{id, status, label, created[, progress, started, finished, elapsed, files, result, error]}`
 where `status` is `queued|running|done|failed|cancelled`, `files` is
-`[{name, size}]` once done, and `error` is the failure message on a failed job.
+`[{name, size, clip}]` once done, `result` is what some jobs hand back (above), and
+`error` is the failure message on a failed job.
 
 ### Clips library
 | Method | Path | Purpose |
@@ -325,7 +326,7 @@ writes except the backfill.
 
 | Param | Default | Meaning |
 |---|---|---|
-| `folder` | the library's top | A folder of the clips library (relative; it can't leave the library: 403). |
+| `folder` | the library's top | A folder of the clips library (relative; it can't leave the library: 403; missing: 404). |
 | `recursive` | `false` | `true`/`1`: every clip and set under `folder`, not just its own files. |
 | `q` | — | Only entries with **every word** of it (case-insensitive, `_` counts as a space) in the file name or path, the line (`meta.cue`), the source's name, the Jellyfin show or title, a set's name or its tiles' titles. |
 | `kind` | — | `audio`, `video`, `gif` or `set`. |
@@ -342,8 +343,12 @@ listing answers `304` with no body):
 | `folders` | The folder's own subfolders that hold clips or sets (names). |
 | `clips` | The entries (below), sorted by `sort`. |
 | `count` | How many entries. |
-| `cursor` | `v1.<n>`: the newest entry's time (the newest file of this listing's `folder`/`recursive`/`q`/`kind`, never older than `since`). Pass it as `since` to poll for new clips. It follows the file's modification time, so a re-cut clip counts as new; writing or backfilling a sidecar doesn't. |
+| `cursor` | `v1.<n>`: the newest entry's time (the newest file of this listing's `folder`/`recursive`/`q`/`kind`, never older than `since`). Pass it as `since` to poll for new clips. It follows the file's modification time, so a re-cut clip counts as new; backfilling a sidecar doesn't. A clip quipclipper cuts is listed only once the file and its sidecar are both written, stamped with that moment, so a poll never sees a half-written clip or one without its `meta`. A file copied into the library keeping an older modification time isn't new to a cursor: list without `since` to catch up. |
 | `etag` | Changes when any listed file or its sidecar changes (or the folders do). |
+
+A clip is any file a cut writes: `.mkv`, `.mp4`, `.m4v`, `.webm`, `.gif`, or audio as
+`.flac`, `.wav`, `.mka`, `.mp3`, `.ogg`, or a lossless cut's codec-matched `.m4a`, `.ac3`,
+`.eac3`, `.opus`, `.dts`, `.thd`; plus `.lsset` sets.
 
 Each entry:
 
@@ -395,7 +400,9 @@ sidecars existed get one from `POST /api/clips/backfill` (`clips.backfill`), mar
 Converts the clip (no cut) to FLAC in D-024's format: the first audio stream, every
 channel kept (a 5.1 clip stays 5.1), `audio/flac`, saved as `<stem>.flac`. The result is
 cached in the state folder by the clip's path, modification time and size, so a second
-download is instant and a re-cut clip converts again (its old copy is deleted). A FLAC clip
+download is instant and a re-cut clip converts again (its old copy goes an hour later).
+The copies are kept under 4 GB in all, the least recently downloaded going first, and two
+conversions run at a time. A FLAC clip
 comes as it is. A set file or a GIF is `400`; a clip ffmpeg can't convert (no audio) is
 `422`. The same path checks as without `as` (outside the library: 403).
 

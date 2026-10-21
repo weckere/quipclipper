@@ -35,7 +35,7 @@ RETRY_AFTER = 300.0
 REFRESH_DELAY = 10.0  # seconds after the last clip lands before the library scan
 
 # Jellyfin item ids and image tags are 32 hex digits.
-ITEM_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+ITEM_ID_RE = re.compile(r"[0-9a-f]{32}\Z")
 _SEASON_RE = re.compile(r"(?i)^(season\s*\d+|specials|extras)$")
 
 

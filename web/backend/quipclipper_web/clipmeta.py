@@ -25,6 +25,7 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+from quipclipper.clip import FALLBACK_AUDIO_EXT, LOSSLESS_AUDIO_EXT
 from quipclipper.naming import clean_title, slugify
 from quipclipper.subtitles import AUDIO_EXTS
 
@@ -34,8 +35,11 @@ SCHEMA = "quipclipper.clip-meta"
 VERSION = 1
 SUFFIX = ".qc.json"
 SET_EXT = ".lsset"
-CLIP_EXTS = (".mkv", ".mka", ".mp4", ".m4v", ".webm", ".gif", ".wav", ".flac", ".ogg",
-             ".mp3")
+# Every extension a cut can write: the video containers, a GIF, and each lossless audio
+# cut's codec-matched container (an AAC line is .m4a, AC-3 .ac3, TrueHD .thd, …).
+CLIP_AUDIO_EXTS = tuple(sorted({f".{e}" for e in LOSSLESS_AUDIO_EXT.values()}
+                               | {f".{FALLBACK_AUDIO_EXT}"}))
+CLIP_EXTS = (".mkv", ".mp4", ".m4v", ".webm", ".gif", *CLIP_AUDIO_EXTS)
 KINDS = ("audio", "video", "gif", "set")
 # The listing's cursor: "v1." and the newest file's mtime in nanoseconds.
 _CURSOR_RE = re.compile(r"^v1\.(\d{1,20})$")
@@ -55,11 +59,50 @@ def sidecar_path(clip: Path) -> Path:
     return clip.with_name(f".{clip.name}{SUFFIX}")
 
 
+# Files a job is writing into the library right now, as (folder, name prefix): the
+# listing leaves them out until the clip and its sidecar are both complete, so a client
+# polling with ``since`` never sees a half-written file or a clip without its metadata.
+_writing: set[tuple[str, str]] = set()
+_writing_lock = threading.Lock()
+
+
+@contextlib.contextmanager
+def writing(out: Path):
+    """Hide ``out`` (and, for a channel split's base name, every ``<out>…`` file the
+    split writes) from the listing while the block runs."""
+    key = (str(out.parent.resolve()), out.name)
+    with _writing_lock:
+        _writing.add(key)
+    try:
+        yield
+    finally:
+        with _writing_lock:
+            _writing.discard(key)
+
+
+def in_progress(f: Path) -> bool:
+    if not _writing:
+        return False
+    folder = str(f.parent.resolve())
+    with _writing_lock:
+        return any(folder == d and f.name.startswith(n) for d, n in _writing)
+
+
+def publish(paths) -> None:
+    """Stamp freshly written clips (and their sidecars written) with the time they were
+    published, so they are newer than any ``since`` cursor handed out while they were
+    being written, however long the sidecar took."""
+    for p in paths:
+        with contextlib.suppress(OSError):
+            os.utime(p)
+
+
 def is_listed(f: Path) -> bool:
     """A clip or set file the listing shows (never a dot-file: macOS leaves "._name"
-    AppleDouble files with the clip's own extension on SMB shares)."""
+    AppleDouble files with the clip's own extension on SMB shares, nor one a job is
+    still writing)."""
     return (not f.name.startswith(".") and f.suffix.lower() in (*CLIP_EXTS, SET_EXT)
-            and f.is_file())
+            and f.is_file() and not in_progress(f))
 
 
 def kind_of(f: Path, meta: dict | None = None) -> str:
@@ -70,7 +113,7 @@ def kind_of(f: Path, meta: dict | None = None) -> str:
     ext = f.suffix.lower()
     if ext == ".gif":
         return "gif"
-    return "audio" if ext in AUDIO_EXTS or ext in (".mka", ".wav", ".flac") else "video"
+    return "audio" if ext in AUDIO_EXTS or ext in CLIP_AUDIO_EXTS else "video"
 
 
 def read(clip: Path) -> dict | None:
@@ -257,7 +300,9 @@ def matches_query(text: str, query: str) -> bool:
 
 
 def etag(rows: list[tuple], params: tuple) -> str:
-    h = hashlib.sha256(json.dumps([list(params), rows], default=str).encode())
+    """The listing's tag. Rows are sorted: a share (mergerfs, SMB) may list a folder
+    in a different order each time, which mustn't change an unchanged listing's tag."""
+    h = hashlib.sha256(json.dumps([list(params), sorted(rows)], default=str).encode())
     return f'"{h.hexdigest()[:32]}"'
 
 
@@ -297,7 +342,7 @@ def backfill(clips_root: Path, *, jellyfin_by_stem=None, cancelled=lambda: False
             f = Path(dirpath) / name
             if name.startswith(".") and name.endswith(SUFFIX):
                 sidecars.append(f)
-            elif is_listed(f):
+            elif is_listed(f) and f.resolve().is_relative_to(root):
                 files.append(f)
     have = {sidecar_path(f) for f in files}
     orphans: dict[tuple[str, int | None], Path] = {}
@@ -342,7 +387,8 @@ def backfill(clips_root: Path, *, jellyfin_by_stem=None, cancelled=lambda: False
             stats["errors"] += 1
     if not cancelled():
         for sc in orphans.values():
-            if sc not in used:
+            # A clip being cut has its sidecar before the listing shows the clip.
+            if sc not in used and not in_progress(sc.with_name(sc.name[1:-len(SUFFIX)])):
                 sc.unlink(missing_ok=True)
                 stats["pruned"] += 1
     return stats
@@ -396,18 +442,29 @@ def set_summary(f: Path) -> dict:
 # --- ?as=flac ---------------------------------------------------------------------------
 
 
+FLAC_CACHE_LIMIT = 4 * 1024 ** 3  # bytes of FLAC copies kept in the state dir
+FLAC_TIMEOUT = 900                # seconds one conversion may take
+
+
 class FlacCache:
     """Full-mix FLAC copies of clips (D-024's format: the first audio stream, every
     channel kept), keyed by the clip's path, mtime and size. A changed clip converts
-    again and its old copy is deleted."""
+    again; its old copy goes once nobody can still be sending it (an hour on). Copies
+    over :data:`FLAC_CACHE_LIMIT` in all go oldest-used first, and two conversions run
+    at a time."""
 
-    def __init__(self, state_dir: Path):
+    def __init__(self, state_dir: Path, *, limit: int = FLAC_CACHE_LIMIT):
         self.dir = state_dir / "clips-flac"
+        self._limit = limit
         self._locks: dict[str, threading.Lock] = {}
         self._guard = threading.Lock()
+        self._slots = threading.BoundedSemaphore(2)
 
     def _lock(self, key: str) -> threading.Lock:
         with self._guard:
+            if len(self._locks) > 1024:  # forget idle ones
+                for k in [k for k, lk in self._locks.items() if not lk.locked()]:
+                    del self._locks[k]
             return self._locks.setdefault(key, threading.Lock())
 
     def get(self, clip: Path, rel: str) -> Path:
@@ -419,23 +476,48 @@ class FlacCache:
         target = folder / f"{st.st_mtime_ns}-{st.st_size}.flac"
         with self._lock(key):
             if target.is_file():
+                with contextlib.suppress(OSError):
+                    os.utime(target)  # recently used: pruned last
                 return target
             folder.mkdir(parents=True, exist_ok=True)
             tmp = folder / f".{target.name}.part"
-            res = subprocess.run(
-                ["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", str(clip),
-                 "-map", "0:a:0", "-vn", "-sn", "-dn", "-map_metadata", "-1",
-                 "-c:a", "flac", "-f", "flac", str(tmp)],
-                capture_output=True, text=True, timeout=900,
-            )
+            try:
+                with self._slots:
+                    res = subprocess.run(
+                        ["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", str(clip),
+                         "-map", "0:a:0", "-vn", "-sn", "-dn", "-map_metadata", "-1",
+                         "-c:a", "flac", "-f", "flac", str(tmp)],
+                        capture_output=True, text=True, timeout=FLAC_TIMEOUT,
+                    )
+            except subprocess.TimeoutExpired:
+                tmp.unlink(missing_ok=True)
+                raise RuntimeError(f"ffmpeg took over {FLAC_TIMEOUT} s") from None
             if res.returncode != 0 or not tmp.is_file():
                 tmp.unlink(missing_ok=True)
                 raise RuntimeError((res.stderr or "ffmpeg failed").strip()[-300:])
+            now = time.time()
             for old in folder.iterdir():
-                if old.name != tmp.name:
-                    old.unlink(missing_ok=True)
+                with contextlib.suppress(OSError):
+                    if old.name != tmp.name and now - old.stat().st_mtime > 3600:
+                        old.unlink()
             os.replace(tmp, target)
-            return target
+        self._trim(keep=target)
+        return target
+
+    def _trim(self, keep: Path) -> None:
+        """Hold the copies under the size limit, oldest-used first."""
+        try:
+            files = [(f.stat().st_mtime, f.stat().st_size, f)
+                     for f in self.dir.glob("*/*.flac") if f != keep]
+            total = sum(s for _, s, _ in files) + keep.stat().st_size
+        except OSError:
+            return
+        for _, size, f in sorted(files):
+            if total <= self._limit:
+                break
+            with contextlib.suppress(OSError):
+                f.unlink()
+                total -= size
 
     def prune(self, live: set[str]) -> int:
         """Delete the copies of clips no longer in the library (``live``: their paths)."""

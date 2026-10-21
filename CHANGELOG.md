@@ -102,6 +102,20 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   of stretching it across the whole window. Lossless-cut keyframe markers are in the
   right place on files whose timestamps don't start at 0 (MPEG-TS).
 - A snapped in point on a whole 10 s mark cuts from the same anchor the snap decoded from.
+- The clips library lists every clip a cut writes: lossless audio cuts in their
+  codec's own container (`.m4a`, `.ac3`, `.eac3`, `.opus`, `.dts`, `.thd`) were missing
+  from `/api/clips`, the Clips view and LeadStinger's browser, and the clips backfill
+  deleted their metadata.
+- A clip shows up in `/api/clips` only once it and its metadata are both written, so a
+  client polling with `since` never gets a half-written file or a clip whose `meta` it
+  then never sees; the listing's ETag no longer changes with the order a share lists
+  files in.
+- Cancelling a running clip cut answers 409 again ("it will finish") instead of
+  reporting the finished clip as cancelled; set exports and the clips backfill still
+  stop when asked.
+- `?as=flac` reports a conversion that times out (422) and keeps its FLAC copies under
+  4 GB, two conversions at a time. A NUL byte in a path is a 400 and an infinite time a
+  422 (both were 500s); a Jellyfin id with a trailing newline is refused.
 - The Docker `web` image ships hls.js again (it fetches the pinned npm tarball, checked by
   its hash): without it, Chrome and Firefox fell back to the old ffmpeg pipe, where long
   files never started playing.

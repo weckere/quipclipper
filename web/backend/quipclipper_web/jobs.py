@@ -44,6 +44,9 @@ class Job:
     # ("12/263 …") and honour a cooperative cancel by checking cancel_requested.
     progress: str | None = None
     cancel_requested: bool = False
+    # Whether the job polls cancel_requested at all: one that doesn't (a clip cut)
+    # runs to the end, so asking it to stop would only mislabel its result.
+    cancellable: bool = False
     # Anything else a finished job hands back, as JSON (e.g. the leadstinger:// link
     # of a Send to LeadStinger job).
     result: dict[str, Any] | None = None
@@ -90,8 +93,9 @@ class JobRegistry:
         self._futures: dict[str, Future] = {}
         self._lock = threading.Lock()
 
-    def submit(self, fn: Callable[[Job], list[Path]], *, label: str = "") -> Job:
-        job = Job(id=uuid.uuid4().hex[:12], label=label)
+    def submit(self, fn: Callable[[Job], list[Path]], *, label: str = "",
+               cancellable: bool = False) -> Job:
+        job = Job(id=uuid.uuid4().hex[:12], label=label, cancellable=cancellable)
         cutoff = time.time() - self.MAX_FINISHED_AGE
         with self._lock:
             for jid, j in list(self._jobs.items()):
@@ -144,10 +148,11 @@ class JobRegistry:
 
     def request_cancel(self, job_id: str) -> bool:
         """Ask a running job to stop at its next checkpoint (cooperative — the
-        job function must poll ``job.cancel_requested``). Returns True if found.
+        job function must poll ``job.cancel_requested``). Returns True if the job
+        exists and can stop; False for one that can't (it runs to the end: 409).
         A queued/finished job is handled by :meth:`cancel` instead."""
         job = self._jobs.get(job_id)
-        if job is None:
+        if job is None or not job.cancellable:
             return False
         job.cancel_requested = True
         return True

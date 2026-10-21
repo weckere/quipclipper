@@ -1823,3 +1823,27 @@ def test_index_marks_subtitle_less_files_and_status_counts_them(tmp_path: Path, 
     found = client.get("/api/search/folder", params={"path": str(media), "query": "force"})
     assert found.status_code == 200
     assert "silent.mkv" not in probes
+
+
+def test_a_running_job_that_cannot_stop_is_409_and_finishes_done(tmp_path: Path) -> None:
+    """Cancelling a running clip cut used to answer "cancelling" and then mark the
+    finished cut "cancelled", though its file was written (M18 review)."""
+    import threading
+
+    from quipclipper_web.jobs import JobRegistry, Status
+
+    reg = JobRegistry(max_workers=1)
+    gate, started = threading.Event(), threading.Event()
+    job = reg.submit(lambda _j: (started.set(), gate.wait(5), [])[2], label="cut")
+    assert started.wait(5)
+    assert reg.cancel(job.id) is False and reg.request_cancel(job.id) is False
+    gate.set()
+    for _ in range(100):
+        if job.finished is not None:
+            break
+        time.sleep(0.02)
+    assert job.status == Status.done
+
+    stoppable = reg.submit(lambda j: [] if j.cancel_requested else [], label="x",
+                           cancellable=True)
+    assert stoppable.cancellable

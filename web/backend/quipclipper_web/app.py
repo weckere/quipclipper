@@ -583,8 +583,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # --- library browsing ----------------------------------------------------
 
+    def _no_nul(path: str) -> None:
+        # The OS can't take a NUL in a path: Path.resolve() raises ValueError (a 500).
+        if "\x00" in path:
+            raise HTTPException(status_code=400, detail="Path contains a NUL byte.")
+
+    def _clip_target(rel: str) -> Path:
+        """A path in the clips library, checked to stay inside it (403) or 400."""
+        _no_nul(rel)
+        target = (settings.clips_dir / rel).resolve()
+        if not target.is_relative_to(settings.clips_dir.resolve()):
+            raise HTTPException(status_code=403, detail="Path outside clips dir.")
+        return target
+
     def _resolve(path: str) -> Path:
         """Resolve a client path within the media roots, mapping errors to HTTP."""
+        _no_nul(path)
         try:
             return library.resolve_within_roots(path, settings.media_roots)
         except library.PathNotAllowed as exc:
@@ -592,6 +606,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     def _resolve_any(path: str) -> Path:
         """Resolve a path within media roots OR clips dir."""
+        _no_nul(path)
         try:
             return library.resolve_within_roots(path, settings.media_roots)
         except library.PathNotAllowed:
@@ -807,7 +822,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/items/link")
     def item_link(
         path: str = Query(...),
-        at: float | None = Query(None, ge=0),
+        at: float | None = Query(None, ge=0, allow_inf_nan=False),
         sel: str | None = Query(None),
         track: int | None = Query(None, ge=0),
     ) -> dict:
@@ -896,8 +911,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/items/peaks")
     def item_peaks(
         path: str = Query(...),
-        start: float = Query(0.0, ge=0),
-        end: float | None = Query(None, gt=0),
+        start: float = Query(0.0, ge=0, allow_inf_nan=False),
+        end: float | None = Query(None, gt=0, allow_inf_nan=False),
         bins: int = Query(1000, ge=1, le=peaks.MAX_BINS),
         audio: int = Query(0, ge=0),
         keyframes: bool = Query(False),
@@ -918,7 +933,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/items/snap")
     def item_snap(
         path: str = Query(...),
-        t: float = Query(..., ge=0),
+        t: float = Query(..., ge=0, allow_inf_nan=False),
         mode: str = Query("zero", pattern="^(zero|silence)$"),
         radius: float | None = Query(None, gt=0, le=10),
         db: float = Query(-45.0, ge=-120, le=0),
@@ -1413,7 +1428,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             job.progress = f"{done} · {fetched} fetched, {failed} failed of {total}"
             return []
 
-        job = yt_jobs.submit(_do, label=f"backfill subtitles: {folder.name}")
+        job = yt_jobs.submit(_do, label=f"backfill subtitles: {folder.name}",
+                             cancellable=True)
         return {"job_id": job.id, "status": job.status.value, "candidates": len(candidates)}
 
     # --- media streaming -------------------------------------------------------
@@ -2170,8 +2186,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             }
 
             def do_cut(job) -> list[Path]:
-                written = _cut(job)
-                _write_sidecars(written, _meta)
+                # Listed (and so seen by a `since` poll) only once the clip and its
+                # sidecar are both there; stamped then, so it's newer than any cursor.
+                with clipmeta.writing(_out_path):
+                    written = _cut(job)
+                    _write_sidecars(written, _meta)
+                    clipmeta.publish(written)
                 return written
 
             def _cut(_job) -> list[Path]:
@@ -2301,13 +2321,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 out_dir = settings.clips_dir / "LeadStinger"
                 out_dir.mkdir(parents=True, exist_ok=True)
                 out = lsset.unique_path(out_dir / f"{set_name}{lsset.EXTENSION}")
-                lsset.write_lsset(out, lsset.build_manifest(set_name, tiles), files)
-                try:
-                    clipmeta.write(out, {"kind": "set", "origin": "leadstinger.set",
-                                         "name": set_name, "items": items_meta,
-                                         "size": out.stat().st_size})
-                except OSError as exc:
-                    clipmeta.log.warning("set metadata for %s: %s", out, exc)
+                with clipmeta.writing(out):
+                    lsset.write_lsset(out, lsset.build_manifest(set_name, tiles), files)
+                    try:
+                        clipmeta.write(out, {"kind": "set", "origin": "leadstinger.set",
+                                             "name": set_name, "items": items_meta,
+                                             "size": out.stat().st_size})
+                    except OSError as exc:
+                        clipmeta.log.warning("set metadata for %s: %s", out, exc)
+                    clipmeta.publish([out])
                 job.progress = f"{n}/{n}"
                 return [out]
             finally:
@@ -2315,7 +2337,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         plural = "s" if n != 1 else ""
         named = f' "{req.name}"' if req.name else ""
-        job = jobs.submit(build, label=f"LeadStinger set{named} ({n} clip{plural})")
+        job = jobs.submit(build, label=f"LeadStinger set{named} ({n} clip{plural})",
+                          cancellable=True)
         return {"job_id": job.id, "status": job.status.value}
 
     # --- Send to LeadStinger by link (M14 phase 3, LeadStinger's D-076) --------------------
@@ -2394,8 +2417,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def leadstinger_link(
         clip: str,
         title: str | None = None,
-        start: float | None = None,
-        end: float | None = None,
+        start: float | None = Query(None, allow_inf_nan=False),
+        end: float | None = Query(None, allow_inf_nan=False),
         set: str | None = None,  # noqa: A002 - the link's own parameter name
     ) -> dict:
         """The ``leadstinger://quip`` link for a clip already in the clips library.
@@ -2403,9 +2426,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ``clip`` is its path inside the library, as ``/api/clips/download/{path}`` takes
         it. No ``start``/``end``: the tile plays the whole clip."""
         server = _public_url()
-        target = (settings.clips_dir / clip).resolve()
-        if not target.is_relative_to(settings.clips_dir.resolve()):
-            raise HTTPException(status_code=403, detail="Path outside clips dir.")
+        target = _clip_target(clip)
         if not target.is_file():
             raise HTTPException(status_code=404, detail="Clip not found.")
         try:
@@ -2465,8 +2486,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if registry.cancel(job_id):
             return {"cancelled": job_id}
         # Running: cooperative cancel for jobs that support it.
-        if job.status.value == "running":
-            registry.request_cancel(job_id)
+        if job.status.value == "running" and registry.request_cancel(job_id):
             return {"cancelling": job_id}
         raise HTTPException(status_code=409, detail="Job can't be cancelled.")
 
@@ -2594,13 +2614,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                "folders": [], "clips": [], "count": 0}
         if not base.is_dir():
             out["cursor"] = since or clipmeta.make_cursor(0)
-            out["etag"] = clipmeta.etag([], ())
-            return out
+            out["etag"] = tag = clipmeta.etag([], ())
+            if clipmeta.etag_matches(request.headers.get("if-none-match"), tag):
+                return Response(status_code=304, headers={"ETag": tag})
+            return JSONResponse(out, headers={"ETag": tag})
         root = base.resolve()
         if folder:
-            target = (base / folder).resolve()
-            if not target.is_relative_to(root):
-                raise HTTPException(status_code=403, detail="Path outside clips dir.")
+            target = _clip_target(folder)
             if not target.is_dir():
                 raise HTTPException(status_code=404, detail="Folder not found.")
         else:
@@ -2610,7 +2630,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # after deleting their clips shouldn't clutter the library.
         out["folders"] = sorted(
             d.name for d in target.iterdir()
-            if not d.name.startswith(".") and d.is_dir() and clipmeta.has_listed(d)
+            if not d.name.startswith(".") and d.is_dir()
+            and d.resolve().is_relative_to(root) and clipmeta.has_listed(d)
         )
         # When a front proxy serves the clips dir directly (QC_CLIPS_URL_PREFIX,
         # e.g. "/clips"), point downloads there so large files bypass uvicorn.
@@ -2689,7 +2710,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             job.result = stats
             return []
 
-        job = jobs.submit(run, label="Clip metadata backfill")
+        job = jobs.submit(run, label="Clip metadata backfill", cancellable=True)
         return {"job_id": job.id, "status": job.status.value}
 
     @app.get("/api/clips/download/{clip_path:path}")
@@ -2702,9 +2723,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ``as=flac`` converts a clip (no cut) to a full-mix FLAC keeping its channels
         (D-024's format; the first audio stream), cached until the clip changes; a FLAC
         clip comes as it is. A set file or a GIF has no FLAC: 400."""
-        target = (settings.clips_dir / clip_path).resolve()
-        if not target.is_relative_to(settings.clips_dir.resolve()):
-            raise HTTPException(status_code=403, detail="Path outside clips dir.")
+        target = _clip_target(clip_path)
         if not target.is_file():
             raise HTTPException(status_code=404, detail="Clip not found.")
         if as_ == "flac":
@@ -2729,9 +2748,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/clips/stream/{clip_path:path}")
     def stream_saved_clip(clip_path: str) -> FileResponse:
         """Stream a clip for in-browser playback (no Content-Disposition download)."""
-        target = (settings.clips_dir / clip_path).resolve()
-        if not target.is_relative_to(settings.clips_dir.resolve()):
-            raise HTTPException(status_code=403, detail="Path outside clips dir.")
+        target = _clip_target(clip_path)
         if not target.is_file():
             raise HTTPException(status_code=404, detail="Clip not found.")
         mime = _BROWSER_MIME.get(target.suffix.lower(), "application/octet-stream")
