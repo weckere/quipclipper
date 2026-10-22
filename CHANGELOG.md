@@ -19,6 +19,9 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 
 ### Fixed
 
+- Switches sit on their row's centre line instead of a few pixels high: Exact (re-encode) in
+  the clip options, the waveform's Snap switches, Loop selection and Follow playback. The
+  "Exact (re-encode)" text is the same size as Before, After and Format.
 - The workspace header no longer shows a movie's title twice: the Jellyfin line under the
   title is hidden when it would repeat it (a "Title (Year)" folder), and shows just the year
   under a bare "Title" folder. Episodes keep their "S01E02 · Title" line.

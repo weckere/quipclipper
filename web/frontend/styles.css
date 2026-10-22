@@ -401,8 +401,10 @@ code {
 .search-result .result-score { color: var(--ok); font-weight: 600; }
 
 .clip-range { font-size: 0.9rem; color: var(--dim); margin-bottom: 0.6rem; }
+/* A switch or checkbox with its text: one flex row, so the switch sits on the row's centre
+   line, not on the text's baseline (where a block label put it, a few px high). */
 .checkbox-label {
-  flex-direction: row !important; align-items: center; gap: 0.4rem !important;
+  display: inline-flex; flex-direction: row !important; align-items: center; gap: 0.4rem !important;
 }
 /* Grey out a checkbox's label text while its input is disabled. */
 .checkbox-label:has(input:disabled) { opacity: 0.45; }
@@ -443,6 +445,8 @@ input[type="checkbox"].switch:disabled { cursor: default; }
   font-size: 0.8rem; color: var(--dim);
 }
 .clip-format-label select { margin-top: 0; font-size: 0.82rem; }
+/* Exact (re-encode) in the clip options: the same size and colour as Before / After / Format. */
+.clip-options .checkbox-label { font-size: 0.8rem; color: var(--dim); }
 .clip-btn[disabled] { opacity: 0.45; cursor: default; }
 
 /* Clip name row (range + B9 name template), under the Marks header. */
