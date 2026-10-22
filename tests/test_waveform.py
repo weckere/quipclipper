@@ -226,7 +226,7 @@ def test_decode_args_pad_the_start_to_file_time():
     assert cmd[cmd.index("-af") + 1] == "aresample=first_pts=0"
     cmd = waveform.decode_args("/m/a.mkv", start=13.0, duration=1, src_rate=48000)
     assert cmd[cmd.index("-af") + 1] == (
-        "aresample=first_pts=0,atrim=start_sample=192000,asetpts=PTS-STARTPTS")
+        "aresample=48000:first_pts=0,atrim=start_sample=192000,asetpts=PTS-STARTPTS")
 
 
 def _delayed_audio(path):
@@ -270,6 +270,60 @@ def test_exact_cuts_keep_late_audio_in_sync(tmp_path, start):
         out = cut_clip(src, ClipRange(start, start + 1.0), kind=kind, lossless=lossless,
                        audio_codec=codec, out=tmp_path / f"cut-{kind}.{ext}")
         assert _first_beep(waveform.decode(out, rate=48000)) == 0.5, kind
+
+
+def hirate_click(path, rate):
+    """60 s of silence at ``rate`` with a 2 ms click (1 ms up, 1 ms down, 1/4 scale) at
+    33.25 s plus 7 samples. Returns the click's time."""
+    n0, half = round(33.25 * rate) + 7, rate // 1000
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-y", "-filter_complex",
+         f"anullsrc=r={rate}:cl=mono,atrim=end_sample={n0}[a];"
+         f"aevalsrc=exprs='0.25*(1-2*gte(n\\,{half}))':s={rate}:d=0.01,"
+         f"atrim=end_sample={2 * half}[c];"
+         f"anullsrc=r={rate}:cl=mono:d=26[b];[a][c][b]concat=n=3:v=0:a=1",
+         "-c:a", "flac", str(path)], check=True)
+    return n0 / rate
+
+
+def first_loud(samples, level=4096):
+    return next((i for i, v in enumerate(samples) if abs(v) >= level), None)
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize("src_rate", [96000, 88200])
+def test_anchored_decode_lands_on_the_click_at_any_output_rate(tmp_path, src_rate):
+    """A decode that resamples (a detail window at 48 or 16 kHz of a 96 kHz file) skips
+    the anchor's samples at the source's rate. Before the fix, atrim counted samples of
+    the output rate, and the window started seconds late (M20)."""
+    src = tmp_path / "click.flac"
+    click = hirate_click(src, src_rate)
+    for rate in (src_rate, 48000, 16000):
+        for start in (click - 0.004, click - 3.7, 30.0, click - 12.0):
+            t0 = waveform.anchored_start(start, src_rate)
+            s = waveform.decode(src, rate=rate, start=t0, duration=14.0, src_rate=src_rate)
+            i = first_loud(s)
+            assert i is not None, (rate, start)
+            assert abs(t0 + i / rate - click) <= 1 / rate, (rate, start, t0 + i / rate)
+
+
+@needs_ffmpeg
+def test_exact_cuts_of_a_96k_source_land_on_the_click(tmp_path):
+    """An mp3 can't hold 96 kHz, so ffmpeg resamples: the cut still starts on the sample."""
+    from quipclipper.clip import ClipRange, cut_clip
+
+    src = tmp_path / "click.flac"
+    click = hirate_click(src, 96000)
+    for start in (click - 0.5, click - 2.25, 31.6):
+        for kind, lossless, codec, ext in (("audio", False, None, "mp3"),
+                                           ("audio", True, "wav", "wav"),
+                                           ("video", False, None, "mp4")):
+            out = cut_clip(src, ClipRange(start, start + 3.0), kind=kind, lossless=lossless,
+                           audio_codec=codec, out=tmp_path / f"cut.{ext}")
+            rate = waveform.native_rate(out)
+            i = first_loud(waveform.decode(out, rate=rate))
+            assert i is not None, (ext, start)
+            assert abs(start + i / rate - click) <= 1 / rate, (ext, start, start + i / rate)
 
 
 @needs_ffmpeg

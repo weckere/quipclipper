@@ -270,6 +270,18 @@ ANCHOR_GRID = 10
 ANCHOR_PAD = "aresample=first_pts=0"
 
 
+def anchor_filter(trim: int | None, src_rate: int | None) -> str:
+    """The audio filter chain of an anchored decode: pad to the anchor, then skip ``trim``
+    samples. With ``src_rate`` the pad holds the stream's own rate, because atrim counts
+    samples at whatever rate reaches it: when ffmpeg resamples inside the chain (for an
+    -ar, or an encoder like mp3 that can't take 96 kHz), the skip would count samples of
+    the new rate and start seconds late. Any resample then runs after the chain."""
+    af = f"aresample={src_rate}:first_pts=0" if src_rate else ANCHOR_PAD
+    if trim:
+        af += f",atrim=start_sample={trim},asetpts=PTS-STARTPTS"
+    return af
+
+
 def anchor(t: float) -> float:
     """The -ss a sample-exact decode reaching ``t`` starts from. ``t`` is taken to the
     microsecond first, so 30.0 and a 29.999999999999996 that arithmetic made of it
@@ -312,10 +324,7 @@ def decode_args(source: str | Path, *, audio: int = 0, rate: int | None = None,
     if duration is not None:
         cmd += ["-t", f"{duration:.6f}"]
     cmd += ["-map", f"0:a:{audio}", "-vn", "-sn", "-dn"]
-    af = ANCHOR_PAD
-    if trim:
-        af += f",atrim=start_sample={trim},asetpts=PTS-STARTPTS"
-    cmd += ["-af", af]
+    cmd += ["-af", anchor_filter(trim, src_rate)]
     cmd += ["-ac", "1"]
     if rate:
         cmd += ["-ar", str(rate)]

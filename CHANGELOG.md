@@ -86,6 +86,11 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 
 ### Fixed
 
+- The waveform, snaps and exact cuts land on the sample again when the audio is resampled on
+  the way: detail views over 15 s (decoded at 16 kHz), any view of a 88.2/96/192 kHz file
+  (drawn at 48 kHz), silence snaps, and an mp3 cut of a 96 kHz file. The anchored decode
+  skipped its lead-in counting samples at the new rate, so the window started up to seconds
+  late and a click drew that much early.
 - Switches sit on their row's centre line instead of a few pixels high: Exact (re-encode) in
   the clip options, the waveform's Snap switches, Loop selection and Follow playback. The
   "Exact (re-encode)" text is the same size as Before, After and Format.

@@ -224,6 +224,48 @@ def test_exact_cut_matches_the_snap_on_dts_in_matroska(client, media, tmp_path):
         assert abs(clip[0] - snap["value"]) <= 2, (t, list(clip[:4]), snap)
 
 
+def _hirate_click(path: Path, rate: int) -> float:
+    """60 s of silence at ``rate`` with a 2 ms click (1 ms up, 1 ms down, 1/4 scale) at
+    33.25 s plus 7 samples. Returns the click's time."""
+    if not path.exists():
+        n0, half = round(33.25 * rate) + 7, rate // 1000
+        _ff("-filter_complex",
+            f"anullsrc=r={rate}:cl=mono,atrim=end_sample={n0}[a];"
+            f"aevalsrc=exprs='0.25*(1-2*gte(n\\,{half}))':s={rate}:d=0.01,"
+            f"atrim=end_sample={2 * half}[c];"
+            f"anullsrc=r={rate}:cl=mono:d=26[b];[a][c][b]concat=n=3:v=0:a=1",
+            "-c:a", "flac", str(path))
+    return (round(33.25 * rate) + 7) / rate
+
+
+@pytest.mark.parametrize("src_rate", [96000, 88200])
+def test_detail_windows_and_snaps_of_a_hirate_file_land_on_the_click(client, media, src_rate):
+    """A 96 kHz file draws at 48 kHz (16 kHz past 15 s): every zoom and offset puts the
+    click in the right place, to the sample, and a snap finds its middle crossing. Before
+    the fix the resampled decode started seconds late (M20)."""
+    src = media / f"click{src_rate}.flac"
+    click = _hirate_click(src, src_rate)
+    for span, before in ((0.008, 0.0031), (2.0, 0.9), (2.0, 1.95), (30.0, 3.7), (30.0, 12.0)):
+        start = click - before
+        body = client.get("/api/items/peaks", params={
+            "path": str(src), "start": start, "end": start + span, "bins": 980}).json()
+        assert body["source"] == "detail", body
+        rate, data = body["rate"], _ints(body["data"])
+        assert rate == (48000 if span <= peaks.DETAIL_FULL_RATE_MAX else 16000)
+        if body["kind"] == "samples":
+            i = next(k for k, v in enumerate(data) if abs(v) >= 4096)
+            assert abs(body["t0"] + i / rate - click) <= 1 / rate, (span, before)
+        else:
+            w = (body["end"] - start) / body["bins"]  # end stops at the file's end
+            b = next(k for k in range(body["bins"]) if data[2 * k + 1] >= 4096)
+            assert start + b * w - 1 / rate <= click < start + (b + 1) * w + 1 / rate, \
+                (span, before, b)
+    snap = client.get("/api/items/snap", params={
+        "path": str(src), "t": click + 0.0013, "radius": 0.0005}).json()
+    assert snap["found"] and snap["rate"] == 48000, snap
+    assert snap["snapped"] == pytest.approx(click + 0.001, abs=1 / 48000)
+
+
 def test_epub_stored_member_reads_in_place(tmp_path, media):
     epub = tmp_path / "book.epub"
     with zipfile.ZipFile(epub, "w") as z:

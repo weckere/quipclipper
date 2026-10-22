@@ -399,9 +399,8 @@ def _ffmpeg_args(
         a0 = waveform.anchor(rng.start)
         audio_in = url_flags + (["-ss", f"{a0:.6f}"] if a0 > 0 else []) + ["-i", _argv_path(source)]
         for j, rate in enumerate(audio_rates or ()):
-            trims += [f"-filter:a:{j}",
-                      f"{waveform.ANCHOR_PAD},atrim=start_sample="
-                      f"{round((round(rng.start, 6) - a0) * rate)},asetpts=PTS-STARTPTS"]
+            trims += [f"-filter:a:{j}", waveform.anchor_filter(
+                round((round(rng.start, 6) - a0) * rate), rate)]
 
     if kind == "gif":
         # Scale and cap fps; height -1 preserves aspect ratio. Always re-encoded.
