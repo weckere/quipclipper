@@ -371,6 +371,14 @@ def idle_argv(argv: list[str]) -> list[str]:
     return [sys.executable, "-m", "quipclipper.idle", *argv]
 
 
+def idle_env() -> dict[str, str]:
+    """The environment for :func:`idle_argv`: this process's import path as PYTHONPATH.
+    A packaged app (Nix's buildPythonApplication) sets its path up inside its own entry
+    script, so the bare interpreter it runs on wouldn't find ``quipclipper.idle``."""
+    paths = [p for p in sys.path if p and os.path.isdir(p)]
+    return {**os.environ, "PYTHONPATH": os.pathsep.join(paths)}
+
+
 def extract_argv(source: str | Path, out_wav: str | Path, *, start: float, duration: float,
                  audio: int = 0, src_rate: int | None = None,
                  input_flags: tuple[str, ...] = ()) -> list[str]:
@@ -414,7 +422,7 @@ class Cancelled(Exception):
 
 def _run(argv: list[str], *, cancelled: Callable[[], bool] | None, timeout: float) -> str:
     """Run one idle-priority subprocess; kill it if ``cancelled()`` turns true."""
-    proc = subprocess.Popen(idle_argv(argv), stdout=subprocess.DEVNULL,
+    proc = subprocess.Popen(idle_argv(argv), stdout=subprocess.DEVNULL, env=idle_env(),
                             stderr=subprocess.PIPE, start_new_session=True)
     err: list[bytes] = []
     reader = threading.Thread(target=lambda: err.append(proc.stderr.read()), daemon=True)

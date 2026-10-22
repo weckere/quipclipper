@@ -238,6 +238,14 @@ def test_idle_launcher_sets_idle_scheduling():
     assert out.stdout.split() == ["True", "19"]
 
 
+def test_idle_env_carries_the_import_path(monkeypatch):
+    monkeypatch.delenv("PYTHONPATH", raising=False)
+    env = tr.idle_env()
+    out = subprocess.run(tr.idle_argv([sys.executable, "-c", "import quipclipper.transcribe"]),
+                         env=env, capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+
+
 def test_lower_priority_reports_what_it_did():
     code = "from quipclipper.idle import lower_priority; print(','.join(lower_priority()))"
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,

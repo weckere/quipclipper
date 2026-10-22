@@ -116,6 +116,14 @@
                   mediaRoots = [ "/srv/media" ];
                   listenAddress = "0.0.0.0";  # reachable on the test net for the assert
                   nginx.enable = false;
+                  # Machine transcription (M21), with a stand-in model file so the test
+                  # doesn't download one: health shows whisper-cli and the model, and
+                  # the unit carries the thread cap.
+                  transcribe = {
+                    enable = true;
+                    vad = false;
+                    modelFiles."small.en" = pkgs.writeText "ggml-small.en.bin" "stand-in";
+                  };
                   jellyfin = {
                     url = "http://127.0.0.1:8096";
                     apiKeyFile = "/etc/jellyfin-key";
@@ -196,6 +204,12 @@
                 machine.succeed("grep -q '\"jellyfin\": *false' /tmp/health.json")
                 backendonly.succeed("curl -fsS http://localhost:8000/api/library/roots -o /tmp/r.json")
                 backendonly.succeed("grep -q /srv/media /tmp/r.json")
+                # Machine transcription: whisper-cli and the model are there, capped at 2
+                # threads; it's off where it isn't enabled.
+                backendonly.succeed("grep -q '\"whisper-cli\": *true' /tmp/h.json")
+                backendonly.succeed("grep -q '\"available\": *true' /tmp/h.json")
+                backendonly.succeed("systemctl show quipclipper-web.service -p Environment | grep -q QC_WHISPER_THREADS=2")
+                machine.succeed("grep -q '\"available\": *false' /tmp/health.json")
               '';
             };
           };

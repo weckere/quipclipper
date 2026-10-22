@@ -48,6 +48,21 @@ let
     let s = cfg.clipsMode; in
     lib.stringLength s >= 4
     && (let d = lib.toInt (lib.substring 0 1 s); in d == 2 || d == 3 || d == 6 || d == 7);
+  # Machine transcription (M21): the whisper.cpp ggml models, each pinned to a Hugging Face
+  # revision by hash, so a rebuild is reproducible and needs no download at run time.
+  hf = repo: rev: file: hash: pkgs.fetchurl {
+    url = "https://huggingface.co/${repo}/resolve/${rev}/${file}";
+    inherit hash;
+  };
+  whisperModels = {
+    "small.en" = hf "ggerganov/whisper.cpp" "5359861c739e955e79d9a303bcbc70fb988958b1"
+      "ggml-small.en.bin" "sha256-xhONbVjsyDIgl+D5h8MvG+i7ChhTKj+I9zTRu/nEHl0=";
+    "medium.en" = hf "ggerganov/whisper.cpp" "5359861c739e955e79d9a303bcbc70fb988958b1"
+      "ggml-medium.en.bin" "sha256-zDfpNHgzjsdwAoGnrDChASiSnrj0J92i6GX6qPbaQ1Y=";
+  };
+  sileroVad = hf "ggml-org/whisper-vad" "9ffd54a1e1ee413ddf265af9913beaf518d1639b"
+    "ggml-silero-v5.1.2.bin" "sha256-KZQNmNQrkfvQXOSJ8+z3xy8KQvAn5IdZGaKPtMBOos8=";
+  stt = cfg.transcribe;
 in
 {
   options.services.quipclipper-web = {
@@ -333,6 +348,74 @@ in
       };
     };
 
+    transcribe = {
+      enable = lib.mkEnableOption ''
+        machine transcription with whisper.cpp (M21): on request, the web app and CLI
+        transcribe a waveform selection, the gaps between a file's subtitle lines, a
+        whole file or a folder, so lines the subtitles leave out become searchable.
+        Nothing ever runs on its own: there is no timer and no hook, only the buttons
+        and commands that ask. Every run is idle priority (SCHED_IDLE, nice 19, idle
+        I/O) with `threads` threads, one at a time'';
+
+      package = lib.mkOption {
+        type = lib.types.package;
+        default = pkgs.whisper-cpp;
+        defaultText = lib.literalExpression "pkgs.whisper-cpp";
+        description = ''
+          whisper.cpp, for its `whisper-cli`. The CPU build picks the best backend for the
+          host (AVX2, …); `pkgs.whisper-cpp.override { cudaSupport = true; }` uses a GPU.
+        '';
+      };
+
+      models = lib.mkOption {
+        type = lib.types.listOf (lib.types.enum (lib.attrNames whisperModels));
+        default = [ "small.en" ];
+        example = [ "small.en" "medium.en" ];
+        description = ''
+          The English ggml models to install, each fetched from Hugging Face pinned by
+          hash: `small.en` (466 MB; quick, a few word errors) and `medium.en` (1.5 GB;
+          close to subtitle quality on lyrics, about three times slower on a CPU). A run
+          picks one of these; the web UI offers the choice when there are two.
+        '';
+      };
+
+      modelFiles = lib.mkOption {
+        type = lib.types.attrsOf lib.types.path;
+        default = whisperModels;
+        defaultText = lib.literalMD "the pinned Hugging Face downloads of each model";
+        description = ''
+          Where each model in `models` comes from, by name. By default a fetchurl from
+          Hugging Face pinned by hash; point a name at a local ggml file to use that.
+        '';
+      };
+
+      defaultModel = lib.mkOption {
+        type = lib.types.enum (lib.attrNames whisperModels);
+        default = "small.en";
+        description = "The model a run uses unless it asks for another (`QC_WHISPER_MODEL`).";
+      };
+
+      vad = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        description = ''
+          Install the Silero voice-activity model (1 MB). It is used only for whole-file
+          runs, where it skips silences; ranges and gaps run without it, because it drops
+          sung lines (the main thing they are transcribed for).
+        '';
+      };
+
+      threads = lib.mkOption {
+        type = lib.types.ints.positive;
+        default = 2;
+        description = ''
+          whisper threads per run (`QC_WHISPER_THREADS`), at most 3: the host is shared,
+          and a whisper run on every core starved on-demand HLS encoding once (the app
+          caps it at 3 as well).
+        '';
+      };
+    };
+
     user = lib.mkOption {
       type = lib.types.str;
       default = "quipclipper-web";
@@ -369,6 +452,29 @@ in
           a group defined in config.users.groups. Define it (e.g. in
           users.groups.${toString cfg.clipsGroup}), or fix the spelling — otherwise
           the service and nginx join a non-existent group and clip downloads 403.
+        '';
+      }
+      {
+        # The hard rule for a shared host (M21, D-037): whisper never gets more than 3
+        # threads, so it can't take every core from playback even when it runs.
+        assertion = !stt.enable || stt.threads <= 3;
+        message = ''
+          services.quipclipper-web.transcribe.threads = ${toString stt.threads}: at most 3.
+          whisper shares the host with playback; a run on every core starved HLS encoding.
+        '';
+      }
+      {
+        assertion = !stt.enable || lib.all (name: stt.modelFiles ? ${name}) stt.models;
+        message = ''
+          services.quipclipper-web.transcribe.modelFiles has no file for
+          ${lib.concatStringsSep ", " (lib.filter (n: !(stt.modelFiles ? ${n})) stt.models)}.
+        '';
+      }
+      {
+        assertion = !stt.enable || builtins.elem stt.defaultModel stt.models;
+        message = ''
+          services.quipclipper-web.transcribe.defaultModel = "${stt.defaultModel}" is not in
+          transcribe.models (${lib.concatStringsSep ", " stt.models}).
         '';
       }
     ];
@@ -469,6 +575,16 @@ in
       } // lib.optionalAttrs cfg.hardwareAcceleration.enable {
         QC_VAAPI_DEVICE = cfg.hardwareAcceleration.device;
         LIBVA_DRIVER_NAME = cfg.hardwareAcceleration.driverName;
+      } // lib.optionalAttrs stt.enable {
+        # Machine transcription (M21): whisper-cli by store path, so PATH needn't carry it.
+        QC_WHISPER_BIN = "${stt.package}/bin/whisper-cli";
+        QC_WHISPER_MODELS = lib.concatMapStringsSep ","
+          (name: "${name}=${stt.modelFiles.${name}}") stt.models;
+        QC_WHISPER_MODEL = stt.defaultModel;
+        QC_WHISPER_THREADS = toString stt.threads;
+        QC_WHISPER_LANGUAGE = "en";
+      } // lib.optionalAttrs (stt.enable && stt.vad) {
+        QC_WHISPER_VAD_MODEL = toString sileroVad;
       } // lib.optionalAttrs (cfg.passwordFile != null) {
         # The gate is enforced by nginx via `basicAuthFile = passwordFile` on the
         # vhost below; this env var only makes the backend report auth_required so

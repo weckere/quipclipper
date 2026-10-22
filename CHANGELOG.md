@@ -37,6 +37,11 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   and hover text in the script, both searches, the hit preview and the waveform's line lane,
   and a screen reader hears "machine transcript" (AA contrast in both themes and with more
   contrast). Settings gains **Transcription model**.
+- **NixOS module:** `services.quipclipper-web.transcribe` (`enable`, `models`, `modelFiles`,
+  `defaultModel`, `threads` asserted at most 3, `vad`, `package`) installs whisper.cpp and the
+  ggml models pinned by hash, and sets `QC_WHISPER_*`. Nothing in it starts a run.
+- The idle launcher passes the app's import path to its child, so it finds the engine under a
+  Nix-wrapped app.
 
 ### UI follow-ups (M20)
 
