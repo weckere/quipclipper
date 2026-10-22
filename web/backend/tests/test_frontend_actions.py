@@ -53,6 +53,7 @@ MARKED_CONTROLS: dict[str, int] = {
     "jellyfin.sessions": 2,   # the Now playing card (library) and the Now playing scope
     "item.link": 2,           # Copy link in the workspace and on a search hit
     "item.transcribe": 3,     # Transcribe selection (waveform), Fill gaps and Transcribe file
+    "index.transcribe": 2,    # Transcribe files without subtitles, Fill gaps in every file
     "youtube.download": 1,
     "youtube.delete-download": 1,
 }

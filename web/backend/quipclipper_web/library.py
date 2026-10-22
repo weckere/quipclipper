@@ -48,6 +48,7 @@ class Entry:
     has_sidecar: bool  # a sidecar subtitle/transcript sits next to this file
     is_audio: bool = False  # audio-only source (podcast/audiobook)
     is_book: bool = False  # EPUB3 media-overlay audiobook (browses into chapters)
+    has_transcript: bool = False  # a machine transcript (M21), stored or in the library
 
 
 def _is_video(p: Path) -> bool:
@@ -58,14 +59,18 @@ def _is_audio(p: Path) -> bool:
     return p.suffix.lower() in AUDIO_EXTS
 
 
-def _media_entry(child: Path) -> Entry | None:
+def _media_entry(child: Path, transcribed=None) -> Entry | None:
     """An Entry for a clippable media file, else None. Video files always qualify
     (they may carry embedded subtitles); audio-only files (podcasts, audiobooks)
-    qualify only when a sidecar transcript sits next to them."""
+    qualify only when a sidecar transcript sits next to them, or (with
+    ``transcribed``, a predicate) when they have a machine transcript (M21)."""
+    heard = bool(transcribed and (_is_video(child) or _is_audio(child)) and transcribed(child))
     if _is_video(child):
-        return Entry(child.name, str(child), False, True, find_sidecar(child) is not None)
-    if _is_audio(child) and find_sidecar(child) is not None:
-        return Entry(child.name, str(child), False, False, True, is_audio=True)
+        return Entry(child.name, str(child), False, True, find_sidecar(child) is not None,
+                     has_transcript=heard)
+    if _is_audio(child) and (find_sidecar(child) is not None or heard):
+        return Entry(child.name, str(child), False, False, find_sidecar(child) is not None,
+                     is_audio=True, has_transcript=heard)
     # A synced EPUB3 audiobook (media overlays) browses into its chapters like a
     # folder, so present it as a book entry.
     if child.suffix.lower() == ".epub" and is_media_overlay_epub(child):
@@ -73,7 +78,7 @@ def _media_entry(child: Path) -> Entry | None:
     return None
 
 
-def browse(path: str | None, roots: list[Path]) -> list[Entry]:
+def browse(path: str | None, roots: list[Path], transcribed=None) -> list[Entry]:
     """List media roots (when `path` is empty) or the contents of a directory.
 
     Only sub-directories and video files are returned, directories first, each
@@ -99,7 +104,7 @@ def browse(path: str | None, roots: list[Path]) -> list[Entry]:
         if child.is_dir():
             dirs.append(Entry(child.name, str(child), True, False, False))
         else:
-            e = _media_entry(child)
+            e = _media_entry(child, transcribed)
             if e is not None:
                 files.append(e)
     dirs.sort(key=lambda e: e.name.lower())

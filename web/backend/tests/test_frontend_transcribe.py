@@ -102,3 +102,19 @@ def test_finished_jobs_reload_the_script_and_polling_stops():
     assert "refreshStt(path, { script: true })" in follow
     # A line selection survives the reload by its times, not its (shifting) cue indexes.
     assert "pendingCueSelect = { start: clipStart(), end: clipEnd() }" in _function("refreshStt")
+
+
+def test_a_folder_transcription_starts_only_from_its_two_buttons_after_a_confirm():
+    js = _js()
+    assert js.count('"/api/search/folder/transcribe"') == 1
+    start = _function("startFolderTranscribe")
+    assert "/api/search/folder/transcribe" in start and "confirm(" in start
+    assert re.findall(r"startFolderTranscribe\(", js) and len(re.findall(r"startFolderTranscribe\(\"", js)) == 2
+    for fn in ("browse", "checkFolderIndex", "renderIndexStatus", "showSttFolder"):
+        assert "startFolderTranscribe" not in _function(fn)
+
+
+def test_the_library_marks_files_with_a_machine_transcript():
+    js = _js()
+    assert "e.has_transcript" in js
+    assert '<span class="visually-hidden">machine transcript</span>' in js

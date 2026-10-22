@@ -169,6 +169,7 @@ by default land where they always did.
 | `index.status` | Show how many files in a folder have cached subtitles. | `PATH` | `GET /api/search/folder/index-status` | Dialogue index card |
 | `index.build` | Cache the subtitles of every file in a folder (prints progress). | `PATH` `--force` | `POST /api/search/folder/index` | Index N files; Re-index all (Dialogue index card) |
 | `index.fetch-subs` | Fetch missing YouTube subtitles for every video in a folder. | `PATH` `--wait` `--out-dir` | `POST /api/search/folder/fetch-subs` | ⬇ Fetch missing YouTube subtitles; ✕ Cancel |
+| `index.transcribe` | Transcribe a folder's files with whisper.cpp, one after another at idle priority: whole files that have no subtitles (audio without a transcript included), or the gaps between every file's subtitle lines. Only ever on request; cancel it like any job. | `PATH` `--mode` `--model` `--wait` `--out-dir` | `POST /api/search/folder/transcribe` | Transcribe files without subtitles; Fill gaps in every file (Dialogue index card); ✕ Cancel |
 
 ## clip
 

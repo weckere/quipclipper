@@ -73,9 +73,10 @@ from quipclipper_web.config import Settings
 from quipclipper_web.jobs import JobRegistry
 from quipclipper_web.sub_cache import SubtitleCache
 
-def _is_media_file(p: Path) -> bool:
+def _is_media_file(p: Path, transcribed=None) -> bool:
     """A real, indexable media file: a video, or an audio-only file (podcast/
-    audiobook) that has a sidecar transcript.
+    audiobook) that has a sidecar transcript, or (``transcribed``, a predicate) a
+    machine transcript (M21).
 
     Excludes hidden/dotfiles — notably macOS AppleDouble ``._*`` sidecars, which
     share a media file's name and extension on non-Mac filesystems (NAS/SMB) but
@@ -90,7 +91,15 @@ def _is_media_file(p: Path) -> bool:
         return True
     # Audio is only indexable with a transcript (nothing to extract embedded subs
     # from); the cheap sidecar glob keeps un-transcribed audio out of the scan.
-    return ext in AUDIO_EXTS and find_sidecar(p) is not None
+    return ext in AUDIO_EXTS and (find_sidecar(p) is not None
+                                  or bool(transcribed and transcribed(p)))
+
+
+def _is_bare_audio(p: Path) -> bool:
+    """An audio file with no sidecar transcript (what a folder transcription can give
+    one). Hidden files are skipped as in ``_is_media_file``."""
+    return (p.is_file() and not p.name.startswith(".") and p.suffix.lower() in AUDIO_EXTS
+            and find_sidecar(p) is None)
 
 
 # The clips listing's contract with LeadStinger (docs/API.md); bump on a breaking change.
@@ -298,6 +307,16 @@ class TranscribeRequest(BaseModel):
     redo: bool = False
 
 
+class FolderTranscribeRequest(BaseModel):
+    """JSON body for POST /api/search/folder/transcribe (M21, phase 5)."""
+
+    path: str
+    # nosubs: whole files with no subtitles (audio without a transcript too); gaps: the
+    # gaps between every subtitled file's lines.
+    mode: str = Field("nosubs", pattern="^(nosubs|gaps)$")
+    model: str | None = Field(None, pattern=r"^(small\.en|medium\.en)$")
+
+
 class YouTubeAdd(BaseModel):
     """Body of POST /api/youtube. Module-level (like ClipRequest) so FastAPI can
     resolve the string annotation under ``from __future__ import annotations``."""
@@ -406,6 +425,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     transcripts = stt.TranscriptStore(settings.state_dir / "transcripts")
     stt_jobs = JobRegistry(max_workers=1)
     active_stt: dict[str, str] = {}
+
+    def _has_machine(p: Path) -> bool:
+        """Cheap: ``p`` has a machine transcript, stored or copied to the library."""
+        return transcripts.exists(p) or bool(stt.find_machine_sidecars(p))
     # video id -> last download / add job id, so a repeat POST returns the
     # in-flight job instead of queueing a duplicate.
     active_downloads: dict[str, str] = {}
@@ -716,7 +739,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if epub_items.is_epub_book(ep):
                 return {"path": path, "entries": epub_items.segment_entries(ep)}
         try:
-            entries = library.browse(path, settings.media_roots)
+            entries = library.browse(path, settings.media_roots, transcribed=_has_machine)
         except library.PathNotAllowed as exc:
             raise HTTPException(status_code=403, detail=str(exc))
         except FileNotFoundError as exc:
@@ -1206,7 +1229,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if capped:
                 break
             for c in folder.rglob("*"):
-                if _is_media_file(c):
+                if _is_media_file(c, _has_machine):
                     rp = c.resolve()
                     if rp not in seen:
                         seen.add(rp)
@@ -1346,7 +1369,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail=f"Not a directory: {self_path}")
         videos: list[Path] = []
         for c in folder.rglob("*"):
-            if _is_media_file(c):
+            if _is_media_file(c, _has_machine):
                 videos.append(c)
                 if cap is not None and len(videos) > cap:
                     return videos, True
@@ -1358,13 +1381,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         videos, skipped = _folder_videos(path, cap=INDEX_CAP)
         if skipped:
             return {"total": len(videos), "indexed": 0, "skipped": True}
-        indexed = no_subs = 0
+        indexed = no_subs = transcribed = 0
         for v in videos:
+            heard = _has_machine(v)
+            transcribed += heard
             if sub_cache.is_cached(v):
                 indexed += 1
-            elif sub_cache.has_no_subs(v):
-                no_subs += 1
-        return {"total": len(videos), "indexed": indexed, "no_subs": no_subs, "skipped": False}
+            elif sub_cache.has_no_subs(v) and not heard:
+                no_subs += 1  # a transcript makes a file without subtitles searchable (M21)
+        # Audio with no transcript of any kind isn't a media file yet (nothing to search),
+        # but a folder transcription can give it one.
+        bare = sum(1 for c in _resolve(path).rglob("*") if _is_bare_audio(c)
+                   and not _has_machine(c))
+        return {"total": len(videos), "indexed": indexed, "no_subs": no_subs,
+                "transcribed": transcribed, "audio_untranscribed": bare, "skipped": False}
 
     # This and /api/items/subtitles/reindex take their input via the query string
     # and no body, so they would be CORS "simple requests" — the classic CSRF
@@ -1472,7 +1502,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return f"{h}:{rest // 60:02d}:{rest % 60:02d}" if h else f"{rest // 60}:{rest % 60:02d}"
 
     def _transcribe(job, p: Path, mode: str, *, start=None, end=None, model: str,
-                    audio: int = 0, redo: bool = False) -> dict:
+                    audio: int = 0, redo: bool = False, prefix: str = "") -> dict:
         """Transcribe what ``mode`` asks of one file; the job's progress follows it. Returns
         the job's result (also used by the folder job)."""
         try:
@@ -1492,7 +1522,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return result
 
         def progress(done: float, total: float) -> None:
-            job.progress = f"{_clock(done)} of {_clock(total)} transcribed"
+            job.progress = f"{prefix}{_clock(done)} of {_clock(total)} transcribed"
 
         t = None
         try:
@@ -1599,6 +1629,78 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 side.unlink()
                 removed.append(side.name)
         return {"path": path, "removed": removed}
+
+    @app.post("/api/search/folder/transcribe")
+    def transcribe_folder(req: FolderTranscribeRequest) -> dict:
+        """Transcribe a folder's files one after another (a job; cancellable): whole files
+        with no subtitles (``nosubs``), or the gaps in every subtitled file (``gaps``).
+        Files already done are skipped. ``{job_id: null, candidates: 0}`` = nothing to do."""
+        _stt_required()
+        folder = _resolve(req.path)
+        if not folder.is_dir():
+            raise HTTPException(status_code=400, detail=f"Not a directory: {req.path}")
+        model = req.model or settings.whisper.default_model
+        try:
+            settings.whisper.model_path(model)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        videos, skipped = _folder_videos(req.path, cap=INDEX_CAP)
+        if skipped:
+            raise HTTPException(status_code=400, detail=f"Folder has more than {INDEX_CAP} "
+                                "files — too many to transcribe in one go; pick a subfolder.")
+        bare = sorted((c for c in folder.rglob("*") if _is_bare_audio(c) and c not in videos),
+                      key=lambda c: c.name.lower()) if req.mode == "nosubs" else []
+        candidates = len(videos) + len(bare)
+        if not candidates:
+            return {"job_id": None, "candidates": 0}
+        key = json.dumps(["folder", str(folder), req.mode, model])
+        prev = stt_jobs.get(active_stt.get(key, ""))
+        if prev is not None and prev.status.value in ("queued", "running"):
+            return {"job_id": prev.id, "existing": True, "candidates": candidates}
+
+        def has_subs(v: Path) -> bool:
+            if sub_cache.has_no_subs(v):
+                return False
+            try:
+                return bool(sub_cache.resolve(v))
+            except (ValueError, FileNotFoundError, RuntimeError):
+                sub_cache.mark_no_subs(v)
+                return False
+
+        def run_job(job) -> list[Path]:
+            files = []
+            todo = [*videos, *bare]
+            for i, v in enumerate(todo, 1):
+                if job.cancel_requested:
+                    break
+                job.progress = f"{i}/{len(todo)} files: checking {v.name}"
+                subbed = v in videos and has_subs(v)
+                if (req.mode == "gaps") != subbed:
+                    continue  # nosubs skips subtitled files; gaps skips the rest
+                one = {"name": v.name, "path": str(v), "new_lines": 0}
+                try:
+                    r = _transcribe(job, v, "gaps" if subbed else "file", model=model,
+                                    prefix=f"{i}/{len(todo)} files, {v.name}: ")
+                    one["new_lines"] = r.get("new_lines", 0)
+                    if r.get("transcribed"):
+                        files.append(one)
+                except (ValueError, RuntimeError, OSError) as exc:
+                    one["error"] = str(exc)
+                    files.append(one)
+            done = [f for f in files if not f.get("error")]
+            job.result = {
+                "path": str(folder), "mode": req.mode, "model": model, "files": files,
+                "new_lines": sum(f["new_lines"] for f in done),
+                "note": (f"Transcribed {len(done)} of {candidates} files"
+                         if files else "Nothing new to transcribe."),
+            }
+            return []
+
+        what = "files without subtitles" if req.mode == "nosubs" else "the gaps in every file"
+        job = stt_jobs.submit(run_job, label=f"Transcribe {what} in {folder.name} ({model})",
+                              cancellable=True)
+        active_stt[key] = job.id
+        return {"job_id": job.id, "candidates": candidates}
 
     @app.post("/api/media/fetch-subs")
     def fetch_subs_file(path: str = Query(...)) -> dict:

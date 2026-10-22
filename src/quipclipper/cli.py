@@ -485,6 +485,10 @@ def _fmt_transcribe(data: dict) -> None:
         data = data.get("result") or {}
     if data.get("note"):
         typer.secho(data["note"], fg="yellow")
+    if "files" in data:  # a folder: one line per file
+        for f in data["files"]:
+            typer.echo(f"  {f.get('new_lines', 0):>4} new  {f['name']}"
+                       + (f"  ({f['error']})" if f.get("error") else ""))
     for line in data.get("new_lines") or []:
         typer.echo(f"{line['start']:>9.2f}  {AUTO_MARK}{line['text']}")
     t = data.get("transcript")
@@ -507,7 +511,7 @@ def _fmt_transcript(data: dict) -> None:
 
 
 _FORMATTERS = {
-    "item.transcribe": _fmt_transcribe,
+    "item.transcribe": _fmt_transcribe, "index.transcribe": _fmt_transcribe,
     "item.transcript": _fmt_transcript,
     "library.browse": _fmt_entries, "library.find": _fmt_entries,
     "search.item": _fmt_matches, "search.folder": _fmt_matches,
@@ -1663,7 +1667,7 @@ _LOCAL = {
     "item.transcript-uncopy": _local_transcript_uncopy,
 }
 # Commands whose --model falls back to the stt_model setting.
-_STT_MODEL = ("item.transcribe",)
+_STT_MODEL = ("item.transcribe", "index.transcribe")
 
 
 def _client_job_wait(c: Context, v: dict) -> Any:

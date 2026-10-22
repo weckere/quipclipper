@@ -568,6 +568,11 @@ class TranscriptStore:
     def has(self, media: str | Path) -> bool:
         return self.load(media) is not None
 
+    def exists(self, media: str | Path) -> bool:
+        """Cheap: a transcript file for ``media`` exists (not read, not checked for
+        staleness). For listings that check many files."""
+        return self._file(media).exists()
+
     def save(self, t: Transcript) -> None:
         self.dir.mkdir(parents=True, exist_ok=True)
         payload = json.dumps(t.to_json(), ensure_ascii=False)

@@ -26,6 +26,7 @@ from quipclipper_web.app import (
     ClipRequest,
     LeadStingerQuipRequest,
     TranscribeRequest,
+    FolderTranscribeRequest,
     YouTubeAdd,
     create_app,
 )
@@ -111,6 +112,7 @@ def _wire_names(cmd: reg.Command, where: str) -> set[str]:
     ("youtube.add", YouTubeAdd),
     ("leadstinger.quip", LeadStingerQuipRequest),
     ("item.transcribe", TranscribeRequest),
+    ("index.transcribe", FolderTranscribeRequest),
 ])
 def test_body_params_match_request_models(cmd_id, model):
     cmd = reg.BY_ID[cmd_id]

@@ -215,3 +215,49 @@ def test_requests_that_cannot_run(env, tmp_path):
     r = off.post("/api/items/transcribe", json={"path": str(root / "a.mkv")})
     assert r.status_code == 503 and "whisper.cpp" in r.json()["detail"]
     assert off.get("/api/health").json()["transcribe"]["available"] is False
+
+
+# --- folders (phase 5) -------------------------------------------------------------------
+
+@needs_ffmpeg
+def test_folder_transcription_and_what_the_library_shows(env, song):
+    root = Path(env["QC_MEDIA_ROOTS"])
+    (root / "pod").mkdir()
+    _tone(root / "pod" / "ep1.mp3")
+    c = _client(env)
+    names = lambda: {e["name"]: e for e in c.get("/api/library/browse",  # noqa: E731
+                                                   params={"path": str(root / "pod")}).json()["entries"]}
+    assert "ep1.mp3" not in names()  # audio with no transcript isn't listed
+    status = c.get("/api/search/folder/index-status", params={"path": str(root)}).json()
+    assert status["audio_untranscribed"] == 1 and status["transcribed"] == 0
+
+    r = c.post("/api/search/folder/transcribe", json={"path": str(root)}).json()
+    assert r["candidates"] == 2  # song.flac (subtitled) and the bare mp3
+    job = _wait(c, r["job_id"])
+    assert job["status"] == "done", job
+    res = job["result"]
+    assert [f["name"] for f in res["files"]] == ["ep1.mp3"]  # nosubs skips the subtitled song
+    assert res["new_lines"] >= 1 and "files without subtitles" in job["label"]
+
+    assert names()["ep1.mp3"]["has_transcript"] is True  # now it's listed, marked
+    status = c.get("/api/search/folder/index-status", params={"path": str(root)}).json()
+    assert status["audio_untranscribed"] == 0 and status["transcribed"] == 1
+    assert status["total"] == 2
+    hits = c.get("/api/search/folder", params={"path": str(root), "query": "way too fast"}).json()
+    assert {Path(h["path"]).name for h in hits["matches"]} == {"ep1.mp3"}
+
+    gaps = _wait(c, c.post("/api/search/folder/transcribe",
+                           json={"path": str(root), "mode": "gaps"}).json()["job_id"])
+    assert [f["name"] for f in gaps["result"]["files"]] == ["song.flac"]
+    again = _wait(c, c.post("/api/search/folder/transcribe",
+                            json={"path": str(root), "mode": "gaps"}).json()["job_id"])
+    assert again["result"]["note"] == "Nothing new to transcribe."
+
+
+def test_folder_transcription_with_nothing_to_do(env):
+    c = _client(env)
+    root = Path(env["QC_MEDIA_ROOTS"])
+    assert c.post("/api/search/folder/transcribe", json={"path": str(root)}).json() == {
+        "job_id": None, "candidates": 0}
+    assert c.post("/api/search/folder/transcribe",
+                  json={"path": str(root), "mode": "everything"}).status_code == 422

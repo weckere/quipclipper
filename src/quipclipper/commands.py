@@ -327,6 +327,20 @@ COMMANDS: tuple[Command, ...] = (
             params=(Param("path", "str", "Folder.", main=True, required=True),)
             + _JOB_FOLLOW,
             response="job", ui="⬇ Fetch missing YouTube subtitles; ✕ Cancel"),
+    Command("index.transcribe", "Transcribe a folder's files with whisper.cpp, one after "
+            "another at idle priority: whole files that have no subtitles (audio without a "
+            "transcript included), or the gaps between every file's subtitle lines. Only ever "
+            "on request; cancel it like any job.", "POST", "/api/search/folder/transcribe",
+            params=(Param("path", "str", "Folder.", where=BODY, main=True, required=True),
+                    Param("mode", "str", "nosubs: whole files with no subtitles; gaps: every "
+                          "file's gaps between subtitle lines.", where=BODY, default="nosubs",
+                          choices=("nosubs", "gaps")),
+                    Param("model", "str", "Whisper model. Default: the settings value, else "
+                          "the server's (small.en).", where=BODY,
+                          choices=("small.en", "medium.en"))) + _JOB_FOLLOW,
+            response="job",
+            ui="Transcribe files without subtitles; Fill gaps in every file (Dialogue index "
+               "card); ✕ Cancel"),
     # --- clip -----------------------------------------------------------------------------
     Command("clip.create", "Cut a clip: around a line of dialogue (QUERY) or between "
             "--start and --end.", "POST", "/api/clip",

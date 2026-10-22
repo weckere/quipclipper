@@ -433,6 +433,7 @@ async function browse(path, { fromLink = false } = {}) {
   // Reset the folder subtitle-backfill controls when entering a folder. A job
   // already running keeps going server-side; we just stop mirroring it here.
   if (fetchFolderPoll) { clearInterval(fetchFolderPoll); fetchFolderPoll = null; }
+  sttFolderReset();
   $("fetch-folder-subs-btn").disabled = false;
   $("fetch-folder-cancel").hidden = true;
   $("fetch-folder-status").hidden = true;
@@ -544,6 +545,10 @@ function renderEntries(entries) {
     // Jellyfin's poster (a show, season or movie folder) or still (an episode) when it knows it.
     const art = e.jellyfin && e.jellyfin.art;
     let chips = (!intoFolder && e.has_sidecar) ? '<span class="badge">sub</span>' : "";
+    // A machine transcript (M21): the "auto" chip, read out as what it is.
+    if (!intoFolder && e.has_transcript) {
+      chips += `<span class="auto-chip" title="Has a machine transcript (whisper): searchable, but it may be wrong"><span aria-hidden="true">auto</span><span class="visually-hidden">machine transcript</span></span>`;
+    }
     // A locally downloaded YouTube video plays/cuts from the server's own copy.
     if (e.is_youtube && e.downloaded) chips += '<span class="badge" title="Downloaded to the server">on server</span>';
     // The row's action is one button; other controls (YouTube's remove) sit beside it, not in it.
@@ -1075,8 +1080,12 @@ function renderIndexStatus(data) {
     $("reindex-folder-btn").hidden = true;
     return;
   }
+  showSttFolder(data);
+  // Machine transcripts (M21): which files have one, and audio that could.
+  const heard = (data.transcribed ? ` ${plural(data.transcribed, "file")} ${data.transcribed === 1 ? "has" : "have"} a machine transcript.` : "")
+    + (data.audio_untranscribed ? ` ${plural(data.audio_untranscribed, "audio file")} ${data.audio_untranscribed === 1 ? "has" : "have"} no transcript yet.` : "");
   if (data.total === 0) {
-    text.textContent = "No video or audio files under this folder.";
+    text.textContent = "No video or audio files under this folder." + heard;
     setIndexBar(null);
     $("reindex-folder-btn").hidden = true;
     return;
@@ -1090,20 +1099,22 @@ function renderIndexStatus(data) {
     ? ` ${plural(noSubs, "file")} ${noSubs === 1 ? "has" : "have"} no subtitles.`
     : "";
   if (withSubs <= 0) {
-    text.textContent = `None of the ${plural(data.total, "file")} here has subtitles, so there is nothing to search.`;
+    text.textContent = (data.transcribed
+      ? `None of the ${plural(data.total, "file")} here has subtitles.`
+      : `None of the ${plural(data.total, "file")} here has subtitles, so there is nothing to search.`) + heard;
     setIndexBar(null);
     return;
   }
   setIndexBar(data.indexed / withSubs);
   const missing = withSubs - data.indexed;
   if (missing <= 0) {
-    text.textContent = noSubs
+    text.textContent = (noSubs
       ? `All ${plural(withSubs, "file")} with subtitles indexed.${none}`
-      : `All ${plural(data.total, "file")} indexed. Dialogue search sees every subtitle here.`;
+      : `All ${plural(data.total, "file")} indexed. Dialogue search sees every subtitle here.`) + heard;
   } else {
     text.textContent = (data.indexed === 0
       ? `None of the ${plural(withSubs, "file")} ${noSubs ? "with subtitles " : ""}are indexed yet. Indexing makes dialogue search fast.`
-      : `${data.indexed} of ${plural(withSubs, "file")} have searchable subtitles.`) + none;
+      : `${data.indexed} of ${plural(withSubs, "file")} have searchable subtitles.`) + none + heard;
     index.textContent = `Index ${plural(missing, "file")}`;
     index.hidden = false;
   }
@@ -1198,6 +1209,94 @@ $("reindex-folder-btn").addEventListener("click", async () => {
   }
   setIndexBusy(false);
 });
+
+// --- folder transcription (M21) -----------------------------------------------------
+// Only from these two buttons, after a confirm: the folder's files one after another, in
+// the background at low priority (one transcription at a time on the server).
+let sttFolderJob = null;   // { id, folder } in flight, for Cancel
+let sttFolderTimer = null;
+
+function sttFolderReset() {
+  clearTimeout(sttFolderTimer);
+  sttFolderTimer = null;
+  sttFolderJob = null;
+  $("stt-folder-status").hidden = true;
+  $("stt-folder-cancel").hidden = true;
+  $("stt-folder-nosubs").hidden = true;
+  $("stt-folder-gaps").hidden = true;
+}
+
+/** Offer the folder transcriptions that have something to do here. */
+function showSttFolder(data) {
+  if (!sttAvailable() || data.skipped || sttFolderJob) return;
+  const bare = (data.no_subs || 0) + (data.audio_untranscribed || 0);
+  $("stt-folder-nosubs").hidden = bare === 0;
+  $("stt-folder-gaps").hidden = data.total - (data.no_subs || 0) <= 0;
+}
+
+async function startFolderTranscribe(mode) {
+  const folder = currentBrowsePath;
+  if (!folder) return;
+  const what = mode === "gaps" ? "the gaps between the subtitle lines of every file here"
+    : "every file here that has no subtitles";
+  if (!confirm(`Transcribe ${what}? It runs one file after another in the background at low ` +
+      "priority, so it can take hours on this server; Cancel keeps what's done.")) return;
+  const status = $("stt-folder-status");
+  status.hidden = false;
+  status.textContent = "Starting…";
+  let r;
+  try {
+    r = await postJSON("/api/search/folder/transcribe",
+      { path: folder, mode, model: sttDefaultModel() || undefined });
+  } catch (err) {
+    status.textContent = `Couldn't start: ${err.message}`;
+    return;
+  }
+  if (!r.job_id) { status.textContent = "Nothing here to transcribe."; return; }
+  announce(`Transcribing ${plural(r.candidates, "file")} in the background`);
+  followFolderTranscribe(r.job_id, folder);
+}
+
+function followFolderTranscribe(id, folder) {
+  sttFolderJob = { id, folder };
+  const status = $("stt-folder-status"), cancel = $("stt-folder-cancel");
+  $("stt-folder-nosubs").hidden = $("stt-folder-gaps").hidden = true;
+  cancel.hidden = false;
+  cancel.disabled = false;
+  const tick = async () => {
+    if (!sttFolderJob || sttFolderJob.id !== id || currentBrowsePath !== folder) return;
+    let job;
+    try { job = await getJSON(`/api/jobs/${encodeURIComponent(id)}`); }
+    catch (err) {
+      if (err.status === 404) { sttFolderReset(); return; }
+      sttFolderTimer = setTimeout(tick, 5000);
+      return;
+    }
+    if (jobActive(job)) {
+      status.textContent = job.status === "queued" ? "Waiting for another transcription to finish…"
+        : `Transcribing at low priority: ${job.progress || "starting"}`;
+      sttFolderTimer = setTimeout(tick, document.hidden ? 10000 : 3000);
+      return;
+    }
+    const res = job.result || {};
+    const msg = job.status === "done" ? `${res.note || "Done"}: ${plural(res.new_lines || 0, "new line")}.`
+      : job.status === "cancelled" ? "Stopped; the files done so far keep their transcripts."
+      : `Failed: ${job.error || "unknown error"}`;
+    announce(msg);
+    sttFolderJob = null;
+    cancel.hidden = true;
+    status.textContent = msg;
+    checkFolderIndex(folder);
+  };
+  cancel.onclick = async () => {
+    cancel.disabled = true;
+    status.textContent = "Stopping after this chunk…";
+    try { await apiFetch(`/api/jobs/${encodeURIComponent(id)}`, { method: "DELETE" }); } catch {}
+  };
+  sttFolderTimer = setTimeout(tick, 800);
+}
+$("stt-folder-nosubs").onclick = () => startFolderTranscribe("nosubs");
+$("stt-folder-gaps").onclick = () => startFolderTranscribe("gaps");
 
 // Backfill YouTube subtitles for every id'd, subtitle-less video in the folder.
 let fetchFolderJob = null;   // in-flight job id, for cancel
