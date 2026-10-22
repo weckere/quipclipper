@@ -164,7 +164,9 @@ typing what you remember, select it on the script, and cut it. The screenshots i
 
 A rail on the left lists the media roots and **YouTube**. The main column lists the
 current folder: folders, video files, audio files that have a transcript beside them
-(🎵) and EPUB3 audiobooks (📚). A **sub** chip marks a file with a sidecar subtitle file.
+or a machine transcript (🎵) and EPUB3 audiobooks (📚). A **sub** chip marks a file with a
+sidecar subtitle file, an **auto** chip one with a [machine
+transcript](#machine-transcription-whispercpp).
 **Search library** filters the folder by name; the dialogue search then covers exactly
 the folders the filter found (the chip says **N folders**), and clearing it goes back to
 the current folder, searched recursively.
@@ -174,7 +176,12 @@ cached. **Index N files** extracts and caches the rest, so dialogue search is fa
 **Re-index all** starts over (use it when subtitles changed). Files with no text
 subtitles at all are counted separately and left out. **Fetch missing YouTube
 subtitles** backfills transcripts for videos that came from YouTube (see
-[below](#backfilling-subtitles-for-existing-videos)).
+[below](#backfilling-subtitles-for-existing-videos)). When the server has whisper.cpp,
+the card also counts the files with a machine transcript and the audio files with no
+transcript yet, and offers **Transcribe files without subtitles** (whole files, audio
+included) and **Fill gaps in every file**: after you confirm, they run file after file in
+the background at low priority, which can take hours, with progress and **Cancel** (what's
+done is kept). Nothing transcribes a folder unless you press one of them.
 
 With Jellyfin set up, a **Now playing** card at the top of the library lists what each
 Jellyfin client is playing; see [Now playing (Jellyfin)](#now-playing-jellyfin).
@@ -761,7 +768,9 @@ a file, not a timer. Each request transcribes one of:
 - **the gaps**: every stretch of 4 s or more between subtitle lines (the default);
 - **the whole file**: `--mode file`, for a file with no subtitles.
 
-Parts transcribed before are skipped, so asking again only does what's new (`--redo`
+A whole **folder** (`quipclipper index.transcribe FOLDER`, `--mode nosubs` for the files with
+no subtitles, audio without a transcript included, or `--mode gaps`) runs file after file
+in one job. Parts transcribed before are skipped, so asking again only does what's new (`--redo`
 does it again, say with a bigger model). English only. **Models:** `small.en` (the
 default: quick, a few word errors) or `medium.en` (closer to subtitle quality, about three
 times slower). Set your default with `quipclipper settings.set stt_model medium.en`, or

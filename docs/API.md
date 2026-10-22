@@ -184,9 +184,14 @@ is false.
 | DELETE | `/api/items/transcript?path=` | Delete the stored transcript → `{deleted}` (a library copy stays). |
 | POST | `/api/items/transcript/library?path=` | Copy the machine lines (those no subtitle line has) next to the file as `<name>.<lang>.whisper.srt` → `{sidecar, lines}`. quipclipper reads that file as machine lines, never as the file's subtitles; the captions then show them, and Jellyfin offers it as a subtitle track. 403 = a read-only folder (needs `writableMediaRoots`), 404 = no transcript. |
 | DELETE | `/api/items/transcript/library?path=` | Remove the `….whisper.srt` copies next to the file → `{removed}`. |
+| POST | `/api/search/folder/transcribe` | Transcribe a folder's files one after another (job): `{path, mode, model}`. `mode=nosubs` (default) does whole files that have no subtitles, audio files with no transcript included; `gaps` does the gaps in every subtitled file. Files already done are skipped. Returns `{job_id, candidates}`, or `{job_id: null, candidates: 0}` when there is nothing to do. Progress reads `"3/41 files, <name>: 1:10 of 4:00 transcribed"`; the `result` is `{path, mode, model, files: [{name, path, new_lines, error?}], new_lines, note}`. 400 = over 500 files. |
 
 `/api/items` adds `transcript: {stored, library, writable, sidecar_name}` for a library
-file.
+file. `/api/library/browse` lists an audio file with a machine transcript (stored or in the
+library) like one with a transcript beside it, and marks entries `has_transcript`.
+`/api/search/folder/index-status` adds `transcribed` (files with a machine transcript; one
+with no subtitles but a transcript no longer counts in `no_subs`) and
+`audio_untranscribed` (audio files with no transcript of any kind, outside `total`).
 
 ### Media (preview/streaming)
 | Method | Path | Purpose |
