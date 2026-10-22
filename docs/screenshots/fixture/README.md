@@ -23,10 +23,11 @@ are a few Borg lines for dialogue search to find.
    section) and `Shows/The Next Leporation/Season 01/` (three short "episodes" of it,
    each with its share of the subtitles).
 
-2. Start a fake Jellyfin with two paused clients (for the Now playing card):
+2. Start a fake Jellyfin with two paused clients (for the Now playing card), the titles
+   and the posters and stills (cut from the fixture's own frames into `~/qc-fixture/art`):
 
    ```bash
-   python3 docs/screenshots/fixture/fake_jellyfin.py
+   FIXTURE=~/qc-fixture python3 docs/screenshots/fixture/fake_jellyfin.py
    ```
 
 3. Start the web app on port 8017 against the fixture:
@@ -49,4 +50,5 @@ are a few Borg lines for dialogue search to find.
    ```
 
    The search shot is cropped to 1600 × 850 (above the footer) (`ffmpeg -vf crop=1600:850:0:0`).
-   Look at every image before committing it.
+   The workspace shots wait for the waveform's peaks; the phone shot scrolls the waveform
+   strip up to just above the pinned selection. Look at every image before committing it.

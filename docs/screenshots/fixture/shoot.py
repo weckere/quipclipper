@@ -39,7 +39,15 @@ async def open_movie_from_now_playing(page):
     await page.wait_for_function("document.querySelector('#script-list .sel, #script-list [aria-selected=true], #script-list .selected') !== null || (typeof clipFirst !== 'undefined' && clipFirst >= 0)")
     await page.wait_for_function("(() => { const v = document.getElementById('player'); return v && v.readyState >= 2 && Math.abs(v.currentTime - 40.1) < 0.6; })()", timeout=20000)
     await page.evaluate("document.getElementById('player').pause()")
+    # The waveform strip: wait for its peaks (the overview is built on first open).
+    await page.wait_for_function("wf.data !== null && document.getElementById('wf-note').textContent === ''", timeout=60000)
     await settle(page, 1500)
+
+
+async def bottom(page, selector, pad=16):
+    """The page y just below the last element matching `selector`, plus `pad`."""
+    box = await page.locator(selector).last.bounding_box()
+    return round(box["y"] + box["height"] + pad)
 
 
 async def shot(page, name, clip=None, full=False):
@@ -59,14 +67,16 @@ async def main():
 
         # Index the season first, so the card says so and search is quick.
         page = await home(dark)
-        await shot(page, "now-playing", clip={"x": 0, "y": 0, "width": 1600, "height": 310})
+        await shot(page, "now-playing", clip={"x": 0, "y": 0, "width": 1600,
+                                            "height": await bottom(page, "#nowplaying-card", 10)})
         await page.evaluate("p => browse(p)", SHOWS + "/The Next Leporation/Season 01")
         await settle(page)
         if await page.locator("#index-btn").is_visible():
             await page.click("#index-btn")
             await page.wait_for_function("!document.getElementById('index-btn') || document.getElementById('index-btn').hidden || /indexed/i.test(document.getElementById('index-card-text').textContent)", timeout=60000)
             await settle(page, 1500)
-        await shot(page, "library", clip={"x": 0, "y": 0, "width": 1600, "height": 425})
+        await shot(page, "library", clip={"x": 0, "y": 0, "width": 1600,
+                                        "height": await bottom(page, "#entries li")})
 
         # Dialogue search over the whole library (from a folder, so the Now
         # playing card is out of the way), tick two hits, preview the first.
@@ -120,6 +130,13 @@ async def main():
                                     is_mobile=True, has_touch=True, color_scheme="dark")
         page = await home(phone)
         await open_movie_from_now_playing(page)
+        # Scroll the waveform strip up to just above the selection pinned to the bottom.
+        await page.evaluate("""() => {
+            const wave = document.getElementById('waveform').getBoundingClientRect();
+            const bar = document.querySelector('.ws-clip').getBoundingClientRect();
+            window.scrollBy(0, wave.bottom + 12 - bar.top);
+        }""")
+        await settle(page, 800)
         await shot(page, "phone")
         await phone.close()
         await b.close()

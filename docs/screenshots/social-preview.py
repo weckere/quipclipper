@@ -7,14 +7,17 @@ FRAME.png is the fixture's frame at 0:40.1 (the big bunny), e.g.
 Writes OUT_DIR/social-preview.{json,figcraft,png}. Needs figcraft-cli and the kit from the
 figcraft skill (~/.claude/skills/figcraft/figcraft_kit.py).
 """
+import math
 import os
+import random
 import sys
 
 sys.path.insert(0, os.path.expanduser("~/.claude/skills/figcraft"))
 from figcraft_kit import Script, build  # noqa: E402
 
 # tokens.css, dark
-BG, SURFACE, RAISED, LINE = "#0F1115", "#171A20", "#202530", "#2B313C"
+BG, SURFACE, RAISED, SUNKEN = "#0F1115", "#171A20", "#202530", "#0B0D10"
+LINE, LINE_STRONG = "#2B313C", "#6A7282"
 TEXT, DIM, FAINT = "#E9EBEF", "#A6ACB8", "#8890A0"
 ACCENT, ACCENT_INK, PLAYHEAD = "#F2B544", "#1A1303", "#5BB5FF"
 ACCENT_SOFT = "#F2B54429"
@@ -57,7 +60,8 @@ s.text(page, "github.com/weckere/quipclipper", X, 548, size=20, color=FAINT)
 # --- right: a slice of the workspace ---------------------------------------------------
 CX, CW = 700, 500
 IW, IH = CW - 32, int((CW - 32) * 568 / 1008)
-CH = 16 + IH + 16 + 44 + 12 + 3 * 40 + 16   # video, map, three lines
+SH = 96                                     # the waveform strip
+CH = 16 + IH + 16 + SH + 12 + 3 * 40 + 16   # video, waveform, three lines
 CY = (H - CH) // 2
 card = s.frame(page, "workspace card", CX, CY, CW, CH, fill=SURFACE, radius=18, stroke=LINE)
 video = s.frame(card, "video", 16, 16, IW, IH, fill="#000000", radius=10)
@@ -67,20 +71,78 @@ SW = 340  # fits the line at 19 px
 s.rect(video, "subtitle box", (IW - SW) // 2, IH - 50, SW, 32, "#000000B8", radius=4)
 s.text(video, sub, 0, IH - 46, size=19, w=IW, align="center", color="#FFFFFF", style="Medium")
 
-# The dialogue map: a bar per line, the selection amber, the playhead blue.
+# The waveform strip, as the app draws it (app.js wfDraw): the subtitle lines as spans
+# along the top, the wave, the selection shaded between its amber in and out handles,
+# the playhead blue, a time ruler along the bottom. Zoomed to the selected line.
 MY = 16 + IH + 16
-strip = s.frame(card, "dialogue map", 16, MY, IW, 44, fill=BG, radius=8, stroke=LINE)
-cues = [2, 5, 9, 13.5, 17, 26, 29, 34, 38.5, 45, 52, 61, 66, 73, 86, 91, 96]
-for t in cues:
-    x = 10 + (IW - 20) * t / 100
-    s.rect(strip, f"bar {t}", x, 8, 3, 28, ACCENT if t == 38.5 else FAINT, radius=1)
-s.rect(strip, "playhead", 10 + (IW - 20) * 40.1 / 100, 4, 2, 36, PLAYHEAD)
+V0, V1 = 36.6, 43.6
+CUE_LANE, RULER = 18, 16
+strip = s.frame(card, "waveform", 16, MY, IW, SH, fill=SUNKEN, radius=8, stroke=LINE)
+
+
+def wx(t):
+    return IW * (t - V0) / (V1 - V0)
+
+
+TOP, BOTTOM = CUE_LANE, SH - RULER
+MID, HALF = (TOP + BOTTOM) / 2, (BOTTOM - TOP) / 2 - 2
+SEL_IN, SEL_OUT = 38.3, 41.9
+s.rect(strip, "selection", wx(SEL_IN), 0, wx(SEL_OUT) - wx(SEL_IN), BOTTOM, ACCENT_SOFT)
+
+cues = [(34.0, 37.5, "From this time forward, you will service us."),
+        (38.5, 41.5, "You will become one with the Borg."),
+        (45.0, 48.0, "Strength is irrelevant.")]
+for a, b, text in cues:
+    if b < V0 or a > V1:
+        continue
+    l, r = max(0, wx(a)), min(IW, wx(b))
+    s.rect(strip, f"cue {a}", l, 2, r - l, CUE_LANE - 4, RAISED)
+    for x in (wx(a), wx(b) - 1):
+        if 0 <= x <= IW - 1:
+            s.rect(strip, f"cue edge {x:.0f}", x, 2, 1, CUE_LANE - 4, LINE_STRONG)
+            s.rect(strip, f"cue line {x:.0f}", x, TOP, 1, BOTTOM - TOP, LINE)
+    span = s.frame(strip, f"cue label {a}", l + 4, 2, r - l - 8, CUE_LANE - 4)
+    s.text(span, text, 0, 0, size=10, color=TEXT)
+
+
+def level(t):
+    """A made-up speech envelope: syllables inside the lines, room tone between them."""
+    amp = 0.04
+    for a, b, _ in cues:
+        if a - 0.05 <= t <= b + 0.2:
+            edge = min(1, (t - a + 0.05) / 0.12, (b + 0.2 - t) / 0.3)
+            # Syllables of uneven length and stress, from a few incommensurate rates.
+            syll = (0.55 + 0.45 * math.sin(t * 9.7 + 1.3)) * abs(math.sin(t * 13.1 + math.sin(t * 3.7)))
+            amp = max(amp, edge * (0.12 + 0.85 * syll ** 0.8))
+    return min(1, amp)
+
+
+rng = random.Random(1701)  # fixed, so the picture doesn't change between runs
+s.rect(strip, "centre line", 0, round(MID), IW, 1, LINE)
+xs = [i * 1.5 for i in range(int(IW / 1.5) + 1)]
+peaks = [level(V0 + (V1 - V0) * x / IW) for x in xs]
+upper = [(x, MID - p * (0.7 + 0.3 * rng.random()) * HALF) for x, p in zip(xs, peaks)]
+lower = [(x, MID + p * (0.7 + 0.3 * rng.random()) * HALF) for x, p in zip(xs, peaks)]
+wave = "M" + " L".join(f"{x:.1f} {y:.1f}" for x, y in upper + lower[::-1]) + " Z"
+s.vector(strip, "wave", 0, 0, IW, SH, wave, fill=DIM)
+
+for t in range(37, 44):
+    x = wx(t)
+    s.rect(strip, f"tick {t}", x, BOTTOM, 1, 4, LINE_STRONG)
+    s.text(strip, f"0:{t}", x + 3, BOTTOM + 2, size=10, font=MONO, color=FAINT)
+
+s.rect(strip, "playhead", wx(40.1) - 1, 0, 2, BOTTOM, PLAYHEAD)
+for name, t, grip_x in (("in", SEL_IN, 0), ("out", SEL_OUT, -12)):
+    x = wx(t) - 1
+    s.rect(strip, f"{name} handle", x, 0, 2, BOTTOM, ACCENT)
+    s.rect(strip, f"{name} grip", x + grip_x, BOTTOM - 26, 14, 26, ACCENT, radius=3,
+           stroke=ACCENT_INK, strokeWeight=1)
 
 # Three script lines, the middle one selected.
 lines = [("0:34.0", "From this time forward, you will service us."),
          ("0:38.5", "You will become one with the Borg."),
          ("0:45.0", "Strength is irrelevant.")]
-LY = MY + 44 + 12
+LY = MY + SH + 12
 for i, (t, text) in enumerate(lines):
     y = LY + i * 40
     sel = i == 1
@@ -92,4 +154,4 @@ for i, (t, text) in enumerate(lines):
            style="SemiBold" if sel else "Regular")
 
 build(s, os.path.join(out_dir, "social-preview.figcraft"),
-      png=os.path.join(out_dir, "social-preview.png"))
+      png=os.path.join(out_dir, "social-preview.png"), scale=1)

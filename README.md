@@ -13,7 +13,7 @@ fuzzy-search the line, map the match back to its time span, and cut it with ffmp
 mkvmerge. quipclipper is a **self-hosted web app** over your own media folders, plus a
 **CLI** that can do everything the web app does.
 
-![The workspace: a video with its script, one line selected, ready to clip](docs/screenshots/workspace-dark.png)
+![The workspace: a video with its script, one line selected, and the waveform strip under the player with the selection's in and out handles](docs/screenshots/workspace-dark.png)
 
 ## Features
 
@@ -23,6 +23,9 @@ mkvmerge. quipclipper is a **self-hosted web app** over your own media folders, 
 - **A workspace for each file:** the player, a dialogue map of where the talking is, and the
   scrolling script. Set the selection by whole lines (Start / End), add padding, and see it
   loop before you cut.
+- **Exact cue points:** a zoomable waveform under the player (down to 20 ms across) with the
+  subtitle lines on it. Drag the in and out handles, snapped to a zero crossing, a quiet
+  spot or a line's edge, and audition the first and last second before you cut.
 - **Clips that keep the source:** a lossless stream copy (every audio track, 5.1/7.1
   intact) or a frame-exact H.264 re-encode (Intel Quick Sync when present); full-mix
   WAV/FLAC; surround split into channel groups (just the centre channel, say); GIFs from
@@ -48,32 +51,35 @@ mkvmerge. quipclipper is a **self-hosted web app** over your own media folders, 
 
 ## Screenshots
 
-**The library:** the media roots on the left, and a Dialogue index card that caches
-subtitles so dialogue search is instant.
+**The library:** the media roots on the left, a Dialogue index card that caches
+subtitles so dialogue search is instant, and Jellyfin's stills on the episodes.
 
-![The library, with the Dialogue index card](docs/screenshots/library.png)
+![The library, with the Dialogue index card and episode stills from Jellyfin](docs/screenshots/library.png)
 
 **Dialogue search** over the whole library: grouped by file, the words highlighted, a
 preview of the lines around a hit, and a batch bar for the ticked lines.
 
 ![Search results across the library, grouped by file, with a preview](docs/screenshots/search-results.png)
 
-**The workspace** in the light theme (the dark one is at the top).
+**The workspace** in the light theme (the dark one is at the top). Under the player, the
+dialogue map outlines the stretch the waveform shows, and the waveform's amber handles
+mark the selected line's in and out points.
 
-![The workspace in the light theme](docs/screenshots/workspace-light.png)
+![The workspace in the light theme, with the waveform strip and its handles under the player](docs/screenshots/workspace-light.png)
 
 **Now playing** from Jellyfin: open what a client is playing, at its playhead.
 
-![Now playing from Jellyfin](docs/screenshots/now-playing.png)
+![Now playing from Jellyfin, with each item's poster](docs/screenshots/now-playing.png)
 
 **Send to LeadStinger:** the ⚡ toggle beside Make clip sends the line to LeadStinger
 instead of the clips library.
 
 <img src="docs/screenshots/send-to-leadstinger.png" width="880" alt="The Selection panel with the Send to LeadStinger toggle ticked">
 
-**On a phone**, the selection stays pinned to the bottom of the screen.
+**On a phone**, the selection stays pinned to the bottom of the screen, and the waveform's
+handles have grips big enough for a finger.
 
-<p align="center"><img src="docs/screenshots/phone.png" width="300" alt="The workspace on a phone, with the selection pinned to the bottom"></p>
+<p align="center"><img src="docs/screenshots/phone.png" width="300" alt="The workspace on a phone: the player, the waveform strip with its handles, and the selection pinned to the bottom"></p>
 
 ## Install
 
@@ -189,7 +195,7 @@ The web app aims at WCAG 2.2 AA, and tests keep it there:
   can say; a skip link jumps past the top bar;
 - the keyboard does everything: `/` to search, Space or K to play, the script as one tab
   stop (↑ ↓ to move, Enter to play, S and E to set the selection), arrow keys on the
-  dialogue map and seek bar;
+  dialogue map, the seek bar and the waveform's handles;
 - finished and failed jobs, the selection and match counts are announced;
 - Settings has subtitle size (Normal, Large, Extra large) and a solid subtitle background;
   both themes meet AA contrast (a test checks every colour pair), with a stronger palette
