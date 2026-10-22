@@ -159,6 +159,10 @@ def cues_to_vtt(cues: list[Cue], offset: float = 0) -> str:
         # Re-emit the speaker as a WebVTT voice tag so the player caption shows it.
         # The speaker is escaped too so a stray '>' can't close the tag early.
         speaker = getattr(c, "speaker", None)
+        if getattr(c, "source", None) == "machine":
+            # A machine transcript line (M21) in the captions: classed for ::cue(.machine)
+            # styling, and led by "≈ ", a mark that survives a player ignoring the class.
+            text = f"<c.machine>≈ {text}</c>"
         lines.append(f"<v {_vtt_escape(speaker)}>{text}" if speaker else text)
         lines.append("")
     return "\n".join(lines)

@@ -47,6 +47,7 @@ from quipclipper.clip import (
     split_audio_channels,
     vaapi_h264_available,
 )
+from quipclipper import transcribe as stt
 from quipclipper.models import Match, format_timestamp
 from quipclipper.naming import (
     DEFAULT_CLIP_TEMPLATE,
@@ -283,6 +284,20 @@ class ClipRequest(BaseModel):
     default_sub_track: int | None = Field(None, ge=0)
 
 
+class TranscribeRequest(BaseModel):
+    """JSON body for POST /api/items/transcribe (M21): what to transcribe, and with what."""
+
+    path: str
+    # range: start..end; gaps: between subtitle lines; file: all of it. None: range when
+    # start is given, else gaps.
+    mode: str | None = Field(None, pattern="^(range|gaps|file)$")
+    start: float | None = Field(None, ge=0, allow_inf_nan=False)
+    end: float | None = Field(None, gt=0, allow_inf_nan=False)
+    model: str | None = Field(None, pattern=r"^(small\.en|medium\.en)$")
+    audio: int = Field(0, ge=0)
+    redo: bool = False
+
+
 class YouTubeAdd(BaseModel):
     """Body of POST /api/youtube. Module-level (like ClipRequest) so FastAPI can
     resolve the string annotation under ``from __future__ import annotations``."""
@@ -385,6 +400,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     yt_store = youtube_items.YouTubeStore(settings.state_dir, download_dir=settings.youtube_dir)
     flac_cache = clipmeta.FlacCache(settings.state_dir)
     peak_store = peaks.PeakStore(settings.state_dir)
+    # Machine transcripts (M21), in the state dir and never next to the media. They run
+    # one at a time in their own pool, so a transcription never takes a clip slot; and
+    # only when someone asks (D-037): nothing here starts one on its own.
+    transcripts = stt.TranscriptStore(settings.state_dir / "transcripts")
+    stt_jobs = JobRegistry(max_workers=1)
+    active_stt: dict[str, str] = {}
     # video id -> last download / add job id, so a repeat POST returns the
     # in-flight job instead of queueing a duplicate.
     active_downloads: dict[str, str] = {}
@@ -400,6 +421,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         jobs.shutdown()
         dl_jobs.shutdown()
         yt_jobs.shutdown()
+        stt_jobs.shutdown()
         peak_store.shutdown()
 
     app = FastAPI(title="quipclipper-web", version=__version__, lifespan=lifespan)
@@ -448,8 +470,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "ffprobe": shutil.which("ffprobe") is not None,
                 "mkvmerge": shutil.which("mkvmerge") is not None,
                 "yt-dlp": shutil.which("yt-dlp") is not None,
+                "whisper-cli": settings.whisper.binary_path() is not None,
             },
             "jellyfin": settings.jellyfin_enabled,  # Now playing (M15) configured
+            # Machine transcription (M21): whisper.cpp, its models and thread cap.
+            "transcribe": settings.whisper.describe(),
         }
 
     @app.get("/api/config")
@@ -465,6 +490,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "public_url": settings.public_url or None,
             # Jellyfin URL + API key set: the Now playing card and scope show (M15).
             "jellyfin": settings.jellyfin_enabled,
+            # Machine transcription (M21): whether it's set up, and the models to offer.
+            "transcribe": {k: v for k, v in settings.whisper.describe().items()
+                           if k in ("available", "models", "default_model", "threads",
+                                    "language")},
         }
 
     # --- Jellyfin now playing (M15) ---------------------------------------------
@@ -617,6 +646,42 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if clips_root.is_dir() and (target == clips_root or clips_root in target.parents):
             return target
         raise HTTPException(status_code=403, detail=f"Path is outside allowed directories: {path}")
+
+    # --- machine transcript lines (M21) -------------------------------------------
+
+    def _machine_lines(p: Path, captions: bool = False) -> list:
+        """A file's machine transcript lines: the stored transcript and any copy in the
+        library next to it. The player's captions show only a library copy (D-037)."""
+        return stt.machine_cues(p, transcripts, stored=not captions)
+
+    def _file_cues(p: Path, track: int | None = None, machine: str = "include",
+                   captions: bool = False, heard: list | None = None) -> list:
+        """A library file's cues with its machine lines mixed in (marked, subtitle lines
+        winning), left out (``exclude``) or alone (``only``). A file with no subtitles but
+        a transcript has only machine lines; with neither, the subtitle error stands."""
+        if machine != "exclude" and heard is None:
+            heard = _machine_lines(p, captions)
+        heard = heard if machine != "exclude" else []
+        if machine == "only":
+            return heard
+        try:
+            real = sub_cache.resolve(p, track=track)
+        except (ValueError, FileNotFoundError, RuntimeError):
+            if not heard:
+                raise
+            real = []
+        return stt.merge_cues(real, heard) if heard else real
+
+    def _transcript_info(p: Path) -> dict:
+        """What /api/items says about a file's transcript, for the workspace card."""
+        t = transcripts.load(p)
+        return {
+            "stored": t.summary() if t else None,
+            "library": [x.name for x in stt.find_machine_sidecars(p)],
+            "writable": os.access(p.parent, os.W_OK),
+            "sidecar_name": stt.machine_sidecar_path(
+                p, t.language if t else settings.whisper.language).name,
+        }
 
     # --- deep links (M18) ----------------------------------------------------
 
@@ -817,6 +882,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         known = _jf_known(p, False)
         if known:
             info["jellyfin"] = known  # title, series, poster (M18)
+        if settings.clips_dir.resolve() not in p.resolve().parents:
+            info["transcript"] = _transcript_info(p)  # machine transcription (M21)
         return info
 
     @app.get("/api/items/link")
@@ -955,6 +1022,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         track: int | None = Query(None, ge=0),
         offset: float = Query(0, ge=0),
         fmt: str = Query("vtt"),
+        machine: str = Query("include", pattern="^(include|exclude|only)$"),
     ) -> Response:
         # YouTube ref: cues come from the stored transcript (SubtitleCache bypassed).
         vid = youtube_items.parse_ref(path)
@@ -995,7 +1063,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # 2160p remux), and the VTT track + script panel request the same
             # subtitles when an item opens.  The cache + in-flight lock means
             # one extraction serves all callers and later views are instant.
-            cues = sub_cache.resolve(p, track=track)
+            # Machine lines (M21) join the script; the captions (vtt) get only a copy
+            # that was put in the library.
+            cues = _file_cues(p, track, machine, captions=fmt != "json")
         except ValueError as exc:  # multiple tracks, none auto-selectable
             raise HTTPException(status_code=409, detail=str(exc))
         except FileNotFoundError as exc:
@@ -1005,7 +1075,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if fmt == "json":
             return Response(
                 content=json.dumps(
-                    [{"start": c.start, "end": c.end, "text": c.text, "speaker": c.speaker}
+                    [{"start": c.start, "end": c.end, "text": c.text, "speaker": c.speaker,
+                      "source": c.source}
                      for c in cues],
                 ),
                 media_type="application/json",
@@ -1025,6 +1096,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         limit: int = Query(10, ge=1, le=100),
         min_score: float = Query(60.0, ge=0, le=100),
         max_span: int = Query(3, ge=1, le=10),
+        machine: str = Query("include", pattern="^(include|exclude|only)$"),
     ) -> dict:
         vid = youtube_items.parse_ref(path)
         epub_ref, seg = epub_items.parse_ref(path)
@@ -1043,7 +1115,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         else:
             p = _resolve_any(path)
             try:
-                cues = sub_cache.resolve(p, track=track)
+                cues = _file_cues(p, track, machine)
             except ValueError as exc:
                 raise HTTPException(status_code=409, detail=str(exc))
             except FileNotFoundError as exc:
@@ -1072,6 +1144,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "start_ts": format_timestamp(m.start),
                     "end_ts": format_timestamp(m.end),
                     "cue_count": len(m.cues),
+                    "machine": m.machine,  # a machine transcript line (M21)
                 }, _item_link(path, sel=(m.start, m.end), track=track))
                 for i, m in enumerate(matches)
             ],
@@ -1086,6 +1159,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         limit: int = Query(5, ge=1, le=20),
         min_score: float = Query(60.0, ge=0, le=100),
         max_span: int = Query(3, ge=1, le=10),
+        machine: str = Query("include", pattern="^(include|exclude|only)$"),
     ) -> dict:
         """Search dialogue across all video files in one or more folders.
 
@@ -1149,10 +1223,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         books.sort(key=lambda p: p.name.lower())
 
         def _search_one(video: Path) -> list[dict]:
-            if sub_cache.has_no_subs(video):
+            heard = _machine_lines(video) if machine != "exclude" else []
+            if sub_cache.has_no_subs(video) and not heard:
                 return []  # known to have nothing to search: skip the probe
             try:
-                cues = sub_cache.resolve(video)
+                cues = _file_cues(video, None, machine, heard=heard)
             except (ValueError, FileNotFoundError, RuntimeError):
                 sub_cache.mark_no_subs(video)
                 return []
@@ -1172,6 +1247,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "start_ts": format_timestamp(m.start),
                     "end_ts": format_timestamp(m.end),
                     "cue_count": len(m.cues),
+                    "machine": m.machine,
                 }
                 for m in matches
             ]
@@ -1235,6 +1311,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 for m in matches
             ]
 
+        if machine == "only":  # books and YouTube items have no machine transcripts
+            books, yt_videos = [], []
         with ThreadPoolExecutor(max_workers=4) as pool:
             futures = {pool.submit(_search_one, v): v for v in videos}
             futures.update({pool.submit(_search_book, b): b for b in books})
@@ -1365,6 +1443,162 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # YouTube and write a .vtt sidecar next to it — making it dialogue-searchable.
     # Requires the folder to be writable (writableMediaRoots). yt-dlp is slow, so
     # these run as background jobs.
+
+    # --- machine transcription (M21) -------------------------------------------------
+    # Only ever on request (D-037): these endpoints are the only way a transcription
+    # starts. Each runs as a job in stt_jobs (one at a time) at idle priority, with at
+    # most 3 whisper threads (quipclipper.transcribe), and can be cancelled between or
+    # during chunks; finished chunks are kept.
+
+    def _stt_required() -> None:
+        if not settings.whisper.available:
+            raise HTTPException(status_code=503, detail="Transcription isn't set up on this "
+                                "server: it needs whisper.cpp and a model (QC_WHISPER_MODEL).")
+
+    def _library_media(path: str) -> Path:
+        """A library file a transcript can belong to (not a YouTube item, an EPUB chapter
+        or a clip)."""
+        if youtube_items.parse_ref(path) is not None or epub_items.parse_ref(path)[1] is not None:
+            raise HTTPException(status_code=422, detail="Transcription works on library "
+                                "files, not YouTube items or EPUB chapters.")
+        p = _resolve(path)
+        if not p.is_file():
+            raise HTTPException(status_code=404, detail=f"Not a file: {path}")
+        return p
+
+    def _clock(t: float) -> str:
+        t = int(max(t, 0))
+        h, rest = divmod(t, 3600)
+        return f"{h}:{rest // 60:02d}:{rest % 60:02d}" if h else f"{rest // 60}:{rest % 60:02d}"
+
+    def _transcribe(job, p: Path, mode: str, *, start=None, end=None, model: str,
+                    audio: int = 0, redo: bool = False) -> dict:
+        """Transcribe what ``mode`` asks of one file; the job's progress follows it. Returns
+        the job's result (also used by the folder job)."""
+        try:
+            real = sub_cache.resolve(p)
+        except (ValueError, FileNotFoundError, RuntimeError):
+            real = []
+        duration = media.probe_duration(p)
+        have = transcripts.load(p)
+        ranges = stt.plan_ranges(mode, real=real, duration=duration,
+                                 done=have.ranges if have else [], start=start, end=end,
+                                 redo=redo)
+        result = {"path": str(p), "mode": mode, "model": model,
+                  "transcribed": [list(r) for r in ranges]}
+        if not ranges:
+            result.update(new_lines=0, note="Nothing new to transcribe.",
+                          transcript=have.summary() if have else None)
+            return result
+
+        def progress(done: float, total: float) -> None:
+            job.progress = f"{_clock(done)} of {_clock(total)} transcribed"
+
+        t = None
+        try:
+            t = stt.run(transcripts, p, ranges, cfg=settings.whisper, model=model,
+                        audio=audio, real=real, duration=duration, progress=progress,
+                        cancelled=lambda: job.cancel_requested)
+        except stt.Cancelled:
+            t = transcripts.load(p)
+        heard = [c for c in (t.cues if t else []) if any(a <= c.start < b for a, b in ranges)]
+        result.update(new_lines=len(heard), transcript=t.summary() if t else None)
+        return result
+
+    @app.post("/api/items/transcribe")
+    def transcribe_item(req: TranscribeRequest) -> dict:
+        """Start transcribing a range, a file's gaps or a whole file (a job; poll it)."""
+        _stt_required()
+        p = _library_media(req.path)
+        mode = req.mode or ("range" if req.start is not None else "gaps")
+        if mode == "range" and (req.start is None or req.end is None or req.end <= req.start):
+            raise HTTPException(status_code=422, detail="A range needs a start before its end.")
+        model = req.model or settings.whisper.default_model
+        try:
+            settings.whisper.model_path(model)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        key = json.dumps([str(p), mode, req.start, req.end, model, req.audio, req.redo])
+        prev = stt_jobs.get(active_stt.get(key, ""))
+        if prev is not None and prev.status.value in ("queued", "running"):
+            return {"job_id": prev.id, "existing": True}
+        what = {"range": f"{_clock(req.start or 0)}–{_clock(req.end or 0)}",
+                "gaps": "the gaps", "file": "the whole file"}[mode]
+
+        def run_job(job) -> list[Path]:
+            job.result = _transcribe(job, p, mode, start=req.start, end=req.end, model=model,
+                                     audio=req.audio, redo=req.redo)
+            return []
+
+        job = stt_jobs.submit(run_job, label=f"Transcribe {what} of {p.name} ({model})",
+                              cancellable=True)
+        active_stt[key] = job.id
+        return {"job_id": job.id}
+
+    @app.get("/api/items/transcript")
+    def item_transcript(
+        path: str = Query(...),
+        fmt: str = Query("json", pattern="^(json|srt|vtt)$"),
+    ) -> Response:
+        """A file's machine transcript: what was transcribed and the lines heard (json), or
+        the lines as SubRip / WebVTT to save."""
+        p = _library_media(path)
+        heard = stt.machine_cues(p, transcripts)
+        if fmt in ("srt", "vtt"):
+            name = stt.machine_sidecar_path(p, settings.whisper.language)
+            body = stt.cues_to_srt(heard) if fmt == "srt" else stt.cues_to_vtt(heard)
+            return Response(body, media_type="application/x-subrip" if fmt == "srt" else "text/vtt",
+                            headers={"Content-Disposition": "attachment; filename*=UTF-8''"
+                                     + quote(name.with_suffix("." + fmt).name)})
+        return JSONResponse({"path": path, **_transcript_info(p),
+                             "lines": [{"start": c.start, "end": c.end, "text": c.text,
+                                        "source": c.source} for c in heard]})
+
+    @app.delete("/api/items/transcript")
+    def delete_item_transcript(path: str = Query(...)) -> dict:
+        """Delete a file's stored transcript (a copy in the library stays)."""
+        p = _library_media(path)
+        return {"path": path, "deleted": transcripts.clear(p)}
+
+    @app.post("/api/items/transcript/library")
+    def copy_transcript_to_library(path: str = Query(...)) -> dict:
+        """Copy a file's machine lines into the library as <name>.<lang>.whisper.srt next to
+        it (writable folders only). From then on the captions and Jellyfin show them."""
+        p = _library_media(path)
+        t = transcripts.load(p)
+        if t is None or not t.cues:
+            raise HTTPException(status_code=404, detail="This file has no machine transcript "
+                                "to copy: transcribe it first.")
+        if not os.access(p.parent, os.W_OK):
+            raise HTTPException(status_code=403, detail="That folder is read-only — add it to "
+                                "writableMediaRoots to copy transcripts into it.")
+        try:
+            real = sub_cache.resolve(p)
+        except (ValueError, FileNotFoundError, RuntimeError):
+            real = []
+        # The lines the script shows as machine lines: none a subtitle line already has.
+        lines = [c for c in stt.merge_cues(real, t.cues) if c.machine]
+        try:
+            side = stt.write_sidecar(p, lines, t.language)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail=f"Couldn't write the sidecar: {exc}")
+        return {"path": path, "sidecar": side.name, "lines": len(lines)}
+
+    @app.delete("/api/items/transcript/library")
+    def remove_transcript_from_library(path: str = Query(...)) -> dict:
+        """Remove the machine transcript sidecar(s) (….whisper.srt) next to a file."""
+        p = _library_media(path)
+        found = stt.find_machine_sidecars(p)
+        if found and not os.access(p.parent, os.W_OK):
+            raise HTTPException(status_code=403, detail="That folder is read-only.")
+        removed = []
+        for side in found:
+            with contextlib.suppress(FileNotFoundError):
+                side.unlink()
+                removed.append(side.name)
+        return {"path": path, "removed": removed}
 
     @app.post("/api/media/fetch-subs")
     def fetch_subs_file(path: str = Query(...)) -> dict:
@@ -2440,7 +2674,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def _find_job(job_id: str):
         """A job from any pool (clips, downloads, or YouTube add/reindex), plus
         its registry — the /api/jobs surface presents them as one list."""
-        for registry in (jobs, dl_jobs, yt_jobs):
+        for registry in (jobs, dl_jobs, yt_jobs, stt_jobs):
             job = registry.get(job_id)
             if job is not None:
                 return job, registry
@@ -2459,7 +2693,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/jobs")
     def list_jobs() -> dict:
-        merged = [*jobs.list_recent(), *dl_jobs.list_recent(), *yt_jobs.list_recent()]
+        merged = [*jobs.list_recent(), *dl_jobs.list_recent(), *yt_jobs.list_recent(),
+                  *stt_jobs.list_recent()]
         merged.sort(key=lambda j: j.created, reverse=True)
         return {"jobs": [_job_dict(j) for j in merged[:20]]}
 

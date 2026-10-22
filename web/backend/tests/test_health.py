@@ -19,7 +19,8 @@ def test_health_ok() -> None:
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "ok"
-    assert set(body["tools"]) == {"ffmpeg", "ffprobe", "mkvmerge", "yt-dlp"}
+    assert set(body["tools"]) == {"ffmpeg", "ffprobe", "mkvmerge", "yt-dlp", "whisper-cli"}
+    assert body["transcribe"]["available"] is False  # no model configured (M21)
 
 
 def test_config_reflects_env() -> None:

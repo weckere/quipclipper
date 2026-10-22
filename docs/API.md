@@ -78,7 +78,7 @@ FastAPI publishes the live schema, served behind the same gate:
 | GET | `/api/items/link?path=&at=&sel=&track=` | A [deep link](#deep-links) that opens the file in the web app at `at` seconds with `sel` (`START-END`) selected: `{path, at, sel, track, link}`. 503 without `QC_PUBLIC_URL`; the path is checked like `/api/items` (403 outside the roots, 404 missing). |
 | GET | `/api/items/peaks?path=&start=&end=&bins=&audio=&keyframes=` | [Waveform](#waveform-peaks-and-snap) peaks of `start..end` on audio stream `a:audio`, mixed to mono. 202 while the overview of a long span is still being built. |
 | GET | `/api/items/snap?path=&t=&mode=&radius=&db=&audio=` | The nearest zero crossing (`mode=zero`) or quiet point (`mode=silence`) to `t`: where a cut starts cleanly. |
-| GET | `/api/items/subtitles?path=&track=&offset=&fmt=` | Subtitles as WebVTT (`fmt=vtt`, default) or JSON cues `{start, end, text, speaker}` (`fmt=json` — what the script view uses). |
+| GET | `/api/items/subtitles?path=&track=&offset=&fmt=&machine=` | Subtitles as WebVTT (`fmt=vtt`, default — the player's captions) or JSON cues `{start, end, text, speaker, source}` (`fmt=json` — what the script view uses). `source` is `"machine"` for a [machine transcript](#machine-transcription) line, else null. `machine=include` (default) mixes them in, `exclude` leaves them out, `only` gives them alone. The captions carry only machine lines copied into the library, as `<c.machine>≈ …</c>`. |
 | POST | `/api/items/subtitles/reindex?path=` | Rebuild the subtitle cache for one file. |
 | POST | `/api/media/fetch-subs?path=` | Backfill one YouTube-sourced library video's subtitles (async job — poll `job_id`). The video's id is read from its `[<id>]` filename or a sibling `.info.json`; a `.vtt` sidecar is written next to it. 400 = no id found or the folder is read-only (needs `writableMediaRoots`). Job `progress` ends `ok`/`skipped`/`none`. |
 | POST | `/api/search/folder/fetch-subs?path=` | Backfill every id'd, subtitle-less YouTube video in a folder (async job with `progress`; cancellable via `DELETE /api/jobs/{id}`). Skips videos that already have subtitles. `{job_id: null, candidates: 0}` = nothing to do. 400 = read-only folder. |
@@ -150,21 +150,43 @@ resolved stream URLs, so `split_channels` and `backend=mkvmerge` return 400 for
 ### Dialogue search
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/search?path=&query=&track=&limit=&min_score=&max_span=` | Rank dialogue matches in one file. |
-| GET | `/api/search/folder?path=&query=&limit=` | Search dialogue across a folder (repeat `path=` for several; `yt:` and EPUB books count). |
+| GET | `/api/search?path=&query=&track=&limit=&min_score=&max_span=&machine=` | Rank dialogue matches in one file. |
+| GET | `/api/search/folder?path=&query=&limit=&machine=` | Search dialogue across a folder (repeat `path=` for several; `yt:` and EPUB books count). |
 | GET | `/api/search/folder/index-status?path=` | How much of a folder's subtitles are cached: `{total, indexed, no_subs, skipped}`. `no_subs` counts files indexing found to have no subtitles at all (no sidecar, no text track); they are never offered for indexing. `skipped: true` means the folder holds over 500 media files, too many to index in one request (`no_subs` is left out, and `POST …/index` answers 400). |
 | POST | `/api/search/folder/index?path=&force=` | Pre-extract subtitles for a folder (streams progress). |
 
 `/api/search` returns `{query, count, matches: [{index, score, text, speaker,
-start, end, start_ts, end_ts, cue_count, link}]}`. The `index` is what you pass back as
+start, end, start_ts, end_ts, cue_count, machine, link}]}`. The `index` is what you pass back as
 `match_index` when clipping. `/api/search/folder` returns `{query, folders,
 files_scanned, capped, count, matches: [{file, path, score, text, speaker, start, end,
-start_ts, end_ts, cue_count, link}]}`: `limit` is the most matches per file (default 5,
+start_ts, end_ts, cue_count, machine, link}]}`: `limit` is the most matches per file (default 5,
 at most 20), and `capped: true` means it stopped after 500 files, so a line not found
 may be in a file it didn't search. Its hits have no `index`: clip one with its
 `path`, `start`, `end` and `text` as `cue_text`. `link` (here, on `/api/search/folder` hits, bookmarks and
 clips-library entries) is a [deep link](#deep-links) to that line, present only when
-`QC_PUBLIC_URL` is set.
+`QC_PUBLIC_URL` is set. `machine: true` marks a hit on a [machine transcript](#machine-transcription)
+line; at an equal score a subtitle line ranks first. `machine=exclude` searches the subtitles
+alone, `machine=only` the machine lines alone.
+
+### Machine transcription
+
+whisper.cpp hears what the subtitles leave out (M21). It only runs when asked: nothing
+transcribes on its own. Each run is a job in its own one-at-a-time pool, at idle CPU and
+I/O priority with at most 3 threads, and stores its lines in the state dir, never next to
+the media. Needs `whisper-cli` and a model (`QC_WHISPER_MODEL`, the NixOS module's
+`transcribe.*`); without them these answer 503 and `/api/health`'s `transcribe.available`
+is false.
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/items/transcribe` | Start transcribing (job): `{path, mode, start, end, model, audio, redo}`. `mode` is `range` (`start`..`end`, seconds), `gaps` (every stretch of 4 s or more between subtitle lines) or `file`; omitted, it is `range` when `start` is given, else `gaps`. `model` is `small.en` (default) or `medium.en`. Parts done before are skipped unless `redo`. Returns `{job_id}` (`existing: true` when the same request is already queued or running). The job's `progress` reads `"1:10 of 4:00 transcribed"`; `DELETE /api/jobs/{id}` stops it, keeping finished chunks. Its `result`: `{path, mode, model, transcribed: [[start, end]…], new_lines, transcript, note?}`. 422: a bad range, a model the server lacks, or a YouTube/EPUB ref. |
+| GET | `/api/items/transcript?path=&fmt=` | A file's machine transcript (json): `{path, stored, library, writable, sidecar_name, lines: [{start, end, text, source}]}`. `stored` is `{ranges, covered, lines, models, language, updated, engine}` or null; `library` names the copies next to the file. `fmt=srt` or `vtt` downloads the lines. |
+| DELETE | `/api/items/transcript?path=` | Delete the stored transcript → `{deleted}` (a library copy stays). |
+| POST | `/api/items/transcript/library?path=` | Copy the machine lines (those no subtitle line has) next to the file as `<name>.<lang>.whisper.srt` → `{sidecar, lines}`. quipclipper reads that file as machine lines, never as the file's subtitles; the captions then show them, and Jellyfin offers it as a subtitle track. 403 = a read-only folder (needs `writableMediaRoots`), 404 = no transcript. |
+| DELETE | `/api/items/transcript/library?path=` | Remove the `….whisper.srt` copies next to the file → `{removed}`. |
+
+`/api/items` adds `transcript: {stored, library, writable, sidecar_name}` for a library
+file.
 
 ### Media (preview/streaming)
 | Method | Path | Purpose |
@@ -324,8 +346,8 @@ seconds after the last one, so a batch is one scan and new clips show up on the 
 |---|---|---|
 | GET/POST | `/api/bookmarks` | List (optionally filtered by `?path=`) / create bookmarks. |
 | PATCH/DELETE | `/api/bookmarks/{id}` | Edit / delete one. `DELETE /api/bookmarks` clears all. |
-| GET | `/api/health` | Liveness + tool presence (no auth-secret required), and `jellyfin` (Now playing, titles and artwork configured). |
-| GET | `/api/config` | Non-secret config the UI needs, including `public_url` (`QC_PUBLIC_URL`, or `null` when Send to LeadStinger links are off) and `jellyfin` (true when Now playing is configured). |
+| GET | `/api/health` | Liveness + tool presence (no auth-secret required; `tools` includes `whisper-cli`), `jellyfin` (Now playing, titles and artwork configured) and `transcribe`: `{available, engine, binary, models: [{name, size, present}], default_model, threads, max_threads, vad, language}`. |
+| GET | `/api/config` | Non-secret config the UI needs, including `public_url` (`QC_PUBLIC_URL`, or `null` when Send to LeadStinger links are off), `jellyfin` (true when Now playing is configured) and `transcribe` (`{available, models, default_model, threads, language}`). |
 
 ## Clips library contract
 

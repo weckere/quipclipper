@@ -13,6 +13,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from quipclipper.transcribe import WhisperConfig
+
 
 def _roots(raw: str | None) -> list[Path]:
     if not raw:
@@ -66,6 +68,9 @@ class Settings:
     jellyfin_url: str = ""
     jellyfin_api_key: str = field(default="", repr=False)
     jellyfin_path_map: tuple[tuple[str, str], ...] = ()
+    # Machine transcription (M21): whisper.cpp and its models, from QC_WHISPER_* (the
+    # NixOS module's transcribe.* options). No model = the feature reports itself off.
+    whisper: WhisperConfig = field(default_factory=WhisperConfig)
 
     @property
     def jellyfin_enabled(self) -> bool:
@@ -138,4 +143,5 @@ class Settings:
             jellyfin_url=e.get("QC_JELLYFIN_URL", "").strip().rstrip("/"),
             jellyfin_api_key=_secret(e, "QC_JELLYFIN_API_KEY"),
             jellyfin_path_map=_path_map(e.get("QC_JELLYFIN_PATH_MAP")),
+            whisper=WhisperConfig.from_env(e),
         )

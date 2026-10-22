@@ -22,6 +22,14 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   `<name>.<lang>.whisper.srt`, which quipclipper reads as machine lines, never as the file's
   subtitles. The CLI runs whisper-cli itself when no server is set (`QC_WHISPER_MODEL`).
   `search` gains `--machine include|exclude|only`.
+- **The server transcribes on request:** `POST /api/items/transcribe` runs as a job in its own
+  one-at-a-time pool (progress, and Cancel keeps the chunks done). The script
+  (`/api/items/subtitles?fmt=json`) and both searches mix machine lines in with `source:
+  "machine"` / `machine: true` (`machine=include|exclude|only`), so a file with no subtitles
+  but a transcript is searchable. The player's captions show machine lines only once they are
+  copied to the library (`POST /api/items/transcript/library`), marked `≈`. `/api/health`
+  and `/api/config` report whisper.cpp and its models. Configure with `QC_WHISPER_MODEL`,
+  `QC_WHISPER_MODELS`, `QC_WHISPER_BIN` and `QC_WHISPER_THREADS` (capped at 3).
 
 ### UI follow-ups (M20)
 
