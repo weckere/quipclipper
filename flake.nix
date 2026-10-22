@@ -123,6 +123,19 @@
                     enable = true;
                     vad = false;
                     modelFiles."small.en" = pkgs.writeText "ggml-small.en.bin" "stand-in";
+                    # A stand-in whisper-cli that "hears" the CPU policy and niceness it
+                    # runs under, so the test sees a whole run inside the hardened unit
+                    # (the idle launcher, ffmpeg, the store) and that it ran idle.
+                    package = pkgs.writeShellScriptBin "whisper-cli" ''
+                      while [ $# -gt 0 ]; do
+                        if [ "$1" = -of ]; then of=$2; fi
+                        shift
+                      done
+                      policy=$(${pkgs.util-linux}/bin/chrt -p $$ | ${pkgs.gawk}/bin/awk -F': ' '{print $2; exit}')
+                      nice=$(${pkgs.gawk}/bin/awk '{print $19}' /proc/$$/stat)
+                      printf '{"transcription":[{"offsets":{"from":500,"to":2500},"text":"heard at %s nice %s"}]}' \
+                        "$policy" "$nice" > "$of.json"
+                    '';
                   };
                   jellyfin = {
                     url = "http://127.0.0.1:8096";
@@ -209,6 +222,19 @@
                 backendonly.succeed("grep -q '\"whisper-cli\": *true' /tmp/h.json")
                 backendonly.succeed("grep -q '\"available\": *true' /tmp/h.json")
                 backendonly.succeed("systemctl show quipclipper-web.service -p Environment | grep -q QC_WHISPER_THREADS=2")
+                # A whole run on request, through the API: it finishes, its line is
+                # stored and searchable, and whisper ran at SCHED_IDLE, nice 19.
+                backendonly.succeed("${pkgs.ffmpeg-headless}/bin/ffmpeg -v error -f lavfi -i sine=duration=5 /srv/media/tone.flac")
+                job = backendonly.succeed(
+                    "curl -fsS -H 'X-Quipclipper: 1' -H 'Content-Type: application/json'"
+                    " -d '{\"path\": \"/srv/media/tone.flac\", \"mode\": \"file\"}'"
+                    " http://localhost:8000/api/items/transcribe"
+                    " | ${pkgs.jq}/bin/jq -r .job_id").strip()
+                backendonly.wait_until_succeeds(
+                    f"curl -fsS http://localhost:8000/api/jobs/{job} | grep -q '\"status\": *\"done\"'",
+                    timeout=120)
+                backendonly.succeed("curl -fsS 'http://localhost:8000/api/items/transcript?path=/srv/media/tone.flac' -o /tmp/t.json")
+                backendonly.succeed("grep -q 'heard at SCHED_IDLE nice 19' /tmp/t.json")
                 machine.succeed("grep -q '\"available\": *false' /tmp/health.json")
               '';
             };

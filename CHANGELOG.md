@@ -38,8 +38,11 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   and a screen reader hears "machine transcript" (AA contrast in both themes and with more
   contrast). Settings gains **Transcription model**.
 - **NixOS module:** `services.quipclipper-web.transcribe` (`enable`, `models`, `modelFiles`,
-  `defaultModel`, `threads` asserted at most 3, `vad`, `package`) installs whisper.cpp and the
-  ggml models pinned by hash, and sets `QC_WHISPER_*`. Nothing in it starts a run.
+  `defaultModel`, `threads` 1 to 3, `vad`, `package`) installs whisper.cpp and the ggml models
+  pinned by hash, and sets `QC_WHISPER_*`. Nothing in it starts a run. `modelFiles` overrides
+  one name and keeps the pinned download for the rest, and a local model file outside the
+  store is bound into the sandbox (one under /home was hidden). The VM test now runs a whole
+  transcription inside the hardened unit and checks it ran at `SCHED_IDLE`, nice 19.
 - The idle launcher passes the app's import path to its child, so it finds the engine under a
   Nix-wrapped app.
 - Transcribed lines land at the right time: the audio for whisper is resampled to 16 kHz inside

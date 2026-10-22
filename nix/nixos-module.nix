@@ -63,6 +63,11 @@ let
   sileroVad = hf "ggml-org/whisper-vad" "9ffd54a1e1ee413ddf265af9913beaf518d1639b"
     "ggml-silero-v5.1.2.bin" "sha256-KZQNmNQrkfvQXOSJ8+z3xy8KQvAn5IdZGaKPtMBOos8=";
   stt = cfg.transcribe;
+  # The pinned downloads, with any name pointed at a local file instead.
+  sttFiles = whisperModels // stt.modelFiles;
+  # Local model files outside the store must be bound into the sandbox (ProtectHome).
+  sttLocalFiles = lib.filter (p: !lib.hasPrefix builtins.storeDir p)
+    (map (name: toString sttFiles.${name}) stt.models);
 in
 {
   options.services.quipclipper-web = {
@@ -85,7 +90,9 @@ in
         downloads, or the subtitle-backfill feature) next to your videos. Browsed
         and clipped exactly like `mediaRoots`; only the mount mode differs. Use
         this for a folder you want quipclipper to enrich (a Pinchflat/yt-dlp
-        library); keep everything you want protected in `mediaRoots`.
+        library); keep everything you want protected in `mediaRoots`. "Copy to
+        library" of a machine transcript (`<name>.<lang>.whisper.srt`) also works
+        only here; on a read-only root it says so.
       '';
     };
 
@@ -381,11 +388,12 @@ in
 
       modelFiles = lib.mkOption {
         type = lib.types.attrsOf lib.types.path;
-        default = whisperModels;
-        defaultText = lib.literalMD "the pinned Hugging Face downloads of each model";
+        default = { };
+        example = lib.literalExpression ''{ "medium.en" = "/var/lib/whisper/ggml-medium.en.bin"; }'';
         description = ''
-          Where each model in `models` comes from, by name. By default a fetchurl from
-          Hugging Face pinned by hash; point a name at a local ggml file to use that.
+          Local ggml files for some models, by name; a name not set here uses its pinned
+          Hugging Face download (fetchurl by hash). A file outside the Nix store is
+          bound read-only into the service's sandbox, so one under /home works too.
         '';
       };
 
@@ -406,7 +414,7 @@ in
       };
 
       threads = lib.mkOption {
-        type = lib.types.ints.positive;
+        type = lib.types.ints.between 1 3;
         default = 2;
         description = ''
           whisper threads per run (`QC_WHISPER_THREADS`), at most 3: the host is shared,
@@ -464,10 +472,10 @@ in
         '';
       }
       {
-        assertion = !stt.enable || lib.all (name: stt.modelFiles ? ${name}) stt.models;
+        assertion = !stt.enable || lib.all (name: sttFiles ? ${name}) stt.models;
         message = ''
           services.quipclipper-web.transcribe.modelFiles has no file for
-          ${lib.concatStringsSep ", " (lib.filter (n: !(stt.modelFiles ? ${n})) stt.models)}.
+          ${lib.concatStringsSep ", " (lib.filter (n: !(sttFiles ? ${n})) stt.models)}.
         '';
       }
       {
@@ -579,7 +587,7 @@ in
         # Machine transcription (M21): whisper-cli by store path, so PATH needn't carry it.
         QC_WHISPER_BIN = "${stt.package}/bin/whisper-cli";
         QC_WHISPER_MODELS = lib.concatMapStringsSep ","
-          (name: "${name}=${stt.modelFiles.${name}}") stt.models;
+          (name: "${name}=${sttFiles.${name}}") stt.models;
         QC_WHISPER_MODEL = stt.defaultModel;
         QC_WHISPER_THREADS = toString stt.threads;
         QC_WHISPER_LANGUAGE = "en";
@@ -617,7 +625,9 @@ in
         # /home *after* the latter re-mount, so a mediaRoot/clipsDir under /home
         # would be invisible. BindReadOnlyPaths/BindPaths bind the source in
         # explicitly, so /home roots keep working under ProtectHome.
-        BindReadOnlyPaths = map toString cfg.mediaRoots;
+        BindReadOnlyPaths = map toString cfg.mediaRoots
+          # "-": a missing model file fails its transcriptions, not the whole app.
+          ++ lib.optionals stt.enable (map (p: "-" + p) sttLocalFiles);
         # Writable: clips, state, the writable media roots, and (if set and not
         # already covered by one of those) the YouTube download dir.
         BindPaths = [ (toString cfg.clipsDir) stateDir ]
