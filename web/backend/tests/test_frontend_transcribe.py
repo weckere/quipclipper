@@ -125,3 +125,9 @@ def test_removing_the_last_machine_lines_clears_the_script_and_captions():
     assert 'querySelectorAll("track").forEach((el) => el.remove())' in refresh
     assert "scriptCues = [];" in refresh
     assert '$("stt-job-text").textContent = ""' in _function("renderSttBar")
+
+
+def test_a_read_only_folder_says_why_copy_is_off():
+    html = (FRONTEND / "index.html").read_text()
+    assert re.search(r'id="stt-readonly"[^>]*>This folder is read-only', html)
+    assert '$("stt-readonly").hidden = copy.hidden || t.writable' in _function("renderSttBar")

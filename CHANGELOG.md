@@ -49,6 +49,8 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   script and captions at once; one file's transcription status no longer shows on the next;
   filler-only lines ("♪ Mmm ♪") are dropped; a copy in the library takes the folder's umask
   (group-writable in a shared folder).
+- On a read-only folder the transcript bar says in words that the transcript can't be copied to
+  the library (it was only the disabled button's hover text).
 - **Folders:** `index.transcribe` / `POST /api/search/folder/transcribe` transcribes a folder's
   files without subtitles (audio with no transcript included) or the gaps in every subtitled
   file, file after file in one cancellable job; the Dialogue index card offers both, after a

@@ -2439,6 +2439,8 @@ function renderSttBar(t, path, hasSubs) {
   copy.title = t.writable
     ? `Copy the machine lines next to the file as ${t.sidecar_name}, so the player's captions and Jellyfin show them too`
     : "This folder is read-only here: add it to the server's writableMediaRoots to copy transcripts into it";
+  // A read-only folder says so in words, not only in the disabled button's hover text (D-038).
+  $("stt-readonly").hidden = copy.hidden || t.writable;
   $("stt-uncopy").hidden = !(lib.length && t.writable);
   $("stt-export").hidden = !sttHasLines(t);
   $("stt-export").href = `/api/items/transcript${qp(path)}&fmt=srt`;
