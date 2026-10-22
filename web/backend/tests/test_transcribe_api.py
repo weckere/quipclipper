@@ -261,3 +261,74 @@ def test_folder_transcription_with_nothing_to_do(env):
         "job_id": None, "candidates": 0}
     assert c.post("/api/search/folder/transcribe",
                   json={"path": str(root), "mode": "everything"}).status_code == 422
+
+
+# --- release review (t-m21-review) --------------------------------------------------------
+
+def test_remove_from_library_leaves_another_files_copy(env):
+    # Show.Part2.en.whisper.srt is Show.Part2.mkv's: removing Show.mkv's copy deleted it (BE-1).
+    root = Path(env["QC_MEDIA_ROOTS"])
+    (root / "Show.mkv").write_bytes(b"")
+    (root / "Show.Part2.mkv").write_bytes(b"")
+    other = root / "Show.Part2.en.whisper.srt"
+    other.write_text("1\n00:00:01,000 --> 00:00:02,000\nnot Show's\n")
+    c = _client(env)
+    r = c.delete("/api/items/transcript/library", params={"path": str(root / "Show.mkv")})
+    assert r.json()["removed"] == [] and other.exists()
+    lines = c.get("/api/items/transcript", params={"path": str(root / "Show.mkv")}).json()["lines"]
+    assert lines == []
+
+
+def test_ranges_past_any_file_and_models_the_server_lacks(env):
+    root = Path(env["QC_MEDIA_ROOTS"])
+    (root / "a.mkv").write_bytes(b"")  # no length to clamp to (BE-2)
+    c = _client(env)
+    huge = c.post("/api/items/transcribe", json={"path": str(root / "a.mkv"), "mode": "range",
+                                                 "start": 0, "end": 1e300})
+    assert huge.status_code == 422
+    # Any configured name may be asked for (BE-10); one this server lacks is a 422, a path never.
+    other = c.post("/api/items/transcribe", json={"path": str(root / "a.mkv"), "model": "large-v3"})
+    assert other.status_code == 422 and "large-v3" in other.json()["detail"]
+    path = c.post("/api/items/transcribe", json={"path": str(root / "a.mkv"), "model": "../x.bin"})
+    assert path.status_code == 422
+
+
+@needs_ffmpeg
+def test_shutdown_stops_a_running_transcription(env, song, monkeypatch):
+    # whisper-cli runs in its own session: exit used to wait out every queued run (BE-3).
+    monkeypatch.setenv("FAKE_WHISPER_SLEEP", "30")
+    with _client(env) as c:
+        job = c.post("/api/items/transcribe", json={"path": str(song), "mode": "file"}).json()
+        deadline = time.monotonic() + 20
+        while c.get(f"/api/jobs/{job['job_id']}").json()["status"] != "running":
+            assert time.monotonic() < deadline
+            time.sleep(0.05)
+    assert _wait(c, job["job_id"], timeout=10)["status"] == "cancelled"
+
+
+def test_folder_job_skips_a_file_it_cannot_tell_has_subtitles(env, monkeypatch):
+    # A probe that fails isn't "no subtitles": that would cost a whole-file run (BE-4/5).
+    import quipclipper_web.app as web
+
+    def broken(_):
+        raise RuntimeError("ffprobe timed out")
+
+    monkeypatch.setattr(web, "list_embedded_tracks", broken)
+    root = Path(env["QC_MEDIA_ROOTS"])
+    (root / "film.mkv").write_bytes(b"")
+    c = _client(env)
+    job = _wait(c, c.post("/api/search/folder/transcribe", json={"path": str(root)}).json()["job_id"])
+    [one] = job["result"]["files"]
+    assert one["name"] == "film.mkv" and "skipped" in one["error"]
+    assert c.get("/api/items/transcript", params={"path": str(root / "film.mkv")}).json()["lines"] == []
+
+
+def test_folder_cap_counts_audio_too(env, monkeypatch):
+    import quipclipper_web.app as web
+
+    monkeypatch.setattr(web, "INDEX_CAP", 2)
+    root = Path(env["QC_MEDIA_ROOTS"])
+    for n in range(3):
+        (root / f"ep{n}.mp3").write_bytes(b"")
+    r = _client(env).post("/api/search/folder/transcribe", json={"path": str(root)})
+    assert r.status_code == 400 and "more than 2" in r.json()["detail"]

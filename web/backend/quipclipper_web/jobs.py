@@ -143,8 +143,15 @@ class JobRegistry:
             jobs = sorted(self._jobs.values(), key=lambda j: j.created, reverse=True)
         return jobs[:limit]
 
-    def shutdown(self) -> None:
-        self._pool.shutdown(wait=False)
+    def shutdown(self, *, cancel: bool = False) -> None:
+        """Stop taking jobs. With ``cancel``, queued jobs are dropped and running ones are
+        asked to stop (cancellable ones poll for it), so exit doesn't wait them out."""
+        if cancel:
+            with self._lock:
+                for job in self._jobs.values():
+                    if job.cancellable and job.status in (Status.queued, Status.running):
+                        job.cancel_requested = True
+        self._pool.shutdown(wait=False, cancel_futures=cancel)
 
     def request_cancel(self, job_id: str) -> bool:
         """Ask a running job to stop at its next checkpoint (cooperative — the

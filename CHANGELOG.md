@@ -71,6 +71,13 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   `item.transcript-copy` copies only what the subtitles don't have (as the server does) and
   prints the sidecar's name, and `search --subs … --machine only` is a usage error rather than
   no matches.
+- Server: stopping it stops a running transcription and drops the queued ones (it waited for
+  every one, hours for a folder). Two identical requests at once start one job. A folder job
+  checks for subtitles with a quick probe instead of extracting them at normal priority,
+  skips (and lists) a file it can't check instead of transcribing it whole, counts audio
+  files against its 500-file cap, and keys a file reached through a link by the file itself.
+  A request may name any model the server has (`QC_WHISPER_MODELS`), not only `small.en` and
+  `medium.en`.
 
 ### UI follow-ups (M20)
 
