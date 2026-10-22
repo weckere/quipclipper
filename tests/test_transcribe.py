@@ -373,3 +373,97 @@ def test_clean_text_drops_subtitle_markup_whisper_learnt():
 
 def test_vad_only_for_whole_files():
     assert tr.use_vad("file") and not tr.use_vad("gaps") and not tr.use_vad("range")
+
+
+# --- release review (t-m21-review) ------------------------------------------------------
+
+def test_machine_sidecars_are_only_the_files_own(tmp_path):
+    # Show.Part2's copy is not Show's: reading or removing it as Show's was wrong (BE-1).
+    show = tmp_path / "Show.mkv"
+    show.write_bytes(b"")
+    (tmp_path / "Show.Part2.mkv").write_bytes(b"")
+    (tmp_path / "Show.Part2.en.whisper.srt").write_text("1\n00:00:01,000 --> 00:00:02,000\nx\n")
+    (tmp_path / "Show.de.whisper.srt").mkdir()  # not a file
+    assert tr.find_machine_sidecars(show) == []
+    own = tr.write_sidecar(show, machine((1, 2, "mine")))
+    assert tr.find_machine_sidecars(show) == [own]
+    assert [c.text for c in tr.machine_cues(show, None)] == ["mine"]
+
+
+def test_a_range_past_any_file_is_refused():
+    # An unknown duration used to let end=1e300 through to chunks() (BE-2).
+    with pytest.raises(ValueError):
+        tr.plan_ranges("range", real=[], duration=None, done=[], start=0, end=1e300)
+    assert tr.plan_ranges("range", real=[], duration=None, done=[], start=0, end=60) == [(0, 60)]
+
+
+def test_outro_lines_go_but_dialogue_mentioning_them_stays():
+    for line in ("Thanks for watching!", "Bye. Thanks for watching.",
+                 "Subtitles by the Amara.org community", "Please subscribe to my channel"):
+        assert tr.is_hallucination(line), line
+    for line in ("It was translated by my mother", "We're watching the kids tonight"):
+        assert not tr.is_hallucination(line), line
+
+
+def test_write_sidecar_leaves_the_process_umask_alone(tmp_path, monkeypatch):
+    # os.umask() changes it for every thread of the server while it's read (EN-6).
+    def no(*_):
+        raise AssertionError("os.umask called")
+    old = os.umask(0o027)
+    try:
+        monkeypatch.setattr(os, "umask", no)
+        side = tr.write_sidecar(tmp_path / "a.mkv", machine((1, 2, "hi")))
+    finally:
+        monkeypatch.undo()
+        os.umask(old)
+    assert side.stat().st_mode & 0o777 == 0o640
+
+
+def test_run_kills_the_child_when_the_caller_stops_waiting(tmp_path):
+    # Ctrl-C: the child is in its own session, so only _run can stop it (EN-1).
+    pidfile = tmp_path / "pid"
+    child = [sys.executable, "-c",
+             f"import os, time; open({str(pidfile)!r}, 'w').write(str(os.getpid())); "
+             "time.sleep(60)"]
+
+    def interrupt():
+        if pidfile.exists() and pidfile.read_text():
+            raise KeyboardInterrupt
+        return False
+
+    with pytest.raises(KeyboardInterrupt):
+        tr._run(child, cancelled=interrupt, timeout=30)
+    with pytest.raises(ProcessLookupError):
+        os.kill(int(pidfile.read_text()), 0)
+
+
+def test_run_does_not_import_from_the_callers_directory(tmp_path, monkeypatch):
+    # python -m puts the working directory first on the import path (EN-2).
+    (tmp_path / "platform.py").write_text(
+        f"open({str(tmp_path / 'pwned')!r}, 'w').write('x')\nfrom os import *\n")
+    monkeypatch.chdir(tmp_path)
+    tr._run([sys.executable, "-c", "pass"], cancelled=None, timeout=30)
+    assert not (tmp_path / "pwned").exists()
+
+
+def test_waiting_for_the_store_can_be_cancelled(tmp_path):
+    # A web job queued behind a CLI run on the same state dir must still stop (EN-8).
+    fcntl = pytest.importorskip("fcntl")
+    store = tr.TranscriptStore(tmp_path)
+    tmp_path.mkdir(exist_ok=True)
+    with open(tmp_path / ".lock", "w") as held:
+        fcntl.flock(held, fcntl.LOCK_EX)
+        with pytest.raises(tr.Cancelled):
+            with store.exclusive(lambda: True):
+                pass
+
+
+def test_idle_launcher_refuses_to_run_at_full_priority(monkeypatch):
+    # If no CPU step took effect, the command isn't run at all (EN-5).
+    from quipclipper import idle
+
+    monkeypatch.setattr(idle, "lower_priority", lambda: ["io_idle"])
+    monkeypatch.setattr(idle.os, "execvp", lambda *a: pytest.fail("ran the command"))
+    with pytest.raises(SystemExit) as exc:
+        idle.main(["true"])
+    assert "priority" in str(exc.value)

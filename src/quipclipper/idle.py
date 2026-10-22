@@ -8,9 +8,11 @@ so every thread the command starts inherits it from the first instruction:
 - CPU: ``SCHED_IDLE`` on Linux (runs only when a core would otherwise be idle) and
   nice 19; on macOS the Darwin background policy (``PRIO_DARWIN_BG``) and nice 19.
 - Disk: the idle I/O class (``ioprio_set``, Linux), so a read of the media file
-  waits behind every other reader.
+  waits behind every other reader (under the BFQ/CFQ schedulers; ``none`` and
+  ``mq-deadline`` ignore I/O classes).
 
-Each step is best effort: a platform without one keeps the others. Lowering a
+Each step is best effort: a platform without one keeps the others. If no CPU step
+takes effect, the command isn't run at all. Lowering a
 priority never needs a privilege, so this works under a hardened systemd unit
 (``NoNewPrivileges``, ``RestrictRealtime``) too.
 """
@@ -70,7 +72,10 @@ def lower_priority() -> list[str]:
 def main(argv: list[str]) -> None:
     if not argv:
         sys.exit("usage: python -m quipclipper.idle CMD [ARGS...]")
-    lower_priority()
+    done = lower_priority()
+    if not {"nice19", "sched_idle", "darwin_bg"} & set(done):
+        # Never run the command at full priority: this host is shared (D-037).
+        sys.exit(f"{argv[0]}: couldn't lower the CPU priority, so not running it")
     try:
         os.execvp(argv[0], argv)
     except OSError as exc:

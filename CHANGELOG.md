@@ -56,6 +56,21 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   file, file after file in one cancellable job; the Dialogue index card offers both, after a
   confirm, and counts files with a machine transcript and audio without one. An audio file
   with a machine transcript is listed, searched and marked **auto** in the library.
+- Ctrl-C on a CLI transcription stops whisper-cli too (it kept running, in its own session,
+  for up to an hour), and the idle launcher no longer imports from the folder you ran the CLI
+  in. It refuses to start whisper at all if it couldn't lower the CPU priority.
+- A file's machine transcript and its library copy are only its own: `Show.mkv` no longer
+  reads, or removes, `Show.Part2.en.whisper.srt`. A job waiting behind another transcription
+  of the same store can be cancelled while it waits, and a range can't ask for more than a
+  week (an unknown length let a huge `end` through).
+- Writing a library copy no longer briefly sets the server's umask to 0 for every thread.
+- Outro lines are dropped only when the line is one ("Thanks for watching!"): "It was
+  translated by my mother" stays.
+- CLI: `item.transcribe` / `index.transcribe` against a server print the number of new lines
+  instead of crashing, `item.transcript` shows a server's stored transcript, a local
+  `item.transcript-copy` copies only what the subtitles don't have (as the server does) and
+  prints the sidecar's name, and `search --subs … --machine only` is a usage error rather than
+  no matches.
 
 ### UI follow-ups (M20)
 

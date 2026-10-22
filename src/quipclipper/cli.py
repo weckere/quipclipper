@@ -492,8 +492,12 @@ def _fmt_transcribe(data: dict) -> None:
         for f in data["files"]:
             typer.echo(f"  {f.get('new_lines', 0):>4} new  {f['name']}"
                        + (f"  ({f['error']})" if f.get("error") else ""))
-    for line in data.get("new_lines") or []:
-        typer.echo(f"{line['start']:>9.2f}  {AUTO_MARK}{line['text']}")
+    new = data.get("new_lines")
+    if isinstance(new, list):  # run here: the lines themselves
+        for line in new:
+            typer.echo(f"{line['start']:>9.2f}  {AUTO_MARK}{line['text']}")
+    elif new and "files" not in data:  # a server job: how many
+        typer.echo(f"{new} new machine line{'' if new == 1 else 's'}")
     t = data.get("transcript")
     if t:
         typer.secho(f"{t['lines']} machine lines over {format_clock(t['covered'])} "
@@ -501,7 +505,7 @@ def _fmt_transcribe(data: dict) -> None:
 
 
 def _fmt_transcript(data: dict) -> None:
-    t = data.get("transcript")
+    t = data.get("transcript") or data.get("stored")  # run here / a server
     if t:
         typer.secho(f"Transcribed {format_clock(t['covered'])} with {', '.join(t['models'])}: "
                     f"{t['lines']} lines", bold=True)
@@ -555,6 +559,10 @@ def search_cmd(
 ):
     """Search one file's dialogue and print ranked matches with timestamps."""
     c = _c(ctx)
+    if subs is not None and machine == "only":
+        _fail(c, CliError("--machine only searches a file's machine transcript: give the "
+                          "media file (--video), not --subs.", code="usage",
+                          exit_code=EXIT_USAGE))
     if c.remote:
         if video is None:
             _fail(c, CliError("--video/--path is required with a server.", code="usage",
@@ -1644,11 +1652,19 @@ def _local_transcript_copy(c: Context, v: dict) -> Any:
     if t is None or not t.cues:
         raise CliError("This file has no machine transcript to copy.", code="not_found")
     try:
-        side = tr.write_sidecar(media, t.cues, t.language)
+        real = resolve_subtitles(subs=None, video=media,
+                                 langs=c.settings.get("sub_langs")).cues
+    except (ValueError, FileNotFoundError, RuntimeError):
+        real = []
+    lines = tr.library_lines(real, t.cues)  # as the server: none the subtitles have
+    try:
+        side = tr.write_sidecar(media, lines, t.language)
+    except ValueError as exc:
+        raise CliError(str(exc), code="http_409") from None
     except OSError as exc:
         raise CliError(f"Can't write next to {media.name}: {exc.strerror or exc}",
                        code="io") from None
-    return {"path": str(media), "sidecar": str(side), "lines": len(t.cues)}
+    return {"path": str(media), "sidecar": side.name, "lines": len(lines)}
 
 
 def _local_transcript_uncopy(c: Context, v: dict) -> Any:

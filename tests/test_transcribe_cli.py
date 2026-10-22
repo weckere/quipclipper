@@ -54,7 +54,7 @@ def test_local_transcribe_then_search_export_copy_clear(local_whisper, tmp_path)
 
     assert runner.invoke(cli.app, ["--safe", "item.transcript-copy", str(media)]).exit_code == 5
     copied = _json(runner.invoke(cli.app, ["--json", "item.transcript-copy", str(media)]))
-    assert copied["sidecar"].endswith("song.en.whisper.srt")
+    assert copied["sidecar"] == "song.en.whisper.srt"
     shown = _json(runner.invoke(cli.app, ["--json", "item.transcript", str(media)]))
     assert shown["library"] == ["song.en.whisper.srt"]
     assert all(line["source"] == "machine" for line in shown["lines"])
@@ -86,3 +86,40 @@ def test_local_transcribe_without_whisper_says_how(tmp_path, monkeypatch):
     monkeypatch.setenv("QC_WHISPER_BIN", "no-such-whisper-cli")
     out = runner.invoke(cli.app, ["item.transcribe", str(media)])
     assert out.exit_code != 0 and "whisper.cpp" in out.output
+
+
+def test_server_job_results_print(capsys):
+    # A server reports new_lines as a count and the transcript as "stored" (DOC-2).
+    job = {"id": "j", "status": "done", "label": "Transcribe",
+           "result": {"path": "/m/a.mkv", "mode": "gaps", "model": "small.en", "new_lines": 3,
+                      "transcribed": [[0, 9]],
+                      "transcript": {"lines": 3, "covered": 9.0, "models": ["small.en"]}}}
+    cli._fmt_transcribe(job)
+    assert "3 new machine lines" in capsys.readouterr().out
+    cli._fmt_transcript({"path": "/m/a.mkv", "library": [], "lines": [],
+                         "stored": {"lines": 3, "covered": 9.0, "models": ["small.en"]}})
+    out = capsys.readouterr().out
+    assert "No machine transcript" not in out and "3 lines" in out
+
+
+def test_machine_only_with_a_subtitle_file_is_a_usage_error(tmp_path):
+    subs = tmp_path / "a.srt"
+    subs.write_text("1\n00:00:01,000 --> 00:00:02,000\nhello\n")
+    out = runner.invoke(cli.app, ["search", "hello", "--subs", str(subs), "--machine", "only"])
+    assert out.exit_code == 2 and "--machine only" in out.output
+
+
+def test_local_copy_writes_what_the_server_would(tmp_path, monkeypatch):
+    # Only machine lines the subtitles don't already have, and the sidecar's name (EN-3).
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    media = tmp_path / "ep.mkv"
+    media.write_bytes(b"")
+    (tmp_path / "ep.en.srt").write_text("1\n00:00:01,000 --> 00:00:03,000\nWhy won't she be mine\n")
+    tr.TranscriptStore(tr.default_store_dir()).add(
+        media, (0, 20), [tr.Cue(0, 1.0, 3.0, "why won't she be mine", source=tr.MACHINE),
+                         tr.Cue(1, 8.0, 10.0, "Driving way too fast", source=tr.MACHINE)],
+        model="small.en")
+    got = _json(runner.invoke(cli.app, ["--json", "item.transcript-copy", str(media)]))
+    assert got == {"path": str(media), "sidecar": "ep.en.whisper.srt", "lines": 1}
+    assert "way too fast" in (tmp_path / "ep.en.whisper.srt").read_text()
+    assert "mine" not in (tmp_path / "ep.en.whisper.srt").read_text()

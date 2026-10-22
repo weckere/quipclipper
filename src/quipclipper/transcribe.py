@@ -33,6 +33,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -47,7 +48,7 @@ from rapidfuzz import fuzz
 
 from quipclipper import waveform
 from quipclipper.models import Cue, format_timestamp
-from quipclipper.subtitles import SIDECAR_TOKEN, is_machine_sidecar, load_subtitles
+from quipclipper.subtitles import SIDECAR_TOKEN, load_subtitles
 
 MACHINE = "machine"
 ENGINE = "whisper.cpp"
@@ -64,6 +65,9 @@ CONTEXT = 2.0
 CHUNK = 180.0
 # Gaps between subtitle lines shorter than this aren't worth a run.
 MIN_GAP = 4.0
+# The longest range a request may ask for when the file's length is unknown (a week:
+# far past any media, and still only a few thousand chunks).
+MAX_SECONDS = 7 * 24 * 3600.0
 # Store format version (bump on an incompatible change; older files are then ignored).
 STORE_VERSION = 1
 
@@ -276,13 +280,23 @@ _FILLERS = frozenset({"mm", "mmm", "mmmm", "hmm", "hm", "uh", "um", "uhm", "oh",
                       "aah", "huh", "la", "na", "da", "doo", "ba", "whoa", "yeah"})
 
 
+# The same lines as :func:`_norm` writes them ("amara.org" -> "amara org").
+_HALLUCINATION_WORDS = tuple(_norm(h) for h in _HALLUCINATIONS)
+
+
 def is_hallucination(text: str) -> bool:
     n = _norm(text)
     if not n:
         return True
     if all(w in _FILLERS for w in n.split()):
         return True
-    return any(h in n for h in _HALLUCINATIONS) and len(n.split()) <= 12
+    # Only a line that is one, or opens or closes with one: "Thanks for watching!",
+    # "Subtitles by the Amara.org community". "It was translated by my mother" is dialogue.
+    padded = f" {n} "
+    return len(n.split()) <= 12 and any(
+        padded.startswith(f" {h} ") or padded.endswith(f" {h} ")
+        or (h == "amara org" and f" {h} " in padded)  # a credit wherever it sits
+        for h in _HALLUCINATION_WORDS)
 
 
 def parse_whisper_json(data: dict, *, offset: float = 0.0,
@@ -412,11 +426,14 @@ def whisper_argv(cfg: WhisperConfig, model_path: str, wav: str | Path, out_base:
     of the Darkplace song, the very lines a range or a gap is transcribed for. A seed
     ``prompt`` of the file's names made small.en write a single "." there, so runs
     don't use one (M21 phase 0)."""
-    cmd = [cfg.binary_path() or cfg.binary, "-m", str(model_path), "-f", str(wav),
+    binary = cfg.binary_path() or cfg.binary
+    if os.sep in binary:
+        binary = os.path.abspath(binary)
+    cmd = [binary, "-m", os.path.abspath(model_path), "-f", os.path.abspath(wav),
            "-t", str(_clamp_threads(cfg.threads)), "-l", cfg.language,
-           "-oj", "-of", str(out_base), "-np"]
+           "-oj", "-of", os.path.abspath(out_base), "-np"]
     if vad and cfg.vad_model:
-        cmd += ["--vad", "-vm", cfg.vad_model]
+        cmd += ["--vad", "-vm", os.path.abspath(cfg.vad_model)]
     if prompt:
         cmd += ["--prompt", prompt[:600]]
     return cmd
@@ -432,10 +449,15 @@ class Cancelled(Exception):
     """The run was cancelled; the chunks finished before that are kept."""
 
 
-def _run(argv: list[str], *, cancelled: Callable[[], bool] | None, timeout: float) -> str:
-    """Run one idle-priority subprocess; kill it if ``cancelled()`` turns true."""
+def _run(argv: list[str], *, cancelled: Callable[[], bool] | None, timeout: float,
+         cwd: str | Path | None = None) -> str:
+    """Run one idle-priority subprocess; kill it if ``cancelled()`` turns true, or if this
+    process stops waiting for any other reason (Ctrl-C: the child is in its own session,
+    so the terminal's SIGINT never reaches it). ``cwd`` should be a directory of ours:
+    ``python -m`` puts the working directory first on the import path."""
     proc = subprocess.Popen(idle_argv(argv), stdout=subprocess.DEVNULL, env=idle_env(),
-                            stderr=subprocess.PIPE, start_new_session=True)
+                            stderr=subprocess.PIPE, start_new_session=True,
+                            cwd=cwd or tempfile.gettempdir())
     err: list[bytes] = []
     reader = threading.Thread(target=lambda: err.append(proc.stderr.read()), daemon=True)
     reader.start()
@@ -455,6 +477,9 @@ def _run(argv: list[str], *, cancelled: Callable[[], bool] | None, timeout: floa
                     proc.wait()
                     raise RuntimeError(f"{Path(argv[0]).name} took over {timeout:.0f} s")
     finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
         reader.join(timeout=5)
     stderr = b"".join(err).decode(errors="replace")
     if proc.returncode != 0:
@@ -473,22 +498,24 @@ def transcribe_range(source: str | Path, start: float, end: float, *, cfg: Whisp
     machine cues in file time. Decodes ``CONTEXT`` seconds either side and keeps only
     the lines that belong inside ``start..end``."""
     model_path = cfg.model_path(model)
+    source = os.path.abspath(source)
     lo = max(0.0, start - CONTEXT)
     hi = end + CONTEXT
     if media_duration:
         hi = min(hi, media_duration)
     with tempfile.TemporaryDirectory(prefix="qc-stt-", dir=workdir) as tmp:
+        tmp = os.path.abspath(tmp)
         wav = Path(tmp) / "a.wav"
         out = Path(tmp) / "out"
         # The decode's first sample is at the anchored start, which can differ from lo
         # by under a sample: count from where it really starts.
         t0 = waveform.anchored_start(lo, src_rate) if (lo and src_rate) else lo
         _run(extract_argv(source, wav, start=lo, duration=hi - lo, audio=audio,
-                          src_rate=src_rate), cancelled=cancelled, timeout=600)
+                          src_rate=src_rate), cancelled=cancelled, timeout=600, cwd=tmp)
         if not wav.exists() or wav.stat().st_size <= 44:
             return []
         _run(whisper_argv(cfg, model_path, wav, out, prompt=prompt, vad=vad),
-             cancelled=cancelled, timeout=max(600.0, (hi - lo) * 20))
+             cancelled=cancelled, timeout=max(600.0, (hi - lo) * 20), cwd=tmp)
         js = out.with_suffix(".json")
         try:
             data = json.loads(js.read_text(encoding="utf-8", errors="replace"))
@@ -637,9 +664,10 @@ class TranscriptStore:
                 continue
 
     @contextlib.contextmanager
-    def exclusive(self) -> Iterator[None]:
+    def exclusive(self, cancelled: Callable[[], bool] | None = None) -> Iterator[None]:
         """One transcription at a time per store, across processes (a CLI run and the
-        server sharing a state dir wait for each other)."""
+        server sharing a state dir wait for each other). Raises :class:`Cancelled` if
+        ``cancelled()`` turns true while waiting."""
         self.dir.mkdir(parents=True, exist_ok=True)
         with open(self.dir / ".lock", "w") as fh:
             try:
@@ -648,7 +676,14 @@ class TranscriptStore:
                 with self._lock:
                     yield
                 return
-            fcntl.flock(fh, fcntl.LOCK_EX)
+            while True:
+                try:
+                    fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if cancelled is not None and cancelled():
+                        raise Cancelled() from None
+                    time.sleep(0.5)
             try:
                 yield
             finally:
@@ -674,6 +709,8 @@ def plan_ranges(mode: str, *, real: list[Cue], duration: float | None, done: lis
     if mode == "range":
         if start is None or end is None or end <= start:
             raise ValueError("A range needs a start before its end.")
+        if end > MAX_SECONDS:
+            raise ValueError("That range ends past any media file's length.")
         hi = min(end, duration) if duration else end
         want = [(max(0.0, start), hi)]
     elif mode == "gaps":
@@ -706,7 +743,7 @@ def run(store: TranscriptStore, media: str | Path, ranges: list[Range], *, cfg: 
     t = None
     if progress:
         progress(0.0, total)
-    with store.exclusive():
+    with store.exclusive(cancelled):
         for s, e in pieces:
             if cancelled is not None and cancelled():
                 raise Cancelled()
@@ -733,14 +770,17 @@ def machine_sidecar_path(media: str | Path, language: str = "en") -> Path:
 
 
 def find_machine_sidecars(media: str | Path) -> list[Path]:
-    """The machine sidecars next to ``media`` (same stem, ``….whisper.srt``/``.vtt``)."""
+    """The machine sidecars of ``media``: ``<stem>.<lang>.whisper.srt``/``.vtt`` (or
+    ``<stem>.whisper.srt``) next to it, nothing else. ``Show.Part2.en.whisper.srt`` is
+    Show.Part2.mkv's, not Show.mkv's: reading or removing it as Show's would be wrong."""
     media = Path(media)
+    own = re.compile(re.escape(media.stem.lower()) + r"(\.[a-z]{1,3})?\."
+                     + SIDECAR_TOKEN + r"\.(srt|vtt)")
     try:
         siblings = list(media.parent.iterdir())
     except OSError:
         return []
-    return sorted(p for p in siblings
-                  if p.suffix.lower() in (".srt", ".vtt") and is_machine_sidecar(p, media.stem))
+    return sorted(p for p in siblings if own.fullmatch(p.name.lower()) and p.is_file())
 
 
 def cues_to_srt(cues: list[Cue]) -> str:
@@ -759,29 +799,31 @@ def cues_to_vtt(cues: list[Cue]) -> str:
     return "WEBVTT\n\n" + "\n".join(blocks)
 
 
+def library_lines(real: list[Cue], machine: list[Cue]) -> list[Cue]:
+    """What copying a transcript to the library writes: the machine lines the script
+    shows as machine lines, i.e. none a subtitle line already has."""
+    return [c for c in merge_cues(real, machine) if c.machine]
+
+
 def write_sidecar(media: str | Path, cues: list[Cue], language: str = "en") -> Path:
     """Write ``cues`` as the machine sidecar next to ``media`` (atomic; replaces an
     older machine sidecar of the same name, never any other file)."""
     target = machine_sidecar_path(media, language)
     if not cues:
         raise ValueError("The transcript has no lines to copy.")
-    fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=".qc-", suffix=".srt.tmp")
+    # Mode 0o666 at creation, so the umask decides as for any new file here (os.umask()
+    # to read it would change it for every thread of the server meanwhile).
+    tmp = target.parent / f".qc-{secrets.token_hex(6)}.srt.tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(cues_to_srt(cues))
-        os.chmod(tmp, 0o666 & ~_umask())  # as any new file here: the umask decides
         os.replace(tmp, target)
     except OSError:
         with contextlib.suppress(OSError):
             os.unlink(tmp)
         raise
     return target
-
-
-def _umask() -> int:
-    mask = os.umask(0)
-    os.umask(mask)
-    return mask
 
 
 def machine_cues(media: str | Path, store: TranscriptStore | None, *,
