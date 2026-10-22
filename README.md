@@ -20,6 +20,11 @@ mkvmerge. quipclipper is a **self-hosted web app** over your own media folders, 
 - **Dialogue search** in a video, a folder or your whole library: fuzzy and typo-tolerant,
   phrases that span several subtitles still match, results grouped by file with the words
   highlighted and a preview of the lines around each hit.
+- **[Machine transcription](docs/MANUAL.md#machine-transcription-whispercpp):** find what
+  the subtitles leave out (a song, an unsubtitled line, a file with no subtitles at all).
+  On request only, whisper.cpp transcribes a selection, the gaps, a file or a folder at idle
+  priority; its lines are searchable and shown in violet, marked **auto**, never passed off
+  as subtitles.
 - **A workspace for each file:** the player, a dialogue map of where the talking is, and the
   scrolling script. Set the selection by whole lines (Start / End), add padding, and see it
   loop before you cut.

@@ -21,7 +21,8 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   `item.transcript-clear` deletes it); `item.transcript-copy` writes one next to the file as
   `<name>.<lang>.whisper.srt`, which quipclipper reads as machine lines, never as the file's
   subtitles. The CLI runs whisper-cli itself when no server is set (`QC_WHISPER_MODEL`).
-  `search` gains `--machine include|exclude|only`.
+  `search`, `search.item`, `search.folder` and `item.script` gain
+  `--machine include|exclude|only`.
 - **The server transcribes on request:** `POST /api/items/transcribe` runs as a job in its own
   one-at-a-time pool (progress, and Cancel keeps the chunks done). The script
   (`/api/items/subtitles?fmt=json`) and both searches mix machine lines in with `source:
@@ -29,7 +30,8 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   but a transcript is searchable. The player's captions show machine lines only once they are
   copied to the library (`POST /api/items/transcript/library`), marked `≈`. `/api/health`
   and `/api/config` report whisper.cpp and its models. Configure with `QC_WHISPER_MODEL`,
-  `QC_WHISPER_MODELS`, `QC_WHISPER_BIN` and `QC_WHISPER_THREADS` (capped at 3).
+  `QC_WHISPER_MODELS`, `QC_WHISPER_BIN`, `QC_WHISPER_THREADS` (capped at 3),
+  `QC_WHISPER_VAD_MODEL` and `QC_WHISPER_LANGUAGE`.
 - **In the workspace:** **Transcribe selection** on the waveform, and a Machine transcript bar
   above the script with **Fill gaps** (or **Transcribe file** on a file with no subtitles), a
   Model choice, progress and Cancel, **Copy to library** / **Remove from library**, **Export

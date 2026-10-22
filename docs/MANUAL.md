@@ -776,7 +776,9 @@ a file, not a timer. Each request transcribes one of:
 
 A whole **folder** (`quipclipper index.transcribe FOLDER`, `--mode nosubs` for the files with
 no subtitles, audio without a transcript included, or `--mode gaps`) runs file after file
-in one job. Parts transcribed before are skipped, so asking again only does what's new (`--redo`
+in one job, on a server (the CLI on its own transcribes one file at a time). A file whose
+subtitles can't be checked is skipped and listed with the reason, rather than transcribed
+whole. Parts transcribed before are skipped, so asking again only does what's new (`--redo`
 does it again, say with a bigger model). English only. **Models:** `small.en` (the
 default: quick, a few word errors) or `medium.en` (closer to subtitle quality, about three
 times slower). Set your default with `quipclipper settings.set stt_model medium.en`, or
@@ -797,7 +799,7 @@ quipclipper item.transcript "Darkplace S01E06.mkv" --fmt srt > lyrics.srt
 ```
 
 Machine lines print with `[auto]`; `--machine exclude` searches the subtitles alone and
-`--machine only` the machine lines alone.
+`--machine only` the machine lines alone (of a media file: not with `--subs`).
 
 **Where transcripts live.** Not next to the media: in quipclipper's state (the server's
 state dir, or `~/.cache/quipclipper/transcripts` when the CLI runs whisper itself), keyed
@@ -809,7 +811,9 @@ as a subtitle file named **`<name>.<lang>.whisper.srt`** (for example
 `S01E06.en.whisper.srt`), in a writable folder only. The `whisper` token marks it as
 machine-made: quipclipper reads it as machine lines (and from then on shows them in the
 player's captions), never as the file's subtitles, and Jellyfin offers it as its own
-subtitle track. `item.transcript-uncopy` removes it again.
+subtitle track. Only lines the subtitles don't already have are copied. `item.transcript-uncopy` removes it
+again (only this file's copy: `Show.Part2.en.whisper.srt` belongs to `Show.Part2.mkv`, not
+to `Show.mkv`).
 
 **Running it on your own machine.** With no server set, the CLI runs `whisper-cli` itself:
 install whisper.cpp (`nix shell nixpkgs#whisper-cpp`, `brew install whisper-cpp`), fetch a
