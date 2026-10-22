@@ -85,3 +85,15 @@ def test_the_play_buttons_note_shows_any_selection():
 
 def test_a_new_item_starts_unheld():
     assert "freeRangeArmed = false" in _function("openItem")
+
+
+def test_a_transcode_reload_or_an_embed_jump_is_a_seek_too():
+    # A transcoded file reloads a segment instead of seeking, so no "seeking" event fires:
+    # loadTranscode reports it. The range loop's own return lands inside the range.
+    load = re.search(r"^  function loadTranscode\(startTime, autoplay\) \{\n(.*?)^  \}", _js(), re.M | re.S)
+    assert load and load.group(1).lstrip().startswith("// ") and "rangeSought(startTime);" in load.group(1)
+    assert load.group(1).index("rangeSought(startTime)") < load.group(1).index("player.src = url")
+    # The YouTube embed's own seek bar reports nothing: its poll treats a jump as a seek.
+    poll = re.search(r"const poll = setInterval\(\(\) => \{\n      if \(!ytEmbed \|\| !ytEmbed.ready\) return;.*?\}, 250\);",
+                     _js(), re.S)
+    assert poll and "rangeSought(t)" in poll.group(0) and "getPlaybackRate()" in poll.group(0)

@@ -8,6 +8,8 @@ pairs the stylesheet actually puts together:
   ``--sunken``): 4.5:1 (SC 1.4.3);
 * text on the selection, playhead and transcript-bar tints (``--accent-soft``, ``--playhead-soft``,
   ``--machine-soft`` laid over a ground), machine lines included, and ``--accent-ink`` on ``--accent`` (the primary buttons): 4.5:1;
+* the stacks the UI paints: a machine cue label on its tint over the cue lane's opaque ``--raised``
+  (whatever selection shade is under it), and a machine search hit's match on ``--accent-soft``: 4.5:1;
 * UI colours on every ground: input and button borders (``--line-strong``), the switch and the
   selection edges (``--accent``), the focus ring (``--accent-text``), the playhead, the job marks
   and the dialogue map's bars (``--faint``): 3:1 (SC 1.4.11).
@@ -111,6 +113,12 @@ def failures(t: dict[str, str]) -> list[str]:
         for g in GROUNDS:
             for f in ("text", "accent-text", "machine"):
                 need(f, c[f], f"{tint} over {g}", over(c[tint], c[g]), 4.5)
+    # Stacked: the waveform's cue lane paints a machine line's tint over an opaque --raised
+    # (wfDraw), inside the selection's shade or not; a machine hit's <mark> puts --machine on
+    # --accent-soft over the row, or over --raised when hovered.
+    need("machine", c["machine"], "machine-soft over raised (cue lane)", over(c["machine-soft"], c["raised"]), 4.5)
+    for g in GROUNDS:
+        need("machine", c["machine"], f"accent-soft over {g} (search mark)", over(c["accent-soft"], c[g]), 4.5)
     need("accent-ink", c["accent-ink"], "accent", c["accent"], 4.5)
     for f in UI:
         for g in GROUNDS:

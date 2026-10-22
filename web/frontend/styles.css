@@ -1031,6 +1031,10 @@ footer { padding: 2rem 1.25rem; font-size: 0.8rem; }
   background: var(--accent-soft); color: var(--text); font-weight: 600;
   border-radius: 4px; padding: 0 0.15rem;
 }
+/* A machine hit's match keeps the machine colour. In the focused row the shade doubles and
+   takes it under 4.5:1, so there it's --text (the italic and the chip still say machine). */
+.dialogue-hit.hit-machine mark { color: var(--machine); }
+.dialogue-hit.hit-machine.focus mark { color: var(--text); }
 .dialogue-hit .hit-score { align-self: center; }
 .dialogue-hit.focus { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
 @media (hover: hover) {

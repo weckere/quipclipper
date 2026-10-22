@@ -85,3 +85,11 @@ def test_the_veil_dims_only_the_wave_band_and_respects_reduced_motion():
     assert "pointer-events: none" in veil and "opacity: 0" in veil
     assert re.search(r'\.wf-stage\[aria-busy="true"\] \.wf-veil \{ opacity: 0\.\d+; \}', css)
     assert re.search(r"prefers-reduced-motion: reduce\) \{ \.wf-veil \{ transition: none; \} \}", css)
+
+
+def test_a_response_clamped_to_the_files_end_covers_the_view():
+    # The server clamps `end` to the file's duration, which can fall short of the probed
+    # one the view runs to: reaching the file's end is covering, or the veil stays on.
+    src = _function("wfSource")
+    assert "d.duration ? Math.min(b, d.duration) : b" in src and "d.end >= reach(d)" in src
+    assert "Math.min(wf.dur, data.duration || wf.dur)" in _function("wfLoad")  # the base, too

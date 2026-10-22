@@ -58,6 +58,7 @@ function stopPlayer() {
   // so a background poll can't yank the user back in or drive a stale player.
   if (itemListeners) { itemListeners.abort(); itemListeners = null; }
   currentItem = null;
+  sttUnfollow();  // its transcription's poll too: the bar follows it again when it's reopened
   scriptLoadId++;  // a script still loading for the old item must not land anywhere
   wfHide();
   destroyYtEmbed();
@@ -1285,12 +1286,15 @@ async function startFolderTranscribe(mode) {
     r = await postJSON("/api/search/folder/transcribe",
       { path: folder, mode, model: sttDefaultModel() || undefined });
   } catch (err) {
-    status.textContent = `Couldn't start: ${err.message}`;
+    if (currentBrowsePath === folder) status.textContent = `Couldn't start: ${err.message}`;
     return;
   }
-  if (!r.job_id) { status.textContent = "Nothing here to transcribe."; return; }
+  const here = currentBrowsePath === folder;
+  if (!r.job_id) { if (here) status.textContent = "Nothing here to transcribe."; return; }
   announce(`Transcribing ${plural(r.candidates, "file")} in the background`);
-  followFolderTranscribe(r.job_id, folder);
+  // Another folder opened meanwhile: its buttons and status aren't this job's to hide (Jobs
+  // shows it).
+  if (here) followFolderTranscribe(r.job_id, folder);
 }
 
 function followFolderTranscribe(id, folder) {
@@ -1744,6 +1748,7 @@ async function openItem(path, name, opts) {
   loadedBookmarkCue = null;
   clipFirst = -1;
   clipLast = -1;
+  restoreLinePads();  // the last item's free range took its pads with it
   // Tear down a previous item's YouTube embed and restore the <video> element
   // (the embed branch below re-hides it when this item uses the official player).
   destroyYtEmbed();
@@ -1762,6 +1767,7 @@ async function openItem(path, name, opts) {
   $("marks-hint").hidden = true;
   $("script-list").innerHTML = "";
   $("stt-bar").hidden = true;
+  delete $("stt-bar").dataset.path;  // an item opened anew starts with a clean status line
   $("wf-stt-group").hidden = true;
 
   let info;
@@ -1865,6 +1871,9 @@ async function openItem(path, name, opts) {
   // `autoplay`: undefined → play unless this is the very first load; or an
   // explicit boolean (used by the range loop to seek without auto-playing).
   function loadTranscode(startTime, autoplay) {
+    // A new segment is a seek the <video> never reports ("seeking"): one outside a free range
+    // lets playback run on past it. The range loop's own return lands on its start, inside.
+    rangeSought(startTime);
     isTranscoding = true;
     settingSrc = true;
     transcodeOffset = startTime;
@@ -2158,8 +2167,18 @@ async function openItem(path, name, opts) {
       $("preview-note").textContent =
         "Couldn't load the YouTube player — switch Player to “Server stream”.";
     });
+    let lastT = null, lastAt = 0;
     const poll = setInterval(() => {
       if (!ytEmbed || !ytEmbed.ready) return;
+      // The embed's own seek bar reports no seeks: a jump more than a second beyond what
+      // playback explains is one, and one outside a free range lets playback run on.
+      const t = playerTime(), now = performance.now();
+      if (lastT !== null) {
+        const ran = ytEmbedPlaying() ? ((now - lastAt) / 1000) * (ytEmbed.player.getPlaybackRate() || 1) : 0;
+        if (t < lastT - 1 || t > lastT + ran + 1) rangeSought(t);
+      }
+      lastT = t;
+      lastAt = now;
       updateScript();
       updatePlaybackUI();
       // Range preview loop: pause (or loop) at the end of the selection.
@@ -2416,6 +2435,25 @@ const STT_MODEL_KEY = "qc_stt_model";
 const sttJobs = new Map();  // path -> id of a transcription started from this page, still running
 let sttFollowing = null;    // { jobId, path } the bar is following
 let sttTimer = null;
+const STT_POLL_TRIES = 6;   // a job poll that fails this many times in a row stops asking
+
+/** Is `path` the file open in the item view? A request for another file must not write here. */
+const sttHere = (path) => !!currentItem && currentItem.path === path;
+
+/** Stop following a transcription (leaving the item view): sttJobs keeps it, so the bar
+ *  follows it again when its file is opened. */
+function sttUnfollow() {
+  clearTimeout(sttTimer);
+  sttTimer = null;
+  sttFollowing = null;
+}
+
+/** Say `msg` in the bar's status line. Cancel stays only while the open file's job runs. */
+function sttStatus(msg) {
+  $("stt-job").hidden = false;
+  $("stt-cancel").hidden = !(sttFollowing && currentItem && sttFollowing.path === currentItem.path);
+  $("stt-job-text").textContent = msg;
+}
 
 const sttConfig = () => appConfig.transcribe || {};
 const sttAvailable = () => !!sttConfig().available;
@@ -2443,6 +2481,10 @@ function fillModelSelect(sel, value) {
  *  transcribed, and the actions on it. Hidden for YouTube items and EPUB chapters. */
 function renderSttBar(t, path, hasSubs) {
   const bar = $("stt-bar");
+  // The status line belongs to the file it was written for: it goes when another file's bar
+  // is drawn, not when this one's is redrawn after an action or a job.
+  const fresh = bar.dataset.path !== path;
+  bar.dataset.path = path;
   const avail = sttAvailable();
   $("wf-stt-group").hidden = !t || !avail;
   bar.hidden = !t || !(avail || sttHasLines(t));
@@ -2481,8 +2523,9 @@ function renderSttBar(t, path, hasSubs) {
   $("stt-export").hidden = !sttHasLines(t);
   $("stt-export").href = `/api/items/transcript${qp(path)}&fmt=srt`;
   $("stt-clear").hidden = !stored;
-  if (running && (!sttFollowing || sttFollowing.jobId !== running)) followSttJob(running, path);
-  else if (!running && (!sttFollowing || sttFollowing.path !== path)) {
+  // Back on a file whose transcription still runs: show its progress and Cancel again.
+  if (running && (fresh || !sttFollowing || sttFollowing.jobId !== running)) followSttJob(running, path);
+  else if (!running && fresh) {
     $("stt-job").hidden = true;  // another file's status doesn't carry over
     $("stt-job-text").textContent = "";
   }
@@ -2528,48 +2571,65 @@ async function startTranscribe(extra, what) {
   try {
     r = await postJSON("/api/items/transcribe", { path, model, audio: getSelectedAudio() ?? 0, ...extra });
   } catch (err) {
-    $("stt-job").hidden = false;
-    $("stt-cancel").hidden = true;
-    $("stt-job-text").textContent = `Couldn't start the transcription: ${err.message}`;
+    if (sttHere(path)) sttStatus(`Couldn't start the transcription: ${err.message}`);
     return;
   }
   sttJobs.set(path, r.job_id);
   announce(`Transcribing ${what} in the background`);
-  followSttJob(r.job_id, path);
+  // Another file opened meanwhile: leave its bar (and the job it follows) alone. This one's
+  // bar follows the job when the file is opened again (renderSttBar).
+  if (sttHere(path)) followSttJob(r.job_id, path);
 }
 
 /** Follow a transcription job in the bar: progress, Cancel, and the script reloaded when it
  *  ends. Stops polling when the job ends (or is gone); one job is followed at a time. */
 function followSttJob(jobId, path) {
   clearTimeout(sttTimer);
-  sttFollowing = { jobId, path };
+  // This follow's own token: following again (the file opened anew) or unfollowing ends this
+  // poll, even a tick still waiting on its answer, so one job never has two polls.
+  const follow = sttFollowing = { jobId, path };
+  const mine = () => sttFollowing === follow;
   const box = $("stt-job"), text = $("stt-job-text"), cancel = $("stt-cancel");
-  box.hidden = false;
-  cancel.hidden = false;
-  cancel.disabled = false;
-  for (const id of ["stt-gaps", "stt-file", "wf-transcribe"]) $(id).disabled = true;
-  text.textContent = "Transcribing in the background, at low priority…";
-  cancel.onclick = async () => {
-    cancel.disabled = true;
-    text.textContent = "Stopping…";
-    try { await apiFetch(`/api/jobs/${encodeURIComponent(jobId)}`, { method: "DELETE" }); } catch {}
-  };
+  const here = () => sttHere(path);
+  const enable = () => { for (const id of ["stt-gaps", "stt-file", "wf-transcribe"]) $(id).disabled = false; };
+  if (here()) {  // the bar shows the open file: another's job only polls
+    box.hidden = false;
+    cancel.hidden = false;
+    cancel.disabled = false;
+    for (const id of ["stt-gaps", "stt-file", "wf-transcribe"]) $(id).disabled = true;
+    text.textContent = "Transcribing in the background, at low priority…";
+    cancel.onclick = async () => {
+      cancel.disabled = true;
+      text.textContent = "Stopping…";
+      try { await apiFetch(`/api/jobs/${encodeURIComponent(jobId)}`, { method: "DELETE" }); } catch {}
+    };
+  }
+  let failures = 0;
   const tick = async () => {
-    if (!sttFollowing || sttFollowing.jobId !== jobId) return;
-    const here = () => currentItem && currentItem.path === path;
+    if (!mine()) return;
     let job;
     try {
       job = await getJSON(`/api/jobs/${encodeURIComponent(jobId)}`);
     } catch (err) {
+      if (!mine()) return;
       if (err.status === 404) {  // the server restarted, or the job was cleared
         sttJobs.delete(path);
         sttFollowing = null;
-        if (here()) box.hidden = true;
+        if (here()) { box.hidden = true; enable(); }
+        return;
+      }
+      // Unreachable for a while: stop asking. sttJobs keeps the job, so opening the file
+      // again follows it afresh.
+      if (++failures >= STT_POLL_TRIES) {
+        sttFollowing = null;
+        if (here()) text.textContent = "Lost touch with the transcription; open the file again to check on it.";
         return;
       }
       sttTimer = setTimeout(tick, 5000);
       return;
     }
+    if (!mine()) return;  // followed afresh, or unfollowed, while asking
+    failures = 0;
     if (jobActive(job)) {
       if (here()) {
         text.textContent = job.status === "queued" ? "Waiting for another transcription to finish…"
@@ -2589,7 +2649,7 @@ function followSttJob(jobId, path) {
     if (!here()) return;
     text.textContent = msg;
     cancel.hidden = true;
-    for (const id of ["stt-gaps", "stt-file", "wf-transcribe"]) $(id).disabled = false;
+    enable();
     refreshStt(path, { script: true });
   };
   sttTimer = setTimeout(tick, 600);
@@ -2610,44 +2670,42 @@ $("wf-transcribe").onclick = () => {
 $("stt-gaps").onclick = () => startTranscribe({ mode: "gaps" }, "the gaps between the subtitles");
 $("stt-file").onclick = () => startTranscribe({ mode: "file" }, "the whole file");
 
-/** Copy to library / Remove from library / Delete transcript: one request, then the bar. */
+/** Copy to library / Remove from library / Delete transcript: one request, then the bar.
+ *  Returns the file's path to refresh, or null when another file has opened since (its bar,
+ *  and its buttons, aren't this request's to touch). */
 async function sttAction(btn, url, method, done) {
   const path = currentItem && currentItem.path;
-  if (!path) return;
+  if (!path) return null;
   btn.disabled = true;
+  let msg;
   try {
     const resp = await apiFetch(url + qp(path), { method });
     let body = {};
     try { body = await resp.json(); } catch {}
     if (!resp.ok) throw new Error(body.detail || `${resp.status}`);
-    announce(done(body));
-    $("stt-job").hidden = false;
-    $("stt-cancel").hidden = true;
-    $("stt-job-text").textContent = done(body);
+    msg = done(body);
   } catch (err) {
-    $("stt-job").hidden = false;
-    $("stt-cancel").hidden = true;
-    $("stt-job-text").textContent = `That didn't work: ${err.message}`;
-  } finally {
-    btn.disabled = false;
+    msg = `That didn't work: ${err.message}`;
   }
+  if (!sttHere(path)) return null;
+  btn.disabled = false;
+  announce(msg);
+  sttStatus(msg);
+  return path;
 }
 $("stt-copy").onclick = async () => {
-  const path = currentItem && currentItem.path;
-  await sttAction($("stt-copy"), "/api/items/transcript/library", "POST",
+  const path = await sttAction($("stt-copy"), "/api/items/transcript/library", "POST",
     (b) => `Copied ${plural(b.lines, "machine line")} to the library as ${b.sidecar}; the captions show them now.`);
   if (path) refreshStt(path, { captions: true });
 };
 $("stt-uncopy").onclick = async () => {
-  const path = currentItem && currentItem.path;
-  await sttAction($("stt-uncopy"), "/api/items/transcript/library", "DELETE",
+  const path = await sttAction($("stt-uncopy"), "/api/items/transcript/library", "DELETE",
     (b) => b.removed && b.removed.length ? `Removed ${b.removed.join(", ")} from the library.` : "There was no copy in the library.");
   if (path) refreshStt(path, { captions: true, script: true });
 };
 $("stt-clear").onclick = async () => {
   if (!confirm("Delete this file's machine transcript? A copy in the library stays.")) return;
-  const path = currentItem && currentItem.path;
-  await sttAction($("stt-clear"), "/api/items/transcript", "DELETE",
+  const path = await sttAction($("stt-clear"), "/api/items/transcript", "DELETE",
     (b) => b.deleted ? "Deleted the machine transcript." : "There was no transcript to delete.");
   if (path) refreshStt(path, { script: true });
 };
@@ -2811,6 +2869,31 @@ let currentDuration = 0;  // set per item in openItem (probed duration)
 function clipPadBefore() { const v = parseFloat($("clip-before").value); return Number.isFinite(v) ? v : 0; }
 function clipPadAfter() { const v = parseFloat($("clip-after").value); return Number.isFinite(v) ? v : 0; }
 
+// Before / After are the padding every line selection gets. A free range (a drag on the
+// waveform, I / O, a bookmark) brings its own, and so does I / O on a line: the session's
+// pads are set aside meanwhile and come back when another line selection (or none) replaces
+// that one, so a drag's 0 s or an I 80 s before the line doesn't stick to every later line.
+let linePads = null;  // {before, after, owner}: the pads set aside, and whose pads show now
+
+/** The line selection's key, by its times (they survive the script reloading). */
+const lineKey = () => `${clipStart()}-${clipEnd()}`;
+
+/** Set the session's pads aside before a free range (owner null) or I / O on the line
+ *  selection (its lineKey) writes its own. */
+function setAsidePads(owner) {
+  if (!linePads) linePads = { before: $("clip-before").value, after: $("clip-after").value };
+  linePads.owner = owner;
+}
+
+/** The selection is now lines, or nothing: bring the session's pads back, unless these
+ *  lines are the ones I / O padded. */
+function restoreLinePads() {
+  if (!linePads || (hasClipRange() && lineKey() === linePads.owner)) return;
+  $("clip-before").value = linePads.before;
+  $("clip-after").value = linePads.after;
+  linePads = null;
+}
+
 /** The range as the server takes it: padding within 0-60 s. A negative pad, or one over
  *  60 s, moves start / end instead, so the cut lands on the same in and out points. */
 function wireRange(start, end) {
@@ -2891,6 +2974,7 @@ function announceSelection() {
 }
 
 function updateClipUI() {
+  restoreLinePads();
   // Range display
   const el = $("mark-range-display");
   if (!hasClipRange()) {
@@ -3094,8 +3178,8 @@ async function loadScript(path, track) {
       : machine ? `${AUTO_CHIP}${escapeHtml(cue.text)}` : escapeHtml(cue.text);
     const at = formatTime(cue.start);
     // Named "time, text" so a screen reader hears where the line is before what it says;
-    // a machine line says so first (M21).
-    const name = `${at}, ${machine ? "machine transcript: " : ""}${cue.speaker ? cue.speaker + ": " : ""}${cue.text}${cue.synthetic ? " (before the first line)" : ""}`;
+    // a machine line says so first (M21), starting with the chip's visible "auto" (SC 2.5.3).
+    const name = `${at}, ${machine ? "auto, machine transcript: " : ""}${cue.speaker ? cue.speaker + ": " : ""}${cue.text}${cue.synthetic ? " (before the first line)" : ""}`;
     const title = machine ? `${MACHINE_TITLE}. ${SCRIPT_LINE_TITLE}` : SCRIPT_LINE_TITLE;
     row.innerHTML =
       `<button type="button" class="script-play" tabindex="${i === 0 ? 0 : -1}" title="${escapeHtml(title)}" aria-label="${escapeHtml(name)}" data-name="${escapeHtml(name)}">` +
@@ -3720,7 +3804,7 @@ async function wfLoad() {
   const data = { ...body, values: b64ToInt16(body.data) };
   wf.data = data;
   if (data.source === "overview" && data.peak) wf.filePeak = data.peak;
-  if (data.start <= 0 && data.end >= wf.dur - 0.05) wf.base = data;
+  if (data.start <= 0 && data.end >= Math.min(wf.dur, data.duration || wf.dur) - 0.05) wf.base = data;
   if (body.keyframes) wf.keyframes = { start: data.start, end: data.end, times: body.keyframes };
   wfCutNote();
   wfDraw();
@@ -3796,7 +3880,10 @@ function wfSharp(d) {
 function wfSource() {
   const [a, b] = wf.view;
   const sharp = [wf.data, wf.base].filter(wfSharp);
-  const full = sharp.find((d) => (d.start <= a || wfNear(d.start, a)) && (d.end >= b || wfNear(d.end, b)));
+  // The server clamps `end` to the file's duration, which can fall short of the probed one
+  // the view runs to: a response that reaches the file's end covers the view.
+  const reach = (d) => (d.duration ? Math.min(b, d.duration) : b);
+  const full = sharp.find((d) => (d.start <= a || wfNear(d.start, a)) && (d.end >= reach(d) || wfNear(d.end, reach(d))));
   if (full) return { src: full, full: true };
   return { src: sharp.find((d) => d.end > a && d.start < b) || null, full: false };
 }
@@ -3845,8 +3932,14 @@ function wfDraw() {
     const l = Math.max(0, x0), r = Math.min(w, x1);
     if (r - l < 0.5) continue;
     const machine = cue.source === "machine";  // a machine line keeps its own colour here too
-    ctx.fillStyle = machine ? c.machineSoft : c.raised;
+    // Opaque first, so the selection's shade doesn't show through a machine line's tint
+    // and take its text under 4.5:1 (test_frontend_contrast).
+    ctx.fillStyle = c.raised;
     ctx.fillRect(l, 2, r - l, WF_CUE_LANE - 4);
+    if (machine) {
+      ctx.fillStyle = c.machineSoft;
+      ctx.fillRect(l, 2, r - l, WF_CUE_LANE - 4);
+    }
     ctx.fillStyle = machine ? c.machine : c.strong;
     if (x0 >= 0) ctx.fillRect(x0, 2, 1, WF_CUE_LANE - 4);
     if (x1 <= w) ctx.fillRect(x1 - 1, 2, 1, WF_CUE_LANE - 4);
@@ -4033,7 +4126,10 @@ function wfMoveHandle(k, t) {
 
 /** Before / After changed (typed or by a handle): refresh everything that shows the range. */
 function padsChanged() {
-  if (!wf.fromHandle) wf.snapSeq++;  // typed Before / After: a pending snap is stale
+  if (!wf.fromHandle) {
+    wf.snapSeq++;  // typed Before / After: a pending snap is stale
+    if (hasClipRange()) linePads = null;  // typed for lines: these are the session's pads now
+  }
   if (hasClipRange()) { updateClipUI(); return; }
   if (clipTargetOn && clipRangeStart != null) renderFreeRange();
   wfOnSelection();
@@ -4131,6 +4227,7 @@ function wfJumpTo(k) {
 /** Select `a..b` as a free range with no padding, replacing any line selection. The view
  *  stays where it is: the range was made on screen. */
 function wfSetFreeRange(a, b) {
+  setAsidePads(null);
   $("clip-before").value = "0";
   $("clip-after").value = "0";
   wf.fromHandle = true;
@@ -4160,13 +4257,21 @@ async function wfSnapRange() {
 /** I (k=0) or O (k=1): put the in or out point at the playhead. With nothing selected, or
  *  the playhead beyond the other end, it starts a new range of WF_POINT_SPAN from there. */
 function wfSetPoint(k) {
-  if (!currentItem || !wf.path) return;
+  if (!currentItem) return;
+  if (!wf.path) {
+    // No waveform (the file's length isn't known): say why the button does nothing.
+    const msg = "Set in and Set out work on the waveform, which this file doesn't have (its length isn't known).";
+    $("preview-note").textContent = msg;
+    announce(msg);
+    return;
+  }
   const t = Math.max(0, Math.min(wf.dur, playerTime()));
   const sel = wfSel();
   const name = k === 0 ? "In" : "Out";
   wf.snapSeq++;  // a snap still on its way would move the point just set
   let fresh = false;
   if (sel && (k === 0 ? t < sel[1] - 0.005 : t > sel[0] + 0.005)) {
+    if (hasClipRange()) setAsidePads(lineKey());  // this line's pad, not every later line's
     wfMoveHandle(k, t);
   } else {
     // The point stays on the playhead; near the file's ends the range is shorter.
@@ -4266,7 +4371,7 @@ $("wf-stage").addEventListener("pointerdown", (e) => {
   if (e.button === 1) e.preventDefault();  // no autoscroll
   const touch = e.pointerType === "touch";
   const d = { kind: touch || e.shiftKey || e.button === 1 ? "pan" : "select",
-    x: wfPointerX(e), t: wfT(wfPointerX(e)), view: [...wf.view], moved: false };
+    x: wfPointerX(e), t: wfT(wfPointerX(e)), view: [...wf.view], moved: false, middle: e.button === 1 };
   if (touch) {
     d.hold = setTimeout(() => {
       if (wf.drag !== d || d.moved) return;
@@ -4339,7 +4444,7 @@ function wfPointerEnd(e) {
     wfSnapHandle(d.k).then(() => wfAnnounceHandle(d.k));
   } else if (d.kind === "select" && d.moved) {
     wfSnapRange();
-  } else if (!d.moved && !d.held && e.type === "pointerup") {
+  } else if (!d.moved && !d.held && !d.middle && e.type === "pointerup") {
     seekTo(Math.max(0, Math.min(wf.dur, wfT(wfPointerX(e)))));  // a click plays from there
   }
 }
@@ -4464,7 +4569,8 @@ function wireBmBufferControls(li, bm, onSaved) {
 }
 
 function useBookmarkForClip(bm) {
-  // Restore the bookmark's saved buffer into the inputs (B16).
+  // Restore the bookmark's saved buffer into the inputs (B16), the session's set aside.
+  setAsidePads(null);
   $("clip-before").value = bm.before ?? 0;
   $("clip-after").value = bm.after ?? 0;
   // Restore the saved stream selection (B17), best-effort (only if the option

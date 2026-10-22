@@ -7,7 +7,10 @@ snap from landing on a selection made since, and the keys and buttons with their
 
 from __future__ import annotations
 
+import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -103,3 +106,65 @@ def test_bookmark_saves_a_free_range_too():
         body = _function(name)
         assert "wfAnchor()" in body and "hasClipRange()" not in body
     assert '$("mark-save").disabled = false' in _function("showFreeRange")
+
+
+def test_a_middle_click_pans_and_never_plays():
+    down = _listener("pointerdown")
+    assert "middle: e.button === 1" in down
+    assert "!d.moved && !d.held && !d.middle" in _function("wfPointerEnd")
+
+
+def test_set_in_and_out_without_a_waveform_say_why():
+    body = _function("wfSetPoint")
+    head = body[:body.index("const t = ")]
+    assert "if (!wf.path)" in head and "announce(msg)" in head and '$("preview-note").textContent = msg' in head
+
+
+def test_a_free_range_or_i_and_o_on_a_line_keep_the_sessions_pads():
+    # A drag or a bookmark brings its own pads, and I / O on a line its own pad: the
+    # session's Before / After are set aside, and come back when other lines (or none) are
+    # selected, so a drag's 0 s or an I far before the line doesn't stick to later lines.
+    assert "setAsidePads(null)" in _function("wfSetFreeRange")
+    assert _function("wfSetFreeRange").index("setAsidePads(null)") < _function("wfSetFreeRange").index('.value = "0"')
+    assert "setAsidePads(null)" in _function("useBookmarkForClip")
+    assert "if (hasClipRange()) setAsidePads(lineKey())" in _function("wfSetPoint")
+    restore = _function("restoreLinePads")
+    assert "hasClipRange() && lineKey() === linePads.owner" in restore and "linePads = null" in restore
+    assert _function("updateClipUI").split("\n")[1].strip() == "restoreLinePads();"
+    assert "restoreLinePads()" in _function("openItem")
+    # Pads typed for lines are the session's from then on.
+    assert "if (hasClipRange()) linePads = null" in _function("padsChanged")
+
+
+NODE = shutil.which("node")
+PADS_HARNESS = r"""
+const src = require("fs").readFileSync(process.argv[2], "utf8");
+const grab = (name) => src.match(new RegExp(`^function ${name}\\(.*?^}|^const ${name} = [^\\n]*`, "ms"))[0];
+const els = {};
+const $ = (id) => els[id] || (els[id] = { value: "" });
+const cues = [{ start: 100, end: 102 }, { start: 110, end: 112 }];
+let clipFirst = -1, clipLast = -1, linePads = null;
+const hasClipRange = () => clipFirst >= 0;
+const clipStart = () => cues[clipFirst].start, clipEnd = () => cues[clipLast].end;
+// A const evaluated here would stay inside eval: hoist it as a var, as the page has it.
+eval(["lineKey", "setAsidePads", "restoreLinePads"].map(grab).join("\n").replace(/^const /m, "var "));
+const pads = () => `${$("clip-before").value}/${$("clip-after").value}`;
+const pick = (i) => { clipFirst = clipLast = i; restoreLinePads(); };  // updateClipUI
+const out = [];
+$("clip-before").value = "0.5"; $("clip-after").value = "0.7";
+setAsidePads(null); $("clip-before").value = "0"; $("clip-after").value = "0";  // a drag
+pick(0); out.push(pads());                                    // a line after the drag
+setAsidePads(lineKey()); $("clip-before").value = "80";       // I 80 s before it
+restoreLinePads(); out.push(pads());                          // the same line keeps it
+pick(1); out.push(pads());                                    // the next line doesn't
+console.log(JSON.stringify(out));
+"""
+
+
+@pytest.mark.skipif(NODE is None, reason="needs node")
+def test_the_pads_in_node(tmp_path):
+    script = tmp_path / "pads.js"
+    script.write_text(PADS_HARNESS)
+    run = subprocess.run([NODE, str(script), str(FRONTEND / "app.js")], capture_output=True, text=True, timeout=30)
+    assert run.returncode == 0, run.stderr
+    assert json.loads(run.stdout) == ["0.5/0.7", "80/0.7", "0.5/0.7"]

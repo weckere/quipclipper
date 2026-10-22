@@ -9,7 +9,10 @@ There's no JS runtime in the tests, so these read ``app.js``, ``index.html`` and
 
 from __future__ import annotations
 
+import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -46,7 +49,8 @@ def test_machine_lines_are_marked_in_the_script():
     load = _function("loadScript")
     assert 'cue.source === "machine"' in load
     assert "script-machine" in load and "AUTO_CHIP" in load
-    assert '"machine transcript: "' in load  # the accessible name says so
+    # The accessible name says so, starting with the chip's visible "auto" (SC 2.5.3).
+    assert '"auto, machine transcript: "' in load
     assert "MACHINE_TITLE" in load
 
 
@@ -131,3 +135,141 @@ def test_a_read_only_folder_says_why_copy_is_off():
     html = (FRONTEND / "index.html").read_text()
     assert re.search(r'id="stt-readonly"[^>]*>This folder is read-only', html)
     assert '$("stt-readonly").hidden = copy.hidden || t.writable' in _function("renderSttBar")
+
+
+def test_the_bars_status_stays_until_another_files_bar_is_drawn():
+    bar = _function("renderSttBar")
+    # The status line goes when the bar's file changes, not on every redraw: an action's
+    # result (a read-only folder's 403 too) and a job's "done" survive the refresh after it.
+    assert "const fresh = bar.dataset.path !== path" in bar and "bar.dataset.path = path" in bar
+    assert bar.index("bar.dataset.path = path") < bar.index("if (bar.hidden) return")
+    assert "else if (!running && fresh)" in bar
+    assert "delete $(\"stt-bar\").dataset.path" in _function("openItem")
+    action = _function("sttAction")
+    assert "announce(msg)" in action and "sttStatus(msg)" in action
+    assert "That didn't work" in action
+
+
+def test_a_file_whose_transcription_still_runs_shows_it_again():
+    bar = _function("renderSttBar")
+    assert "if (running && (fresh || !sttFollowing || sttFollowing.jobId !== running)) followSttJob(running, path)" in bar
+    follow = _function("followSttJob")
+    # One poll per job: following again ends the older poll, even mid-request.
+    assert "const follow = sttFollowing = { jobId, path }" in follow
+    assert follow.count("if (!mine()) return") >= 3
+
+
+def test_transcript_requests_never_land_in_another_file():
+    action = _function("sttAction")
+    # The answer, its message and the re-enabled button are the file's that asked.
+    assert action.index("if (!sttHere(path)) return null") < action.index("btn.disabled = false;")
+    assert "finally" not in action
+    start = _function("startTranscribe")
+    assert "if (sttHere(path)) followSttJob(r.job_id, path)" in start
+    assert "sttJobs.set(path, r.job_id)" in start  # still followed when the file is back
+    follow = _function("followSttJob")
+    assert follow.index("if (here())") < follow.index("box.hidden = false")
+    for name in ("stt-copy", "stt-uncopy", "stt-clear"):
+        assert re.search(rf'\$\("{name}"\)\.onclick = async \(\) => \{{[^}}]*const path = await sttAction\(', _js()), name
+
+
+def test_the_job_poll_stops_when_the_item_view_is_left_or_the_server_is_gone():
+    assert "sttUnfollow()" in _function("stopPlayer")
+    unfollow = _function("sttUnfollow")
+    assert "clearTimeout(sttTimer)" in unfollow and "sttFollowing = null" in unfollow
+    follow = _function("followSttJob")
+    assert "++failures >= STT_POLL_TRIES" in follow and "failures = 0" in follow
+
+
+def test_a_folder_transcription_started_from_a_folder_since_left_stays_out_of_the_new_one():
+    start = _function("startFolderTranscribe")
+    assert "const here = currentBrowsePath === folder" in start
+    assert "if (here) followFolderTranscribe(r.job_id, folder)" in start
+    assert "if (currentBrowsePath === folder) status.textContent" in start
+
+
+def test_machine_cue_labels_sit_on_an_opaque_ground():
+    draw = _function("wfDraw")
+    # The selection's shade must not show through a machine line's tint (it took the text
+    # under 4.5:1 in light): raised first, then the tint over it.
+    lane = draw[draw.index('const machine = cue.source === "machine"'):]
+    assert lane.index("ctx.fillStyle = c.raised") < lane.index("ctx.fillStyle = c.machineSoft")
+    assert "machine ? c.machineSoft : c.raised" not in draw
+
+
+def test_a_machine_hits_match_keeps_the_machine_colour():
+    css = (FRONTEND / "styles.css").read_text()
+    assert re.search(r"\.dialogue-hit\.hit-machine mark \{[^}]*color: var\(--machine\)", css)
+    # The focused row doubles the shade, which takes --machine under 4.5:1: --text there.
+    assert re.search(r"\.dialogue-hit\.hit-machine\.focus mark \{[^}]*color: var\(--text\)", css)
+
+
+NODE = shutil.which("node")
+STT_HARNESS = r"""
+const src = require("fs").readFileSync(process.argv[2], "utf8");
+const grab = (name) => {
+  const m = src.match(new RegExp(`^(?:async )?function ${name}\\(.*?^}|^const ${name} = [^\n]*`, "ms"));
+  if (!m) throw new Error("no " + name);
+  return m[0];
+};
+const els = {};
+const $ = (id) => els[id] || (els[id] = { id, hidden: false, disabled: false, textContent: "", dataset: {}, value: "" });
+const sttAvailable = () => true, sttModels = () => ["small.en"], sttDefaultModel = () => "small.en";
+const sttHasLines = (t) => !!t && ((t.stored && t.stored.lines > 0) || (t.library || []).length > 0);
+const formatTimeWhole = String, plural = (n, w) => `${n} ${w}s`, qp = (p) => `?path=${p}`;
+const sttJobs = new Map(), announced = [], timers = [];
+let sttFollowing = null, sttTimer = null, currentItem = null, jobAnswer = null, apiAnswer = null;
+const STT_POLL_TRIES = 6;
+function fillModelSelect() {}
+function announce(m) { announced.push(m); }
+function setTimeout(fn) { timers.push(fn); return timers.length; }
+function clearTimeout() {}
+async function getJSON() { if (jobAnswer instanceof Error) throw jobAnswer; return jobAnswer; }
+async function apiFetch() { return apiAnswer; }
+const jobActive = (j) => j.status === "running" || j.status === "queued";
+async function refreshStt() {}
+eval(["sttHere", "sttUnfollow", "sttStatus", "renderSttBar", "followSttJob", "sttAction"].map(grab).join("\n"));
+const T = { stored: { covered: 60, models: ["small.en"], lines: 12 }, library: [], writable: false };
+const out = {};
+(async () => {
+  currentItem = { path: "a" };
+  renderSttBar(T, "a", true);
+  apiAnswer = { ok: false, status: 403, json: async () => ({ detail: "read-only" }) };
+  await sttAction($("stt-copy"), "/x", "POST", () => "ok");
+  renderSttBar(T, "a", true);  // the refresh after the action
+  out.errorKept = !$("stt-job").hidden && $("stt-job-text").textContent.includes("read-only");
+  out.errorAnnounced = announced.at(-1).includes("read-only");
+  renderSttBar(T, "b", true);
+  out.clearedForAnother = $("stt-job").hidden && $("stt-job-text").textContent === "";
+  sttJobs.set("a", "jobA");
+  renderSttBar(T, "a", true);
+  currentItem = { path: "b" };
+  renderSttBar(T, "b", true);
+  currentItem = { path: "a" };
+  renderSttBar(T, "a", true);
+  out.backOnRunning = !$("stt-job").hidden && !$("stt-cancel").hidden && $("stt-gaps").disabled;
+  apiAnswer = { ok: true, status: 200, json: async () => ({}) };
+  $("stt-job-text").textContent = "mine";
+  const late = sttAction($("stt-copy"), "/x", "POST", () => "done");
+  currentItem = { path: "c" };
+  $("stt-copy").disabled = true;
+  out.staleIgnored = (await late) === null && $("stt-copy").disabled && $("stt-job-text").textContent === "mine";
+  timers.length = 0;
+  jobAnswer = Object.assign(new Error("down"), { status: 502 });
+  followSttJob("jobZ", "z");
+  let ticks = 0;
+  while (timers.length && ticks < 50) { await timers.shift()(); ticks++; }
+  out.pollGivesUp = ticks === STT_POLL_TRIES && sttFollowing === null;
+  console.log(JSON.stringify(out));
+})();
+"""
+
+
+@pytest.mark.skipif(NODE is None, reason="needs node")
+def test_the_transcript_bar_in_node(tmp_path):
+    script = tmp_path / "stt.js"
+    script.write_text(STT_HARNESS)
+    run = subprocess.run([NODE, str(script), str(FRONTEND / "app.js")], capture_output=True, text=True, timeout=30)
+    assert run.returncode == 0, run.stderr
+    result = json.loads(run.stdout)
+    assert result == {k: True for k in result} and len(result) == 6, result
