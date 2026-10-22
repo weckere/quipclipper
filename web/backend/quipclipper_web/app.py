@@ -1497,8 +1497,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         t = None
         try:
             t = stt.run(transcripts, p, ranges, cfg=settings.whisper, model=model,
-                        audio=audio, real=real, duration=duration, progress=progress,
-                        cancelled=lambda: job.cancel_requested)
+                        audio=audio, real=real, duration=duration, vad=stt.use_vad(mode),
+                        progress=progress, cancelled=lambda: job.cancel_requested)
         except stt.Cancelled:
             t = transcripts.load(p)
         heard = [c for c in (t.cues if t else []) if any(a <= c.start < b for a, b in ranges)]

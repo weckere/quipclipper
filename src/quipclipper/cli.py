@@ -1596,7 +1596,8 @@ def _local_transcribe(c: Context, v: dict) -> Any:
 
     try:
         t = tr.run(store, media, ranges, cfg=cfg, model=model, audio=int(v.get("audio") or 0),
-                   real=real, duration=_probe_duration(media), progress=progress)
+                   real=real, duration=_probe_duration(media), vad=tr.use_vad(mode),
+                   progress=progress)
     except RuntimeError as exc:
         raise CliError(str(exc), code="failed") from None
     new = [cue for cue in (t.cues if t else []) if any(a <= cue.start < b for a, b in ranges)]

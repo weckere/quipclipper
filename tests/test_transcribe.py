@@ -337,3 +337,11 @@ def test_run_refuses_an_unknown_model(tmp_path):
 
 def test_cues_to_vtt():
     assert tr.cues_to_vtt(machine((1, 2, "hi"))) == "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nhi\n"
+
+
+def test_clean_text_drops_subtitle_markup_whisper_learnt():
+    assert tr.clean_text(" <i>Cause the temperature's too high</i>") == "Cause the temperature's too high"
+
+
+def test_vad_only_for_whole_files():
+    assert tr.use_vad("file") and not tr.use_vad("gaps") and not tr.use_vad("range")

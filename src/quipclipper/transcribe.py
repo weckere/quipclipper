@@ -243,6 +243,8 @@ def chunks(start: float, end: float, size: float | None = None) -> list[Range]:
 
 # --- whisper output ------------------------------------------------------------------
 
+# Markup whisper copies from the subtitles it learnt from: <i>…</i>, {\an8}.
+_TAG_RE = re.compile(r"<[^>]+>|\{[^}]*\}")
 # Parenthesised or bracketed sound descriptions: "(dramatic music)", "[Music]", "[BLANK_AUDIO]".
 _SOUND_RE = re.compile(r"[\[(][^\])]{0,60}[\])]")
 # A segment with nothing but music notes, punctuation and space left.
@@ -262,7 +264,7 @@ def _norm(text: str) -> str:
 
 def clean_text(text: str) -> str:
     """Whisper text as a line: sound descriptions dropped, markup and space collapsed."""
-    text = _SOUND_RE.sub(" ", text)
+    text = _SOUND_RE.sub(" ", _TAG_RE.sub("", text))
     text = " ".join(text.split())
     if text.startswith("- ") and " - " not in text:  # a lone dialogue dash
         text = text[2:]
@@ -383,7 +385,13 @@ def extract_argv(source: str | Path, out_wav: str | Path, *, start: float, durat
 
 def whisper_argv(cfg: WhisperConfig, model_path: str, wav: str | Path, out_base: str | Path,
                  *, prompt: str | None = None, vad: bool = False) -> list[str]:
-    """``whisper-cli`` arguments: JSON out, English, capped threads, no console text."""
+    """``whisper-cli`` arguments: JSON out, English, capped threads, no console text.
+
+    ``vad`` (Silero, when a VAD model is configured) skips what it hears as non-speech.
+    Only whole-file runs use it (:func:`use_vad`): on wizrock it dropped every sung line
+    of the Darkplace song, the very lines a range or a gap is transcribed for. A seed
+    ``prompt`` of the file's names made small.en write a single "." there, so runs
+    don't use one (M21 phase 0)."""
     cmd = [cfg.binary_path() or cfg.binary, "-m", str(model_path), "-f", str(wav),
            "-t", str(_clamp_threads(cfg.threads)), "-l", cfg.language,
            "-oj", "-of", str(out_base), "-np"]
@@ -392,6 +400,12 @@ def whisper_argv(cfg: WhisperConfig, model_path: str, wav: str | Path, out_base:
     if prompt:
         cmd += ["--prompt", prompt[:600]]
     return cmd
+
+
+def use_vad(mode: str) -> bool:
+    """Whether a run of ``mode`` uses voice activity detection: a whole file (a podcast's
+    silences) yes; a range or the gaps, which are mostly songs and music, no."""
+    return mode == "file"
 
 
 class Cancelled(Exception):
@@ -427,14 +441,6 @@ def _run(argv: list[str], *, cancelled: Callable[[], bool] | None, timeout: floa
         tail = [ln for ln in stderr.strip().splitlines() if ln.strip()][-1:] or ["no output"]
         raise RuntimeError(f"{Path(argv[0]).name} failed ({proc.returncode}): {tail[0]}")
     return stderr
-
-
-def prompt_from(cues: list[Cue], start: float, end: float, limit: int = 400) -> str | None:
-    """Text of the subtitle lines around a stretch, to seed whisper's vocabulary with the
-    file's own names and words."""
-    near = [c.text for c in cues if not c.machine and c.end >= start - 60 and c.start <= end + 60]
-    text = " ".join(near)
-    return text[-limit:] if text else None
 
 
 def transcribe_range(source: str | Path, start: float, end: float, *, cfg: WhisperConfig,
@@ -680,8 +686,8 @@ def run(store: TranscriptStore, media: str | Path, ranges: list[Range], *, cfg: 
             if cancelled is not None and cancelled():
                 raise Cancelled()
             cues = transcribe_range(media, s, e, cfg=cfg, model=model, audio=audio,
-                                    src_rate=src_rate, prompt=prompt_from(real or [], s, e),
-                                    vad=vad, cancelled=cancelled, media_duration=duration)
+                                    src_rate=src_rate, vad=vad, cancelled=cancelled,
+                                    media_duration=duration)
             t = store.add(media, (s, e), cues, model=model, language=cfg.language)
             done += e - s
             if progress:
