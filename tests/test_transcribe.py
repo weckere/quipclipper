@@ -225,7 +225,26 @@ def test_extract_argv_is_an_anchored_16k_wav():
     assert argv[argv.index("-ss") + 1] == "349.000000"  # the anchor, as the waveform seeks
     assert "atrim=start_sample=192000" in argv[argv.index("-af") + 1]
     assert argv[-6:] == ["-f", "wav", "-acodec", "pcm_s16le", "-y", "/a.wav"]
-    assert "0:a:1" in argv and "16000" in argv
+    assert "0:a:1" in argv and "-ar" not in argv
+    assert argv[argv.index("-af") + 1].endswith(",aresample=16000")
+
+
+@needs_ffmpeg
+def test_extract_lands_on_the_second_asked_for(tmp_path):
+    """An anchored extraction of AC3 in Matroska starts where it should. With -ar after the
+    chain's aresample=first_pts=0 it started seconds late (M21, live on Darkplace S01E06)."""
+    mkv = tmp_path / "burst.mkv"
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i",
+                    "aevalsrc='if(between(t,52,53),0.5*sin(2*PI*440*t),0)':s=48000:d=70",
+                    "-c:a", "ac3", "-y", str(mkv)], check=True)
+    wav = tmp_path / "a.wav"
+    subprocess.run(tr.extract_argv(mkv, wav, start=51.0, duration=6, src_rate=48000), check=True)
+    out = subprocess.run(["ffmpeg", "-v", "info", "-i", str(wav), "-af",
+                          "silencedetect=n=-40dB:d=0.3", "-f", "null", "-"],
+                         capture_output=True, text=True).stderr
+    import re as _re
+    first = float(_re.search(r"silence_end: ([0-9.]+)", out).group(1))
+    assert abs(first - 1.0) < 0.05, out
 
 
 @pytest.mark.skipif(not hasattr(os, "SCHED_IDLE"), reason="Linux scheduling only")

@@ -42,6 +42,9 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   ggml models pinned by hash, and sets `QC_WHISPER_*`. Nothing in it starts a run.
 - The idle launcher passes the app's import path to its child, so it finds the engine under a
   Nix-wrapped app.
+- Transcribed lines land at the right time: the audio for whisper is resampled to 16 kHz inside
+  the decode's filter chain. Resampling after it started an anchored decode of AC3 in Matroska
+  seconds late, so every line came out early (4 s on Darkplace S01E06, found live).
 - **Folders:** `index.transcribe` / `POST /api/search/folder/transcribe` transcribes a folder's
   files without subtitles (audio with no transcript included) or the gaps in every subtitled
   file, file after file in one cancellable job; the Dialogue index card offers both, after a

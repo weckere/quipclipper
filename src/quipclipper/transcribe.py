@@ -385,9 +385,14 @@ def extract_argv(source: str | Path, out_wav: str | Path, *, start: float, durat
     """ffmpeg arguments that write ``start..start+duration`` of audio stream ``a:audio``
     as a 16 kHz mono WAV, decoded the way the waveform decodes (anchored seek, so the
     first sample is at ``start`` exactly)."""
-    cmd = waveform.decode_args(source, audio=audio, rate=SAMPLE_RATE, start=start,
+    # Decode at the stream's own rate and resample to 16 kHz inside the filter chain. An
+    # output -ar after the chain's aresample=first_pts=0 starts the audio seconds late
+    # (4 s on Darkplace S01E06's AC3, after an anchored -ss): every line came out early.
+    cmd = waveform.decode_args(source, audio=audio, rate=None, start=start,
                                duration=duration, input_flags=input_flags, src_rate=src_rate)
     assert cmd[-5:] == ["-f", "s16le", "-acodec", "pcm_s16le", "-"], cmd[-5:]
+    af = cmd.index("-af") + 1
+    cmd[af] += f",aresample={SAMPLE_RATE}"
     return cmd[:-5] + ["-f", "wav", "-acodec", "pcm_s16le", "-y", str(out_wav)]
 
 
