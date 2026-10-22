@@ -52,6 +52,7 @@ MARKED_CONTROLS: dict[str, int] = {
     "leadstinger.link": 2,    # a clip row's Send to LeadStinger button and the clips toggle
     "jellyfin.sessions": 2,   # the Now playing card (library) and the Now playing scope
     "item.link": 2,           # Copy link in the workspace and on a search hit
+    "item.transcribe": 3,     # Transcribe selection (waveform), Fill gaps and Transcribe file
     "youtube.download": 1,
     "youtube.delete-download": 1,
 }

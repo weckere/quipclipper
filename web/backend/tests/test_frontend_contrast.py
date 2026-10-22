@@ -4,10 +4,10 @@
 pairs the stylesheet actually puts together:
 
 * text colours (``--text``, ``--dim``, ``--faint``, ``--accent-text``, ``--ok``, ``--danger``,
-  ``--playhead`` for speaker names) on every ground (``--bg``, ``--surface``, ``--raised``,
+  ``--playhead`` for speaker names, ``--machine`` for machine transcript lines) on every ground (``--bg``, ``--surface``, ``--raised``,
   ``--sunken``): 4.5:1 (SC 1.4.3);
-* text on the selection and playhead tints (``--accent-soft``, ``--playhead-soft`` laid over a
-  ground), and ``--accent-ink`` on ``--accent`` (the primary buttons): 4.5:1;
+* text on the selection, playhead and transcript-bar tints (``--accent-soft``, ``--playhead-soft``,
+  ``--machine-soft`` laid over a ground), machine lines included, and ``--accent-ink`` on ``--accent`` (the primary buttons): 4.5:1;
 * UI colours on every ground: input and button borders (``--line-strong``), the switch and the
   selection edges (``--accent``), the focus ring (``--accent-text``), the playhead, the job marks
   and the dialogue map's bars (``--faint``): 3:1 (SC 1.4.11).
@@ -26,10 +26,10 @@ TOKENS = Path(__file__).resolve().parents[2] / "frontend" / "tokens.css"
 # The Nix build packages web/backend alone, so the frontend isn't next to the tests there.
 needs_frontend = pytest.mark.skipif(not TOKENS.exists(), reason="web/frontend is not part of this source tree")
 
-TEXT = ("text", "dim", "faint", "accent-text", "ok", "danger", "playhead")
+TEXT = ("text", "dim", "faint", "accent-text", "ok", "danger", "playhead", "machine")
 GROUNDS = ("bg", "surface", "raised", "sunken")
-TINTS = ("accent-soft", "playhead-soft")
-UI = ("line-strong", "accent", "accent-text", "playhead", "ok", "danger", "faint")
+TINTS = ("accent-soft", "playhead-soft", "machine-soft")
+UI = ("line-strong", "accent", "accent-text", "playhead", "ok", "danger", "faint", "machine")
 
 
 def _decls(body: str) -> dict[str, str]:
@@ -109,7 +109,7 @@ def failures(t: dict[str, str]) -> list[str]:
             need(f, c[f], g, c[g], 4.5)
     for tint in TINTS:
         for g in GROUNDS:
-            for f in ("text", "accent-text"):
+            for f in ("text", "accent-text", "machine"):
                 need(f, c[f], f"{tint} over {g}", over(c[tint], c[g]), 4.5)
     need("accent-ink", c["accent-ink"], "accent", c["accent"], 4.5)
     for f in UI:

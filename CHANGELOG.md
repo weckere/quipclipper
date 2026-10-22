@@ -30,6 +30,13 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   copied to the library (`POST /api/items/transcript/library`), marked `≈`. `/api/health`
   and `/api/config` report whisper.cpp and its models. Configure with `QC_WHISPER_MODEL`,
   `QC_WHISPER_MODELS`, `QC_WHISPER_BIN` and `QC_WHISPER_THREADS` (capped at 3).
+- **In the workspace:** **Transcribe selection** on the waveform, and a Machine transcript bar
+  above the script with **Fill gaps** (or **Transcribe file** on a file with no subtitles), a
+  Model choice, progress and Cancel, **Copy to library** / **Remove from library**, **Export
+  .srt** and **Delete transcript**. Machine lines show in violet italics with an "auto" chip
+  and hover text in the script, both searches, the hit preview and the waveform's line lane,
+  and a screen reader hears "machine transcript" (AA contrast in both themes and with more
+  contrast). Settings gains **Transcription model**.
 
 ### UI follow-ups (M20)
 

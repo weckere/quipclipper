@@ -251,6 +251,20 @@ Opening a file opens its workspace.
   line, *Start of video*, lets a clip begin at 0:00. **Follow playback** keeps the
   playing line in view. The tabs beside **Script** are **Matches** (after a search),
   **Bookmarks** for this file and **Clips** made from it this visit.
+- **Machine transcript** (when the server has whisper.cpp): a bar above the script.
+  **Fill gaps** transcribes every stretch between subtitle lines (a song the subtitles
+  skip); on a file with no subtitles it's **Transcribe file**. **Transcribe selection**
+  on the waveform transcribes the stretch you selected, again if it was done before, for
+  a second go with **Model** medium.en. Each runs in the background at low priority, so it
+  can take a while: the bar shows its progress and **Cancel** (it keeps what's done). The
+  lines whisper hears appear in the script and in search **in violet italics with an
+  "auto" chip**, never mistaken for the subtitles (a screen reader hears "machine
+  transcript"), and on the waveform's line lane in violet. They stay out of the video's
+  captions until **Copy to library** writes them next to the file as
+  `<name>.en.whisper.srt` (writable folders only); then the captions show them too, marked
+  ≈, and Jellyfin offers that file as a subtitle track. **Export .srt** saves them,
+  **Remove from library** and **Delete transcript** undo the two. See
+  [Machine transcription](#machine-transcription-whispercpp).
 - **The Selection panel** shows the selected range and acts on it: **★ Bookmark** (with
   a label you can edit; a range dragged on the waveform can be bookmarked too), **✂ Make clip**, and **⚡ Send to LeadStinger** (an icon button:
   hover or focus it for what it does; one click cuts and sends). Under
@@ -289,6 +303,9 @@ Saved per browser:
   subtitles**, for the subtitles on the video.
 - **Subtitle languages**: the order to prefer when a file has several subtitle tracks
   (`eng,spa`); empty uses the server's `QC_SUBTITLE_LANGS`.
+- **Transcription model** (when the server has both): small.en, quicker, or medium.en,
+  which hears more and is about three times slower. The transcript bar's **Model** picks
+  another for one run.
 
 The clip name template is the Name field in the Selection panel, and the YouTube player
 choice is on each YouTube video.

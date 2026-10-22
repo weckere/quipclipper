@@ -32,7 +32,7 @@ async function postJSON(url, body) {
     try { detail = (await resp.json()).detail || detail; } catch {}
     throw new Error(detail);
   }
-  if (/^\/api\/(clip|youtube|media|search\/folder\/(index|fetch-subs))/.test(url)) nudgeJobs();
+  if (/^\/api\/(clip|youtube|media|items\/transcribe|search\/folder\/(index|fetch-subs|transcribe))/.test(url)) nudgeJobs();
   return resp.json();
 }
 
@@ -871,12 +871,12 @@ async function dialogueSearch(query, folders) {
     list.appendChild(head);
     for (const hit of g.hits) {
       const li = document.createElement("li");
-      li.className = "dialogue-hit";
+      li.className = hit.machine ? "dialogue-hit hit-machine" : "dialogue-hit";
       li.dataset.group = gid;
       li.innerHTML =
         `<label class="hit-check"><input type="checkbox" class="search-select" title="Select this line for Clip selected and Bookmark selected" aria-label="Select the line at ${hit.start_ts}" /></label>` +
         `<div class="hit-main" tabindex="0" role="button" title="${previewOn() ? "Show this line in context" : "Open this file in the workspace with the line selected"}">` +
-          `<span class="hit-text">${hit.speaker ? `<span class="hit-speaker">${escapeHtml(hit.speaker)}</span>` : ""}${highlightMatch(hit.text, query)}</span>` +
+          `<span class="hit-text">${hit.machine ? `${AUTO_CHIP}<span class="visually-hidden">Machine transcript: </span>` : ""}${hit.speaker ? `<span class="hit-speaker">${escapeHtml(hit.speaker)}</span>` : ""}${highlightMatch(hit.text, query)}</span>` +
           `<span class="hit-time">${hit.start_ts} – ${hit.end_ts}</span>` +
         `</div>` +
         `<span class="hit-score" title="Match score">${hit.score}%</span>` +
@@ -971,8 +971,10 @@ async function focusHit(li, hit, open) {
   list.innerHTML = "";
   for (let i = Math.max(0, idx - 3); i <= Math.min(cues.length - 1, idx + 3); i++) {
     const row = document.createElement("li");
-    row.className = "preview-line" + (i === idx ? " hit" : "");
-    row.innerHTML = `<span class="ts">${formatTime(cues[i].start)}</span><span>${escapeHtml(cues[i].text)}</span>`;
+    const machine = cues[i].source === "machine";
+    row.className = "preview-line" + (i === idx ? " hit" : "") + (machine ? " machine" : "");
+    if (machine) row.title = MACHINE_TITLE;
+    row.innerHTML = `<span class="ts">${formatTime(cues[i].start)}</span><span>${machine ? `${AUTO_CHIP}<span class="visually-hidden">Machine transcript: </span>` : ""}${escapeHtml(cues[i].text)}</span>`;
     list.appendChild(row);
   }
 }
@@ -1624,6 +1626,8 @@ async function openItem(path, name, opts) {
   $("script-wrap").hidden = true;
   $("marks-hint").hidden = true;
   $("script-list").innerHTML = "";
+  $("stt-bar").hidden = true;
+  $("wf-stt-group").hidden = true;
 
   let info;
   try {
@@ -2201,6 +2205,13 @@ function renderStreamSelector(info, path, onStreamChange) {
     loadScript(path, t);
   };
   if (hasSubs) { loadSubtitleTrack(path, initialTrack); loadScript(path, initialTrack); }
+  else if (sttHasLines(info.transcript)) {
+    // No subtitles, but machine lines (M21): the script and search show them, and the
+    // captions once they are copied to the library.
+    if (info.transcript.library.length) loadSubtitleTrack(path, null);
+    loadScript(path, null);
+  }
+  renderSttBar(info.transcript, path, hasSubs);
 
   // --- Audio streams ---
   const audios = (info.streams || []).filter((s) => s.kind === "audio");
@@ -2257,6 +2268,248 @@ function loadSubtitleTrack(path, track, offset) {
   // Browsers often ignore .default on dynamically added tracks; force showing.
   track_el.track.mode = "showing";
 }
+
+
+// --- machine transcription (M21) ------------------------------------------------------
+// whisper.cpp on the server hears what the subtitles leave out. It only ever runs when one
+// of these controls is pressed (D-037): Transcribe selection (waveform), Fill gaps or
+// Transcribe file (the transcript bar). A run is a background job at low priority; the bar
+// follows it and reloads the script when it's done. Machine lines are marked everywhere:
+// the "auto" chip, their own colour (--machine) and MACHINE_TITLE.
+
+const STT_MODEL_KEY = "qc_stt_model";
+const sttJobs = new Map();  // path -> id of a transcription started from this page, still running
+let sttFollowing = null;    // { jobId, path } the bar is following
+let sttTimer = null;
+
+const sttConfig = () => appConfig.transcribe || {};
+const sttAvailable = () => !!sttConfig().available;
+const sttModels = () => (sttConfig().models || []).filter((m) => m.present).map((m) => m.name);
+function sttDefaultModel() {
+  const want = readPref(STT_MODEL_KEY), have = sttModels();
+  return have.includes(want) ? want : (sttConfig().default_model || have[0] || "");
+}
+/** Whether a file's transcript info has any machine lines (stored, or copied to the library). */
+const sttHasLines = (t) => !!t && ((t.stored && t.stored.lines > 0) || (t.library || []).length > 0);
+const STT_MODEL_LABEL = { "small.en": "small.en (quicker)", "medium.en": "medium.en (better, slower)" };
+
+function fillModelSelect(sel, value) {
+  sel.innerHTML = "";
+  for (const name of sttModels()) {
+    const o = document.createElement("option");
+    o.value = name;
+    o.textContent = STT_MODEL_LABEL[name] || name;
+    sel.appendChild(o);
+  }
+  sel.value = value;
+}
+
+/** The transcript bar for the open file (`t`: /api/items' `transcript`): what has been
+ *  transcribed, and the actions on it. Hidden for YouTube items and EPUB chapters. */
+function renderSttBar(t, path, hasSubs) {
+  const bar = $("stt-bar");
+  const avail = sttAvailable();
+  $("wf-stt-group").hidden = !t || !avail;
+  bar.hidden = !t || !(avail || sttHasLines(t));
+  if (bar.hidden) return;
+  bar.dataset.hasSubs = hasSubs ? "1" : "";
+  const stored = t.stored, lib = t.library || [];
+  const parts = [];
+  if (stored) {
+    parts.push(`${formatTimeWhole(stored.covered)} transcribed with ${stored.models.join(", ")}, ${plural(stored.lines, "line")}`);
+  }
+  if (lib.length) parts.push(`in the library as ${lib.join(", ")}`);
+  if (!parts.length) {
+    parts.push(hasSubs ? "None yet. Lines the subtitles leave out, like a song, can be transcribed."
+      : "This file has no subtitles: transcribe it to search what's said.");
+  }
+  $("stt-summary").textContent = parts.join(" · ");
+  const running = sttJobs.get(path);
+  $("stt-gaps").hidden = !avail || !hasSubs;
+  $("stt-file").hidden = !avail || hasSubs;
+  for (const id of ["stt-gaps", "stt-file", "wf-transcribe"]) $(id).disabled = !!running;
+  $("stt-model-field").hidden = !avail || sttModels().length < 2;
+  if (!$("stt-model-field").hidden) {
+    const cur = $("stt-model").value;
+    fillModelSelect($("stt-model"), sttModels().includes(cur) ? cur : sttDefaultModel());
+  }
+  const copy = $("stt-copy");
+  copy.hidden = !(stored && stored.lines);
+  copy.textContent = lib.length ? "Update the library copy" : "Copy to library";
+  copy.disabled = !t.writable;
+  copy.title = t.writable
+    ? `Copy the machine lines next to the file as ${t.sidecar_name}, so the player's captions and Jellyfin show them too`
+    : "This folder is read-only here: add it to the server's writableMediaRoots to copy transcripts into it";
+  $("stt-uncopy").hidden = !(lib.length && t.writable);
+  $("stt-export").hidden = !sttHasLines(t);
+  $("stt-export").href = `/api/items/transcript${qp(path)}&fmt=srt`;
+  $("stt-clear").hidden = !stored;
+  if (running && (!sttFollowing || sttFollowing.jobId !== running)) followSttJob(running, path);
+  else if (!running) $("stt-job").hidden = true;
+}
+
+/** Fetch the open file's transcript info again and redraw the bar; with `script`, reload the
+ *  script too (the machine lines changed), keeping a line selection where it was. */
+async function refreshStt(path, { script = false, captions = false } = {}) {
+  let t;
+  try { t = await getJSON(`/api/items/transcript${qp(path)}`); } catch { return; }
+  if (!currentItem || currentItem.path !== path) return;
+  const hasSubs = $("stt-bar").dataset.hasSubs === "1";
+  renderSttBar(t, path, hasSubs);
+  const track = hasSubs ? getSelectedTrack() : null;
+  if (captions && (hasSubs || t.library.length)) loadSubtitleTrack(path, track, transcodeOffset || 0);
+  if (script && (hasSubs || sttHasLines(t))) {
+    // The cue indexes change as lines come and go: carry a line selection over by its times.
+    if (hasClipRange()) pendingCueSelect = { start: clipStart(), end: clipEnd() };
+    clipFirst = clipLast = -1;
+    loadScript(path, track);
+  }
+}
+
+async function startTranscribe(extra, what) {
+  const item = currentItem;
+  if (!item) return;
+  const path = item.path;
+  const model = !$("stt-model-field").hidden && $("stt-model").value ? $("stt-model").value : sttDefaultModel();
+  let r;
+  try {
+    r = await postJSON("/api/items/transcribe", { path, model, audio: getSelectedAudio() ?? 0, ...extra });
+  } catch (err) {
+    $("stt-job").hidden = false;
+    $("stt-cancel").hidden = true;
+    $("stt-job-text").textContent = `Couldn't start the transcription: ${err.message}`;
+    return;
+  }
+  sttJobs.set(path, r.job_id);
+  announce(`Transcribing ${what} in the background`);
+  followSttJob(r.job_id, path);
+}
+
+/** Follow a transcription job in the bar: progress, Cancel, and the script reloaded when it
+ *  ends. Stops polling when the job ends (or is gone); one job is followed at a time. */
+function followSttJob(jobId, path) {
+  clearTimeout(sttTimer);
+  sttFollowing = { jobId, path };
+  const box = $("stt-job"), text = $("stt-job-text"), cancel = $("stt-cancel");
+  box.hidden = false;
+  cancel.hidden = false;
+  cancel.disabled = false;
+  for (const id of ["stt-gaps", "stt-file", "wf-transcribe"]) $(id).disabled = true;
+  text.textContent = "Transcribing in the background, at low priority…";
+  cancel.onclick = async () => {
+    cancel.disabled = true;
+    text.textContent = "Stopping…";
+    try { await apiFetch(`/api/jobs/${encodeURIComponent(jobId)}`, { method: "DELETE" }); } catch {}
+  };
+  const tick = async () => {
+    if (!sttFollowing || sttFollowing.jobId !== jobId) return;
+    const here = () => currentItem && currentItem.path === path;
+    let job;
+    try {
+      job = await getJSON(`/api/jobs/${encodeURIComponent(jobId)}`);
+    } catch (err) {
+      if (err.status === 404) {  // the server restarted, or the job was cleared
+        sttJobs.delete(path);
+        sttFollowing = null;
+        if (here()) box.hidden = true;
+        return;
+      }
+      sttTimer = setTimeout(tick, 5000);
+      return;
+    }
+    if (jobActive(job)) {
+      if (here()) {
+        text.textContent = job.status === "queued" ? "Waiting for another transcription to finish…"
+          : `Transcribing in the background, at low priority: ${job.progress || "starting"}…`;
+      }
+      sttTimer = setTimeout(tick, here() && !document.hidden ? 1500 : 5000);
+      return;
+    }
+    sttJobs.delete(path);
+    sttFollowing = null;
+    const res = job.result || {};
+    const msg = job.status === "done"
+      ? (res.note || `Transcription done: ${plural(res.new_lines || 0, "new line")}, marked auto in the script and search.`)
+      : job.status === "cancelled" ? "Transcription stopped; what it had done is kept."
+      : `Transcription failed: ${job.error || "unknown error"}`;
+    announce(msg);
+    if (!here()) return;
+    text.textContent = msg;
+    cancel.hidden = true;
+    for (const id of ["stt-gaps", "stt-file", "wf-transcribe"]) $(id).disabled = false;
+    refreshStt(path, { script: true });
+  };
+  sttTimer = setTimeout(tick, 600);
+}
+
+$("wf-transcribe").onclick = () => {
+  const sel = wfSel();
+  if (!sel) {
+    $("wf-note").textContent = "Select a stretch on the waveform to transcribe it.";
+    announce("Select a stretch on the waveform first");
+    return;
+  }
+  // A selection is transcribed again even where it was before: that's how a song gets a
+  // second go with the bigger model. Fill gaps and Transcribe file skip what's done.
+  startTranscribe({ mode: "range", start: round6(sel[0]), end: round6(sel[1]), redo: true },
+    `${formatTime(sel[0])} to ${formatTime(sel[1])}`);
+};
+$("stt-gaps").onclick = () => startTranscribe({ mode: "gaps" }, "the gaps between the subtitles");
+$("stt-file").onclick = () => startTranscribe({ mode: "file" }, "the whole file");
+
+/** Copy to library / Remove from library / Delete transcript: one request, then the bar. */
+async function sttAction(btn, url, method, done) {
+  const path = currentItem && currentItem.path;
+  if (!path) return;
+  btn.disabled = true;
+  try {
+    const resp = await apiFetch(url + qp(path), { method });
+    let body = {};
+    try { body = await resp.json(); } catch {}
+    if (!resp.ok) throw new Error(body.detail || `${resp.status}`);
+    announce(done(body));
+    $("stt-job").hidden = false;
+    $("stt-cancel").hidden = true;
+    $("stt-job-text").textContent = done(body);
+  } catch (err) {
+    $("stt-job").hidden = false;
+    $("stt-cancel").hidden = true;
+    $("stt-job-text").textContent = `That didn't work: ${err.message}`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+$("stt-copy").onclick = async () => {
+  const path = currentItem && currentItem.path;
+  await sttAction($("stt-copy"), "/api/items/transcript/library", "POST",
+    (b) => `Copied ${plural(b.lines, "machine line")} to the library as ${b.sidecar}; the captions show them now.`);
+  if (path) refreshStt(path, { captions: true });
+};
+$("stt-uncopy").onclick = async () => {
+  const path = currentItem && currentItem.path;
+  await sttAction($("stt-uncopy"), "/api/items/transcript/library", "DELETE",
+    (b) => b.removed && b.removed.length ? `Removed ${b.removed.join(", ")} from the library.` : "There was no copy in the library.");
+  if (path) refreshStt(path, { captions: true, script: true });
+};
+$("stt-clear").onclick = async () => {
+  if (!confirm("Delete this file's machine transcript? A copy in the library stays.")) return;
+  const path = currentItem && currentItem.path;
+  await sttAction($("stt-clear"), "/api/items/transcript", "DELETE",
+    (b) => b.deleted ? "Deleted the machine transcript." : "There was no transcript to delete.");
+  if (path) refreshStt(path, { script: true });
+};
+
+// The default model, per browser (the CLI's stt_model setting).
+function showSttSetting() {
+  const avail = sttAvailable() && sttModels().length > 1;
+  $("stt-setting").hidden = !avail;
+  if (avail) fillModelSelect($("stt-default-model"), sttDefaultModel());
+}
+$("stt-default-model").addEventListener("change", () => {
+  const v = $("stt-default-model").value;
+  writePref(STT_MODEL_KEY, v === sttConfig().default_model ? null : v);
+  if (!$("stt-model-field").hidden) $("stt-model").value = v;
+});
 
 // --- dialogue search --------------------------------------------------------
 
@@ -2323,14 +2576,15 @@ async function doSearch(query, { focus = true } = {}) {
 
   for (const m of data.matches) {
     const li = document.createElement("li");
-    li.className = "search-result";
+    li.className = m.machine ? "search-result result-machine" : "search-result";
     li.innerHTML =
-      `<span class="result-text">${escapeHtml(m.text)}</span>` +
+      `<span class="result-text">${m.machine ? `${AUTO_CHIP}<span class="visually-hidden">Machine transcript: </span>` : ""}${escapeHtml(m.text)}</span>` +
       `<span class="result-meta">` +
         `<span class="result-score">${m.score}</span>` +
         `<span>${m.start_ts} – ${m.end_ts}</span>` +
       `</span>`;
     makeActivatable(li, "Play from this line and select it");
+    if (m.machine) li.title = `${MACHINE_TITLE}. ${li.title}`;
     li.onclick = () => {
       seekTo(m.start);
       // Select the matching cue(s) in Marks (highlighted yellow) — identical to
@@ -2624,6 +2878,9 @@ let pendingCueSelect = null;
 
 // One tooltip for every script line (not one per line): what a click does.
 const SCRIPT_LINE_TITLE = "Click or Enter to play from here; Start / End (S / E) set the selection; ↑ ↓ move between lines";
+// A machine transcript line (M21) carries the "auto" chip, its own colour and this hover text.
+const MACHINE_TITLE = "Machine transcript (whisper), not the subtitles: it may be wrong";
+const AUTO_CHIP = `<span class="auto-chip" aria-hidden="true" title="${MACHINE_TITLE}">auto</span>`;
 
 /** Load cues as JSON and populate the script panel. */
 async function loadScript(path, track) {
@@ -2672,19 +2929,23 @@ async function loadScript(path, track) {
   const frag = document.createDocumentFragment();
   scriptCues.forEach((cue, i) => {
     const row = document.createElement("div");
-    row.className = cue.synthetic ? "script-line script-synthetic" : "script-line";
+    const machine = cue.source === "machine";
+    row.className = cue.synthetic ? "script-line script-synthetic"
+      : machine ? "script-line script-machine" : "script-line";
     row.setAttribute("role", "listitem");
     row.dataset.idx = i;
     const speaker = cue.speaker
       ? `<span class="script-speaker">${escapeHtml(cue.speaker)}</span>` : "";
     const text = cue.synthetic
       ? `${escapeHtml(cue.text)} <span class="muted">(before the first line)</span>`
-      : escapeHtml(cue.text);
+      : machine ? `${AUTO_CHIP}${escapeHtml(cue.text)}` : escapeHtml(cue.text);
     const at = formatTime(cue.start);
-    // Named "time, text" so a screen reader hears where the line is before what it says.
-    const name = `${at}, ${cue.speaker ? cue.speaker + ": " : ""}${cue.text}${cue.synthetic ? " (before the first line)" : ""}`;
+    // Named "time, text" so a screen reader hears where the line is before what it says;
+    // a machine line says so first (M21).
+    const name = `${at}, ${machine ? "machine transcript: " : ""}${cue.speaker ? cue.speaker + ": " : ""}${cue.text}${cue.synthetic ? " (before the first line)" : ""}`;
+    const title = machine ? `${MACHINE_TITLE}. ${SCRIPT_LINE_TITLE}` : SCRIPT_LINE_TITLE;
     row.innerHTML =
-      `<button type="button" class="script-play" tabindex="${i === 0 ? 0 : -1}" title="${SCRIPT_LINE_TITLE}" aria-label="${escapeHtml(name)}" data-name="${escapeHtml(name)}">` +
+      `<button type="button" class="script-play" tabindex="${i === 0 ? 0 : -1}" title="${escapeHtml(title)}" aria-label="${escapeHtml(name)}" data-name="${escapeHtml(name)}">` +
         `<span class="script-ts">${at}</span>` +
         `<span class="script-text">${speaker}${text}</span>` +
       `</button>` +
@@ -3352,7 +3613,7 @@ function wfColors() {
   return {
     wave: v("--dim"), faint: v("--faint"), line: v("--line"), strong: v("--line-strong"),
     accent: v("--accent"), soft: v("--accent-soft"), text: v("--text"), raised: v("--raised"),
-    head: v("--playhead"),
+    head: v("--playhead"), machine: v("--machine"), machineSoft: v("--machine-soft"),
   };
 }
 
@@ -3425,9 +3686,10 @@ function wfDraw() {
     const x0 = wfX(cue.start), x1 = wfX(cue.end);
     const l = Math.max(0, x0), r = Math.min(w, x1);
     if (r - l < 0.5) continue;
-    ctx.fillStyle = c.raised;
+    const machine = cue.source === "machine";  // a machine line keeps its own colour here too
+    ctx.fillStyle = machine ? c.machineSoft : c.raised;
     ctx.fillRect(l, 2, r - l, WF_CUE_LANE - 4);
-    ctx.fillStyle = c.strong;
+    ctx.fillStyle = machine ? c.machine : c.strong;
     if (x0 >= 0) ctx.fillRect(x0, 2, 1, WF_CUE_LANE - 4);
     if (x1 <= w) ctx.fillRect(x1 - 1, 2, 1, WF_CUE_LANE - 4);
     if (r - l > 24) {
@@ -3435,8 +3697,8 @@ function wfDraw() {
       ctx.beginPath();
       ctx.rect(l + 3, 0, r - l - 6, WF_CUE_LANE);
       ctx.clip();
-      ctx.fillStyle = c.text;
-      ctx.fillText((cue.speaker ? cue.speaker + ": " : "") + cue.text.replace(/\s+/g, " "), l + 4, WF_CUE_LANE / 2);
+      ctx.fillStyle = machine ? c.machine : c.text;
+      ctx.fillText((machine ? "auto: " : "") + (cue.speaker ? cue.speaker + ": " : "") + cue.text.replace(/\s+/g, " "), l + 4, WF_CUE_LANE / 2);
       ctx.restore();
     }
     // Faint cue edges down through the wave, so you see where the line sits in the sound.
@@ -5642,6 +5904,7 @@ async function loadStatus() {
     }
     // Jellyfin configured: offer the Now playing scope and card (M15).
     $("scope-nowplaying").hidden = !appConfig.jellyfin;
+    showSttSetting();  // the Transcription model setting, when the server transcribes (M21)
     refreshNowPlaying();
   } catch {}
   // Load media roots so the breadcrumb can offer clickable path segments.

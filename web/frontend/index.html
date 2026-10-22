@@ -86,6 +86,11 @@
             <p class="muted set-help">The order to prefer when a file has several subtitle tracks, e.g. <code>eng,spa</code>. Empty uses the server default.</p>
             <input id="ss-langs" data-action="settings.set" type="text" autocomplete="off" spellcheck="false" title="Preferred subtitle language(s) to auto-select, in order — e.g. eng or eng,spa. Remembered in this browser." />
           </div>
+          <div class="set-row" id="stt-setting" hidden>
+            <label class="set-label" for="stt-default-model">Transcription model</label>
+            <p class="muted set-help">The whisper model for Transcribe selection, Fill gaps and Transcribe file: small.en is quicker, medium.en hears more, about three times slower.</p>
+            <select id="stt-default-model" data-action="settings.set" title="The whisper model a transcription uses unless you pick another for one run. Remembered in this browser."></select>
+          </div>
           <p class="muted set-help">The clip name template is the Name field in the clip bar. The YouTube player choice is on a YouTube video.</p>
         </div>
       </div>
@@ -341,6 +346,9 @@
                   <button type="button" id="wf-play-in" class="wf-btn" title="Play the first second after the in point">▶ 1 s from in</button>
                   <button type="button" id="wf-play-out" class="wf-btn" title="Play the last second before the out point">▶ 1 s to out</button>
                 </div>
+                <div class="wf-group" role="group" aria-label="Machine transcription" id="wf-stt-group" hidden>
+                  <button type="button" id="wf-transcribe" data-action="item.transcribe" class="wf-btn" title="Transcribe the selection with whisper, for lines the subtitles leave out (a song, say). It runs in the background at low priority, so it can take a minute; the lines it hears show in the script and search, marked auto.">Transcribe selection</button>
+                </div>
               </div>
               <div id="wf-stage" class="wf-stage" title="Click to play from here, drag to select, Shift-drag or scroll to pan, Ctrl/⌘-scroll or pinch to zoom">
                 <canvas id="wf-canvas" aria-hidden="true"></canvas>
@@ -454,6 +462,24 @@
               <div class="script-bar">
                 <span id="marks-hint" class="script-hint" hidden>Click a line to seek · hover for <strong>Start</strong> / <strong>End</strong> (keys: ↑ ↓ move, <kbd>S</kbd> / <kbd>E</kbd> set them). The first line, <em>Start of video</em>, lets a clip begin at 0:00.</span>
                 <label class="checkbox-label script-follow" title="Keep the script scrolled to the line that's playing"><input id="script-follow" class="switch" type="checkbox" checked /> Follow playback</label>
+              </div>
+              <!-- Machine transcription (M21): what whisper has heard in this file, and the
+                   actions on it. Only ever runs when one of these is pressed. -->
+              <div id="stt-bar" class="stt-bar" hidden>
+                <div class="stt-head">
+                  <span class="stt-title"><span class="auto-chip" aria-hidden="true">auto</span>Machine transcript</span>
+                  <span id="stt-summary" class="stt-summary muted"></span>
+                </div>
+                <div class="stt-actions">
+                  <button type="button" id="stt-gaps" data-action="item.transcribe" class="reindex-link" title="Transcribe every stretch of 4 s or more between the subtitle lines (songs, lines the subtitles skip) with whisper. It runs in the background at low priority and can take a few minutes.">Fill gaps</button>
+                  <button type="button" id="stt-file" data-action="item.transcribe" class="reindex-link" title="Transcribe the whole file with whisper, so its dialogue can be searched. It runs in the background at low priority: an hour of audio can take half an hour or more.">Transcribe file</button>
+                  <label class="stt-model" id="stt-model-field" title="The whisper model for the next run: small.en is quicker, medium.en hears more">Model <select id="stt-model"></select></label>
+                  <button type="button" id="stt-copy" data-action="item.transcript-copy" class="reindex-link" title="Copy the machine lines next to the file as a subtitle file named …whisper.srt, so the player's captions and Jellyfin show them too">Copy to library</button>
+                  <button type="button" id="stt-uncopy" data-action="item.transcript-uncopy" class="reindex-link" title="Remove the …whisper.srt copy from the library; the transcript stays">Remove from library</button>
+                  <a id="stt-export" data-action="item.transcript" class="reindex-link" title="Save the machine lines as a SubRip (.srt) file" download>Export .srt</a>
+                  <button type="button" id="stt-clear" data-action="item.transcript-clear" class="reindex-link" title="Delete this file's machine transcript (a copy in the library stays)">Delete transcript</button>
+                </div>
+                <p id="stt-job" class="stt-job" hidden><span id="stt-job-text" role="status"></span> <button type="button" id="stt-cancel" data-action="job.cancel" class="reindex-link" title="Stop this transcription; what it has done so far is kept">Cancel</button></p>
               </div>
               <!-- The dialogue cues. -->
               <div id="script-wrap" class="script-wrap" hidden>
