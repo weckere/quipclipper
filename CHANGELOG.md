@@ -10,6 +10,13 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 
 ## [Unreleased]
 
+### UI follow-ups (M20)
+
+- **Send to LeadStinger** in the workspace is a button again, not a toggle on Make clip: the ⚡
+  icon beside Make clip cuts the selection with its Before/After padding and sends it to
+  LeadStinger in one click (a set file when the server has no `QC_PUBLIC_URL`). Its tooltip
+  says so on hover and on keyboard focus, and Esc hides it. The batch bars keep their toggles.
+
 ### Fixed
 
 - The workspace header no longer shows a movie's title twice: the Jellyfin line under the

@@ -384,7 +384,13 @@
                 <button type="button" id="copy-link" data-action="item.link" class="mark-icon-btn" title="Copy a link to this moment: it opens this file here with the selection (or the playhead) and the subtitle track" aria-label="Copy link to this moment"><svg class="icon" aria-hidden="true"><use href="#i-link"/></svg><span class="btn-label">Copy link</span></button>
                 <button type="button" id="mark-save" data-action="bookmark.add" class="mark-icon-btn" disabled title="Save the selection as a bookmark, with a label you can edit" aria-label="Save as bookmark" aria-expanded="false" aria-controls="bookmark-label-form"><span class="star" aria-hidden="true">★</span><span class="btn-label">Bookmark</span></button>
                 <button type="button" id="clip-btn" data-action="clip.create" class="mark-icon-btn make-clip-btn" disabled title="Cut the selection into a clip with these options (it runs as a job)" aria-label="Make clip"><span class="scissors" aria-hidden="true">✂</span><span class="btn-label">Make clip</span></button>
-                <label class="ls-toggle" title="Send to LeadStinger: Make clip sends the line straight into LeadStinger (or makes a LeadStinger set file when the server has no QC_PUBLIC_URL)"><input type="checkbox" id="ls-send" data-action="leadstinger.set leadstinger.quip" aria-label="Send to LeadStinger" /><svg class="icon" aria-hidden="true"><use href="#i-leadstinger"/></svg></label>
+                <!-- Send to LeadStinger: one click cuts the selection and sends it. Its hover text is
+                     the tooltip below (shown on hover and on keyboard focus, Esc hides it), not a
+                     title, so it isn't shown twice; app.js words it for a server with no QC_PUBLIC_URL. -->
+                <span class="tip-wrap">
+                  <button type="button" id="ls-send" data-action="leadstinger.quip leadstinger.set" class="mark-icon-btn ls-send-btn" disabled aria-label="Send to LeadStinger" aria-describedby="ls-send-tip" data-notitle="the visible tooltip #ls-send-tip is its hover text"><svg class="icon" aria-hidden="true"><use href="#i-leadstinger"/></svg></button>
+                  <span id="ls-send-tip" class="tip" role="tooltip">Send to LeadStinger: cuts the selection with the Before/After padding and sends it to LeadStinger as a new tile. The padding becomes the tile's handles.</span>
+                </span>
               </div>
             </div>
             <!-- ★ Bookmark opens this inline label field (no window.prompt): Enter saves,

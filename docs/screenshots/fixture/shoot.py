@@ -107,17 +107,20 @@ async def main():
         await page.close()
         await dark.close()
 
-        # Send to LeadStinger: the toggle beside Make clip, ticked, at 2x.
+        # Send to LeadStinger: the button beside Make clip, hovered so its tooltip shows, at 2x.
         hi = await b.new_context(viewport={"width": 1600, "height": 1000}, device_scale_factor=2, color_scheme="dark")
         page = await home(hi)
         await open_movie_from_now_playing(page)
-        await page.locator("#ls-send").check(force=True)
         await page.fill("#clip-before", "2")
         await page.fill("#clip-after", "2")
         await page.evaluate("document.activeElement.blur()")
-        await settle(page, 500)
+        await page.evaluate("document.querySelector('.ws-clip').scrollIntoView({block: 'center'})")
+        await page.hover("#ls-send")
+        await settle(page, 700)
         box = await page.locator(".ws-clip").bounding_box()
-        await shot(page, "send-to-leadstinger", clip={"x": box["x"] - 16, "y": box["y"] - 16, "width": box["width"] + 32, "height": box["height"] + 32})
+        tip = await page.locator("#ls-send-tip").bounding_box()
+        top = min(box["y"], tip["y"]) - 16
+        await shot(page, "send-to-leadstinger", clip={"x": box["x"] - 16, "y": top, "width": box["width"] + 32, "height": box["y"] + box["height"] + 16 - top})
         await hi.close()
 
         light = await b.new_context(viewport={"width": 1600, "height": 1000}, color_scheme="light")

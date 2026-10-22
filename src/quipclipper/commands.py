@@ -488,7 +488,8 @@ COMMANDS: tuple[Command, ...] = (
                           "(search.item results).", where=CLIENT),
                     *_JOB_FOLLOW),
             mode="client", response="job",
-            ui="Send to LeadStinger toggle beside Make clip / Clip / Export selected"),
+            ui="Send to LeadStinger button beside Make clip (no QC_PUBLIC_URL), or the "
+               "toggle beside Clip / Export selected"),
     Command("leadstinger.send", "Put the clips on stdin straight into LeadStinger on this "
             "machine: a new set, or appended to an existing one with --set.", None, None,
             params=(Param("name", "str", "The new set's name (ignored with --set). "
@@ -528,8 +529,8 @@ COMMANDS: tuple[Command, ...] = (
                           "default: its current set).", where=BODY),
                     *_OPEN_LINK),
             mode="client", response="job",
-            ui="Send to LeadStinger toggle with Make clip, or with Clip / Export selected "
-               "on one line (needs QC_PUBLIC_URL)"),
+            ui="Send to LeadStinger button beside Make clip, or the toggle with Clip / "
+               "Export selected on one line (needs QC_PUBLIC_URL)"),
     Command("leadstinger.link", "The leadstinger://quip link for a clip already in the clips "
             "library, opened here so LeadStinger downloads it into a new tile. Needs "
             "QC_PUBLIC_URL on the server.", "GET", "/api/leadstinger/link",

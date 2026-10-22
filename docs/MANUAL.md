@@ -229,7 +229,8 @@ Opening a file opens its workspace.
   playing line in view. The tabs beside **Script** are **Matches** (after a search),
   **Bookmarks** for this file and **Clips** made from it this visit.
 - **The Selection panel** shows the selected range and acts on it: **★ Bookmark** (with
-  a label you can edit), **✂ Make clip**, and the **Send to LeadStinger** toggle. Under
+  a label you can edit), **✂ Make clip**, and **⚡ Send to LeadStinger** (an icon button:
+  hover or focus it for what it does; one click cuts and sends). Under
   it: **Before** / **After** padding in seconds (it changes the preview, the bookmark and
   the clip), **Video | Audio only**, **Exact (re-encode)** for a frame-exact video clip
   (off: a lossless copy that starts on a keyframe), **Format** for audio (Passthrough,
@@ -755,13 +756,15 @@ quipclipper clip   "you will become one with the borg" --video "Book (readaloud)
 ### Sending clips to LeadStinger
 
 [LeadStinger](https://github.com/weckere/leadstinger) is a soundboard for live shows.
-quipclipper can hand it a line in one click. In the web app, tick the small
-**Send to LeadStinger** toggle beside Make clip (or beside Clip / Export selected with one
-line or clip ticked), or use a clip's Send to LeadStinger button in the Clips library; on
+quipclipper can hand it a line in one click. In the web app, click the **⚡ Send to
+LeadStinger** button beside Make clip (it uses the Before/After padding), tick the small
+Send to LeadStinger toggle beside Clip / Export selected with one line or clip ticked, or
+use a clip's Send to LeadStinger button in the Clips library; on
 the command line, `quipclipper leadstinger.quip` / `leadstinger.link`. quipclipper cuts
 the line, then opens a `leadstinger://quip` link; LeadStinger downloads the clip from the
 quipclipper server into a new tile whose trim is exactly the line. (With several lines
-ticked, the toggle makes a LeadStinger set file instead.)
+ticked, the toggle makes a LeadStinger set file instead; so does the button when the server
+has no `QC_PUBLIC_URL`.)
 
 The line is cut with **handles**: its padding, kept as extra audio either side (the clip
 bar's Before/After, a bookmark's saved padding, none for a search hit; `--before`/`--after`

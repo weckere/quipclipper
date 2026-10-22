@@ -3915,6 +3915,7 @@ let loadedBookmarkCue = null;  // {cue} fallback when a bookmark range is loaded
 // clip target (a cue selection or a loaded bookmark); hide otherwise.
 function showClipTarget(on) {
   $("clip-btn").disabled = !on;
+  $("ls-send").disabled = !on;
   $("clip-name-row").hidden = !on;
   clipTargetOn = on;
   wfOnSelection();
@@ -3948,7 +3949,6 @@ async function makeClip() {
   if (!currentItem) return;
   // Need a selected clip range (cue selection or loaded bookmark).
   if (clipRangeStart === null || clipRangeEnd === null) return;
-  if (lsOn("ls-send")) return appConfig.public_url ? sendLeadStingerClip() : makeLeadStingerClip();
   setClipIndicator("processing");
 
   const fmt = $("clip-format").value;
@@ -4080,6 +4080,26 @@ function pollClipJob(jobId, row) {
 }
 
 $("clip-btn").onclick = makeClip;
+
+// Send to LeadStinger beside Make clip: one click cuts the selection with its padding and
+// sends it (or, with no public URL, makes a one-tile set file). Its tooltip shows on hover
+// and keyboard focus; Esc hides it until the pointer or focus leaves (WCAG 1.4.13).
+$("ls-send").onclick = () => {
+  if (!currentItem || clipRangeStart === null || clipRangeEnd === null) return;
+  announce(appConfig.public_url ? "Sending to LeadStinger" : "Making a LeadStinger set");
+  return appConfig.public_url ? sendLeadStingerClip() : makeLeadStingerClip();
+};
+{
+  const wrap = $("ls-send").closest(".tip-wrap");
+  const reset = () => wrap.classList.remove("tip-off");
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && (wrap.matches(":hover") || wrap.contains(document.activeElement))) {
+      wrap.classList.add("tip-off");
+    }
+  });
+  wrap.addEventListener("pointerleave", reset);
+  wrap.addEventListener("focusout", reset);
+}
 
 // --- clip name template (B9) ------------------------------------------------
 // {folder} is the name {title} gave before titles came from Jellyfin (D-032), so a
@@ -4663,9 +4683,9 @@ $("search-batch-bookmark").onclick = async () => {
 
 // --- Send to LeadStinger (M14, D-026) ------------------------------------------
 //
-// A small toggle beside Make clip and beside each batch bar's Clip/Export selected:
-// when it is on, that same button makes a LeadStinger set file (.lsset) instead of
-// plain clips. POST /api/leadstinger/set cuts each line as FLAC with its own padding
+// A small toggle beside each batch bar's Clip/Export selected: when it is on, that same
+// button makes a LeadStinger set file (.lsset) instead of plain clips (the workspace has
+// its own Send to LeadStinger button beside Make clip). POST /api/leadstinger/set cuts each line as FLAC with its own padding
 // (the Before/After fields, a bookmark's saved padding, 0 for search hits and clips),
 // kept as handle audio around a tile trimmed to the line, and names the set after
 // the movie or show.
@@ -4747,7 +4767,7 @@ async function runLeadStingerBatch(prefix, onDone) {
   tick();
 }
 
-/** Make clip with the toggle on: the selection becomes a one-tile LeadStinger set. */
+/** Send to LeadStinger with no public URL: the selection becomes a one-tile LeadStinger set. */
 async function makeLeadStingerClip() {
   const cue = (selectedCueText() || (clipFirst < 0 ? loadedBookmarkCue : "") || "").trim();
   const item = {
@@ -4838,7 +4858,7 @@ async function sendLeadStingerLink(it, status) {
   }
 }
 
-/** Make clip with the toggle on and a public URL: the selection goes straight into
+/** Send to LeadStinger with a public URL: the selection goes straight into
  *  LeadStinger. The clip row follows the job and opens the link when it is done. */
 async function sendLeadStingerClip() {
   const cue = (selectedCueText() || (clipFirst < 0 ? loadedBookmarkCue : "") || "").trim();
@@ -5402,6 +5422,12 @@ async function loadStatus() {
     // Show the server default subtitle-language preference as the placeholder.
     if (appConfig.subtitle_langs && $("ss-langs")) {
       $("ss-langs").placeholder = appConfig.subtitle_langs.join(",");
+    }
+    // No public URL: Send to LeadStinger makes a set file instead of sending by link.
+    if (!appConfig.public_url) {
+      $("ls-send-tip").textContent = "Send to LeadStinger: cuts the selection with the " +
+        "Before/After padding into a LeadStinger set file to import. The padding becomes the " +
+        "tile's handles. (Sending straight into LeadStinger needs the server's QC_PUBLIC_URL.)";
     }
     // Jellyfin configured: offer the Now playing scope and card (M15).
     $("scope-nowplaying").hidden = !appConfig.jellyfin;

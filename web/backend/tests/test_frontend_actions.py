@@ -47,8 +47,8 @@ MARKED_CONTROLS: dict[str, int] = {
     "library.browse": 3,      # folder rows, breadcrumbs, Back
     "settings.set": 2,        # Name template and Auto-lang
     "job.cancel": 3,          # folder backfill Cancel, the Jobs popover's Cancel/Dismiss and Clear finished
-    "leadstinger.set": 4,     # the Send to LeadStinger toggles: workspace, search, bookmarks, clips
-    "leadstinger.quip": 3,    # the workspace, search and bookmarks toggles (one line, by link)
+    "leadstinger.set": 4,     # the workspace Send to LeadStinger button and the search, bookmarks, clips toggles
+    "leadstinger.quip": 3,    # the workspace button and the search and bookmarks toggles (one line, by link)
     "leadstinger.link": 2,    # a clip row's Send to LeadStinger button and the clips toggle
     "jellyfin.sessions": 2,   # the Now playing card (library) and the Now playing scope
     "item.link": 2,           # Copy link in the workspace and on a search hit
