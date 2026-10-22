@@ -209,8 +209,18 @@ Opening a file opens its workspace.
   it to seek.
 - **The waveform** under it sets the exact cut. It shows the sound of a window of the file,
   from the whole runtime down to 20 ms (single samples): zoom with **−** / **+** (or the
-  keys), Ctrl/⌘-scroll or a pinch; drag or scroll to pan; click to play from there. The
-  subtitle lines run along the top as labelled spans, and on video the keyframes show as ◆.
+  keys), Ctrl/⌘-scroll or a pinch; scroll, **Shift**-drag or middle-drag to pan; click to
+  play from there. On a touch screen a drag pans and a tap plays. The subtitle lines run
+  along the top as labelled spans, and on video the keyframes show as ◆.
+  **Drag across the waveform** (away from the handles) to select from where the drag
+  starts to where it ends; on a touch screen, **long-press, then drag**. That is how you
+  select something with no line of its own, such as a song: it replaces any line selection,
+  with Before and After at 0, snaps both ends (when Snap is on) and is then fine-tuned with
+  the handles like any other. **I** and **O**, or **Set in** and **Set out** by the play
+  button, put the in or out point at the playhead; with nothing selected they select 2 s
+  from it (I) or up to it (O), and pressing them again moves that end. A clip of a range
+  with no line has an empty `{cue}`, which the default name drops:
+  `{source}/{timestamp}_{folder}`.
   The selection's **in and out handles** are the Before / After padding: drag one (or
   focus it and use the arrow keys) and the fields follow; a negative value trims into the
   line. **Snap** pulls a dropped handle to the nearest **zero crossing** (on by default,
@@ -221,15 +231,15 @@ Opening a file opens its workspace.
   A note says how the in point will be cut: on the sample with **Exact** on (or FLAC/WAV
   audio); on the keyframe before it for a lossless video copy; on a codec frame (20–30 ms)
   for passthrough audio.
-- **The transport**: back to the start, play/pause, **Loop selection**, and the
-  selection's range.
+- **The transport**: back to the start, play/pause, **Set in** / **Set out** at the
+  playhead, **Loop selection**, and the selection's range.
 - **The script** on the right lists every line. Click a line to seek; hover (or focus)
   a line for **Start** and **End**, which set the selection by whole lines. The first
   line, *Start of video*, lets a clip begin at 0:00. **Follow playback** keeps the
   playing line in view. The tabs beside **Script** are **Matches** (after a search),
   **Bookmarks** for this file and **Clips** made from it this visit.
 - **The Selection panel** shows the selected range and acts on it: **★ Bookmark** (with
-  a label you can edit), **✂ Make clip**, and **⚡ Send to LeadStinger** (an icon button:
+  a label you can edit; a range dragged on the waveform can be bookmarked too), **✂ Make clip**, and **⚡ Send to LeadStinger** (an icon button:
   hover or focus it for what it does; one click cuts and sends). Under
   it: **Before** / **After** padding in seconds (it changes the preview, the bookmark and
   the clip), **Video | Audio only**, **Exact (re-encode)** for a frame-exact video clip
@@ -282,7 +292,8 @@ The web app aims at WCAG 2.2 AA.
   dialogue map and the seek bar are sliders: the arrow keys step 1 s (Shift: 10 s).
   The waveform's in and out handles are sliders too: **← →** move one 10 ms (Shift 100 ms,
   Alt one frame, Page Up/Down 1 s), **[** and **]** jump between them, **+** and **−**
-  zoom.
+  zoom. **I** and **O** set the in and out points at the playhead (and say where: "In at
+  5:53.2"); the **Set in** and **Set out** buttons do the same.
 - Jobs and Settings are dialogs: focus moves in, **Esc** closes them and returns focus.
   When a folder, a file or a page opens, focus moves to it.
 - One polite announcement says when a job finishes or fails, what the selection now is,

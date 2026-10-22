@@ -360,6 +360,7 @@ video.audio-only {
   font-size: 1rem; line-height: 1.2; min-width: 2.4rem;
 }
 .pb-btn:hover { border-color: var(--accent-text); }
+.pb-btn.pb-point { font-size: 0.82rem; min-height: 1.9rem; }
 .pb-range-note { font-size: 0.8rem; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .pb-loop-label { font-size: 0.82rem; color: var(--dim); }
 
@@ -865,11 +866,13 @@ footer { padding: 2rem 1.25rem; font-size: 0.8rem; }
 .wf-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .wf-span { font: 0.75rem var(--font-mono); color: var(--faint); font-variant-numeric: tabular-nums; }
 .wf-stage {
-  position: relative; height: 128px; cursor: grab; touch-action: pan-y;
+  position: relative; height: 128px; cursor: text; touch-action: pan-y;
   background: var(--sunken); border-radius: var(--radius-sm); overflow: hidden;
-  user-select: none; -webkit-user-select: none;
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
 }
-.wf-stage:active { cursor: grabbing; }
+.wf-stage.wf-panning { cursor: grabbing; }
+/* A held touch is about to drag out a selection. */
+.wf-stage.wf-holding { box-shadow: inset 0 0 0 2px var(--accent); }
 .wf-stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .wf-head { position: absolute; top: 0; bottom: 16px; width: 2px; margin-left: -1px; background: var(--playhead); pointer-events: none; }
 .wf-handle {
@@ -888,6 +891,12 @@ footer { padding: 2rem 1.25rem; font-size: 0.8rem; }
 .wf-handle:focus-visible { box-shadow: 0 0 0 1px var(--text); }
 .wf-handle.off-left, .wf-handle.off-right { opacity: 0.55; }
 .wf-notes { margin: 4px 0 0; font-size: 0.75rem; color: var(--dim); min-height: 1em; }
+.wf-hint { margin: 4px 0 0; font-size: 0.75rem; color: var(--dim); }
+.wf-hint-touch { display: none; }
+@media (pointer: coarse) {
+  .wf-hint-fine { display: none; }
+  .wf-hint-touch { display: inline; }
+}
 
 /* clip bar */
 .ws-clip .marks-header { flex-wrap: wrap; row-gap: 0.4rem; }
@@ -1115,7 +1124,7 @@ main:focus, [tabindex="-1"]:focus:not(:focus-visible) { outline: none; }
 }
 .script-play:focus-visible { outline: none; }
 .script-line:has(> .script-play:focus-visible) { outline: 2px solid var(--accent-text); outline-offset: -2px; }
-.script-hint kbd { font: 0.72rem var(--font-mono); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); padding: 0 0.3rem; }
+.script-hint kbd, .wf-hint kbd { font: 0.72rem var(--font-mono); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); padding: 0 0.3rem; }
 .dialogue-map:focus-visible { outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) { .script-list { scroll-behavior: auto; } }
 

@@ -16,6 +16,14 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   icon beside Make clip cuts the selection with its Before/After padding and sends it to
   LeadStinger in one click (a set file when the server has no `QC_PUBLIC_URL`). Its tooltip
   says so on hover and on keyboard focus, and Esc hides it. The batch bars keep their toggles.
+- **Select on the waveform:** drag across it to select from the drag's start to its end (on
+  touch, long-press then drag), for a song or a sound with no line of its own. The range
+  replaces any line selection with Before/After at 0, snaps both ends, and the handles,
+  audition, Make clip, Send to LeadStinger and Bookmark all work on it. A mouse drag no
+  longer pans: scroll, Shift-drag or middle-drag does, and a touch drag still pans. **I** and
+  **O** (and **Set in** / **Set out** by the play button) put the in or out point at the
+  playhead, and start a 2 s range when nothing is selected. ★ Bookmark now saves a free
+  range (a waveform range, a loaded bookmark, a whole clip) instead of staying disabled.
 
 ### Fixed
 

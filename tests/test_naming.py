@@ -67,3 +67,18 @@ def test_the_default_names_a_clip_as_the_earlier_default_did():
     assert render_clip_template(resolve_template(old), ctx) == (
         "Star.Trek.TNG.S03E26/00-27-58_Fire_Star_Trek_-_The_Next_Generation")
     assert resolve_template("{title}") == "{title}"
+
+
+def test_a_range_with_no_line_names_cleanly():
+    # A range dragged out on the waveform (or set with I / O) has no dialogue: the default
+    # template drops {cue} and its separator, leaving neither "__" nor a trailing "_".
+    ctx = clip_template_context(
+        Path("/tv/Garth Marenghi's Darkplace/Season 1/Darkplace.S01E06.mkv"),
+        ClipRange(start=353.2, end=401.0), "",
+    )
+    assert render_clip_template(DEFAULT_CLIP_TEMPLATE, ctx) == (
+        "Darkplace.S01E06/00-05-53_Garth_Marenghi's_Darkplace"
+    )
+    for template in ("{cue}_{timestamp}", "{timestamp}_{cue}", "{timestamp}-{cue}-{end}"):
+        name = render_clip_template(template, ctx)
+        assert name in ("00-05-53", "00-05-53-00-06-41"), name

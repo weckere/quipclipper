@@ -2502,10 +2502,14 @@ function formatTimeWhole(s) {
     : `${m}:${String(sec).padStart(2, "0")}`;
 }
 
+/** The dialogue a selection carries for {cue}: its first line, else a loaded bookmark's. */
+const selectionCue = () => selectedCueText() || (clipFirst < 0 ? loadedBookmarkCue || "" : "");
+
 /** Default bookmark label: time range (whole seconds) + first dialogue line. */
 function defaultBookmarkLabel() {
-  let label = `${formatTimeWhole(clipStart())} – ${formatTimeWhole(clipEnd())}`;
-  const firstLine = selectedCueText().slice(0, 60);
+  const [s, e] = wfAnchor();
+  let label = `${formatTimeWhole(s)} – ${formatTimeWhole(e)}`;
+  const firstLine = selectionCue().slice(0, 60);
   if (firstLine) label += ` — ${firstLine}`;
   return label;
 }
@@ -2513,7 +2517,7 @@ function defaultBookmarkLabel() {
 /** ★ Bookmark: open the inline label field, filled with the default and selected,
  *  so Enter saves it as is and typing replaces it. A second click closes it. */
 function openBookmarkLabel() {
-  if (!currentItem || !hasClipRange()) return;
+  if (!currentItem || !wfAnchor()) return;
   const form = $("bookmark-label-form");
   if (!form.hidden) { closeBookmarkLabel(); return; }
   const input = $("bookmark-label-input");
@@ -2530,8 +2534,8 @@ function closeBookmarkLabel() {
 }
 
 async function saveBookmark() {
-  if (!currentItem || !hasClipRange()) return;
-  const s = clipStart(), e = clipEnd();
+  if (!currentItem || !wfAnchor()) return;
+  const [s, e] = wfAnchor();
   const defaultLabel = defaultBookmarkLabel();
   const label = $("bookmark-label-input").value.trim();
   closeBookmarkLabel();
@@ -2546,7 +2550,7 @@ async function saveBookmark() {
       audio_track: getSelectedAudio(),
       channel_subset: getSelectedChan(),
       // Keep the matched dialogue so exporting the bookmark fills the {cue} token.
-      cue: selectedCueText(),
+      cue: selectionCue(),
     });
     announce("Bookmark saved");
     loadBookmarks();
@@ -3005,6 +3009,10 @@ $("dialogue-map").addEventListener("mousemove", (e) => {
 // the window for short ones, raw samples at the deepest zoom. The in and out handles are
 // the selection's padded start and end, so dragging one rewrites Before / After (negative
 // when it trims into the line). Snapping asks GET /api/items/snap (item.snap).
+//
+// A drag across the strip (a long press, then a drag, on touch), or I / O at the playhead,
+// makes a selection that isn't made of lines: a free range, as a bookmark loads one. It
+// is cut by start and end (clip.create --start/--end), so it needs no command of its own.
 
 const WF_MIN_SPAN = 0.02;     // s across the strip at the deepest zoom
 const WF_ZOOM_STEP = 2;       // per button press or + / - key
@@ -3013,6 +3021,9 @@ const WF_CUE_SNAP_PX = 8;     // cue-edge snap reach while dragging
 const WF_CUE_LANE = 18;       // px: subtitle spans along the top
 const WF_RULER = 16;          // px: time ruler along the bottom
 const WF_DEFAULT_FPS = 25;    // the Alt-nudge frame when the source has no video
+const WF_DRAG_PX = 4;         // px a press moves before it is a drag, not a click
+const WF_HOLD_MS = 450;       // a touch held this long without moving drags out a selection
+const WF_POINT_SPAN = 2;      // s: I or O with nothing selected selects this much from the playhead
 
 const wf = {
   path: null, audio: 0, dur: 0, fps: 0, hasVideo: false,
@@ -3078,7 +3089,9 @@ function wfHide() {
   wf.snapSeq++;  // a snap still on its way belongs to the item being left
   clearTimeout(wf.nudgeTimer);
   wf.pointers.clear();
+  if (wf.drag) clearTimeout(wf.drag.hold);
   wf.drag = null;
+  $("wf-stage").classList.remove("wf-holding", "wf-panning");
   clearTimeout(wf.loadTimer);
   clearTimeout(wf.pollTimer);
   cancelAnimationFrame(wf.raf);
@@ -3598,6 +3611,68 @@ function wfJumpTo(k) {
   $(k === 0 ? "wf-in" : "wf-out").focus();
 }
 
+// --- selecting on the strip -------------------------------------------------------------------
+
+/** Select `a..b` as a free range with no padding, replacing any line selection. The view
+ *  stays where it is: the range was made on screen. */
+function wfSetFreeRange(a, b) {
+  $("clip-before").value = "0";
+  $("clip-after").value = "0";
+  wf.fromHandle = true;
+  try {
+    showFreeRange(round6(a), round6(b));
+  } finally {
+    wf.fromHandle = false;
+  }
+}
+
+/** The free range `wfSetFreeRange` made is still the selection (nothing replaced it). */
+const wfIsRange = (a, b) => clipFirst < 0 && clipTargetOn && clipRangeStart === a && clipRangeEnd === b;
+
+/** After a drag-select: snap both ends, unless the selection has changed meanwhile. */
+async function wfSnapRange() {
+  const a = clipRangeStart, b = clipRangeEnd;
+  const seq = ++wf.snapSeq;
+  if ($("wf-snap-silence").checked || wfZeroOn()) {
+    const [s, e] = await Promise.all([wfServerSnap(a), wfServerSnap(b)]);
+    if (seq !== wf.snapSeq || !wfIsRange(a, b)) return;
+    if (e - s >= 0.005 && (Math.abs(s - a) > 1e-7 || Math.abs(e - b) > 1e-7)) wfSetFreeRange(s, e);
+  }
+  const sel = wfSel();
+  if (sel) announce(`Selected ${formatTimePrecise(sel[0], 1)} to ${formatTimePrecise(sel[1], 1)}`);
+}
+
+/** I (k=0) or O (k=1): put the in or out point at the playhead. With nothing selected, or
+ *  the playhead beyond the other end, it starts a new range of WF_POINT_SPAN from there. */
+function wfSetPoint(k) {
+  if (!currentItem || !wf.path) return;
+  const t = Math.max(0, Math.min(wf.dur, playerTime()));
+  const sel = wfSel();
+  const name = k === 0 ? "In" : "Out";
+  wf.snapSeq++;  // a snap still on its way would move the point just set
+  let fresh = false;
+  if (sel && (k === 0 ? t < sel[1] - 0.005 : t > sel[0] + 0.005)) {
+    wfMoveHandle(k, t);
+  } else {
+    // The point stays on the playhead; near the file's ends the range is shorter.
+    const a = k === 0 ? t : Math.max(0, t - WF_POINT_SPAN);
+    const b = k === 0 ? Math.min(wf.dur, t + WF_POINT_SPAN) : t;
+    if (b - a < 0.005) return;
+    wfSetFreeRange(a, b);
+    fresh = true;
+  }
+  wfReveal(wfSel()[k]);
+  wfSnapHandle(k).then(() => {
+    const now = wfSel();
+    if (!now) return;
+    announce(`${name} at ${formatTimePrecise(now[k], 1)}` +
+      (fresh ? `, ${k === 0 ? "out" : "in"} at ${formatTimePrecise(now[1 - k], 1)}` : ""));
+  });
+}
+
+$("pb-set-in").onclick = () => wfSetPoint(0);
+$("pb-set-out").onclick = () => wfSetPoint(1);
+
 // --- audition ---------------------------------------------------------------------------------
 
 /** Play `a..b` once and stop. A 20 ms timer watches the end (it keeps running in a
@@ -3649,13 +3724,16 @@ $("wf-stage").addEventListener("wheel", (e) => {
 
 function wfPointerX(e) { return e.clientX - $("wf-stage").getBoundingClientRect().left; }
 
+// A mouse or pen drag selects and Shift-drag (or the middle button) pans; on touch a drag
+// pans and a long press, then a drag, selects. A click or a tap plays from there.
 $("wf-stage").addEventListener("pointerdown", (e) => {
-  if (!wf.path || (e.pointerType === "mouse" && e.button !== 0)) return;
+  if (!wf.path || (e.pointerType === "mouse" && e.button !== 0 && e.button !== 1)) return;
   const handle = e.target.closest(".wf-handle");
   wf.pointers.set(e.pointerId, wfPointerX(e));
   $("wf-stage").setPointerCapture(e.pointerId);
   if (wf.pointers.size === 2) {
     // Two fingers: pinch to zoom around their midpoint.
+    if (wf.drag) clearTimeout(wf.drag.hold);
     const [x1, x2] = [...wf.pointers.values()];
     wf.drag = { kind: "pinch", dist: Math.max(8, Math.abs(x2 - x1)), view: [...wf.view],
       at: wfT((x1 + x2) / 2), f: (x1 + x2) / 2 / wfWidth() };
@@ -3668,16 +3746,32 @@ $("wf-stage").addEventListener("pointerdown", (e) => {
     if (pb) pb.pause();
     wf.snapSeq++;  // a pending snap must not move the handle out from under the drag
     wf.drag = { kind: "handle", k, grab: wfX(wfSel()[k]) - wfPointerX(e) };
-  } else {
-    wf.drag = { kind: "pan", x: wfPointerX(e), view: [...wf.view], moved: false };
+    return;
   }
+  if (e.button === 1) e.preventDefault();  // no autoscroll
+  const touch = e.pointerType === "touch";
+  const d = { kind: touch || e.shiftKey || e.button === 1 ? "pan" : "select",
+    x: wfPointerX(e), t: wfT(wfPointerX(e)), view: [...wf.view], moved: false };
+  if (touch) {
+    d.hold = setTimeout(() => {
+      if (wf.drag !== d || d.moved) return;
+      d.kind = "select";
+      d.held = true;
+      $("wf-stage").classList.add("wf-holding");
+      if (navigator.vibrate) navigator.vibrate(10);
+    }, WF_HOLD_MS);
+  }
+  wf.drag = d;
 });
+
+// A long press would open the context menu (Android) before the drag starts.
+$("wf-stage").addEventListener("contextmenu", (e) => { if (wf.drag) e.preventDefault(); });
 
 $("wf-stage").addEventListener("pointermove", (e) => {
   if (!wf.drag || !wf.pointers.has(e.pointerId)) {
     if (wf.path && !e.target.closest(".wf-handle")) {
-      $("wf-stage").title = `${formatTimePrecise(wfT(wfPointerX(e)), wfDecimals())}: click to play from here, drag to pan, ` +
-        "Ctrl/⌘-scroll or pinch to zoom";
+      $("wf-stage").title = `${formatTimePrecise(wfT(wfPointerX(e)), wfDecimals())}: click to play from here, ` +
+        "drag to select, Shift-drag or scroll to pan, Ctrl/⌘-scroll or pinch to zoom";
     }
     return;
   }
@@ -3692,10 +3786,24 @@ $("wf-stage").addEventListener("pointermove", (e) => {
     wfMoveHandle(d.k, wfCueSnap(wfT(wfPointerX(e) + d.grab)));
   } else if (d.kind === "pan") {
     const dx = wfPointerX(e) - d.x;
-    if (Math.abs(dx) > 4) d.moved = true;
+    if (Math.abs(dx) > WF_DRAG_PX) d.moved = true;
     if (!d.moved) return;
+    clearTimeout(d.hold);
+    $("wf-stage").classList.add("wf-panning");
     const dt = (-dx / wfWidth()) * (d.view[1] - d.view[0]);
     wfSetView(d.view[0] + dt, d.view[1] + dt);
+  } else if (d.kind === "select") {
+    const x = wfPointerX(e);
+    if (!d.moved && Math.abs(x - d.x) <= WF_DRAG_PX) return;
+    if (!d.moved) {
+      d.moved = true;
+      d.t = wfCueSnap(d.t);
+      if (pb) pb.pause();
+      wf.snapSeq++;  // a snap still on its way belongs to the selection this replaces
+    }
+    const t = Math.max(0, Math.min(wf.dur, wfCueSnap(wfT(x))));
+    const a = Math.max(0, Math.min(d.t, t)), b = Math.min(wf.dur, Math.max(d.t, t));
+    if (b - a >= 0.005) wfSetFreeRange(a, b);
   }
 });
 
@@ -3710,9 +3818,13 @@ function wfPointerEnd(e) {
     return;
   }
   wf.drag = null;
+  clearTimeout(d.hold);
+  $("wf-stage").classList.remove("wf-holding", "wf-panning");
   if (d.kind === "handle") {
     wfSnapHandle(d.k).then(() => wfAnnounceHandle(d.k));
-  } else if (d.kind === "pan" && !d.moved && e.type === "pointerup") {
+  } else if (d.kind === "select" && d.moved) {
+    wfSnapRange();
+  } else if (!d.moved && !d.held && e.type === "pointerup") {
     seekTo(Math.max(0, Math.min(wf.dur, wfT(wfPointerX(e)))));  // a click plays from there
   }
 }
@@ -3722,13 +3834,15 @@ $("wf-stage").addEventListener("pointercancel", wfPointerEnd);
 $("wf-in").addEventListener("keydown", (e) => wfHandleKey(e, 0));
 $("wf-out").addEventListener("keydown", (e) => wfHandleKey(e, 1));
 
-// + / - zoom and [ / ] jump to the handles, anywhere in the workspace but a text field.
+// + / - zoom, [ / ] jump to the handles and I / O set them at the playhead, anywhere in
+// the workspace but a text field.
 document.addEventListener("keydown", (e) => {
   if (currentView !== "item" || !wf.path || e.ctrlKey || e.metaKey || e.altKey) return;
   const t = e.target;
   if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
   const act = { "+": () => wfZoom(WF_ZOOM_STEP), "=": () => wfZoom(WF_ZOOM_STEP),
-    "-": () => wfZoom(1 / WF_ZOOM_STEP), "[": () => wfJumpTo(0), "]": () => wfJumpTo(1) }[e.key];
+    "-": () => wfZoom(1 / WF_ZOOM_STEP), "[": () => wfJumpTo(0), "]": () => wfJumpTo(1),
+    i: () => wfSetPoint(0), I: () => wfSetPoint(0), o: () => wfSetPoint(1), O: () => wfSetPoint(1) }[e.key];
   if (!act) return;
   e.preventDefault();
   act();
@@ -3859,6 +3973,7 @@ function showFreeRange(start, end, label) {
   clipRangeStart = start;
   clipRangeEnd = end;
   freeRangeLabel = label || "";
+  $("mark-save").disabled = false;
   showClipTarget(true);
   renderFreeRange();
   updateScriptHighlight();

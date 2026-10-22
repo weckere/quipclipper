@@ -342,17 +342,20 @@
                   <button type="button" id="wf-play-out" class="wf-btn" title="Play the last second before the out point">▶ 1 s to out</button>
                 </div>
               </div>
-              <div id="wf-stage" class="wf-stage" title="Click to play from here, drag to pan, Ctrl/⌘-scroll or pinch to zoom">
+              <div id="wf-stage" class="wf-stage" title="Click to play from here, drag to select, Shift-drag or scroll to pan, Ctrl/⌘-scroll or pinch to zoom">
                 <canvas id="wf-canvas" aria-hidden="true"></canvas>
                 <div id="wf-head" class="wf-head" hidden></div>
                 <div id="wf-in" class="wf-handle wf-in" role="slider" tabindex="0" aria-label="In point" title="In point: drag it, or ← → 10 ms (Shift 100 ms, Alt one frame); [ and ] jump between the handles" hidden><span class="wf-grip" aria-hidden="true"></span></div>
                 <div id="wf-out" class="wf-handle wf-out" role="slider" tabindex="0" aria-label="Out point" title="Out point: drag it, or ← → 10 ms (Shift 100 ms, Alt one frame); [ and ] jump between the handles" hidden><span class="wf-grip" aria-hidden="true"></span></div>
               </div>
+              <p class="wf-hint"><span class="wf-hint-fine">Drag to select, Shift-drag or scroll to pan, click to play from there.</span><span class="wf-hint-touch">Long-press, then drag, to select; drag to pan; tap to play from there.</span> <kbd>I</kbd> and <kbd>O</kbd> set the in and out points at the playhead.</p>
               <p class="wf-notes"><span id="wf-cut-note"></span> <span id="wf-note" role="status"></span></p>
             </div>
             <div id="playback-controls" class="playback-controls">
               <button type="button" id="pb-restart" class="pb-btn" title="Play from the start of the selection, or of the file" aria-label="Restart"><span aria-hidden="true">⏮</span></button>
               <button type="button" id="pb-playpause" class="pb-btn" title="Play / pause the selection, or the file (Space or K)" aria-label="Play" aria-pressed="false"><span id="pb-playpause-glyph" aria-hidden="true">▶</span></button>
+              <button type="button" id="pb-set-in" class="pb-btn pb-point" title="Set the in point at the playhead (I); with nothing selected, select 2 s from there" aria-keyshortcuts="I">Set in</button>
+              <button type="button" id="pb-set-out" class="pb-btn pb-point" title="Set the out point at the playhead (O); with nothing selected, select 2 s up to there" aria-keyshortcuts="O">Set out</button>
               <label class="checkbox-label pb-loop-label" title="Keep the selection playing on a loop"><input id="pb-loop" class="switch" type="checkbox" /> Loop selection</label>
               <span id="pb-range-note" class="muted pb-range-note" hidden></span>
             </div>

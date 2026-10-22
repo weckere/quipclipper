@@ -25,7 +25,9 @@ mkvmerge. quipclipper is a **self-hosted web app** over your own media folders, 
   loop before you cut.
 - **Exact cue points:** a zoomable waveform under the player (down to 20 ms across) with the
   subtitle lines on it. Drag the in and out handles, snapped to a zero crossing, a quiet
-  spot or a line's edge, and audition the first and last second before you cut.
+  spot or a line's edge, and audition the first and last second before you cut. Where
+  there's no line to pick (a song, a sound), drag a range out on the waveform, or press
+  I and O (Set in / Set out) at the playhead.
 - **Clips that keep the source:** a lossless stream copy (every audio track, 5.1/7.1
   intact) or a frame-exact H.264 re-encode (Intel Quick Sync when present); full-mix
   WAV/FLAC; surround split into channel groups (just the centre channel, say); GIFs from
@@ -195,8 +197,9 @@ The web app aims at WCAG 2.2 AA, and tests keep it there:
 - every control has hover text (what it does, and its shortcut) and a name a screen reader
   can say; a skip link jumps past the top bar;
 - the keyboard does everything: `/` to search, Space or K to play, the script as one tab
-  stop (↑ ↓ to move, Enter to play, S and E to set the selection), arrow keys on the
-  dialogue map, the seek bar and the waveform's handles;
+  stop (↑ ↓ to move, Enter to play, S and E to set the selection), I and O to set the in
+  and out points at the playhead, arrow keys on the dialogue map, the seek bar and the
+  waveform's handles;
 - finished and failed jobs, the selection and match counts are announced;
 - Settings has subtitle size (Normal, Large, Extra large) and a solid subtitle background;
   both themes meet AA contrast (a test checks every colour pair), with a stronger palette
