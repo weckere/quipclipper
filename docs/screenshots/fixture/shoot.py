@@ -130,11 +130,13 @@ async def main():
                                     is_mobile=True, has_touch=True, color_scheme="dark")
         page = await home(phone)
         await open_movie_from_now_playing(page)
-        # Scroll the waveform strip up to just above the selection pinned to the bottom.
+        # Scroll the waveform strip up to just above the selection pinned to the bottom,
+        # but never past the title.
         await page.evaluate("""() => {
             const wave = document.getElementById('waveform').getBoundingClientRect();
             const bar = document.querySelector('.ws-clip').getBoundingClientRect();
-            window.scrollBy(0, wave.bottom + 12 - bar.top);
+            const title = document.getElementById('item-name').getBoundingClientRect();
+            window.scrollBy(0, Math.min(wave.bottom + 12 - bar.top, title.top - 8));
         }""")
         await settle(page, 800)
         await shot(page, "phone")
