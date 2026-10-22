@@ -96,6 +96,9 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 
 ### Fixed
 
+- Release: `:latest` and `:X.Y` move only once both images are pushed. A failed image build
+  used to leave `latest` pointing at the new app with the old web image (NIX-7, deferred in
+  0.2.0's review).
 - The waveform, snaps and exact cuts land on the sample again when the audio is resampled on
   the way: detail views over 15 s (decoded at 16 kHz), any view of a 88.2/96/192 kHz file
   (drawn at 48 kHz), silence snaps, and an mp3 cut of a 96 kHz file. The anchored decode

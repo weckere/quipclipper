@@ -38,3 +38,17 @@ def test_docker_image_installs_hls_js_where_the_frontend_loads_it() -> None:
     app = (ROOT / "web/frontend/app.js").read_text()
     assert 's.src = "vendor/hls.min.js"' in app
     assert "/usr/share/nginx/html/vendor/hls.min.js" in DOCKERFILE.read_text()
+
+
+def test_release_moves_latest_only_after_both_images_pushed() -> None:
+    """NIX-7: a matrix build pushed X.Y.Z, X.Y and latest per image, so one failed build
+    left latest on a mix of two releases. Builds push X.Y.Z only; one later job retags."""
+    wf = (ROOT / ".github/workflows/release.yml").read_text()
+    images = wf[wf.index("\n  images:"):wf.index("\n  tags:")]
+    tags = wf[wf.index("\n  tags:"):wf.index("\n  release:")]
+    assert "value=latest" not in images
+    assert "{{major}}.{{minor}}" not in images
+    assert "needs: [check, images]" in tags
+    assert '-t "$repo-$image:latest"' in tags and '-t "$repo-$image:$minor"' in tags
+    assert tags.index(':$minor"') < tags.index(':latest"')
+    assert "needs: [check, tags]" in wf[wf.index("\n  release:"):]
