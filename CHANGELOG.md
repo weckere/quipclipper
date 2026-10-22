@@ -10,6 +10,12 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 
 ## [Unreleased]
 
+### Fixed
+
+- The workspace header no longer shows a movie's title twice: the Jellyfin line under the
+  title is hidden when it would repeat it (a "Title (Year)" folder), and shows just the year
+  under a bare "Title" folder. Episodes keep their "S01E02 · Title" line.
+
 ## [0.2.0] - 2026-10-21
 
 ### Deep links (M18)

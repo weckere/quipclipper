@@ -1513,8 +1513,17 @@ function cleanItemName(path, fileName) {
   return parent || fileName;
 }
 
+/** Text reduced to its letters and digits, lowercased and without accents, so
+ *  "Amélie (2001)" and "amelie 2001" compare equal. */
+function sameTitle(a, b) {
+  const norm = (s) => String(s || "").normalize("NFKD").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+  return norm(a) !== "" && norm(a) === norm(b);
+}
+
 /** The workspace header's poster and Jellyfin title line ("S03E26 · The Best of Both
- *  Worlds", or a movie's title and year), or neither when Jellyfin doesn't know the file. */
+ *  Worlds", or a movie's title and year), or neither when Jellyfin doesn't know the file.
+ *  A movie's line never repeats the heading: in a "Title (Year)" folder it is hidden, and
+ *  in a bare "Title" folder it keeps only the year. */
 function showItemArtwork(jf) {
   const img = $("item-art");
   const line = $("item-jf-title");
@@ -1526,8 +1535,14 @@ function showItemArtwork(jf) {
   } else if (jf && jf.title) {
     text = jf.title + (jf.year ? ` (${jf.year})` : "");
   }
-  line.textContent = text;
-  line.hidden = !text;
+  let shown = text;
+  if (jf && jf.type === "Movie") {
+    const heading = $("item-name").textContent;
+    if (sameTitle(heading, text)) shown = "";
+    else if (sameTitle(heading, jf.title)) shown = jf.year ? String(jf.year) : "";
+  }
+  line.textContent = shown;
+  line.hidden = !shown;
   // The file's own artwork: an episode's still, a movie's poster.
   const art = jf && jf.art;
   if (!art) {
