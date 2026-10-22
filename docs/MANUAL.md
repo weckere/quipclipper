@@ -213,8 +213,9 @@ Opening a file opens its workspace.
   change playback and what the clip contains (the subtitle you pick becomes the clip's
   default track).
 - **The dialogue map** under the player shows where the talking is over the whole file:
-  the selection in amber, the playhead in blue, and the waveform's window outlined. Click
-  it to seek.
+  the selection in amber (the range ▶ plays: selected lines, or a waveform range, I / O, a
+  bookmark or a link's span, with Before / After), the playhead in blue, and the waveform's
+  window outlined. Click it to seek.
 - **The waveform** under it sets the exact cut. It shows the sound of a window of the file,
   from the whole runtime down to 20 ms (single samples): zoom with **−** / **+** (or the
   keys), Ctrl/⌘-scroll or a pinch; scroll, **Shift**-drag or middle-drag to pan; click to

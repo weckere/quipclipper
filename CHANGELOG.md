@@ -83,6 +83,9 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   by the play button. A line selection holds playback to it as before; a free range does
   once play starts it, and lets go on a seek outside it, so playback after **I** runs on to
   the out point.
+- **The dialogue map shows any selection:** its amber band is the range the transport plays,
+  a waveform range, I / O, a bookmark or a link's span as well as selected lines (lines
+  first), with Before / After, where it showed only selected lines before.
 
 ### Fixed
 

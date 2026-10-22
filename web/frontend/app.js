@@ -3316,7 +3316,8 @@ $("clip-options-toggle").onclick = () => {
 //
 // One bar per slice of the runtime, as tall as the number of cues starting in it,
 // built from the script that is already loaded (no extra request). The selected
-// range is amber, the playhead blue; clicking seeks.
+// range (lines or a free range, as the transport plays it) is amber, the playhead blue;
+// clicking seeks.
 
 const DM_BARS = 160;
 
@@ -3350,12 +3351,15 @@ function renderDialogueMap() {
   if (wf.path) wfViewChanged();
 }
 
+/** The amber band: wfSel(), the range the transport plays (the selected lines, else a
+ *  free range: a waveform drag or I / O, a bookmark, a link's span), with Before / After. */
 function updateMapSelection() {
   const map = $("dialogue-map");
   const sel = $("dialogue-map-sel");
   const dur = mapDuration();
-  if (map.hidden || !dur || !hasClipRange()) { sel.hidden = true; return; }
-  const s = bufStart(), e = bufEnd();
+  const range = map.hidden || !dur ? null : wfSel();
+  if (!range) { sel.hidden = true; return; }
+  const [s, e] = range;
   sel.hidden = false;
   sel.style.setProperty("--f", String(Math.min(1, s / dur)));
   sel.style.setProperty("--w", String(Math.max(0.004, (e - s) / dur)));
@@ -3611,6 +3615,7 @@ function wfFollowSelection() {
 
 /** The selection changed: redraw, and move the view to it unless a handle did it. */
 function wfOnSelection() {
+  updateMapSelection();
   if (!wf.path) return;
   if (!wf.fromHandle) wfFollowSelection();
   wfDraw();
