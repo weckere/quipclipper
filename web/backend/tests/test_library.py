@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -80,6 +81,48 @@ def test_browse_lists_audio_only_with_a_transcript(tmp_path: Path) -> None:
     assert set(by_name) == {"ep1.mp3"}  # ep2 (no .srt) and cover.jpg skipped
     entry = by_name["ep1.mp3"]
     assert entry.is_audio and not entry.is_video and entry.has_sidecar
+
+
+SRT_HI = "1\n00:00:01,000 --> 00:00:02,000\nhi\n"
+
+
+def test_browse_index_state_from_one_listing(tmp_path: Path, monkeypatch) -> None:
+    """Each media row says whether its dialogue is indexed (the subtitle cache), from
+    one listing of the folder: no file lists it again (a big folder stays quick)."""
+    from quipclipper_web import sub_cache as sub_cache_mod
+    from quipclipper_web.sub_cache import SubtitleCache
+
+    media = tmp_path / "media"
+    (media / "Extras").mkdir(parents=True)
+    for name in ("cached.mkv", "nosubs.mkv", "fresh.mkv", "stale.mkv"):
+        (media / name).write_bytes(b"")
+    (media / "cached.srt").write_text(SRT_HI)
+    (media / "stale.srt").write_text(SRT_HI)
+    cache = SubtitleCache(tmp_path / "state")
+    cache.resolve(media / "cached.mkv")
+    cache.resolve(media / "stale.mkv")
+    monkeypatch.setattr(sub_cache_mod, "list_embedded_tracks", lambda video: [])
+    assert cache.mark_no_subs(media / "nosubs.mkv")
+    # The subtitles changed after indexing: the cached cues no longer count.
+    stale = media / "stale.srt"
+    os.utime(stale, (stale.stat().st_atime, stale.stat().st_mtime + 10))
+
+    listed: list[Path] = []
+    real_iterdir = Path.iterdir
+
+    def counting_iterdir(self):
+        listed.append(self)
+        return real_iterdir(self)
+
+    monkeypatch.setattr(Path, "iterdir", counting_iterdir)
+    entries = browse(str(media), [media], indexed=cache.index_state)
+    assert listed == [media]
+
+    state = {e.name: e.index_state for e in entries}
+    assert state == {"Extras": None, "cached.mkv": "indexed", "nosubs.mkv": "no_subs",
+                     "fresh.mkv": "not_indexed", "stale.mkv": "not_indexed"}
+    # Without the predicate (other listings) the field stays empty.
+    assert {e.index_state for e in browse(str(media), [media])} == {None}
 
 
 def test_browse_rejects_outside_path(tmp_path: Path) -> None:

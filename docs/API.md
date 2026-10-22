@@ -83,6 +83,15 @@ FastAPI publishes the live schema, served behind the same gate:
 | POST | `/api/media/fetch-subs?path=` | Backfill one YouTube-sourced library video's subtitles (async job — poll `job_id`). The video's id is read from its `[<id>]` filename or a sibling `.info.json`; a `.vtt` sidecar is written next to it. 400 = no id found or the folder is read-only (needs `writableMediaRoots`). Job `progress` ends `ok`/`skipped`/`none`. |
 | POST | `/api/search/folder/fetch-subs?path=` | Backfill every id'd, subtitle-less YouTube video in a folder (async job with `progress`; cancellable via `DELETE /api/jobs/{id}`). Skips videos that already have subtitles. `{job_id: null, candidates: 0}` = nothing to do. 400 = read-only folder. |
 
+`/api/library/browse` entries are `{name, path, is_dir, is_video, is_audio, is_book,
+has_sidecar, has_transcript, index_state}` (plus `jellyfin` when Jellyfin knows the file).
+`index_state` is the file's place in the dialogue index (the subtitle cache that
+`/api/search/folder/index` fills): `"indexed"` (its subtitles are cached and current, so a
+search reads them without extracting anything), `"no_subs"` (indexing found no text
+subtitles: no sidecar, no text track) or `"not_indexed"` (not yet, or the subtitles changed
+since). It is `null` for folders, books and the roots, and `/api/library/search` and the
+YouTube folder leave it out. Working it out costs one stat per file; the folder is listed once.
+
 Both backfill endpoints appear in the UI only for YouTube-sourced videos in
 **writable** roots. `/api/items` flags such a file with `youtube_id` and
 `backfill_writable: true` so the frontend can offer the action.

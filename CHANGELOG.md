@@ -86,6 +86,13 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 - **The dialogue map shows any selection:** its amber band is the range the transport plays,
   a waveform range, I / O, a bookmark or a link's span as well as selected lines (lines
   first), with Before / After, where it showed only selected lines before.
+- **Library rows show the dialogue index:** an **indexed** chip marks a file whose subtitles
+  are cached (a search reads them at once), a **no subs** chip one indexing found has none,
+  each with hover text and a name a screen reader reads; they update when indexing finishes.
+  `/api/library/browse` entries gain `index_state` (`indexed`, `no_subs`, `not_indexed`;
+  null for folders), worked out from one listing of the folder, and `library.browse` in the
+  CLI prints `[indexed]` / `[no subs]`. Listing a folder no longer lists it again for every
+  file's sidecar lookup.
 
 ### Fixed
 

@@ -55,23 +55,24 @@ class SubtitleCache:
         self._inflight: dict[str, threading.Lock] = {}
         self._inflight_guard = threading.Lock()
 
-    def _source_mtime(self, video: Path) -> float:
+    def _source_mtime(self, video: Path, siblings: list[Path] | None = None) -> float:
         """Mtime of the subtitle source — sidecar if present, else the video.
 
         Pass the server language preference so the *same* sidecar `resolve` picks
         (language-aware) is the one whose mtime keys the cache."""
-        sidecar = find_sidecar(video, self._default_langs)
+        sidecar = find_sidecar(video, self._default_langs, siblings)
         target = sidecar if sidecar else video
         try:
             return Path(target).stat().st_mtime
         except OSError:
             return 0.0
 
-    def _cache_key(self, video: Path, track: int | None = None) -> str:
+    def _cache_key(self, video: Path, track: int | None = None,
+                   siblings: list[Path] | None = None) -> str:
         # Track must be part of the key: different subtitle streams in the
         # same container have different cues.  None = backend auto-select.
         tkey = "auto" if track is None else str(track)
-        raw = f"{video}:{self._source_mtime(video)}:{tkey}"
+        raw = f"{video}:{self._source_mtime(video, siblings)}:{tkey}"
         return hashlib.sha256(raw.encode()).hexdigest()
 
     def _cache_path(self, video: Path, track: int | None = None) -> Path:
@@ -102,6 +103,21 @@ class SubtitleCache:
             return self._cache_path(video, track).exists()
         except OSError:
             return False
+
+    def index_state(self, video: Path, siblings: list[Path] | None = None) -> str:
+        """For a library row: "indexed" (the auto-selected subtitles are cached and
+        current), "no_subs" (indexing found none to cache) or "not_indexed". One key,
+        so one stat of the source and at most two lookups here; ``siblings`` (the
+        folder's listing) spares listing the folder again."""
+        try:
+            key = self._cache_key(video, siblings=siblings)
+            if (self._dir / (key + ".json")).exists():
+                return "indexed"
+            if (self._dir / (key + ".nosubs")).exists():
+                return "no_subs"
+        except OSError:
+            pass
+        return "not_indexed"
 
     # --- files with no usable subtitles -------------------------------------
 

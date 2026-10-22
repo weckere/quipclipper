@@ -449,3 +449,16 @@ def test_template_segments_fit_a_linux_file_name():
     out = render_clip_template("{cue}_{folder}", {"cue": "あ" * 80, "folder": "x" * 120})
     assert len(out.encode()) <= MAX_SEGMENT_BYTES
     out.encode().decode("utf-8")  # cut on a character boundary
+
+
+def test_browse_listing_marks_the_dialogue_index(capsys):
+    """library.browse rows carry index_state; the listing tags indexed and no-subs files."""
+    cli._fmt_entries({"entries": [
+        {"name": "Season 1", "path": "/m/Season 1", "is_dir": True, "index_state": None},
+        {"name": "a.mkv", "path": "/m/a.mkv", "is_video": True, "index_state": "indexed"},
+        {"name": "b.mkv", "path": "/m/b.mkv", "is_video": True, "index_state": "no_subs"},
+        {"name": "c.mkv", "path": "/m/c.mkv", "is_video": True, "index_state": "not_indexed"},
+    ]})
+    lines = capsys.readouterr().out.splitlines()
+    assert "[indexed]" in lines[1] and "[no subs]" in lines[2]
+    assert "[" not in lines[0] and "[" not in lines[3]

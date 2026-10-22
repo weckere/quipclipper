@@ -166,7 +166,12 @@ A rail on the left lists the media roots and **YouTube**. The main column lists 
 current folder: folders, video files, audio files that have a transcript beside them
 or a machine transcript (🎵) and EPUB3 audiobooks (📚). A **sub** chip marks a file with a
 sidecar subtitle file, an **auto** chip one with a [machine
-transcript](#machine-transcription-whispercpp).
+transcript](#machine-transcription-whispercpp). An **indexed** chip marks a file whose
+dialogue is indexed (its subtitles are cached, so a search reads them at once), and a
+**no subs** chip one that indexing found has no text subtitles; a file with neither isn't
+indexed yet (or its subtitles changed since). The chips update when **Index N files** or
+**Re-index all** finishes; `quipclipper library.browse` (or `ls`) prints them as
+`[indexed]` / `[no subs]`.
 **Search library** filters the folder by name; the dialogue search then covers exactly
 the folders the filter found (the chip says **N folders**), and clearing it goes back to
 the current folder, searched recursively.

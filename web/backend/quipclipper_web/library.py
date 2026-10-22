@@ -49,6 +49,9 @@ class Entry:
     is_audio: bool = False  # audio-only source (podcast/audiobook)
     is_book: bool = False  # EPUB3 media-overlay audiobook (browses into chapters)
     has_transcript: bool = False  # a machine transcript (M21), stored or in the library
+    # The dialogue index (subtitle cache) for a media file in a browse listing: "indexed",
+    # "no_subs" or "not_indexed"; None for folders, books and other listings.
+    index_state: str | None = None
 
 
 def _is_video(p: Path) -> bool:
@@ -59,18 +62,24 @@ def _is_audio(p: Path) -> bool:
     return p.suffix.lower() in AUDIO_EXTS
 
 
-def _media_entry(child: Path, transcribed=None) -> Entry | None:
+def _media_entry(child: Path, transcribed=None, indexed=None,
+                 siblings: list[Path] | None = None) -> Entry | None:
     """An Entry for a clippable media file, else None. Video files always qualify
     (they may carry embedded subtitles); audio-only files (podcasts, audiobooks)
     qualify only when a sidecar transcript sits next to them, or (with
-    ``transcribed``, a predicate) when they have a machine transcript (M21)."""
-    heard = bool(transcribed and (_is_video(child) or _is_audio(child)) and transcribed(child))
+    ``transcribed``, a predicate) when they have a machine transcript (M21).
+    ``indexed(child, siblings)`` fills ``index_state``; ``siblings`` is the folder's
+    listing, so no file lists the folder again."""
+    media = _is_video(child) or _is_audio(child)
+    heard = bool(transcribed and media and transcribed(child))
+    sidecar = media and find_sidecar(child, siblings=siblings) is not None
+    state = indexed(child, siblings) if indexed and media else None
     if _is_video(child):
-        return Entry(child.name, str(child), False, True, find_sidecar(child) is not None,
-                     has_transcript=heard)
-    if _is_audio(child) and (find_sidecar(child) is not None or heard):
-        return Entry(child.name, str(child), False, False, find_sidecar(child) is not None,
-                     is_audio=True, has_transcript=heard)
+        return Entry(child.name, str(child), False, True, sidecar,
+                     has_transcript=heard, index_state=state)
+    if _is_audio(child) and (sidecar or heard):
+        return Entry(child.name, str(child), False, False, sidecar,
+                     is_audio=True, has_transcript=heard, index_state=state)
     # A synced EPUB3 audiobook (media overlays) browses into its chapters like a
     # folder, so present it as a book entry.
     if child.suffix.lower() == ".epub" and is_media_overlay_epub(child):
@@ -78,11 +87,12 @@ def _media_entry(child: Path, transcribed=None) -> Entry | None:
     return None
 
 
-def browse(path: str | None, roots: list[Path], transcribed=None) -> list[Entry]:
+def browse(path: str | None, roots: list[Path], transcribed=None, indexed=None) -> list[Entry]:
     """List media roots (when `path` is empty) or the contents of a directory.
 
     Only sub-directories and video files are returned, directories first, each
-    sorted case-insensitively. Hidden entries (dotfiles) are skipped.
+    sorted case-insensitively. Hidden entries (dotfiles) are skipped. The folder
+    is listed once; every file's sidecar lookup (and ``indexed``) reuses it.
     """
     if not path:
         return [
@@ -98,13 +108,14 @@ def browse(path: str | None, roots: list[Path], transcribed=None) -> list[Entry]
 
     dirs: list[Entry] = []
     files: list[Entry] = []
-    for child in target.iterdir():
+    children = list(target.iterdir())
+    for child in children:
         if child.name.startswith("."):
             continue
         if child.is_dir():
             dirs.append(Entry(child.name, str(child), True, False, False))
         else:
-            e = _media_entry(child, transcribed)
+            e = _media_entry(child, transcribed, indexed, children)
             if e is not None:
                 files.append(e)
     dirs.sort(key=lambda e: e.name.lower())

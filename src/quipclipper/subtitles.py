@@ -491,7 +491,7 @@ def is_machine_sidecar(path: str | Path, stem: str | None = None) -> bool:
 
 
 
-def _sidecar_candidates(video_path: Path) -> list[Path]:
+def _sidecar_candidates(video_path: Path, siblings: list[Path] | None = None) -> list[Path]:
     """All sidecar subtitle/transcript files for a video: ``<stem>.<…>.<ext>``.
 
     Matched by a literal ``<stem>.`` filename prefix — deliberately NOT ``glob``:
@@ -500,12 +500,14 @@ def _sidecar_candidates(video_path: Path) -> list[Path]:
     as a character class (and ``*``/``?`` as wildcards), silently matching *nothing* and
     dropping every sidecar — bare ``.srt`` and language-suffixed ``.en.srt``/``.hi.en.srt``
     alike. The trailing dot is still required, so a sibling ``movie2.srt`` isn't picked up
-    for ``movie``; yt-dlp's ``*.info.json`` metadata is skipped."""
+    for ``movie``; yt-dlp's ``*.info.json`` metadata is skipped. ``siblings`` is the
+    folder's listing when the caller already has it (a listing that checks every file)."""
     prefix = (video_path.stem + ".").lower()
-    try:
-        siblings = list(video_path.parent.iterdir())
-    except OSError:
-        return []
+    if siblings is None:
+        try:
+            siblings = list(video_path.parent.iterdir())
+        except OSError:
+            return []
     return [
         p
         for p in siblings
@@ -543,7 +545,7 @@ def _sidecar_tags(stem: str, sidecar: Path) -> tuple[str | None, bool, bool, str
     return lang, forced, hi, " ".join(tokens)
 
 
-def find_sidecar(video_path: str | Path, langs=None) -> Path | None:
+def find_sidecar(video_path: str | Path, langs=None, siblings: list[Path] | None = None) -> Path | None:
     """Find the best sidecar subtitle/transcript next to a video (same stem).
 
     When several exist (e.g. ``movie.en.srt`` + ``movie.hi.en.srt`` +
@@ -551,9 +553,10 @@ def find_sidecar(video_path: str | Path, langs=None) -> Path | None:
     each filename and scored with the same :func:`best_track` logic used for
     embedded tracks, so the configured ``langs`` preference wins and HI/forced/
     commentary are deprioritised. Ties break by extension priority
-    (``SUBTITLE_EXTS`` order), then alphabetically."""
+    (``SUBTITLE_EXTS`` order), then alphabetically. Pass ``siblings`` (the folder's
+    listing) to skip listing the folder again."""
     video_path = Path(video_path)
-    candidates = _sidecar_candidates(video_path)
+    candidates = _sidecar_candidates(video_path, siblings)
     if not candidates:
         return None
     if len(candidates) == 1:

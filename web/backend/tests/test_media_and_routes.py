@@ -194,6 +194,28 @@ def test_browse_route(tmp_path: Path) -> None:
     assert [e["name"] for e in listing["entries"]] == ["show.mkv"]
 
 
+def test_browse_route_index_state(tmp_path: Path) -> None:
+    """Library rows carry index_state: "indexed" once the folder index has cached a
+    file's subtitles, "not_indexed" before; folders and the roots have none."""
+    media = tmp_path / "media"
+    media.mkdir()
+    (media / "Season 1").mkdir()
+    (media / "show.mkv").write_bytes(b"")
+    (media / "show.srt").write_text(SRT)
+    client = _csrf(TestClient(create_app(Settings.from_env(
+        {"QC_MEDIA_ROOTS": str(media), "QC_STATE_DIR": str(tmp_path / "state")}))))
+
+    def states() -> dict:
+        listing = client.get("/api/library/browse", params={"path": str(media)}).json()
+        return {e["name"]: e["index_state"] for e in listing["entries"]}
+
+    assert states() == {"Season 1": None, "show.mkv": "not_indexed"}
+    assert client.post("/api/search/folder/index", params={"path": str(media)}).status_code == 200
+    assert states() == {"Season 1": None, "show.mkv": "indexed"}
+    roots = client.get("/api/library/browse").json()["entries"]
+    assert all(e.get("index_state") is None for e in roots)
+
+
 def test_browse_route_forbids_outside(tmp_path: Path) -> None:
     root = tmp_path / "media"
     root.mkdir()

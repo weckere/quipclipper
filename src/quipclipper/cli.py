@@ -328,7 +328,10 @@ def _fmt_entries(data: dict) -> None:
         kind = e.get("type") or e.get("kind") or ("dir" if e.get("is_dir") else "file")
         icon = {"dir": "📁", "folder": "📁", "epub": "📚", "audio": "🎵",
                 "youtube": "▶", "video": "🎬"}.get(kind, "  ")
-        typer.echo(f"{icon} {e.get('name', '')}  {typer.style(e.get('path', ''), dim=True)}")
+        # The dialogue index (library.browse): "indexed", or "no subs" when indexing found none.
+        state = {"indexed": typer.style("  [indexed]", fg="green"),
+                 "no_subs": typer.style("  [no subs]", fg="yellow")}.get(e.get("index_state"), "")
+        typer.echo(f"{icon} {e.get('name', '')}{state}  {typer.style(e.get('path', ''), dim=True)}")
 
 
 def _fmt_matches(data: dict) -> None:

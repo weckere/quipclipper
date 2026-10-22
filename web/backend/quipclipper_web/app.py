@@ -739,7 +739,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if epub_items.is_epub_book(ep):
                 return {"path": path, "entries": epub_items.segment_entries(ep)}
         try:
-            entries = library.browse(path, settings.media_roots, transcribed=_has_machine)
+            entries = library.browse(path, settings.media_roots, transcribed=_has_machine,
+                                     indexed=sub_cache.index_state)
         except library.PathNotAllowed as exc:
             raise HTTPException(status_code=403, detail=str(exc))
         except FileNotFoundError as exc:

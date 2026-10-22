@@ -526,6 +526,37 @@ function jfArtFallback(root, fallback) {
   }
 }
 
+/** The dialogue index chip for a library row (library.browse's index_state): "indexed"
+ *  (subtitles cached, so a search reads them at once) or "no subs"; none before indexing. */
+function indexChipHtml(state) {
+  const chip = (text, name, title) => `<span class="badge idx-chip" title="${title}">` +
+    `<span aria-hidden="true">${text}</span><span class="visually-hidden">${name}</span></span>`;
+  if (state === "indexed") {
+    return chip("indexed", "dialogue indexed", "Dialogue indexed: its subtitles are cached, so a search reads them at once");
+  }
+  if (state === "no_subs") {
+    return chip("no subs", "no subtitles to index",
+      "Indexing found no text subtitles in this file (no sidecar, no text track): nothing to search until it is transcribed");
+  }
+  return "";
+}
+
+/** After indexing `folder`, bring its rows' index chips up to date (one listing, no re-render). */
+async function refreshIndexChips(folder) {
+  let data;
+  try {
+    data = await getJSON(`/api/library/browse?path=${encodeURIComponent(folder)}`);
+  } catch { return; }
+  if (currentBrowsePath !== folder) return;
+  const state = new Map(data.entries.map((e) => [e.path, e.index_state]));
+  for (const li of $("entries").querySelectorAll("li[data-path]")) {
+    if (!state.has(li.dataset.path)) continue;
+    const chips = li.querySelector(".chips");
+    chips.querySelector(".idx-chip")?.remove();
+    chips.insertAdjacentHTML("beforeend", indexChipHtml(state.get(li.dataset.path)));
+  }
+}
+
 function renderEntries(entries) {
   const list = $("entries");
   list.innerHTML = "";
@@ -541,6 +572,7 @@ function renderEntries(entries) {
     // A book (EPUB audiobook) browses into its chapters like a folder.
     const intoFolder = e.is_dir || e.is_book;
     li.className = "entry " + (intoFolder ? "dir" : "video");
+    if (!intoFolder) li.dataset.path = e.path;
     const icon = e.is_dir ? "folder" : e.is_book ? "book" : e.is_youtube ? "youtube" : e.is_audio ? "music" : "film";
     // Jellyfin's poster (a show, season or movie folder) or still (an episode) when it knows it.
     const art = e.jellyfin && e.jellyfin.art;
@@ -549,6 +581,7 @@ function renderEntries(entries) {
     if (!intoFolder && e.has_transcript) {
       chips += `<span class="auto-chip" title="Has a machine transcript (whisper): searchable, but it may be wrong"><span aria-hidden="true">auto</span><span class="visually-hidden">machine transcript</span></span>`;
     }
+    if (!intoFolder) chips += indexChipHtml(e.index_state);
     // A locally downloaded YouTube video plays/cuts from the server's own copy.
     if (e.is_youtube && e.downloaded) chips += '<span class="badge" title="Downloaded to the server">on server</span>';
     // The row's action is one button; other controls (YouTube's remove) sit beside it, not in it.
@@ -1184,7 +1217,7 @@ $("index-btn").addEventListener("click", async () => {
   }
   text.removeAttribute("aria-busy");
   setIndexBusy(false);
-  if (currentBrowsePath === folder) checkFolderIndex(folder);
+  if (currentBrowsePath === folder) { checkFolderIndex(folder); refreshIndexChips(folder); }
 });
 
 // Force-reindex the current folder(s) — clears cache then re-extracts.
@@ -1203,7 +1236,10 @@ $("reindex-folder-btn").addEventListener("click", async () => {
       });
     }
     status.textContent = "Reindexed.";
-    if (currentBrowsePath && !dialogueSearchScope) checkFolderIndex(currentBrowsePath);
+    if (currentBrowsePath && !dialogueSearchScope) {
+      checkFolderIndex(currentBrowsePath);
+      refreshIndexChips(currentBrowsePath);
+    }
   } catch (err) {
     status.textContent = `Reindex failed: ${err.message}`;
   }
