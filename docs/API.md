@@ -189,8 +189,7 @@ is false.
 `/api/items` adds `transcript: {stored, library, writable, sidecar_name}` for a library
 file. `/api/library/browse` lists an audio file with a machine transcript (stored or in the
 library) like one with a transcript beside it, and marks entries `has_transcript`.
-`/api/search/folder/index-status` adds `transcribed` (files with a machine transcript; one
-with no subtitles but a transcript no longer counts in `no_subs`) and
+`/api/search/folder/index-status` adds `transcribed` (files with a machine transcript) and
 `audio_untranscribed` (audio files with no transcript of any kind, outside `total`).
 
 ### Media (preview/streaming)

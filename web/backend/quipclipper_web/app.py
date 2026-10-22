@@ -1387,8 +1387,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             transcribed += heard
             if sub_cache.is_cached(v):
                 indexed += 1
-            elif sub_cache.has_no_subs(v) and not heard:
-                no_subs += 1  # a transcript makes a file without subtitles searchable (M21)
+            elif sub_cache.has_no_subs(v):
+                no_subs += 1  # still none to index, even with a machine transcript
         # Audio with no transcript of any kind isn't a media file yet (nothing to search),
         # but a folder transcription can give it one.
         bare = sum(1 for c in _resolve(path).rglob("*") if _is_bare_audio(c)
@@ -1691,7 +1691,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             job.result = {
                 "path": str(folder), "mode": req.mode, "model": model, "files": files,
                 "new_lines": sum(f["new_lines"] for f in done),
-                "note": (f"Transcribed {len(done)} of {candidates} files"
+                "note": (f"Transcribed {len(done)} file{'' if len(done) == 1 else 's'}"
                          if files else "Nothing new to transcribe."),
             }
             return []
