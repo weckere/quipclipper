@@ -30,6 +30,12 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   drawn; a request for a view already left is cancelled, so a quick run of zooms shows only
   the last. The handles, playhead and selection stay usable, and the fade is skipped under
   reduced motion.
+- **Play and Loop selection follow any selection:** the transport's play/pause, back to the
+  start and Loop selection play a range dragged on the waveform, set with I / O, or loaded
+  from a bookmark or a link, as well as selected lines (lines first), with the range shown
+  by the play button. A line selection holds playback to it as before; a free range does
+  once play starts it, and lets go on a seek outside it, so playback after **I** runs on to
+  the out point.
 
 ### Fixed
 

@@ -237,7 +237,14 @@ Opening a file opens its workspace.
   audio); on the keyframe before it for a lossless video copy; on a codec frame (20–30 ms)
   for passthrough audio.
 - **The transport**: back to the start, play/pause, **Set in** / **Set out** at the
-  playhead, **Loop selection**, and the selection's range.
+  playhead, **Loop selection**, and the selection's range. Play and **Loop selection**
+  play the selection with its Before / After padding: the selected lines, else a range
+  dragged on the waveform, set with I / O, or loaded from a bookmark or a link (with nothing
+  selected, the whole file). Play from outside the selection starts at its in point; at the
+  out point playback stops and returns to the in point, or starts it again with Loop on. A
+  line selection always holds playback to it. A dragged or bookmarked range does once play
+  (or back to the start, or Loop turned on inside it) has started it, and lets go when you
+  seek outside it, so after **I** playback runs on and **O** can catch the out point.
 - **The script** on the right lists every line. Click a line to seek; hover (or focus)
   a line for **Start** and **End**, which set the selection by whole lines. The first
   line, *Start of video*, lets a clip begin at 0:00. **Follow playback** keeps the

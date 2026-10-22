@@ -1455,9 +1455,10 @@ function updatePlaybackUI() {
   $("pb-playpause-glyph").textContent = paused ? "▶" : "⏸";
   $("pb-playpause").setAttribute("aria-pressed", String(!paused));
   const note = $("pb-range-note");
-  if (hasClipRange()) {
+  const range = wfSel();
+  if (range) {
     note.hidden = false;
-    note.textContent = `▶ ${formatTime(bufStart())} – ${formatTime(bufEnd())}`;
+    note.textContent = `▶ ${formatTime(range[0])} – ${formatTime(range[1])}`;
   } else {
     note.hidden = true;
   }
@@ -1466,6 +1467,11 @@ $("player").addEventListener("play", updatePlaybackUI);
 $("player").addEventListener("pause", updatePlaybackUI);
 $("pb-restart").onclick = () => pb && pb.restart();
 $("pb-playpause").onclick = () => pb && pb.toggle();
+// Loop selection turned on inside a free range holds playback to it, as ▶ does.
+$("pb-loop").addEventListener("change", (e) => {
+  const r = wfSel(), t = playerTime();
+  if (e.target.checked && r && t >= r[0] - 0.1 && t < r[1]) freeRangeArmed = true;
+});
 // Lock the player box to the real video aspect once known, so subsequent
 // transcode-segment reloads don't resize it and reflow the page.
 $("player").addEventListener("loadedmetadata", () => {
@@ -1482,6 +1488,7 @@ function playerTime() {
 /** Seek to an absolute position in the source file. */
 function seekTo(seconds) {
   if (ytEmbed) {
+    rangeSought(seconds);  // the <video> reports its seeks itself ("seeking")
     if (ytEmbed.ready) {
       ytEmbed.player.seekTo(seconds, true);
       ytEmbed.player.playVideo();
@@ -1606,6 +1613,7 @@ async function openItem(path, name, opts) {
   destroyHls();
   $("player").hidden = false;
   $("yt-player-row").hidden = true;
+  freeRangeArmed = false;
   updatePlaybackUI();  // clear any stale range note / reset the play icon
   $("mark-range-display").innerHTML = "";
   $("mark-save").disabled = true;
@@ -1895,19 +1903,21 @@ async function openItem(path, name, opts) {
   }
 
   player.addEventListener("timeupdate", updateSeekBar, { signal });
+  player.addEventListener("seeking", () => rangeSought(player.currentTime + transcodeOffset), { signal });
 
-  // Range loop: when playback reaches the end of the selected range, pause and
-  // return to the start so the clip can be previewed again.
+  // Range loop: when playback reaches the end of the range it is held to (rangeEnded),
+  // pause and return to the start so the clip can be previewed again.
   player.addEventListener("timeupdate", () => {
-    if (settingSrc || !hasClipRange()) return;
+    if (settingSrc) return;
     const absTime = player.currentTime + transcodeOffset;
-    if (absTime >= bufEnd() - 0.04) {
+    if (rangeEnded(absTime, 0.04)) {
+      const start = wfSel()[0];
       if ($("pb-loop").checked) {
-        seekAbs(bufStart(), true);   // keep playing — continuous loop
+        seekAbs(start, true);   // keep playing — continuous loop
       } else {
-        player.pause();              // paused attribute flips synchronously
-        seekAbs(bufStart(), false);  // return to start, paused, ready to replay
-        updatePlaybackUI();          // reflect the paused state on the icon now
+        player.pause();         // paused attribute flips synchronously
+        seekAbs(start, false);  // return to start, paused, ready to replay
+        updatePlaybackUI();     // reflect the paused state on the icon now
       }
     }
   }, { signal });
@@ -1950,13 +1960,14 @@ async function openItem(path, name, opts) {
   // Expose range-aware playback controls to the module-level buttons. The
   // wiring (below, near boot) calls these; they close over this item's state.
   pb = {
-    restart() { seekAbs(hasClipRange() ? bufStart() : 0, true); },
+    restart() { const r = playRange(); seekAbs(r ? r[0] : 0, true); },
     toggle() {
       if (!player.paused) { player.pause(); return; }
-      if (hasClipRange()) {
+      const r = playRange();
+      if (r) {
         const t = player.currentTime + transcodeOffset;
-        if (t < bufStart() - 0.1 || t >= bufEnd() - 0.05) {
-          seekAbs(bufStart(), true);
+        if (t < r[0] - 0.1 || t >= r[1] - 0.05) {
+          seekAbs(r[0], true);
           return;
         }
       }
@@ -2013,13 +2024,13 @@ async function openItem(path, name, opts) {
       updateScript();
       updatePlaybackUI();
       // Range preview loop: pause (or loop) at the end of the selection.
-      if (!hasClipRange()) return;
-      if (playerTime() >= bufEnd() - 0.1 && ytEmbedPlaying()) {
+      if (ytEmbedPlaying() && rangeEnded(playerTime(), 0.1)) {
+        const start = wfSel()[0];
         if ($("pb-loop").checked) {
-          ytEmbed.player.seekTo(bufStart(), true);
+          ytEmbed.player.seekTo(start, true);
         } else {
           ytEmbed.player.pauseVideo();
-          ytEmbed.player.seekTo(bufStart(), true);
+          ytEmbed.player.seekTo(start, true);
           updatePlaybackUI();
         }
       }
@@ -2027,13 +2038,14 @@ async function openItem(path, name, opts) {
     signal.addEventListener("abort", () => clearInterval(poll));
     // Range-aware controls on the embed (replaces the <video>-backed pb above).
     pb = {
-      restart() { seekTo(hasClipRange() ? bufStart() : 0); },
+      restart() { const r = playRange(); seekTo(r ? r[0] : 0); },
       toggle() {
         if (!ytEmbed || !ytEmbed.ready) return;
         if (ytEmbedPlaying()) { ytEmbed.player.pauseVideo(); return; }
-        if (hasClipRange()) {
+        const r = playRange();
+        if (r) {
           const t = playerTime();
-          if (t < bufStart() - 0.1 || t >= bufEnd() - 0.05) { seekTo(bufStart()); return; }
+          if (t < r[0] - 0.1 || t >= r[1] - 0.05) { seekTo(r[0]); return; }
         }
         ytEmbed.player.playVideo();
       },
@@ -2411,6 +2423,33 @@ function bufEnd() {
   if (e === null) return null;
   const padded = e + clipPadAfter();
   return currentDuration ? Math.min(currentDuration, padded) : padded;
+}
+
+// ▶, ⟲ and Loop selection play wfSel(): the selected lines first, else a free range (a
+// waveform drag or I / O, a bookmark, a link's span), with Before / After. A line
+// selection always holds playback to it. A free range does once the transport starts it
+// (▶ or ⟲, or Loop selection turned on inside it), until a seek outside it or a new free
+// range away from the playhead: so playback after I, or from a click elsewhere, runs on
+// and O can follow it.
+let freeRangeArmed = false;
+
+/** ▶ / ⟲: the range to play (null: the whole file), which now holds playback. */
+function playRange() {
+  const r = wfSel();
+  freeRangeArmed = !!r;
+  return r;
+}
+
+/** A seek to `t` outside the free range lets playback run on past it. */
+function rangeSought(t) {
+  const r = wfSel();
+  if (r && (t < r[0] - 0.25 || t > r[1] + 0.05)) freeRangeArmed = false;
+}
+
+/** Playback at `t` has reached the end of the range it is held to (`slack` s early). */
+function rangeEnded(t, slack) {
+  const r = wfSel();
+  return !!r && (hasClipRange() || freeRangeArmed) && t >= r[1] - slack;
 }
 
 function setClipInAt(idx) {
@@ -3063,7 +3102,8 @@ function wfSel() {
   if (!a) return null;
   const i = Math.max(0, a[0] - clipPadBefore());
   let o = a[1] + clipPadAfter();
-  if (wf.dur) o = Math.min(wf.dur, o);
+  const dur = wf.dur || currentDuration;
+  if (dur) o = Math.min(dur, o);
   return [i, Math.max(o, i + 0.001)];
 }
 
@@ -4033,7 +4073,7 @@ function showFreeRange(start, end, label) {
   renderFreeRange();
   updateScriptHighlight();
   if (pb) pb.refreshSeekBar();
-  updatePlaybackUI();
+  if (currentItem) rangeSought(playerTime());  // a new range away from the playhead waits for ▶
 }
 let freeRangeLabel = "";
 
@@ -4054,6 +4094,7 @@ function renderFreeRange() {
   };
   $("clip-range-display").textContent =
     `${freeRangeLabel ? freeRangeLabel + " — " : ""}${text} ${dur}`;
+  updatePlaybackUI();
 }
 
 /** Set a <select> to a saved value if that option exists, firing change. */
