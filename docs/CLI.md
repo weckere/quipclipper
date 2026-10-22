@@ -143,19 +143,24 @@ by default land where they always did.
 | Command | What it does | Arguments | API | Web UI |
 |---|---|---|---|---|
 | `item.info` (`tracks`) | Show a file's streams, duration and subtitle tracks. | `PATH` `--langs` | `GET /api/items` · local | Opening an item; stream selector |
-| `item.script` | Print a file's subtitle script (every cue with its times). | `PATH` `--track` `--offset` `--fmt` | `GET /api/items/subtitles` | Script view; subtitle track picker |
+| `item.script` | Print a file's subtitle script (every cue with its times). | `PATH` `--track` `--offset` `--fmt` `--machine` | `GET /api/items/subtitles` | Script view; subtitle track picker |
 | `item.reindex` | Re-read a file's subtitles (or re-fetch a YouTube transcript), clearing its cache. | `PATH` | `POST /api/items/subtitles/reindex` | ↻ Reindex subtitles (item) |
 | `item.fetch-subs` | Fetch subtitles from YouTube for one library video. | `PATH` `--wait` `--out-dir` | `POST /api/media/fetch-subs` | ⬇ Fetch subtitles from YouTube (item) |
 | `item.link` | A link that opens a file in the web app at a moment, with a range selected (needs QC_PUBLIC_URL on the server). | `PATH` `--at` `--sel` `--track` | `GET /api/items/link` | Copy link (workspace selection; search hit) |
 | `item.peaks` | Waveform peaks of a span: min/max pairs as base64 int16 (raw samples when zoomed past one per bin). Long spans come from a cached overview built in the background (202 while it builds). | `PATH` `--start` `--end` `--bins` `--audio` `--keyframes` | `GET /api/items/peaks` | Waveform strip (workspace): drawing, zoom and pan |
 | `item.snap` | The nearest zero crossing or quiet point to a time: where to put a cut so it starts without a click. | `PATH` `--t` `--mode` `--radius` `--db` `--audio` | `GET /api/items/snap` | Waveform strip: Snap to zero crossing / silence while dragging a handle |
+| `item.transcribe` | Transcribe a file's audio with whisper.cpp, for lines the subtitles leave out: a range (--start/--end), every gap between subtitle lines, or the whole file. Runs as a background job at idle priority; lines it hears are searchable and marked as machine-made. | `PATH` `--mode` `--start` `--end` `--model` `--audio` `--redo` `--wait` `--out-dir` | `POST /api/items/transcribe` · local | Transcribe selection (waveform); Fill gaps / Transcribe file (Transcript card) |
+| `item.transcript` | Show a file's machine transcript: the lines whisper heard, with what was transcribed. | `PATH` `--fmt` | `GET /api/items/transcript` · local | Transcript card (workspace) |
+| `item.transcript-clear` ⚠ | Delete a file's machine transcript (not a copy in the library). | `PATH` | `DELETE /api/items/transcript` · local | Transcript card: Delete transcript |
+| `item.transcript-copy` ⚠ | Copy a file's machine transcript into the library as a subtitle sidecar, <name>.<lang>.whisper.srt, next to the file (writable folders only). From then on it also shows in the player's captions and in Jellyfin. | `PATH` | `POST /api/items/transcript/library` · local | Transcript card: Copy to library |
+| `item.transcript-uncopy` ⚠ | Remove the machine transcript sidecar (…whisper.srt) from the library; the transcript itself stays. | `PATH` | `DELETE /api/items/transcript/library` · local | Transcript card: Remove from library |
 
 ## search
 
 | Command | What it does | Arguments | API | Web UI |
 |---|---|---|---|---|
-| `search.item` (`search`) | Search one file's dialogue. | `QUERY` `--path` `--track` `--limit` `--min-score` `--max-span` `--subs¹` `--langs¹` | `GET /api/search` · local | Top-bar search, scope This video |
-| `search.folder` | Search dialogue across every file in one or more folders. | `QUERY` `--path` `--limit` `--min-score` `--max-span` | `GET /api/search/folder` | Top-bar search, scope This folder / Whole library |
+| `search.item` (`search`) | Search one file's dialogue. | `QUERY` `--path` `--track` `--limit` `--min-score` `--max-span` `--machine` `--subs¹` `--langs¹` | `GET /api/search` · local | Top-bar search, scope This video |
+| `search.folder` | Search dialogue across every file in one or more folders. | `QUERY` `--path` `--limit` `--min-score` `--max-span` `--machine` | `GET /api/search/folder` | Top-bar search, scope This folder / Whole library |
 
 ## index
 
@@ -225,6 +230,6 @@ by default land where they always did.
 |---|---|---|---|---|
 | `settings.list` | Show the CLI settings. |  | (client) | — |
 | `settings.get` | Show one CLI setting. | `KEY` | (client) | — |
-| `settings.set` ⚠ | Change a CLI setting (empty value clears it). | `KEY` `VALUE` | (client) | Name field (clip bar); Subtitle languages (Settings) |
+| `settings.set` ⚠ | Change a CLI setting (empty value clears it). | `KEY` `VALUE` | (client) | Name field (clip bar); Subtitle languages, Transcription model (Settings) |
 
 ⚠ destructive: refused with `--safe`. ¹ local mode only.

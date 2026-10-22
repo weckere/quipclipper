@@ -472,6 +472,25 @@ def extract_embedded(video_path: str | Path, stream_index: int) -> list[Cue]:
         tmp_path.unlink(missing_ok=True)
 
 
+# A transcript copied into the library (M21) is named <stem>.<lang>.whisper.srt: it is
+# machine-made, so it is never picked as a file's subtitles (see quipclipper.transcribe).
+SIDECAR_TOKEN = "whisper"
+
+
+def is_machine_sidecar(path: str | Path, stem: str | None = None) -> bool:
+    """True for a machine sidecar: the dotted token right before the extension is
+    ``whisper`` (``movie.en.whisper.srt``). With the media's ``stem``, only tokens after
+    it count, so ``The.Whisper.srt`` (the plain sidecar of ``The.Whisper.mkv``) isn't."""
+    name = Path(path).name
+    if stem is not None:
+        if not name.lower().startswith(stem.lower() + "."):
+            return False
+        name = name[len(stem):]
+    tokens = [t.lower() for t in name.split(".")[1:-1] if t]
+    return bool(tokens) and tokens[-1] == SIDECAR_TOKEN
+
+
+
 def _sidecar_candidates(video_path: Path) -> list[Path]:
     """All sidecar subtitle/transcript files for a video: ``<stem>.<…>.<ext>``.
 
@@ -496,6 +515,8 @@ def _sidecar_candidates(video_path: Path) -> list[Path]:
         if p.name.lower().startswith(prefix)
         and p.suffix.lower() in SUBTITLE_EXTS
         and not p.name.lower().endswith(".info.json")
+        # A machine transcript copied into the library is not the file's subtitles.
+        and not is_machine_sidecar(p, video_path.stem)
     ]
 
 

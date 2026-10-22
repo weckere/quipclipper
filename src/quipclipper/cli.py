@@ -140,13 +140,17 @@ def _dump(data: Any) -> str:
 # --- local helpers (unchanged from the original CLI) -------------------------------------
 
 
+# Machine transcript lines (M21) are marked wherever they are printed.
+AUTO_MARK = "[auto] "
+
+
 def _echo_match(rank: int, m: Match) -> None:
     typer.echo(
         f"[{rank}] {m.start:>8.2f}s  "
         f"{typer.style(m.cues[0].start_ts, fg='cyan')}–{m.cues[-1].end_ts}  "
         f"(score {m.score:.0f})"
     )
-    typer.echo(f"      {m.text}")
+    typer.echo(f"      {AUTO_MARK if m.machine else ''}{m.text}")
 
 
 def _match_dict(rank: int, m: Match) -> dict:
@@ -155,7 +159,7 @@ def _match_dict(rank: int, m: Match) -> dict:
         "index": rank, "score": round(m.score, 1), "text": m.text,
         "start": m.start, "end": m.end,
         "start_ts": m.cues[0].start_ts, "end_ts": m.cues[-1].end_ts,
-        "cue_count": len(m.cues),
+        "cue_count": len(m.cues), "machine": m.machine,
     }
 
 
@@ -183,6 +187,28 @@ def _resolve(
         )
         typer.secho(f"  auto-selected subtitle track: {label}", fg="bright_black", err=True)
     return resolved
+
+
+def _local_cues(subs: Optional[Path], video: Optional[Path], track: Optional[int], langs,
+                machine: str = "include") -> list:
+    """A local file's cues for search: its subtitles, with the machine transcript lines
+    (this machine's transcript store, and a ….whisper.srt copy next to the file) mixed
+    in, left out, or alone. A file with only a transcript has no subtitles to resolve."""
+    from quipclipper import transcribe as tr
+
+    heard = (tr.machine_cues(video, tr.TranscriptStore(tr.default_store_dir()))
+             if video is not None and subs is None and machine != "exclude" else [])
+    if heard and machine == "only":
+        return heard
+    if heard:
+        try:
+            real = resolve_subtitles(subs=subs, video=video, track=track, langs=langs).cues
+        except (ValueError, FileNotFoundError, RuntimeError):
+            real = []
+        return tr.merge_cues(real, heard)
+    if machine == "only":
+        return []
+    return _resolve(subs, video, track, langs).cues
 
 
 def _parse_tracks(spec: Optional[str]) -> Optional[list[int]]:
@@ -318,7 +344,7 @@ def _fmt_matches(data: dict) -> None:
         typer.echo(f"[{m.get('index', '?')}] {where}"
                    f"{typer.style(m.get('start_ts', ''), fg='cyan')}–{m.get('end_ts', '')}  "
                    f"(score {m.get('score', 0):.0f})")
-        typer.echo(f"      {m.get('text', '')}")
+        typer.echo(f"      {AUTO_MARK if m.get('machine') else ''}{m.get('text', '')}")
 
 
 def _fmt_job(job: dict) -> None:
@@ -370,7 +396,8 @@ def _fmt_clips(data: dict) -> None:
 def _fmt_script(data: Any) -> None:
     for cue in data if isinstance(data, list) else []:
         speaker = f"{cue['speaker']}: " if cue.get("speaker") else ""
-        typer.echo(f"{cue.get('start', 0):>9.2f}  {speaker}{cue.get('text', '')}")
+        auto = AUTO_MARK if cue.get("source") == "machine" else ""
+        typer.echo(f"{cue.get('start', 0):>9.2f}  {auto}{speaker}{cue.get('text', '')}")
 
 
 def _fmt_item(data: dict) -> None:
@@ -452,7 +479,36 @@ def _fmt_link(data: dict) -> None:
     typer.echo(data.get("link") or "")
 
 
+def _fmt_transcribe(data: dict) -> None:
+    if "status" in data:  # a server job
+        _fmt_job(data)
+        data = data.get("result") or {}
+    if data.get("note"):
+        typer.secho(data["note"], fg="yellow")
+    for line in data.get("new_lines") or []:
+        typer.echo(f"{line['start']:>9.2f}  {AUTO_MARK}{line['text']}")
+    t = data.get("transcript")
+    if t:
+        typer.secho(f"{t['lines']} machine lines over {format_clock(t['covered'])} "
+                    f"({', '.join(t['models'])})", dim=True)
+
+
+def _fmt_transcript(data: dict) -> None:
+    t = data.get("transcript")
+    if t:
+        typer.secho(f"Transcribed {format_clock(t['covered'])} with {', '.join(t['models'])}: "
+                    f"{t['lines']} lines", bold=True)
+    elif not data.get("lines"):
+        typer.secho("No machine transcript.", fg="yellow")
+    if data.get("library"):
+        typer.secho("In the library: " + ", ".join(data["library"]), dim=True)
+    for line in data.get("lines") or []:
+        typer.echo(f"{line['start']:>9.2f}  {AUTO_MARK}{line['text']}")
+
+
 _FORMATTERS = {
+    "item.transcribe": _fmt_transcribe,
+    "item.transcript": _fmt_transcript,
     "library.browse": _fmt_entries, "library.find": _fmt_entries,
     "search.item": _fmt_matches, "search.folder": _fmt_matches,
     "job.get": _fmt_job, "job.wait": _fmt_job, "job.list": _fmt_jobs,
@@ -485,6 +541,10 @@ def search_cmd(
     limit: int = typer.Option(10, "--limit", "-n", help="Max matches to show."),
     min_score: float = typer.Option(60.0, "--min-score", help="Drop matches below this score (0-100)."),
     max_span: int = typer.Option(3, "--max-span", help="Max consecutive captions a match may join."),
+    machine: Literal["include", "exclude", "only"] = typer.Option(
+        "include", "--machine",
+        help="Machine transcript lines (whisper): include them (marked [auto]), exclude "
+             "them, or search only them."),
 ):
     """Search one file's dialogue and print ranked matches with timestamps."""
     c = _c(ctx)
@@ -494,7 +554,7 @@ def search_cmd(
                               exit_code=EXIT_USAGE))
         _run_server(c, "search.item", {
             "query": query, "path": str(video), "track": track, "limit": limit,
-            "min_score": min_score, "max_span": max_span, "subs": subs,
+            "min_score": min_score, "max_span": max_span, "machine": machine, "subs": subs,
             "langs": langs})
         return
     # An EPUB3 media-overlay audiobook carries its own cues (text + narration
@@ -508,7 +568,7 @@ def search_cmd(
             )
         cues = to_cues(book.cues)
     else:
-        cues = _resolve(subs, video, track, langs or c.settings.get("sub_langs")).cues
+        cues = _local_cues(subs, video, track, langs or c.settings.get("sub_langs"), machine)
     matches = search(query, cues, limit=limit, min_score=min_score, max_span=max_span)
     if c.json:
         typer.echo(_dump({"query": query, "count": len(matches),
@@ -1475,6 +1535,136 @@ def _client_clip_nowplaying(c: Context, v: dict) -> Any:
             "line": line}
 
 
+# --- machine transcription on this machine (M21) -----------------------------------------
+# item.transcribe and the transcript commands run whisper.cpp here when no server is set:
+# `whisper-cli` on PATH (or QC_WHISPER_BIN), and a ggml model in QC_WHISPER_MODEL (a path)
+# or QC_WHISPER_MODELS (name=path pairs). Transcripts go to ~/.cache/quipclipper/transcripts.
+
+
+def _media_arg(v: dict) -> Path:
+    media = Path(str(v.get("path") or "")).expanduser()
+    if not media.is_file():
+        raise CliError(f"Not a file: {media}", code="not_found")
+    return media.resolve()
+
+
+def _store():
+    from quipclipper import transcribe as tr
+
+    return tr.TranscriptStore(tr.default_store_dir())
+
+
+def _local_transcribe(c: Context, v: dict) -> Any:
+    from quipclipper import transcribe as tr
+
+    cfg = tr.WhisperConfig.from_env()
+    if not cfg.binary_path():
+        raise CliError(f"{cfg.binary} not found: install whisper.cpp, or set QC_WHISPER_BIN.",
+                       code="missing_tool")
+    if not cfg.models:
+        raise CliError("No whisper model: set QC_WHISPER_MODEL to a ggml model file "
+                       "(e.g. ggml-small.en.bin).", code="usage", exit_code=EXIT_USAGE)
+    media = _media_arg(v)
+    model = v.get("model") or cfg.default_model
+    try:
+        cfg.model_path(model)
+    except ValueError as exc:
+        raise CliError(str(exc), code="usage", exit_code=EXIT_USAGE) from None
+    try:
+        real = resolve_subtitles(subs=None, video=media,
+                                 langs=c.settings.get("sub_langs")).cues
+    except (ValueError, FileNotFoundError, RuntimeError):
+        real = []
+    store = _store()
+    have = store.load(media)
+    mode = v.get("mode") or ("range" if v.get("start") is not None else "gaps")
+    try:
+        ranges = tr.plan_ranges(mode, real=real, duration=_probe_duration(media),
+                                done=have.ranges if have else [], start=v.get("start"),
+                                end=v.get("end"), redo=bool(v.get("redo")))
+    except ValueError as exc:
+        raise CliError(str(exc), code="usage", exit_code=EXIT_USAGE) from None
+    if not ranges:
+        return {"path": str(media), "transcribed": [], "new_lines": [],
+                "transcript": have.summary() if have else None,
+                "note": "Nothing new to transcribe (pass --redo to do it again)."}
+
+    def progress(done: float, total: float) -> None:
+        if not c.json:
+            typer.secho(f"  transcribing… {format_clock(done)} of {format_clock(total)}",
+                        dim=True, err=True)
+
+    try:
+        t = tr.run(store, media, ranges, cfg=cfg, model=model, audio=int(v.get("audio") or 0),
+                   real=real, duration=_probe_duration(media), progress=progress)
+    except RuntimeError as exc:
+        raise CliError(str(exc), code="failed") from None
+    new = [cue for cue in (t.cues if t else []) if any(a <= cue.start < b for a, b in ranges)]
+    return {"path": str(media), "model": model, "transcribed": [list(r) for r in ranges],
+            "new_lines": [{"start": x.start, "end": x.end, "text": x.text} for x in new],
+            "transcript": t.summary() if t else None}
+
+
+def _local_transcript(c: Context, v: dict) -> Any:
+    from quipclipper import transcribe as tr
+
+    media = _media_arg(v)
+    store = _store()
+    t = store.load(media)
+    cues = tr.machine_cues(media, store)
+    fmt = v.get("fmt") or "json"
+    if fmt == "srt":
+        return tr.cues_to_srt(cues)
+    if fmt == "vtt":
+        return tr.cues_to_vtt(cues)
+    return {"path": str(media), "transcript": t.summary() if t else None,
+            "library": [x.name for x in tr.find_machine_sidecars(media)],
+            "lines": [{"start": x.start, "end": x.end, "text": x.text, "source": x.source}
+                      for x in cues]}
+
+
+def _local_transcript_clear(c: Context, v: dict) -> Any:
+    media = _media_arg(v)
+    return {"path": str(media), "deleted": _store().clear(media)}
+
+
+def _local_transcript_copy(c: Context, v: dict) -> Any:
+    from quipclipper import transcribe as tr
+
+    media = _media_arg(v)
+    t = _store().load(media)
+    if t is None or not t.cues:
+        raise CliError("This file has no machine transcript to copy.", code="not_found")
+    try:
+        side = tr.write_sidecar(media, t.cues, t.language)
+    except OSError as exc:
+        raise CliError(f"Can't write next to {media.name}: {exc.strerror or exc}",
+                       code="io") from None
+    return {"path": str(media), "sidecar": str(side), "lines": len(t.cues)}
+
+
+def _local_transcript_uncopy(c: Context, v: dict) -> Any:
+    from quipclipper import transcribe as tr
+
+    media = _media_arg(v)
+    removed = []
+    for side in tr.find_machine_sidecars(media):
+        side.unlink()
+        removed.append(side.name)
+    return {"path": str(media), "removed": removed}
+
+
+_LOCAL = {
+    "item.transcribe": _local_transcribe,
+    "item.transcript": _local_transcript,
+    "item.transcript-clear": _local_transcript_clear,
+    "item.transcript-copy": _local_transcript_copy,
+    "item.transcript-uncopy": _local_transcript_uncopy,
+}
+# Commands whose --model falls back to the stt_model setting.
+_STT_MODEL = ("item.transcribe",)
+
+
 def _client_job_wait(c: Context, v: dict) -> Any:
     return wait_job(c, v["job_id"], out_dir=v.get("out_dir") or c.settings.get("out_dir"))
 
@@ -1522,6 +1712,13 @@ def _run_client(c: Context, cmd: reg.Command, v: dict) -> Any:
 
 def run_command(c: Context, cmd: reg.Command, values: dict) -> Any:
     """Run any registry command from a values dict (used by generic commands and `run`)."""
+    if cmd.id in _STT_MODEL and not values.get("model") and c.settings.get("stt_model"):
+        values = {**values, "model": c.settings["stt_model"]}
+    if cmd.mode == "both" and not c.remote and cmd.id in _LOCAL:
+        if cmd.destructive and c.safe:
+            raise CliError(f"{cmd.id} changes or deletes data; refused with --safe.",
+                           code="refused", exit_code=EXIT_REFUSED)
+        return _LOCAL[cmd.id](c, values)
     if cmd.mode == "client":
         if cmd.destructive and c.safe:  # execute() checks server commands
             raise CliError(f"{cmd.id} changes or deletes data; refused with --safe.",

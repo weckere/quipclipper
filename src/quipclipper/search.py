@@ -73,13 +73,16 @@ def search(
             window = tuple(cues[start : i + 1])
             candidates.append(Match(score=score, cues=window, text=joined))
 
-    # Rank by score; then, among equal-scoring span-variants, prefer the window
-    # whose full text best matches the whole query (fuzz.ratio penalises both
-    # missing and extra words). This keeps a single-cue hit for a one-line query
-    # but the joined window for a sentence split across captions. Tighter span and
-    # earlier position break any remaining ties.
+    # Rank by score; at an equal score a subtitle line beats a machine transcript
+    # line (M21: a tiebreak, never a penalty, so a real line is never pushed down).
+    # Then, among equal-scoring span-variants, prefer the window whose full text
+    # best matches the whole query (fuzz.ratio penalises both missing and extra
+    # words). This keeps a single-cue hit for a one-line query but the joined
+    # window for a sentence split across captions. Tighter span and earlier
+    # position break any remaining ties.
     candidates.sort(
-        key=lambda m: (-m.score, -fuzz.ratio(q, _normalize(m.text)), len(m.cues), m.start)
+        key=lambda m: (-m.score, m.machine, -fuzz.ratio(q, _normalize(m.text)),
+                       len(m.cues), m.start)
     )
 
     results: list[Match] = []

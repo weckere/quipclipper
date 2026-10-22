@@ -119,6 +119,11 @@ _CLIP_OPTIONS = (
           "in the saved video clip.", where=BODY),
 )
 
+# Machine transcript lines (M21) in a script or search: mixed in (marked), left out, or alone.
+_MACHINE = Param("machine", "str", "Machine transcript lines (whisper): include them "
+                 "(marked as machine-made), exclude them, or search only them.",
+                 default="include", choices=("include", "exclude", "only"))
+
 _JOB_FOLLOW = (
     Param("wait", "bool", "Wait for the job to finish and show its result.",
           where=CLIENT, default=True),
@@ -191,7 +196,8 @@ COMMANDS: tuple[Command, ...] = (
                     Param("offset", "float", "Shift every cue by this many seconds.",
                           default=0.0),
                     Param("fmt", "str", "json (cues with speakers) or vtt.", default="json",
-                          choices=("json", "vtt"))),
+                          choices=("json", "vtt")),
+                    _MACHINE),
             ui="Script view; subtitle track picker"),
     Command("item.reindex", "Re-read a file's subtitles (or re-fetch a YouTube "
             "transcript), clearing its cache.", "POST", "/api/items/subtitles/reindex",
@@ -239,6 +245,46 @@ COMMANDS: tuple[Command, ...] = (
                           default=-45.0),
                     Param("audio", "int", "Audio stream (a:N).", default=0)),
             ui="Waveform strip: Snap to zero crossing / silence while dragging a handle"),
+    # Machine transcription (M21, D-037): only ever on request, at idle priority.
+    Command("item.transcribe", "Transcribe a file's audio with whisper.cpp, for lines the "
+            "subtitles leave out: a range (--start/--end), every gap between subtitle lines, "
+            "or the whole file. Runs as a background job at idle priority; lines it hears are "
+            "searchable and marked as machine-made.", "POST", "/api/items/transcribe",
+            params=(Param("path", "str", "Media file.", where=BODY, main=True, required=True),
+                    Param("mode", "str", "range (needs --start/--end), gaps (between subtitle "
+                          "lines) or file (all of it). Default: range with --start, else gaps.",
+                          where=BODY, choices=("range", "gaps", "file")),
+                    Param("start", "float", "Range start in seconds.", where=BODY),
+                    Param("end", "float", "Range end in seconds.", where=BODY),
+                    Param("model", "str", "Whisper model. Default: the settings value, else "
+                          "the server's (small.en).", where=BODY, choices=("small.en", "medium.en")),
+                    Param("audio", "int", "Audio stream (a:N).", where=BODY, default=0),
+                    Param("redo", "bool", "Transcribe again parts done before (e.g. with a "
+                          "bigger model).", where=BODY, default=False)) + _JOB_FOLLOW,
+            mode="both", response="job",
+            ui="Transcribe selection (waveform); Fill gaps / Transcribe file (Transcript card)"),
+    Command("item.transcript", "Show a file's machine transcript: the lines whisper heard, "
+            "with what was transcribed.", "GET", "/api/items/transcript",
+            params=(Param("path", "str", "Media file.", main=True, required=True),
+                    Param("fmt", "str", "json, or srt / vtt to export the lines.",
+                          default="json", choices=("json", "srt", "vtt"))),
+            mode="both", ui="Transcript card (workspace)"),
+    Command("item.transcript-clear", "Delete a file's machine transcript (not a copy in the "
+            "library).", "DELETE", "/api/items/transcript",
+            params=(Param("path", "str", "Media file.", main=True, required=True),),
+            mode="both", destructive=True, ui="Transcript card: Delete transcript"),
+    Command("item.transcript-copy", "Copy a file's machine transcript into the library as a "
+            "subtitle sidecar, <name>.<lang>.whisper.srt, next to the file (writable folders "
+            "only). From then on it also shows in the player's captions and in Jellyfin.",
+            "POST", "/api/items/transcript/library",
+            params=(Param("path", "str", "Media file.", where=QUERY, main=True,
+                          required=True),),
+            mode="both", destructive=True, ui="Transcript card: Copy to library"),
+    Command("item.transcript-uncopy", "Remove the machine transcript sidecar (…whisper.srt) "
+            "from the library; the transcript itself stays.", "DELETE",
+            "/api/items/transcript/library",
+            params=(Param("path", "str", "Media file.", main=True, required=True),),
+            mode="both", destructive=True, ui="Transcript card: Remove from library"),
 
     # --- search ------------------------------------------------------------------------
     Command("search.item", "Search one file's dialogue.", "GET", "/api/search",
@@ -249,6 +295,7 @@ COMMANDS: tuple[Command, ...] = (
                     Param("limit", "int", "Most matches to return.", default=10,
                           flags=("-n",)),
                     *_SEARCH_TUNING,
+                    _MACHINE,
                     Param("subs", "str", "Subtitle file to search instead of the video's.",
                           where=CLIENT, flags=("-s",), local_only=True),
                     Param("langs", "str", "Preferred subtitle languages, comma-separated.",
@@ -261,7 +308,8 @@ COMMANDS: tuple[Command, ...] = (
                           required=True),
                     Param("limit", "int", "Most matches per file.", default=5,
                           flags=("-n",)),
-                    *_SEARCH_TUNING),
+                    *_SEARCH_TUNING,
+                    _MACHINE),
             ui="Top-bar search, scope This folder / Whole library"),
 
     # --- index -------------------------------------------------------------------------
@@ -279,7 +327,6 @@ COMMANDS: tuple[Command, ...] = (
             params=(Param("path", "str", "Folder.", main=True, required=True),)
             + _JOB_FOLLOW,
             response="job", ui="⬇ Fetch missing YouTube subtitles; ✕ Cancel"),
-
     # --- clip -----------------------------------------------------------------------------
     Command("clip.create", "Cut a clip: around a line of dialogue (QUERY) or between "
             "--start and --end.", "POST", "/api/clip",
@@ -559,7 +606,7 @@ COMMANDS: tuple[Command, ...] = (
                     Param("value", "str", "New value (omit to clear).", where=CLIENT,
                           default="", main=True)),
             mode="client", destructive=True,
-            ui="Name field (clip bar); Subtitle languages (Settings)"),
+            ui="Name field (clip bar); Subtitle languages, Transcription model (Settings)"),
 )
 
 BY_ID: dict[str, Command] = {c.id: c for c in COMMANDS}
@@ -574,10 +621,13 @@ SETTINGS: dict[str, str] = {
     "sub_langs": "Default subtitle languages (the web UI's Subtitle languages setting, "
                  "localStorage qc_sub_langs).",
     "out_dir": "Default --out-dir for downloading finished jobs.",
+    "stt_model": "Default --model for transcription (small.en or medium.en; the web UI's "
+                 "Transcription model setting, localStorage qc_stt_model).",
 }
 UI_SETTINGS: dict[str, str] = {
     "qc_clip_template": "clip_template",
     "qc_sub_langs": "sub_langs",
+    "qc_stt_model": "stt_model",
 }
 
 # API routes no command covers, and why. Playback (the browser's player streams media

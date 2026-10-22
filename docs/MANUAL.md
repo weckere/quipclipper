@@ -43,6 +43,7 @@ code is built the way it is, see [`DESIGN_NOTES.md`](DESIGN_NOTES.md).
   - [Splitting surround sound](#splitting-surround-sound)
   - [Subtitles in clips](#subtitles-in-clips)
   - [Searching and the picker](#searching-and-the-picker)
+  - [Machine transcription (whisper.cpp)](#machine-transcription-whispercpp)
   - [Output names and containers](#output-names-and-containers)
   - [EPUB3 audiobooks (experimental)](#epub3-audiobooks-experimental)
   - [Sending clips to LeadStinger](#sending-clips-to-leadstinger)
@@ -726,6 +727,64 @@ If a file has *only* image subtitles, supply a text sidecar with `--subs`.
 Run `quipclipper tracks <video>` to see all tracks, and pass `--track N` to
 override the automatic choice. The same scoring drives the web app's subtitle
 picker and its search/index cache, so all paths agree on the default track.
+
+### Machine transcription (whisper.cpp)
+
+Search reads subtitle lines, so a line the subtitles leave out (most often a song's
+lyrics), or a file with no subtitles at all, can't be found. **Machine transcription**
+runs [whisper.cpp](https://github.com/ggml-org/whisper.cpp) over a stretch of a file's
+audio and keeps what it hears as *machine* lines. They are a search aid, clearly marked
+as machine-made wherever they appear, and never replace the real subtitles: where a
+subtitle line covers a stretch, the subtitle line wins.
+
+**It only runs when you ask.** Nothing transcribes on its own: not indexing, not opening
+a file, not a timer. Each request transcribes one of:
+
+- **a range**: `--start` and `--end`, in seconds (in the web app, a waveform selection);
+- **the gaps**: every stretch of 4 s or more between subtitle lines (the default);
+- **the whole file**: `--mode file`, for a file with no subtitles.
+
+Parts transcribed before are skipped, so asking again only does what's new (`--redo`
+does it again, say with a bigger model). English only. **Models:** `small.en` (the
+default: quick, a few word errors) or `medium.en` (closer to subtitle quality, about three
+times slower). Set your default with `quipclipper settings.set stt_model medium.en`, or
+pass `--model` per run.
+
+**It runs at idle priority.** whisper gets the CPU only when nothing else wants it (Linux
+`SCHED_IDLE` and nice 19, idle I/O), with 2 threads (3 at most), one transcription at a
+time. So it never slows down playback or a clip, and it is slower when the machine is busy.
+
+```bash
+quipclipper item.transcribe "Darkplace S01E06.mkv"                  # the gaps
+quipclipper item.transcribe "Darkplace S01E06.mkv" --start 353 --end 395
+quipclipper item.transcribe "podcast.mp3" --mode file --model medium.en
+quipclipper search "way too fast" --video "Darkplace S01E06.mkv"
+# [0]   383.10s  00:06:23.100–00:06:27.000  (score 100)
+#       [auto] ♪ Driving way too fast ♪
+quipclipper item.transcript "Darkplace S01E06.mkv" --fmt srt > lyrics.srt
+```
+
+Machine lines print with `[auto]`; `--machine exclude` searches the subtitles alone and
+`--machine only` the machine lines alone.
+
+**Where transcripts live.** Not next to the media: in quipclipper's state (the server's
+state dir, or `~/.cache/quipclipper/transcripts` when the CLI runs whisper itself), keyed
+on the media file, so new subtitles don't throw a transcript away. `item.transcript-clear`
+deletes one.
+
+**Copying to the library.** `item.transcript-copy` writes a file's transcript next to it
+as a subtitle file named **`<name>.<lang>.whisper.srt`** (for example
+`S01E06.en.whisper.srt`), in a writable folder only. The `whisper` token marks it as
+machine-made: quipclipper reads it as machine lines (and from then on shows them in the
+player's captions), never as the file's subtitles, and Jellyfin offers it as its own
+subtitle track. `item.transcript-uncopy` removes it again.
+
+**Running it on your own machine.** With no server set, the CLI runs `whisper-cli` itself:
+install whisper.cpp (`nix shell nixpkgs#whisper-cpp`, `brew install whisper-cpp`), fetch a
+model from [Hugging Face](https://huggingface.co/ggerganov/whisper.cpp/tree/main) and set
+`QC_WHISPER_MODEL=/path/to/ggml-small.en.bin` (or several, as
+`QC_WHISPER_MODELS=small.en=/…/ggml-small.en.bin,medium.en=/…/ggml-medium.en.bin`).
+`QC_WHISPER_BIN` names another binary, `QC_WHISPER_THREADS` the threads (capped at 3).
 
 ### Output names and containers
 

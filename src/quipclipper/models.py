@@ -23,6 +23,10 @@ class Cue:
     ``speaker`` is the attributed speaker when the source carries one — a WebVTT
     ``<v Name>`` voice tag, a Podcast Namespace transcript ``speaker`` field, or a
     recurring ``Name:`` prefix — else None.
+
+    ``source`` is None for a line from a subtitle file or track, and ``"machine"`` for
+    one a speech-to-text model heard (M21, :mod:`quipclipper.transcribe`), which the
+    UI marks as such everywhere it shows it.
     """
 
     index: int
@@ -30,6 +34,11 @@ class Cue:
     end: float  # seconds
     text: str
     speaker: str | None = None
+    source: str | None = None
+
+    @property
+    def machine(self) -> bool:
+        return self.source == "machine"
 
     @property
     def duration(self) -> float:
@@ -65,3 +74,8 @@ class Match:
     @property
     def index(self) -> int:
         return self.cues[0].index
+
+    @property
+    def machine(self) -> bool:
+        """True when any matched line is a machine transcript line (M21)."""
+        return any(c.machine for c in self.cues)

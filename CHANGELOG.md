@@ -10,6 +10,19 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 
 ## [Unreleased]
 
+### Machine transcription (M21)
+
+- **Find what the subtitles left out:** `item.transcribe` runs whisper.cpp over a range, the
+  gaps between subtitle lines, or a whole file, and keeps what it hears as machine lines,
+  which search mixes in (a subtitle line wins a tie) and prints marked `[auto]`. It only ever
+  runs when asked, at idle priority with at most 3 threads, one run at a time. Models
+  `small.en` (default) or `medium.en`, English only; `stt_model` sets your default.
+  Transcripts are stored apart from the media (`item.transcript` shows or exports one,
+  `item.transcript-clear` deletes it); `item.transcript-copy` writes one next to the file as
+  `<name>.<lang>.whisper.srt`, which quipclipper reads as machine lines, never as the file's
+  subtitles. The CLI runs whisper-cli itself when no server is set (`QC_WHISPER_MODEL`).
+  `search` gains `--machine include|exclude|only`.
+
 ### UI follow-ups (M20)
 
 - **Send to LeadStinger** in the workspace is a button again, not a toggle on Make clip: the ⚡
