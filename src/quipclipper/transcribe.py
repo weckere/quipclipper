@@ -271,9 +271,16 @@ def clean_text(text: str) -> str:
     return text
 
 
+# Sounds, not words: a line of nothing else ("♪ Mmm ♪", "Oh, oh") is no use to a search.
+_FILLERS = frozenset({"mm", "mmm", "mmmm", "hmm", "hm", "uh", "um", "uhm", "oh", "ah", "ooh",
+                      "aah", "huh", "la", "na", "da", "doo", "ba", "whoa", "yeah"})
+
+
 def is_hallucination(text: str) -> bool:
     n = _norm(text)
     if not n:
+        return True
+    if all(w in _FILLERS for w in n.split()):
         return True
     return any(h in n for h in _HALLUCINATIONS) and len(n.split()) <= 12
 
@@ -762,7 +769,7 @@ def write_sidecar(media: str | Path, cues: list[Cue], language: str = "en") -> P
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(cues_to_srt(cues))
-        os.chmod(tmp, 0o644 & ~_umask())
+        os.chmod(tmp, 0o666 & ~_umask())  # as any new file here: the umask decides
         os.replace(tmp, target)
     except OSError:
         with contextlib.suppress(OSError):

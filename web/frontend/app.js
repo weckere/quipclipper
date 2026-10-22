@@ -2444,7 +2444,10 @@ function renderSttBar(t, path, hasSubs) {
   $("stt-export").href = `/api/items/transcript${qp(path)}&fmt=srt`;
   $("stt-clear").hidden = !stored;
   if (running && (!sttFollowing || sttFollowing.jobId !== running)) followSttJob(running, path);
-  else if (!running) $("stt-job").hidden = true;
+  else if (!running && (!sttFollowing || sttFollowing.path !== path)) {
+    $("stt-job").hidden = true;  // another file's status doesn't carry over
+    $("stt-job-text").textContent = "";
+  }
 }
 
 /** Fetch the open file's transcript info again and redraw the bar; with `script`, reload the
@@ -2456,12 +2459,25 @@ async function refreshStt(path, { script = false, captions = false } = {}) {
   const hasSubs = $("stt-bar").dataset.hasSubs === "1";
   renderSttBar(t, path, hasSubs);
   const track = hasSubs ? getSelectedTrack() : null;
-  if (captions && (hasSubs || t.library.length)) loadSubtitleTrack(path, track, transcodeOffset || 0);
-  if (script && (hasSubs || sttHasLines(t))) {
-    // The cue indexes change as lines come and go: carry a line selection over by its times.
-    if (hasClipRange()) pendingCueSelect = { start: clipStart(), end: clipEnd() };
-    clipFirst = clipLast = -1;
+  if (captions) {
+    if (hasSubs || t.library.length) loadSubtitleTrack(path, track, transcodeOffset || 0);
+    else $("player").querySelectorAll("track").forEach((el) => el.remove());  // nothing left
+  }
+  if (!script) return;
+  // The cue indexes change as lines come and go: carry a line selection over by its times.
+  if (hasClipRange()) pendingCueSelect = { start: clipStart(), end: clipEnd() };
+  clipFirst = clipLast = -1;
+  if (hasSubs || sttHasLines(t)) {
     loadScript(path, track);
+  } else {
+    // No subtitles and no machine lines left: no script either.
+    scriptLoadId++;
+    scriptCues = [];
+    $("script-list").innerHTML = "";
+    $("script-wrap").hidden = true;
+    $("marks-hint").hidden = true;
+    updateClipUI();
+    renderDialogueMap();
   }
 }
 

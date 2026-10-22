@@ -118,3 +118,10 @@ def test_the_library_marks_files_with_a_machine_transcript():
     js = _js()
     assert "e.has_transcript" in js
     assert '<span class="visually-hidden">machine transcript</span>' in js
+
+
+def test_removing_the_last_machine_lines_clears_the_script_and_captions():
+    refresh = _function("refreshStt")
+    assert 'querySelectorAll("track").forEach((el) => el.remove())' in refresh
+    assert "scriptCues = [];" in refresh
+    assert '$("stt-job-text").textContent = ""' in _function("renderSttBar")

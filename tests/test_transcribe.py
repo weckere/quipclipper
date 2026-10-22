@@ -77,6 +77,7 @@ def test_parse_whisper_json_offsets_and_filters():
         _seg(2, 4, " ♪ Driving way too fast ♪"),
         _seg(4, 5, " ♪ Driving way too fast ♪"),          # a repeat
         _seg(5, 6, " ♪ ♪"),                               # notes only
+        _seg(6, 6.5, " ♪ Mmm ♪"),                        # a sound, not words
         _seg(6, 9, " Thanks for watching!"),              # stock outro
         _seg(9, 12, " - Cause the temperature's too high"),
         _seg(30, 31, " outside the kept range"),
