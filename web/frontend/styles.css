@@ -874,6 +874,15 @@ footer { padding: 2rem 1.25rem; font-size: 0.8rem; }
 /* A held touch is about to drag out a selection. */
 .wf-stage.wf-holding { box-shadow: inset 0 0 0 2px var(--accent); }
 .wf-stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+/* While the peaks for a new view load (aria-busy), the wave band goes grey; the cue lane,
+   ruler, handles and playhead stay on top and keep working. */
+.wf-veil {
+  position: absolute; left: 0; right: 0; top: 18px; bottom: 16px; pointer-events: none;
+  background: color-mix(in srgb, var(--faint) 30%, var(--sunken)); opacity: 0;
+  transition: opacity 0.12s ease-out;
+}
+.wf-stage[aria-busy="true"] .wf-veil { opacity: 0.85; }
+@media (prefers-reduced-motion: reduce) { .wf-veil { transition: none; } }
 .wf-head { position: absolute; top: 0; bottom: 16px; width: 2px; margin-left: -1px; background: var(--playhead); pointer-events: none; }
 .wf-handle {
   position: absolute; top: 0; bottom: 16px; width: 2px; margin-left: -1px; background: var(--accent);

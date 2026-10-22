@@ -24,6 +24,12 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   **O** (and **Set in** / **Set out** by the play button) put the in or out point at the
   playhead, and start a 2 s range when nothing is selected. ★ Bookmark now saves a free
   range (a waveform range, a loaded bookmark, a whole clip) instead of staying disabled.
+- **Waveform zoom waits in grey:** after a zoom or a pan the wave turns grey (the strip is
+  `aria-busy`) until the peaks for the new view arrive, instead of drawing the previous,
+  coarser view stretched into blocks. Only sound at least as sharp as the view needs is
+  drawn; a request for a view already left is cancelled, so a quick run of zooms shows only
+  the last. The handles, playhead and selection stay usable, and the fade is skipped under
+  reduced motion.
 
 ### Fixed
 

@@ -3029,10 +3029,12 @@ const wf = {
   path: null, audio: 0, dur: 0, fps: 0, hasVideo: false,
   view: [0, 0],      // seconds shown
   data: null,        // the last peaks response for (roughly) this view
-  base: null,        // the whole-file response: drawn while a closer one loads
+  base: null,        // the whole-file response: drawn again when the view goes back to it
   filePeak: 0,       // largest sample in the file (from the overview), int16 units
   keyframes: null,   // {start, end, times} for the last window that listed them
   req: 0, loadTimer: null, pollTimer: null,
+  abort: null,       // the AbortController of the peaks request in flight
+  failed: false,     // the last load failed: say so in the note instead of looking busy
   drag: null,        // {kind: "in"|"out"|"pan"|"pinch", ...}
   pointers: new Map(),
   snapSeq: 0,
@@ -3083,9 +3085,16 @@ function formatSpan(s) {
   return formatTimeWhole(s);
 }
 
+/** Drop the peaks request in flight: whatever it answers belongs to a view no longer shown. */
+function wfCancel() {
+  wf.req++;
+  if (wf.abort) wf.abort.abort();
+  wf.abort = null;
+}
+
 function wfHide() {
   wf.path = null;
-  wf.req++;
+  wfCancel();
   wf.snapSeq++;  // a snap still on its way belongs to the item being left
   clearTimeout(wf.nudgeTimer);
   wf.pointers.clear();
@@ -3110,7 +3119,7 @@ function wfReset(path, info, primaryVideo) {
   // A negative pad is one line's exact trim (a handle pulled inside it), not a preference.
   ["clip-before", "clip-after"].forEach((id) => { if (parseFloat($(id).value) < 0) $(id).value = "0"; });
   Object.assign(wf, {
-    path, dur, view: [0, dur], data: null, base: null, filePeak: 0, keyframes: null,
+    path, dur, view: [0, dur], data: null, base: null, filePeak: 0, keyframes: null, failed: false,
     audio: getSelectedAudio() ?? 0, hasVideo: !!primaryVideo,
     fps: (primaryVideo && primaryVideo.frame_rate) || 0, lastHead: null,
   });
@@ -3128,6 +3137,10 @@ function wfSetView(a, b) {
   let span = Math.max(WF_MIN_SPAN, Math.min(dur, b - a));
   a = Math.max(0, Math.min(dur - span, a));
   wf.view = [a, a + span];
+  // Only the newest view's peaks are drawn: a response still on its way for an older one
+  // would be a zoom (or a page) behind.
+  wfCancel();
+  wf.failed = false;
   wfViewChanged();
   clearTimeout(wf.loadTimer);
   wf.loadTimer = setTimeout(wfLoad, 120);
@@ -3194,30 +3207,39 @@ function b64ToInt16(s) {
   return new Int16Array(bytes.buffer, 0, bytes.length >> 1);
 }
 
+/** How many bins to ask for across `span` seconds. Under ~170 ms, every sample (the server
+ *  sends raw samples when they fit in the bins). */
+function wfBins(span) {
+  return span <= 0.17 ? 8192
+    : Math.max(16, Math.min(8192, Math.round(wfWidth() * Math.min(2, window.devicePixelRatio || 1))));
+}
+
 async function wfLoad() {
   clearTimeout(wf.pollTimer);
   if (!wf.path) return;
   const audio = getSelectedAudio() ?? 0;
   if (audio !== wf.audio) Object.assign(wf, { audio, base: null, data: null, filePeak: 0 });
   const [a, b] = wf.view;
-  // Under ~170 ms ask for every sample (the server sends raw samples when they fit in bins).
-  const bins = b - a <= 0.17 ? 8192
-    : Math.max(16, Math.min(8192, Math.round(wfWidth() * Math.min(2, window.devicePixelRatio || 1))));
+  const bins = wfBins(b - a);
   const kf = wf.hasVideo && b - a <= 60;
-  const req = ++wf.req;
+  wfCancel();
+  const req = wf.req;
+  const ctl = wf.abort = new AbortController();
+  wf.failed = false;
   const url = `/api/items/peaks${qp(wf.path)}&start=${a.toFixed(6)}&end=${b.toFixed(6)}` +
     `&bins=${bins}&audio=${audio}${kf ? "&keyframes=true" : ""}`;
   let resp, body;
   try {
-    resp = await apiFetch(url);
+    resp = await apiFetch(url, { signal: ctl.signal });
     body = await resp.json();
   } catch {
-    if (req === wf.req) $("wf-note").textContent = "Couldn't load the waveform.";
+    if (req === wf.req) wfFailed("Couldn't load the waveform.");
     return;
   }
   if (req !== wf.req || !wf.path) return;  // superseded by a newer view or item
+  wf.abort = null;
   if (!resp.ok) {
-    $("wf-note").textContent = `No waveform: ${body.detail || resp.status}`;
+    wfFailed(`No waveform: ${body.detail || resp.status}`);
     return;
   }
   const ov = body.overview || {};
@@ -3225,6 +3247,7 @@ async function wfLoad() {
     // The overview is still being built: say how far along, and ask again shortly. A
     // failed build stops asking (the server retries it when the view next asks).
     const failed = ov.state === "error";
+    wf.failed = failed;
     wfNote(failed ? `The waveform overview failed: ${ov.error || "ffmpeg error"}.`
       : `Building the waveform overview… ${Math.round((ov.progress || 0) * 100)}% ` +
         "(zoom in under 2 minutes to see the audio now).", !failed);
@@ -3246,6 +3269,13 @@ async function wfLoad() {
   if (ov.state === "queued" || ov.state === "building") {
     wf.pollTimer = setTimeout(() => { if (wf.path && !wf.filePeak) wfLoad(); }, 3000);
   }
+}
+
+/** A load failed: say why, and stop looking busy (there's nothing on its way). */
+function wfFailed(text) {
+  wf.failed = true;
+  wfNote(text);
+  wfDraw();
 }
 
 /** The strip's status line. While `busy` (progress ticking by) its region is aria-busy, so
@@ -3286,13 +3316,37 @@ function wfColors() {
   };
 }
 
-/** The response that best covers the view: the latest one if it does, else the whole file. */
+// While the peaks for a new view load, the strip is dimmed (aria-busy) rather than showing a
+// coarser response stretched to the new zoom, which draws as blocks (M20). Only a response at
+// least as sharp as the view asks for is drawn: the one for this view, or an older one with
+// bins as narrow (after a pan) or narrower (after zooming out), over the part it covers.
+
+/** Within a pixel of the view's edges (the server echoes them rounded, the file's end clamped). */
+const wfNear = (x, y) => Math.abs(x - y) <= Math.max(1e-5, wfSpan() / wfWidth());
+
+/** Is response `d` sharp enough to draw at this zoom? */
+function wfSharp(d) {
+  if (!d) return false;
+  const [a, b] = wf.view;
+  if (d.kind === "samples" || (wfNear(d.start, a) && wfNear(d.end, b))) return true;
+  return (d.end - d.start) / (d.values.length >> 1) <= ((b - a) / wfBins(b - a)) * 1.1;
+}
+
+/** What to draw: {src, full}. `src` is the sharp response that covers the view (`full`), else
+ *  one that covers part of it, else null. */
 function wfSource() {
   const [a, b] = wf.view;
-  const d = wf.data;
-  const covers = d && d.start <= a + 1e-6 && d.end >= b - 1e-6;
-  if (covers) return d;
-  return wf.base || d;
+  const sharp = [wf.data, wf.base].filter(wfSharp);
+  const full = sharp.find((d) => (d.start <= a || wfNear(d.start, a)) && (d.end >= b || wfNear(d.end, b)));
+  if (full) return { src: full, full: true };
+  return { src: sharp.find((d) => d.end > a && d.start < b) || null, full: false };
+}
+
+/** Dim the strip (and tell assistive tech it's updating) until the view's peaks arrive. */
+function wfBusy(on) {
+  const stage = $("wf-stage");
+  if (on) stage.setAttribute("aria-busy", "true");
+  else stage.removeAttribute("aria-busy");
 }
 
 function wfDraw() {
@@ -3354,7 +3408,8 @@ function wfDraw() {
   // Centre line, then the wave.
   ctx.fillStyle = c.line;
   ctx.fillRect(0, Math.round(mid), w, 1);
-  const src = wfSource();
+  const { src, full } = wfSource();
+  wfBusy(!full && !wf.failed);
   if (src) {
     // Auto-gain to the view, but never more than 24 dB above the file's loudest peak, so
     // room tone doesn't fill the strip.

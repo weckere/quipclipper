@@ -212,6 +212,11 @@ Opening a file opens its workspace.
   keys), Ctrl/⌘-scroll or a pinch; scroll, **Shift**-drag or middle-drag to pan; click to
   play from there. On a touch screen a drag pans and a tap plays. The subtitle lines run
   along the top as labelled spans, and on video the keyframes show as ◆.
+  After a zoom or a pan the wave **turns grey until the sound for the new view arrives**,
+  then the real wave appears: a close zoom on a long film can take a few seconds to
+  decode. It never stretches a coarser view over the new one (older sound that is just as
+  sharp, after a pan or zooming out, stays visible under the grey). The handles, playhead
+  and selection keep working meanwhile, and only the last zoom of a quick run is fetched.
   **Drag across the waveform** (away from the handles) to select from where the drag
   starts to where it ends; on a touch screen, **long-press, then drag**. That is how you
   select something with no line of its own, such as a song: it replaces any line selection,
