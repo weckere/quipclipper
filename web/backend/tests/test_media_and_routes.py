@@ -183,6 +183,12 @@ def _client(root: Path) -> TestClient:
     return _csrf(TestClient(create_app(Settings.from_env({"QC_MEDIA_ROOTS": str(root)}))))
 
 
+def _index(client: TestClient, folder: Path) -> None:
+    """Index a folder's subtitles, as its Index button does: folder search reads only
+    indexed files."""
+    assert client.post("/api/search/folder/index", params={"path": str(folder)}).status_code == 200
+
+
 def test_browse_route(tmp_path: Path) -> None:
     (tmp_path / "show.mkv").write_bytes(b"")
     client = _client(tmp_path)
@@ -1489,6 +1495,7 @@ def test_folder_dialogue_search(tmp_path: Path) -> None:
     srt2.write_text(SRT2)
 
     client = _client(tmp_path)
+    _index(client, tmp_path)
     resp = client.get(
         "/api/search/folder",
         params={"path": str(tmp_path), "query": "force"},
@@ -1517,6 +1524,7 @@ def test_folder_dialogue_search_ranks_verbatim_first(tmp_path: Path) -> None:
         (tmp_path / f"{name}.srt").write_text(f"1\n00:00:01,000 --> 00:00:03,000\n{text}\n")
 
     client = _client(tmp_path)
+    _index(client, tmp_path)
     get = lambda: client.get(  # noqa: E731
         "/api/search/folder", params={"path": str(tmp_path), "query": "make it so"}).json()
     data = get()
@@ -1531,16 +1539,22 @@ def test_folder_dialogue_search_ranks_verbatim_first(tmp_path: Path) -> None:
 
 
 def test_folder_dialogue_search_no_subs(tmp_path: Path) -> None:
-    """Files without subtitles are skipped gracefully."""
+    """Files without subtitles are skipped gracefully: not indexed, counted as such;
+    once indexing finds none, searched (as known empty) and no longer counted."""
     (tmp_path / "nosubs.mkv").write_bytes(b"")
     client = _client(tmp_path)
-    resp = client.get(
-        "/api/search/folder",
-        params={"path": str(tmp_path), "query": "hello"},
-    )
-    assert resp.status_code == 200
-    assert resp.json()["count"] == 0
-    assert resp.json()["files_scanned"] == 1
+
+    def search() -> dict:
+        resp = client.get("/api/search/folder", params={"path": str(tmp_path), "query": "hello"})
+        assert resp.status_code == 200
+        return resp.json()
+
+    before = search()
+    assert (before["count"], before["files_scanned"], before["not_indexed"]) == (0, 0, 1)
+    with patch("quipclipper_web.sub_cache.list_embedded_tracks", return_value=[]):
+        _index(client, tmp_path)
+    after = search()
+    assert (after["count"], after["files_scanned"], after["not_indexed"]) == (0, 1, 0)
 
 
 def test_folder_dialogue_search_skips_unparseable_subs(tmp_path: Path) -> None:
@@ -1561,38 +1575,66 @@ def test_folder_dialogue_search_skips_unparseable_subs(tmp_path: Path) -> None:
     (tmp_path / "bad.srt").write_text("\x00\x01 not a subtitle file at all")
 
     client = _client(tmp_path)
+    _index(client, tmp_path)
     resp = client.get(
         "/api/search/folder",
         params={"path": str(tmp_path), "query": "back"},
     )
     assert resp.status_code == 200
     data = resp.json()
-    assert data["files_scanned"] == 2          # both scanned
+    assert data["files_scanned"] == 1          # the good file, indexed
+    assert data["not_indexed"] == 1            # the bad one couldn't be
     assert data["count"] >= 1                   # the good file still matched
     assert all(m["file"] == "good.mkv" for m in data["matches"])
 
 
-def test_folder_dialogue_search_capped(tmp_path: Path) -> None:
-    """R3: an oversized folder scan stops at INDEX_CAP and reports capped=True so
-    the UI can tell the user results are partial."""
-    for i in range(5):
+def test_folder_dialogue_search_reads_only_indexed_files(tmp_path: Path) -> None:
+    """Folder search never extracts subtitles: it searches every indexed file, counts
+    the rest in not_indexed (capped=True), and caches nothing itself."""
+    for i in range(3):
         (tmp_path / f"ep{i}.mkv").write_bytes(b"")
         (tmp_path / f"ep{i}.srt").write_text(SRT)
     client = _client(tmp_path)
-    with patch("quipclipper_web.app.INDEX_CAP", 2):
+
+    def search() -> dict:
         resp = client.get("/api/search/folder", params={"path": str(tmp_path), "query": "back"})
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["capped"] is True
-    assert data["files_scanned"] <= 2
+        assert resp.status_code == 200
+        return resp.json()
+
+    cold = search()
+    assert (cold["files_scanned"], cold["not_indexed"], cold["capped"], cold["count"]) == (
+        0, 3, True, 0)
+    status = client.get("/api/search/folder/index-status", params={"path": str(tmp_path)}).json()
+    assert status["indexed"] == 0  # the search cached nothing
+    # Opening one file caches its subtitles: now it is searched.
+    client.get("/api/items/subtitles", params={"path": str(tmp_path / "ep1.mkv"), "fmt": "json"})
+    one = search()
+    assert (one["files_scanned"], one["not_indexed"]) == (1, 2)
+    assert {m["file"] for m in one["matches"]} == {"ep1.mkv"}
+    _index(client, tmp_path)
+    full = search()
+    assert (full["files_scanned"], full["not_indexed"], full["capped"]) == (3, 0, False)
+
+
+def test_folder_dialogue_search_dedupes_overlapping_folders(tmp_path: Path) -> None:
+    sub = tmp_path / "season1"
+    sub.mkdir()
+    (sub / "ep.mkv").write_bytes(b"")
+    (sub / "ep.srt").write_text(SRT)
+    (tmp_path / "._ep.mkv").write_bytes(b"")  # AppleDouble junk is never a media file
+    client = _client(tmp_path)
+    _index(client, tmp_path)
+    data = client.get("/api/search/folder", params={
+        "path": [str(tmp_path), str(sub)], "query": "back"}).json()
+    assert data["files_scanned"] == 1 and data["not_indexed"] == 0
 
 
 def test_folder_dialogue_search_not_capped_when_small(tmp_path: Path) -> None:
     (tmp_path / "ep.mkv").write_bytes(b"")
     (tmp_path / "ep.srt").write_text(SRT)
-    resp = _client(tmp_path).get(
-        "/api/search/folder", params={"path": str(tmp_path), "query": "back"}
-    )
+    client = _client(tmp_path)
+    _index(client, tmp_path)
+    resp = client.get("/api/search/folder", params={"path": str(tmp_path), "query": "back"})
     assert resp.json()["capped"] is False
 
 
@@ -1628,10 +1670,10 @@ def test_recursive_scan_skips_appledouble_files(tmp_path: Path) -> None:
     (tmp_path / ".hidden.mkv").write_bytes(b"")
 
     client = _client(tmp_path)
-    # Folder dialogue search scans only the one real video.
+    # Folder dialogue search sees only the one real video (not indexed yet).
     resp = client.get("/api/search/folder", params={"path": str(tmp_path), "query": "force"})
     assert resp.status_code == 200
-    assert resp.json()["files_scanned"] == 1
+    assert resp.json()["files_scanned"] + resp.json()["not_indexed"] == 1
     # index-status counts only the real video (total = 1, fully indexable).
     status = client.get("/api/search/folder/index-status", params={"path": str(tmp_path)})
     assert status.status_code == 200
@@ -1721,12 +1763,19 @@ def test_segment_subtitles_and_search(tmp_path: Path) -> None:
     assert hits["count"] >= 1
 
 
-def test_folder_search_finds_books_in_a_folder(tmp_path: Path) -> None:
-    """Folder dialogue search sweeps EPUB books too, with hits pointing at the
-    chapter (segment ref) so opening one lands on the line."""
-    _build_mo_epub(tmp_path / "book.epub")
-    r = _client(tmp_path).get(
+def test_folder_search_counts_books_in_a_folder(tmp_path: Path) -> None:
+    """A read-along book found in a folder has no index, so folder search counts it
+    in books_not_searched; searched as itself, hits point at the chapter (segment
+    ref) so opening one lands on the line."""
+    epub = _build_mo_epub(tmp_path / "book.epub")
+    client = _client(tmp_path)
+    r = client.get(
         "/api/search/folder", params={"path": str(tmp_path), "query": "resistance is futile"},
+    ).json()
+    assert (r["files_scanned"], r["count"], r["books_not_searched"], r["capped"]) == (
+        0, 0, 1, True)
+    r = client.get(
+        "/api/search/folder", params={"path": str(epub), "query": "resistance is futile"},
     ).json()
     assert r["files_scanned"] == 1 and r["count"] >= 1
     hit = next(h for h in r["matches"] if "Resistance is futile." in h["text"])

@@ -167,10 +167,16 @@ resolved stream URLs, so `split_channels` and `backend=mkvmerge` return 400 for
 `/api/search` returns `{query, count, matches: [{index, score, text, speaker,
 start, end, start_ts, end_ts, cue_count, link}]}`. The `index` is what you pass back as
 `match_index` when clipping. `/api/search/folder` returns `{query, folders,
-files_scanned, capped, count, matches: [{file, path, score, text, speaker, start, end,
-start_ts, end_ts, cue_count, link}]}`: `limit` is the most matches per file (default 5,
-at most 20), and `capped: true` means it stopped after 500 files, so a line not found
-may be in a file it didn't search. Its hits have no `index`: clip one with its
+files_scanned, not_indexed, books_not_searched, capped, count, matches: [{file, path, score,
+text, speaker, start, end, start_ts, end_ts, cue_count, link}]}`: `limit` is the most matches
+per file (default 5, at most 20). It searches only **indexed** files, those whose subtitles
+are cached (opened once, or indexed with `POST …/index`), however many there are, and
+never extracts subtitles itself; a file not indexed but with a stored machine transcript is
+searched on that. `files_scanned` counts the files searched, `not_indexed` the media files
+left out because they aren't indexed, and `books_not_searched` the read-along EPUB books
+found in the folders (a book has no index; pass a book itself as `path` to search it).
+`capped: true` means either is above 0, so a line not found may be in a file it didn't
+search. Its hits have no `index`: clip one with its
 `path`, `start`, `end` and `text` as `cue_text`. `link` (here, on `/api/search/folder` hits, bookmarks and
 clips-library entries) is a [deep link](#deep-links) to that line, present only when
 `QC_PUBLIC_URL` is set.

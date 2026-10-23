@@ -75,8 +75,9 @@ class SubtitleCache:
         raw = f"{video}:{self._source_mtime(video, siblings)}:{tkey}"
         return hashlib.sha256(raw.encode()).hexdigest()
 
-    def _cache_path(self, video: Path, track: int | None = None) -> Path:
-        return self._dir / (self._cache_key(video, track) + ".json")
+    def _cache_path(self, video: Path, track: int | None = None,
+                    siblings: list[Path] | None = None) -> Path:
+        return self._dir / (self._cache_key(video, track, siblings) + ".json")
 
     def _inflight_lock(self, key: str) -> threading.Lock:
         with self._inflight_guard:
@@ -104,13 +105,26 @@ class SubtitleCache:
         except OSError:
             return False
 
-    def index_state(self, video: Path, siblings: list[Path] | None = None) -> str:
+    def entry_names(self) -> set[str]:
+        """The cache folder's file names, for :meth:`index_state` over many files."""
+        try:
+            return set(os.listdir(self._dir))
+        except OSError:
+            return set()
+
+    def index_state(self, video: Path, siblings: list[Path] | None = None,
+                    names: set[str] | None = None) -> str:
         """For a library row: "indexed" (the auto-selected subtitles are cached and
         current), "no_subs" (indexing found none to cache) or "not_indexed". One key,
         so one stat of the source and at most two lookups here; ``siblings`` (the
-        folder's listing) spares listing the folder again."""
+        folder's listing) spares listing the folder again, and ``names`` (from
+        :meth:`entry_names`) the lookups."""
         try:
             key = self._cache_key(video, siblings=siblings)
+            if names is not None:
+                if key + ".json" in names:
+                    return "indexed"
+                return "no_subs" if key + ".nosubs" in names else "not_indexed"
             if (self._dir / (key + ".json")).exists():
                 return "indexed"
             if (self._dir / (key + ".nosubs")).exists():
@@ -197,6 +211,14 @@ class SubtitleCache:
             if tmp is not None:
                 with contextlib.suppress(OSError):
                     os.unlink(tmp)
+
+    def cached(self, video: Path, track: int | None = None,
+               siblings: list[Path] | None = None) -> list[Cue] | None:
+        """``video``'s cached cues, or None when they aren't cached: never extracts."""
+        try:
+            return self._read(self._cache_path(video, track, siblings))
+        except OSError:
+            return None
 
     def resolve(self, video: Path, track: int | None = None) -> list[Cue]:
         cp = self._cache_path(video, track)

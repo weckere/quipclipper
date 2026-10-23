@@ -155,6 +155,15 @@ scripts/release.sh leaves this block in Unreleased; delete the two marker lines 
   across files (a subtitle line before a machine line, then the closer line, then file and
   time), the score shows as a % with hover text in both searches, and a library-wide search
   is about four times faster.
+- **Folder and library search read every indexed file, and only those:** the 500-file cap is
+  gone, so a whole-library search reaches every file whose subtitles are cached (it used to
+  stop after 500 files, often before reaching the show you wanted), and it no longer runs
+  ffmpeg to extract a file's subtitles mid-search. Files not indexed yet, and read-along
+  books found in a folder, are left out and counted: `/api/search/folder` gains
+  `not_indexed` and `books_not_searched` (`capped` now means either is above 0), and the web
+  status line and the CLI say how many weren't searched. A file with a stored machine
+  transcript is searched on it even when not indexed. Listing the library is quicker too:
+  one listing per folder serves every file's sidecar lookups, and the EPUB check is cached.
 
 ### Fixed
 

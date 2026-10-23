@@ -392,6 +392,21 @@ a one-line query keeps its tight single cue, while a sentence split across capti
 keeps the joined window. A `collapse_overlapping=False` switch preserves the old
 behaviour for callers that want every variant.
 
+**Folder and library search read indexed files only (D-042, 2026-10-23).** A folder
+search used to stop after 500 media files (R3: one request must finish inside nginx's
+600 s) and extracted the subtitles of any it reached that weren't cached. On wizrock
+(~33k media files, ~1k indexed) the walk never left `shows/`, so a library search
+missed most indexed files and still ran ffmpeg mid-search. Now it searches every file
+whose subtitles are cached and no others: extraction (1-9 s a file) belongs to the
+folder's Index, and the response counts what it left out (`not_indexed`,
+`books_not_searched`). Read-along books are left out of folder sweeps too: a book has
+no index and parsing wizrock's 31 took 30-40 s a search. To keep a sweep of ~70k files
+quick on a FUSE mount, each folder is listed once (`scandir` file types, no stat per
+file), each file gets only its own sidecars from that listing, the cache folder and
+transcript store are listed once instead of stat-ed per file, the index check's stats
+run in 8 threads, and the EPUB overlay check is cached per path and mtime. A warm
+library search there takes ~10 s (the first after a restart ~17 s).
+
 ---
 
 ## 12. The interactive picker

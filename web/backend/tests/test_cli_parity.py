@@ -302,6 +302,8 @@ def test_round_trip_bookmarks(served, capsys):
 
 def test_round_trip_batch_from_folder_search(served, capsys, monkeypatch):
     transport, media, clips, video = served
+    code, out = _run(transport, ["index.build", str(media)], capsys)  # folder search: indexed only
+    assert code == 0
     code, out = _run(transport, ["search.folder", "baby", "--path", str(media)], capsys)
     assert code == 0
     hits = out.splitlines()[-1]

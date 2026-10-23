@@ -25,7 +25,7 @@ import subprocess
 import tempfile
 import threading
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Annotated
@@ -66,6 +66,7 @@ from quipclipper.mkv import (
 from quipclipper.search import search as engine_search
 from quipclipper.subtitles import (
     AUDIO_EXTS,
+    SUBTITLE_EXTS,
     VIDEO_EXTS,
     find_sidecar,
     is_text_subtitle,
@@ -114,9 +115,34 @@ def _is_bare_audio(p: Path) -> bool:
 CLIPS_CONTRACT = "quipclipper.clips/1"
 
 # Upper bound on how many media files a single recursive folder operation
-# (indexing, folder dialogue search) will touch. The nginx-side timeout is 600s,
+# (indexing, transcription) will touch. The nginx-side timeout is 600s,
 # so a huge tree can't be swept in one request — cap it and tell the client.
 INDEX_CAP = 500
+
+
+def _walk_dirs(top: Path) -> Iterator[tuple[Path, list[os.DirEntry]]]:
+    """``(folder, its files)`` for ``top`` and every folder below it. The
+    entries' cached file types spare a stat per file (a library holds ~70k files on a
+    FUSE mount); symlinked folders aren't followed, as with ``Path.rglob``."""
+    stack = [top]
+    while stack:
+        d = stack.pop()
+        try:
+            with os.scandir(d) as it:
+                entries = list(it)
+        except OSError:
+            continue
+        files = []
+        for e in entries:
+            try:
+                if e.is_dir(follow_symlinks=False):
+                    stack.append(Path(e.path))
+                elif e.is_file():
+                    files.append(e)
+            except OSError:
+                continue
+        yield d, files
+
 
 # Output naming (B9) lives in the engine so the CLI names clips the same way.
 _clean_title = clean_title
@@ -453,9 +479,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 del active_stt[k]
         return stt_jobs.get(active_stt.get(key, ""))
 
-    def _has_machine(p: Path) -> bool:
-        """Cheap: ``p`` has a machine transcript, stored or copied to the library."""
-        return stt_on and (transcripts.exists(p) or bool(stt.find_machine_sidecars(p)))
+    def _has_machine(p: Path, siblings: list[Path] | None = None,
+                     stored: set[str] | None = None) -> bool:
+        """Cheap: ``p`` has a machine transcript, stored or copied to the library.
+        ``siblings`` (the folder's listing) and ``stored`` (``transcripts.names()``)
+        spare a listing and a stat when checking many files."""
+        return stt_on and (transcripts.exists(p, stored)
+                           or bool(stt.find_machine_sidecars(p, siblings)))
     # video id -> last download / add job id, so a repeat POST returns the
     # in-flight job instead of queueing a duplicate.
     active_downloads: dict[str, str] = {}
@@ -702,11 +732,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # --- machine transcript lines (M21) -------------------------------------------
 
-    def _machine_lines(p: Path, captions: bool = False) -> list:
+    def _machine_lines(p: Path, captions: bool = False,
+                       siblings: list[Path] | None = None) -> list:
         """A file's machine transcript lines: the stored transcript and any copy in the
         library next to it. The player's captions show only a library copy (D-037). None
         while transcription is switched off (D-040)."""
-        return stt.machine_cues(p, transcripts, stored=not captions) if stt_on else []
+        return (stt.machine_cues(p, transcripts, stored=not captions, siblings=siblings)
+                if stt_on else [])
 
     def _machine_mode(machine: str) -> str:
         """A request's ``machine`` choice: switched off, machine lines are left out, and
@@ -1262,41 +1294,68 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         all_hits: list[dict] = []
 
-        # Collect video files and EPUB books recursively across all folders,
-        # de-duplicated (folders may overlap) and sorted for deterministic order.
-        # Capped at INDEX_CAP total files (R3): an uncapped rglob over a huge tree
-        # would blow the nginx timeout, so stop collecting once we hit the cap and
-        # surface `capped` so the UI can tell the user results are partial.
-        videos: list[Path] = []
-        capped = False
+        # Every media file under the folders, de-duplicated (folders may overlap) and
+        # sorted by name for a deterministic order. Only indexed files are searched:
+        # their subtitles are cached, so a search reads them and never runs ffmpeg
+        # (extraction takes 1-9 s a file; the folder's Index does it). A file not
+        # indexed is searched on its stored machine transcript if it has one, else
+        # counted in `not_indexed`. A read-along book found in a folder is counted in
+        # `books_not_searched`: it has no index, and parsing it each search is slow
+        # (wizrock: 31 books, 30-40 s); a book given as a path is searched. One listing
+        # per folder serves each file's sidecar lookups, and the per-file stats of the
+        # index check run in threads (a library is ~70k files on a FUSE mount).
+        found: list[tuple[Path, list[Path]]] = []  # (file, its sidecar files)
+        books_not_searched = 0
+        stored = transcripts.names() if stt_on and machine != "exclude" else set()
         for folder in folders:
-            if capped:
-                break
-            for c in folder.rglob("*"):
-                if _is_media_file(c, _has_machine):
-                    rp = c.resolve()
-                    if rp not in seen:
-                        seen.add(rp)
-                        videos.append(c)
-                elif c.suffix.lower() == ".epub" and epub_items.is_epub_book(c):
-                    rp = c.resolve()
-                    if rp not in seen_books:
-                        seen_books.add(rp)
-                        books.append(c)
-                if len(videos) + len(books) >= INDEX_CAP:
-                    capped = True
-                    break
-        videos.sort(key=lambda p: p.name.lower())
+            for d, files in _walk_dirs(folder):
+                real_dir = os.path.realpath(d)
+                named = [(e.name.lower(), os.path.splitext(e.name)[1].lower(), e.name)
+                         for e in files if not e.name.startswith(".")]  # no ._* (see _is_media_file)
+                subs = [(low, d / name) for low, ext, name in named if ext in SUBTITLE_EXTS]
+                for low, ext, name in named:
+                    if ext != ".epub" and ext not in VIDEO_EXTS and ext not in AUDIO_EXTS:
+                        continue
+                    rp = Path(real_dir, name)
+                    c = d / name
+                    if ext == ".epub":
+                        if rp not in seen_books and epub_items.is_epub_book(c):
+                            seen_books.add(rp)
+                            books_not_searched += 1
+                        continue
+                    # Its own sidecars (``<stem>.…``), the only siblings its lookups read.
+                    prefix = os.path.splitext(low)[0] + "."
+                    own = [p for n, p in subs if n.startswith(prefix)]
+                    if rp in seen or not (ext in VIDEO_EXTS or (
+                            find_sidecar(c, siblings=own) is not None
+                            or _has_machine(c, own, stored))):
+                        continue
+                    seen.add(rp)
+                    found.append((c, own))
+
+        cached = sub_cache.entry_names()
+
+        def _classify(item: tuple[Path, list[Path]]) -> tuple[Path, list[Path], str]:
+            c, subs = item
+            state = sub_cache.index_state(c, siblings=subs, names=cached)
+            if state == "not_indexed" and machine != "exclude" and _has_machine(c, subs, stored):
+                state = "transcript"  # searchable on its machine lines alone
+            return c, subs, state
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            classified = list(pool.map(_classify, found))
+        videos = sorted((x for x in classified if x[2] != "not_indexed"),
+                        key=lambda x: (x[0].name.lower(), str(x[0])))
+        not_indexed = len(classified) - len(videos)
         books.sort(key=lambda p: p.name.lower())
 
-        def _search_one(video: Path) -> list[dict]:
-            heard = _machine_lines(video) if machine != "exclude" else []
-            if sub_cache.has_no_subs(video) and not heard:
-                return []  # known to have nothing to search: skip the probe
-            try:
-                cues = _file_cues(video, None, machine, heard=heard)
-            except (ValueError, FileNotFoundError, RuntimeError):
-                sub_cache.mark_no_subs(video)
+        def _search_one(item: tuple[Path, list[Path], str]) -> list[dict]:
+            video, subs, state = item
+            heard = _machine_lines(video, siblings=subs) if machine != "exclude" else []
+            real = (sub_cache.cached(video, siblings=subs)
+                    if state == "indexed" and machine != "only" else None)
+            cues = stt.merge_cues(real, heard) if real and heard else real or heard
+            if not cues:
                 return []
             matches = engine_search(
                 query, cues,
@@ -1404,7 +1463,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "query": query,
             "folders": path,
             "files_scanned": len(videos) + len(books) + len(yt_videos),
-            "capped": capped,  # True if the scan hit INDEX_CAP (results partial)
+            # Not searched, so results may be partial: files whose subtitles aren't
+            # indexed, and read-along books inside the folders.
+            "not_indexed": not_indexed,
+            "books_not_searched": books_not_searched,
+            "capped": bool(not_indexed or books_not_searched),
             "count": len(all_hits),
             "matches": all_hits,
         }

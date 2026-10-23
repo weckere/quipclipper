@@ -629,10 +629,20 @@ class TranscriptStore:
     def has(self, media: str | Path) -> bool:
         return self.load(media) is not None
 
-    def exists(self, media: str | Path) -> bool:
+    def exists(self, media: str | Path, names: set[str] | None = None) -> bool:
         """Cheap: a transcript file for ``media`` exists (not read, not checked for
-        staleness). For listings that check many files."""
+        staleness). For listings that check many files; ``names`` (from :meth:`names`)
+        spares a stat each."""
+        if names is not None:
+            return self._file(media).name in names
         return self._file(media).exists()
+
+    def names(self) -> set[str]:
+        """The store's file names, for :meth:`exists` over many files."""
+        try:
+            return set(os.listdir(self.dir))
+        except OSError:
+            return set()
 
     def save(self, t: Transcript) -> None:
         self.dir.mkdir(parents=True, exist_ok=True)
@@ -791,17 +801,24 @@ def machine_sidecar_path(media: str | Path, language: str = "en") -> Path:
     return media.with_name(f"{media.stem}.{lang}.{SIDECAR_TOKEN}.srt")
 
 
-def find_machine_sidecars(media: str | Path) -> list[Path]:
+def find_machine_sidecars(media: str | Path, siblings: list[Path] | None = None) -> list[Path]:
     """The machine sidecars of ``media``: ``<stem>.<lang>.whisper.srt``/``.vtt`` (or
     ``<stem>.whisper.srt``) next to it, nothing else. ``Show.Part2.en.whisper.srt`` is
-    Show.Part2.mkv's, not Show.mkv's: reading or removing it as Show's would be wrong."""
+    Show.Part2.mkv's, not Show.mkv's: reading or removing it as Show's would be wrong.
+    ``siblings`` is the folder's listing (its subtitle files are enough) when the caller
+    already has it."""
     media = Path(media)
+    if siblings is None:
+        try:
+            siblings = list(media.parent.iterdir())
+        except OSError:
+            return []
+    token = f".{SIDECAR_TOKEN}."
+    siblings = [p for p in siblings if token in p.name.lower()]
+    if not siblings:
+        return []  # the common case, without compiling a pattern per file
     own = re.compile(re.escape(media.stem.lower()) + r"(\.[a-z]{1,3})?\."
                      + SIDECAR_TOKEN + r"\.(srt|vtt)")
-    try:
-        siblings = list(media.parent.iterdir())
-    except OSError:
-        return []
     return sorted(p for p in siblings if own.fullmatch(p.name.lower()) and p.is_file())
 
 
@@ -849,16 +866,18 @@ def write_sidecar(media: str | Path, cues: list[Cue], language: str = "en") -> P
 
 
 def machine_cues(media: str | Path, store: TranscriptStore | None, *,
-                 library: bool = True, stored: bool = True) -> list[Cue]:
+                 library: bool = True, stored: bool = True,
+                 siblings: list[Path] | None = None) -> list[Cue]:
     """A file's machine lines: its stored transcript and/or the machine sidecars copied
-    into the library next to it (read as machine lines, deduplicated)."""
+    into the library next to it (read as machine lines, deduplicated). ``siblings``
+    spares listing the folder (see :func:`find_machine_sidecars`)."""
     groups: list[list[Cue]] = []
     if stored and store is not None:
         t = store.load(media)
         if t is not None:
             groups.append(t.cues)
     if library:
-        for p in find_machine_sidecars(media):
+        for p in find_machine_sidecars(media, siblings):
             with contextlib.suppress(OSError, ValueError, FileNotFoundError):
                 groups.append([Cue(c.index, c.start, c.end, c.text, c.speaker, MACHINE)
                                for c in load_subtitles(p)])

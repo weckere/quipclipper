@@ -203,7 +203,11 @@ Matches under 60 are left out (`--min-score` in the CLI, `min_score` in the API)
 score a subtitle line comes before a machine transcript line.
 
 - **In a video**, the matches appear in the workspace's **Matches** tab.
-- **In a folder or the library**, the results are grouped by file, with the words of the
+- **In a folder or the library**, only **indexed** files are searched (their subtitles are
+  cached, so even the whole library takes seconds); the status line says how many files
+  weren't, and **Index** on a folder includes them. Read-along books in a folder aren't
+  searched either: open a book and search it on its own.
+- The results are grouped by file, with the words of the
   query highlighted and a score on each line. On a wide screen (1250 px and up) clicking
   a line previews the lines around it, with **Open in workspace**; on a narrower one it
   opens the file with that line selected.

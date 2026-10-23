@@ -842,6 +842,16 @@ function wireYtDownload(path, name, info, signal) {
 
 // --- folder dialogue search ------------------------------------------------
 
+const countOf = (n, noun) => `${(n || 0).toLocaleString()} ${noun}${n === 1 ? "" : "s"}`;
+
+/** What a folder search left out (it reads only indexed files): "" when nothing. */
+function searchSkipped(data) {
+  const parts = [];
+  if (data.not_indexed) parts.push(`${countOf(data.not_indexed, "file")} not indexed yet (Index a folder to include it)`);
+  if (data.books_not_searched) parts.push(`${countOf(data.books_not_searched, "read-along book")} (search a book on its own)`);
+  return parts.length ? `. Not searched: ${parts.join("; ")}.` : "";
+}
+
 async function dialogueSearch(query, folders) {
   if (!query || !folders.length) return;
 
@@ -870,7 +880,8 @@ async function dialogueSearch(query, folders) {
   }
   if (myId !== librarySearchId) return;  // the user went elsewhere meanwhile
 
-  status.textContent = `${data.count} match${data.count !== 1 ? "es" : ""} across ${data.files_scanned} file${data.files_scanned !== 1 ? "s" : ""}`;
+  status.textContent = `${data.count} match${data.count !== 1 ? "es" : ""} across ${countOf(data.files_scanned, "indexed file")}` +
+    searchSkipped(data);
 
   if (!data.matches.length) {
     $("search-batch").hidden = true;

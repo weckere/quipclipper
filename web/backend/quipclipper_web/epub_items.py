@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import functools
 import os
+import stat
 import tempfile
 import zipfile
 from collections.abc import Iterator
@@ -60,10 +61,24 @@ def make_ref(epub_path: str | Path, seg: int) -> str:
 
 
 def is_epub_book(p: Path) -> bool:
-    return p.is_file() and p.suffix.lower() == ".epub" and is_media_overlay_epub(p)
+    """A read-along EPUB (media overlays). The zip is read once per path and mtime: a
+    library-wide search checks every .epub (wizrock: 312, 8 s unchecked)."""
+    if p.suffix.lower() != ".epub":
+        return False
+    try:
+        st = p.stat()
+    except OSError:
+        return False
+    return stat.S_ISREG(st.st_mode) and _is_overlay(str(p), st.st_mtime)
 
 
-@functools.lru_cache(maxsize=8)
+@functools.lru_cache(maxsize=4096)
+def _is_overlay(path_str: str, mtime: float) -> bool:
+    return is_media_overlay_epub(path_str)
+
+
+# Enough for every read-along book a library-wide search parses (wizrock: 31).
+@functools.lru_cache(maxsize=64)
 def _read_cached(path_str: str, mtime: float) -> EpubBook:
     return read_epub(path_str)
 

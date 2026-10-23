@@ -49,8 +49,9 @@ _UNSPACED = re.compile(r"[฀-๿぀-ヿ㐀-䶿一-鿿"
 def _normalize(text: str) -> str:
     """Lowercase words separated by single spaces: markup dropped, apostrophes
     removed ("I'll" -> "ill"), every other non-word character a separator."""
-    text = _APOSTROPHE.sub("", _MARKUP.sub(" ", text).casefold())
-    return _NON_WORD.sub(" ", text).strip()
+    if "<" in text or "{" in text:
+        text = _MARKUP.sub(" ", text)
+    return _NON_WORD.sub(" ", _APOSTROPHE.sub("", text.casefold())).strip()
 
 
 def _f_beta(matched: float, query_weight: float, window_weight: float) -> float:
@@ -174,11 +175,18 @@ def search(
     max_span = max(1, max_span)
 
     # Normalise each cue once; a window reuses its cues' words and matches.
+    memo, hits = q._memo, q.hits
     prepared = []
     for cue in cues:
         norm = _normalize(cue.text)
         words = norm.split()
-        found = [(p, h) for p, w in enumerate(words) if (h := q.hits(w))]
+        found = []
+        for p, w in enumerate(words):
+            h = memo.get(w)
+            if h is None:
+                h = hits(w)
+            if h:
+                found.append((p, h))
         prepared.append((norm, [len(w) + 1 for w in words], found))
 
     candidates: list[Match] = []

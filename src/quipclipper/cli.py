@@ -344,9 +344,12 @@ def _fmt_matches(data: dict) -> None:
     if not matches:
         typer.secho("No matches.", fg="yellow")
         return
-    if data.get("capped"):
-        typer.secho(f"(searched the first {data.get('files_scanned')} files only)",
-                    fg="yellow", err=True)
+    skipped = [f"{n} {what}" for n, what in (
+        (data.get("not_indexed"), "files not indexed yet (index.build a folder to include it)"),
+        (data.get("books_not_searched"), "read-along books (search a book on its own)")) if n]
+    if skipped:
+        typer.secho(f"(searched {data.get('files_scanned')} indexed files; not searched: "
+                    f"{'; '.join(skipped)})", fg="yellow", err=True)
     for m in matches:
         where = f"{m['file']}  " if m.get("file") else ""
         typer.echo(f"[{m.get('index', '?')}] {where}"
