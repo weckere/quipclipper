@@ -50,6 +50,7 @@ def env(tmp_path, monkeypatch):
         "QC_MEDIA_ROOTS": str(root), "QC_STATE_DIR": str(tmp_path / "state"),
         "QC_CLIPS_DIR": str(tmp_path / "clips"),
         "QC_WHISPER_BIN": str(exe), "QC_WHISPER_MODEL": str(model),
+        "QC_TRANSCRIBE": "1",  # experimental, off unless switched on (D-040)
     }
 
 

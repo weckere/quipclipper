@@ -16,6 +16,13 @@ runner = CliRunner()
 needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="needs ffmpeg")
 
 
+@pytest.fixture(autouse=True)
+def switched_on(monkeypatch):
+    # Transcription is off unless QC_TRANSCRIBE turns it on (D-040); test_transcribe_off.py
+    # covers it off.
+    monkeypatch.setenv("QC_TRANSCRIBE", "1")
+
+
 @pytest.fixture
 def local_whisper(fake_whisper, monkeypatch, tmp_path):  # noqa: F811
     cfg, log = fake_whisper

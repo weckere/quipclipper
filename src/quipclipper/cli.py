@@ -89,6 +89,8 @@ from quipclipper.subtitles import (
     list_streams,
     resolve_subtitles,
 )
+from quipclipper.transcribe import OFF_REASON as STT_OFF
+from quipclipper.transcribe import enabled as stt_enabled
 
 app = typer.Typer(
     add_completion=False,
@@ -193,9 +195,12 @@ def _local_cues(subs: Optional[Path], video: Optional[Path], track: Optional[int
                 machine: str = "include") -> list:
     """A local file's cues for search: its subtitles, with the machine transcript lines
     (this machine's transcript store, and a ….whisper.srt copy next to the file) mixed
-    in, left out, or alone. A file with only a transcript has no subtitles to resolve."""
+    in, left out, or alone. A file with only a transcript has no subtitles to resolve.
+    While transcription is switched off (D-040) machine lines are always left out."""
     from quipclipper import transcribe as tr
 
+    if not stt_enabled():
+        machine = "exclude"
     heard = (tr.machine_cues(video, tr.TranscriptStore(tr.default_store_dir()))
              if video is not None and subs is None and machine != "exclude" else [])
     if heard and machine == "only":
@@ -553,12 +558,14 @@ def search_cmd(
     min_score: float = typer.Option(60.0, "--min-score", help="Drop matches below this score (0-100)."),
     max_span: int = typer.Option(3, "--max-span", help="Max consecutive captions a match may join."),
     machine: Literal["include", "exclude", "only"] = typer.Option(
-        "include", "--machine",
+        "include", "--machine", hidden=not stt_enabled(),
         help="Machine transcript lines (whisper): include them (marked [auto]), exclude "
              "them, or search only them."),
 ):
     """Search one file's dialogue and print ranked matches with timestamps."""
     c = _c(ctx)
+    if machine == "only" and not c.remote and not stt_enabled():
+        _fail(c, CliError(STT_OFF, code="usage", exit_code=EXIT_USAGE))
     if subs is not None and machine == "only":
         _fail(c, CliError("--machine only searches a file's machine transcript: give the "
                           "media file (--video), not --subs.", code="usage",
@@ -1697,7 +1704,8 @@ def _client_settings(c: Context, cmd_id: str, v: dict) -> Any:
     values = load_settings()
     if cmd_id == "settings.list":
         return {"file": str(settings_path()),
-                "settings": {k: values.get(k, "") for k in reg.SETTINGS}}
+                "settings": {k: values.get(k, "") for k in reg.SETTINGS
+                             if stt_enabled() or k not in reg.EXPERIMENTAL_SETTINGS}}
     key = v["key"]
     if key not in reg.SETTINGS:
         raise CliError(f"Unknown setting {key!r}; one of: {', '.join(reg.SETTINGS)}",
@@ -1736,6 +1744,9 @@ def _run_client(c: Context, cmd: reg.Command, v: dict) -> Any:
 
 def run_command(c: Context, cmd: reg.Command, values: dict) -> Any:
     """Run any registry command from a values dict (used by generic commands and `run`)."""
+    if cmd.experimental and not c.remote and not stt_enabled():
+        # A server decides for itself (it answers 404 when it's off there).
+        raise CliError(STT_OFF, code="usage", exit_code=EXIT_USAGE)
     if cmd.id in _STT_MODEL and not values.get("model") and c.settings.get("stt_model"):
         values = {**values, "model": c.settings["stt_model"]}
     if cmd.mode == "both" and not c.remote and cmd.id in _LOCAL:
@@ -1779,7 +1790,8 @@ def _typer_default(p: reg.Param):
         default = ... if p.required else p.default
         return typer.Argument(default, help=p.help, show_default=False)
     return typer.Option(p.default, *_decls(p), help=p.help,
-                        show_default=p.default not in (None, "", False))
+                        show_default=p.default not in (None, "", False),
+                        hidden=p.experimental and not stt_enabled())
 
 
 def _make_generic(cmd: reg.Command):
@@ -1815,7 +1827,8 @@ for _cmd in reg.COMMANDS:
     if _cmd.id in _HANDWRITTEN:
         continue
     _fn = _make_generic(_cmd)
-    app.command(name=_cmd.id)(_fn)
+    # Experimental commands (D-040) still run; they only stay out of the help while off.
+    app.command(name=_cmd.id, hidden=_cmd.experimental and not stt_enabled())(_fn)
     if _cmd.shortcut:
         app.command(name=_cmd.shortcut, help=f"Shortcut for {_cmd.id}. {_cmd.summary}")(_fn)
 
@@ -1834,7 +1847,8 @@ def commands_cmd(
     if markdown:
         typer.echo(reg.render_markdown())
         return
-    rows = [x for x in reg.COMMANDS if not filter_ or filter_ in x.id]
+    rows = [x for x in reg.COMMANDS if (not filter_ or filter_ in x.id)
+            and (stt_enabled() or not x.experimental)]
     if c.json:
         typer.echo(_dump([{
             "id": x.id, "shortcut": x.shortcut, "summary": x.summary, "mode": x.mode,
@@ -1843,7 +1857,8 @@ def commands_cmd(
             "params": [{"name": p.name, "type": p.type, "where": p.where,
                         "required": p.required, "main": p.main, "default": p.default,
                         "choices": list(p.choices) if p.choices else None,
-                        "local_only": p.local_only, "help": p.help} for p in x.params],
+                        "local_only": p.local_only, "help": p.help} for p in x.params
+                       if stt_enabled() or not p.experimental],
         } for x in rows]))
         return
     width = max(len(x.id) for x in rows) if rows else 0

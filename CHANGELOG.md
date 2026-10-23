@@ -12,6 +12,13 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 
 ### Machine transcription (M21)
 
+- **Experimental, and off unless switched on (D-040):** nothing of it runs or shows unless
+  `QC_TRANSCRIBE=1` (the NixOS module's `transcribe.enable` sets it); whisper.cpp and a model
+  alone no longer turn it on, and the Docker images leave it off. Off, its endpoints answer 404
+  with the reason, `/api/health` and `/api/config` leave it out, stored transcripts and
+  `….whisper.srt` copies stay out of search, the script and the library, the web UI shows none
+  of it, and the CLI keeps its commands and `--machine` out of its help and refuses them
+  locally. It is documented apart, in docs/TRANSCRIPTION.md.
 - **Find what the subtitles left out:** `item.transcribe` runs whisper.cpp over a range, the
   gaps between subtitle lines, or a whole file, and keeps what it hears as machine lines,
   which search mixes in (a subtitle line wins a tie) and prints marked `[auto]`. It only ever

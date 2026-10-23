@@ -43,7 +43,6 @@ code is built the way it is, see [`DESIGN_NOTES.md`](DESIGN_NOTES.md).
   - [Splitting surround sound](#splitting-surround-sound)
   - [Subtitles in clips](#subtitles-in-clips)
   - [Searching and the picker](#searching-and-the-picker)
-  - [Machine transcription (whisper.cpp)](#machine-transcription-whispercpp)
   - [Output names and containers](#output-names-and-containers)
   - [EPUB3 audiobooks (experimental)](#epub3-audiobooks-experimental)
   - [Sending clips to LeadStinger](#sending-clips-to-leadstinger)
@@ -164,9 +163,8 @@ typing what you remember, select it on the script, and cut it. The screenshots i
 
 A rail on the left lists the media roots and **YouTube**. The main column lists the
 current folder: folders, video files, audio files that have a transcript beside them
-or a machine transcript (🎵) and EPUB3 audiobooks (📚). A **sub** chip marks a file with a
-sidecar subtitle file, an **auto** chip one with a [machine
-transcript](#machine-transcription-whispercpp). An **indexed** chip marks a file whose
+(🎵) and EPUB3 audiobooks (📚). A **sub** chip marks a file with a
+sidecar subtitle file. An **indexed** chip marks a file whose
 dialogue is indexed (its subtitles are cached, so a search reads them at once), and a
 **no subs** chip one that indexing found has no text subtitles; a file with neither isn't
 indexed yet (or its subtitles changed since). The chips update when **Index N files** or
@@ -181,12 +179,7 @@ cached. **Index N files** extracts and caches the rest, so dialogue search is fa
 **Re-index all** starts over (use it when subtitles changed). Files with no text
 subtitles at all are counted separately and left out. **Fetch missing YouTube
 subtitles** backfills transcripts for videos that came from YouTube (see
-[below](#backfilling-subtitles-for-existing-videos)). When the server has whisper.cpp,
-the card also counts the files with a machine transcript and the audio files with no
-transcript yet, and offers **Transcribe files without subtitles** (whole files, audio
-included) and **Fill gaps in every file**: after you confirm, they run file after file in
-the background at low priority, which can take hours, with progress and **Cancel** (what's
-done is kept). Nothing transcribes a folder unless you press one of them.
+[below](#backfilling-subtitles-for-existing-videos)).
 
 With Jellyfin set up, a **Now playing** card at the top of the library lists what each
 Jellyfin client is playing; see [Now playing (Jellyfin)](#now-playing-jellyfin).
@@ -264,20 +257,6 @@ Opening a file opens its workspace.
   line, *Start of video*, lets a clip begin at 0:00. **Follow playback** keeps the
   playing line in view. The tabs beside **Script** are **Matches** (after a search),
   **Bookmarks** for this file and **Clips** made from it this visit.
-- **Machine transcript** (when the server has whisper.cpp): a bar above the script.
-  **Fill gaps** transcribes every stretch between subtitle lines (a song the subtitles
-  skip); on a file with no subtitles it's **Transcribe file**. **Transcribe selection**
-  on the waveform transcribes the stretch you selected, again if it was done before, for
-  a second go with **Model** medium.en. Each runs in the background at low priority, so it
-  can take a while: the bar shows its progress and **Cancel** (it keeps what's done). The
-  lines whisper hears appear in the script and in search **in violet italics with an
-  "auto" chip**, never mistaken for the subtitles (a screen reader hears "machine
-  transcript"), and on the waveform's line lane in violet. They stay out of the video's
-  captions until **Copy to library** writes them next to the file as
-  `<name>.en.whisper.srt` (writable folders only); then the captions show them too, marked
-  ≈, and Jellyfin offers that file as a subtitle track. **Export .srt** saves them,
-  **Remove from library** and **Delete transcript** undo the two. See
-  [Machine transcription](#machine-transcription-whispercpp).
 - **The Selection panel** shows the selected range and acts on it: **★ Bookmark** (with
   a label you can edit; a range dragged on the waveform can be bookmarked too), **✂ Make clip**, and **⚡ Send to LeadStinger** (an icon button:
   hover or focus it for what it does; one click cuts and sends). Under
@@ -316,9 +295,6 @@ Saved per browser:
   subtitles**, for the subtitles on the video.
 - **Subtitle languages**: the order to prefer when a file has several subtitle tracks
   (`eng,spa`); empty uses the server's `QC_SUBTITLE_LANGS`.
-- **Transcription model** (when the server has both): small.en, quicker, or medium.en,
-  which hears more and is about three times slower. The transcript bar's **Model** picks
-  another for one run.
 
 The clip name template is the Name field in the Selection panel, and the YouTube player
 choice is on each YouTube video.
@@ -757,70 +733,6 @@ If a file has *only* image subtitles, supply a text sidecar with `--subs`.
 Run `quipclipper tracks <video>` to see all tracks, and pass `--track N` to
 override the automatic choice. The same scoring drives the web app's subtitle
 picker and its search/index cache, so all paths agree on the default track.
-
-### Machine transcription (whisper.cpp)
-
-Search reads subtitle lines, so a line the subtitles leave out (most often a song's
-lyrics), or a file with no subtitles at all, can't be found. **Machine transcription**
-runs [whisper.cpp](https://github.com/ggml-org/whisper.cpp) over a stretch of a file's
-audio and keeps what it hears as *machine* lines. They are a search aid, clearly marked
-as machine-made wherever they appear, and never replace the real subtitles: where a
-subtitle line covers a stretch, the subtitle line wins.
-
-**It only runs when you ask.** Nothing transcribes on its own: not indexing, not opening
-a file, not a timer. Each request transcribes one of:
-
-- **a range**: `--start` and `--end`, in seconds (in the web app, a waveform selection);
-- **the gaps**: every stretch of 4 s or more between subtitle lines (the default);
-- **the whole file**: `--mode file`, for a file with no subtitles.
-
-A whole **folder** (`quipclipper index.transcribe FOLDER`, `--mode nosubs` for the files with
-no subtitles, audio without a transcript included, or `--mode gaps`) runs file after file
-in one job, on a server (the CLI on its own transcribes one file at a time). A file whose
-subtitles can't be checked is skipped and listed with the reason, rather than transcribed
-whole. Parts transcribed before are skipped, so asking again only does what's new (`--redo`
-does it again, say with a bigger model). English only. **Models:** `small.en` (the
-default: quick, a few word errors) or `medium.en` (closer to subtitle quality, about three
-times slower). Set your default with `quipclipper settings.set stt_model medium.en`, or
-pass `--model` per run.
-
-**It runs at idle priority.** whisper gets the CPU only when nothing else wants it (Linux
-`SCHED_IDLE` and nice 19, idle I/O), with 2 threads (3 at most), one transcription at a
-time. So it never slows down playback or a clip, and it is slower when the machine is busy.
-
-```bash
-quipclipper item.transcribe "Darkplace S01E06.mkv"                  # the gaps
-quipclipper item.transcribe "Darkplace S01E06.mkv" --start 353 --end 395
-quipclipper item.transcribe "podcast.mp3" --mode file --model medium.en
-quipclipper search "way too fast" --video "Darkplace S01E06.mkv"
-# [0]   383.10s  00:06:23.100–00:06:27.000  (score 100)
-#       [auto] ♪ Driving way too fast ♪
-quipclipper item.transcript "Darkplace S01E06.mkv" --fmt srt > lyrics.srt
-```
-
-Machine lines print with `[auto]`; `--machine exclude` searches the subtitles alone and
-`--machine only` the machine lines alone (of a media file: not with `--subs`).
-
-**Where transcripts live.** Not next to the media: in quipclipper's state (the server's
-state dir, or `~/.cache/quipclipper/transcripts` when the CLI runs whisper itself), keyed
-on the media file, so new subtitles don't throw a transcript away. `item.transcript-clear`
-deletes one.
-
-**Copying to the library.** `item.transcript-copy` writes a file's transcript next to it
-as a subtitle file named **`<name>.<lang>.whisper.srt`** (for example
-`S01E06.en.whisper.srt`), in a writable folder only. The `whisper` token marks it as
-machine-made: quipclipper reads it as machine lines (and from then on shows them in the
-player's captions), never as the file's subtitles, and Jellyfin offers it as its own
-subtitle track. Only lines the subtitles don't already have are copied. `item.transcript-uncopy` removes it
-again (only this file's copy: `Show.Part2.en.whisper.srt` belongs to `Show.Part2.mkv`, not
-to `Show.mkv`).
-
-**Running it on your own machine.** With no server set, the CLI runs `whisper-cli` itself:
-install whisper.cpp (`nix shell nixpkgs#whisper-cpp`, `brew install whisper-cpp`), fetch a
-model from [Hugging Face](https://huggingface.co/ggerganov/whisper.cpp/tree/main) and set
-`QC_WHISPER_MODEL=/path/to/ggml-small.en.bin` (or several, as
-`QC_WHISPER_MODELS=small.en=/…/ggml-small.en.bin,medium.en=/…/ggml-medium.en.bin`).
-`QC_WHISPER_BIN` names another binary, `QC_WHISPER_THREADS` the threads (capped at 3).
 
 ### Output names and containers
 

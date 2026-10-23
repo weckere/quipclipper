@@ -222,6 +222,7 @@
                 backendonly.succeed("grep -q '\"whisper-cli\": *true' /tmp/h.json")
                 backendonly.succeed("grep -q '\"available\": *true' /tmp/h.json")
                 backendonly.succeed("systemctl show quipclipper-web.service -p Environment | grep -q QC_WHISPER_THREADS=2")
+                backendonly.succeed("systemctl show quipclipper-web.service -p Environment | grep -q QC_TRANSCRIBE=1")
                 # A whole run on request, through the API: it finishes, its line is
                 # stored and searchable, and whisper ran at SCHED_IDLE, nice 19.
                 backendonly.succeed("${pkgs.ffmpeg-headless}/bin/ffmpeg -v error -f lavfi -i sine=duration=5 /srv/media/tone.flac")
@@ -235,7 +236,13 @@
                     timeout=120)
                 backendonly.succeed("curl -fsS 'http://localhost:8000/api/items/transcript?path=/srv/media/tone.flac' -o /tmp/t.json")
                 backendonly.succeed("grep -q 'heard at SCHED_IDLE nice 19' /tmp/t.json")
-                machine.succeed("grep -q '\"available\": *false' /tmp/health.json")
+                # Off by default (experimental, D-040): health doesn't mention it, and its
+                # endpoints answer 404 with the reason.
+                machine.fail("grep -q transcribe /tmp/health.json")
+                machine.succeed(
+                    "curl -sS -u quip:test123 -o /dev/null -w '%{http_code}' -H 'X-Quipclipper: 1'"
+                    " 'http://localhost/api/items/transcript?path=/srv/media/tone.flac'"
+                    " | grep -qx 404")
               '';
             };
           };

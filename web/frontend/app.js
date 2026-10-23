@@ -537,7 +537,8 @@ function indexChipHtml(state) {
   }
   if (state === "no_subs") {
     return chip("no subs", "no subtitles to index",
-      "Indexing found no text subtitles in this file (no sidecar, no text track): nothing to search until it is transcribed");
+      "Indexing found no text subtitles in this file (no sidecar, no text track): nothing to search"
+        + (sttAvailable() ? " until it is transcribed" : ""));
   }
   return "";
 }

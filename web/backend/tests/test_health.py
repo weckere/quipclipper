@@ -19,8 +19,11 @@ def test_health_ok() -> None:
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "ok"
-    assert set(body["tools"]) == {"ffmpeg", "ffprobe", "mkvmerge", "yt-dlp", "whisper-cli"}
-    assert body["transcribe"]["available"] is False  # no model configured (M21)
+    assert set(body["tools"]) == {"ffmpeg", "ffprobe", "mkvmerge", "yt-dlp"}
+    assert "transcribe" not in body  # experimental, off unless QC_TRANSCRIBE (D-040)
+    on = _client({"QC_TRANSCRIBE": "1"}).get("/api/health").json()
+    assert "whisper-cli" in on["tools"]
+    assert on["transcribe"]["available"] is False  # no model configured (M21)
 
 
 def test_config_reflects_env() -> None:

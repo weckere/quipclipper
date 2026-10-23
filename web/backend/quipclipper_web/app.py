@@ -437,6 +437,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # one at a time in their own pool, so a transcription never takes a clip slot; and
     # only when someone asks (D-037): nothing here starts one on its own.
     transcripts = stt.TranscriptStore(settings.state_dir / "transcripts")
+    # Experimental and off unless QC_TRANSCRIBE switches it on (D-040): off, no endpoint
+    # here answers, and stored transcripts and library copies stay out of everything.
+    stt_on = settings.whisper.enabled
     stt_jobs = JobRegistry(max_workers=1)
     active_stt: dict[str, str] = {}
     stt_submit = threading.Lock()  # one check-then-submit at a time (no twin jobs)
@@ -452,7 +455,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     def _has_machine(p: Path) -> bool:
         """Cheap: ``p`` has a machine transcript, stored or copied to the library."""
-        return transcripts.exists(p) or bool(stt.find_machine_sidecars(p))
+        return stt_on and (transcripts.exists(p) or bool(stt.find_machine_sidecars(p)))
     # video id -> last download / add job id, so a repeat POST returns the
     # in-flight job instead of queueing a duplicate.
     active_downloads: dict[str, str] = {}
@@ -517,11 +520,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "ffprobe": shutil.which("ffprobe") is not None,
                 "mkvmerge": shutil.which("mkvmerge") is not None,
                 "yt-dlp": shutil.which("yt-dlp") is not None,
-                "whisper-cli": settings.whisper.binary_path() is not None,
+                **({"whisper-cli": settings.whisper.binary_path() is not None}
+                   if stt_on else {}),
             },
             "jellyfin": settings.jellyfin_enabled,  # Now playing (M15) configured
-            # Machine transcription (M21): whisper.cpp, its models and thread cap.
-            "transcribe": settings.whisper.describe(),
+            # Machine transcription (M21): whisper.cpp, its models and thread cap; only
+            # when switched on (D-040).
+            **({"transcribe": settings.whisper.describe()} if stt_on else {}),
         }
 
     @app.get("/api/config")
@@ -537,10 +542,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "public_url": settings.public_url or None,
             # Jellyfin URL + API key set: the Now playing card and scope show (M15).
             "jellyfin": settings.jellyfin_enabled,
-            # Machine transcription (M21): whether it's set up, and the models to offer.
-            "transcribe": {k: v for k, v in settings.whisper.describe().items()
-                           if k in ("available", "models", "default_model", "threads",
-                                    "language")},
+            # Machine transcription (M21): whether it's set up, and the models to offer;
+            # only when switched on (D-040).
+            **({"transcribe": {k: v for k, v in settings.whisper.describe().items()
+                               if k in ("available", "models", "default_model", "threads",
+                                        "language")}} if stt_on else {}),
         }
 
     # --- Jellyfin now playing (M15) ---------------------------------------------
@@ -698,8 +704,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     def _machine_lines(p: Path, captions: bool = False) -> list:
         """A file's machine transcript lines: the stored transcript and any copy in the
-        library next to it. The player's captions show only a library copy (D-037)."""
-        return stt.machine_cues(p, transcripts, stored=not captions)
+        library next to it. The player's captions show only a library copy (D-037). None
+        while transcription is switched off (D-040)."""
+        return stt.machine_cues(p, transcripts, stored=not captions) if stt_on else []
+
+    def _machine_mode(machine: str) -> str:
+        """A request's ``machine`` choice: switched off, machine lines are left out, and
+        asking for them alone is an error that says why."""
+        if stt_on:
+            return machine
+        if machine == "only":
+            raise HTTPException(status_code=404, detail=stt.OFF_REASON)
+        return "exclude"
 
     def _file_cues(p: Path, track: int | None = None, machine: str = "include",
                    captions: bool = False, heard: list | None = None) -> list:
@@ -930,7 +946,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         known = _jf_known(p, False)
         if known:
             info["jellyfin"] = known  # title, series, poster (M18)
-        if settings.clips_dir.resolve() not in p.resolve().parents:
+        if stt_on and settings.clips_dir.resolve() not in p.resolve().parents:
             info["transcript"] = _transcript_info(p)  # machine transcription (M21)
         return info
 
@@ -1072,6 +1088,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         fmt: str = Query("vtt"),
         machine: str = Query("include", pattern="^(include|exclude|only)$"),
     ) -> Response:
+        machine = _machine_mode(machine)
         # YouTube ref: cues come from the stored transcript (SubtitleCache bypassed).
         vid = youtube_items.parse_ref(path)
         if vid is not None:
@@ -1146,6 +1163,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         max_span: int = Query(3, ge=1, le=10),
         machine: str = Query("include", pattern="^(include|exclude|only)$"),
     ) -> dict:
+        machine = _machine_mode(machine)
         vid = youtube_items.parse_ref(path)
         epub_ref, seg = epub_items.parse_ref(path)
         if vid is not None:
@@ -1217,6 +1235,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         search engine and collect the top results.  Returns a flat list of
         matches grouped by source file, sorted best-score-first across all files.
         """
+        machine = _machine_mode(machine)
         # Resolve and validate every requested target: a folder to scan, an
         # EPUB audiobook to search directly (its chapters are searched like
         # files), or the YouTube pseudo-folder (every stored transcript).
@@ -1417,7 +1436,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Audio with no transcript of any kind isn't a media file yet (nothing to search),
         # but a folder transcription can give it one.
         bare = sum(1 for c in _resolve(path).rglob("*") if _is_bare_audio(c)
-                   and not _has_machine(c))
+                   and not _has_machine(c)) if stt_on else 0
         return {"total": len(videos), "indexed": indexed, "no_subs": no_subs,
                 "transcribed": transcribed, "audio_untranscribed": bare, "skipped": False}
 
@@ -1505,7 +1524,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # most 3 whisper threads (quipclipper.transcribe), and can be cancelled between or
     # during chunks; finished chunks are kept.
 
+    def _stt_on() -> None:
+        if not stt_on:
+            raise HTTPException(status_code=404, detail=stt.OFF_REASON)
+
     def _stt_required() -> None:
+        _stt_on()
         if not settings.whisper.available:
             raise HTTPException(status_code=503, detail="Transcription isn't set up on this "
                                 "server: it needs whisper.cpp and a model (QC_WHISPER_MODEL).")
@@ -1513,6 +1537,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def _library_media(path: str) -> Path:
         """A library file a transcript can belong to (not a YouTube item, an EPUB chapter
         or a clip)."""
+        _stt_on()
         if youtube_items.parse_ref(path) is not None or epub_items.parse_ref(path)[1] is not None:
             raise HTTPException(status_code=422, detail="Transcription works on library "
                                 "files, not YouTube items or EPUB chapters.")

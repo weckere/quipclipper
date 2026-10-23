@@ -24,6 +24,11 @@ keyed on the media file: a new subtitle file doesn't throw away hours of CPU. An
 explicit action copies one into the library as a subtitle sidecar named
 ``<stem>.<lang>.whisper.srt`` (:func:`machine_sidecar_path`), which quipclipper
 recognises as machine-made and never picks as a file's subtitles.
+
+The feature is experimental and off unless a deployment turns it on (D-040):
+``QC_TRANSCRIBE=1`` (the NixOS module's ``transcribe.enable`` sets it). Off, nothing
+transcribes, and stored transcripts and machine sidecars stay out of search and the
+script (:func:`enabled`).
 """
 
 from __future__ import annotations
@@ -75,6 +80,18 @@ STORE_VERSION = 1
 
 # --- configuration ------------------------------------------------------------------
 
+# The explicit switch (D-040): off unless set to one of these. A server with whisper and a
+# model but no switch still reports transcription off.
+SWITCH = "QC_TRANSCRIBE"
+OFF_REASON = ("Machine transcription is experimental and off here: a deployment turns it "
+              f"on with {SWITCH}=1 (the NixOS module's transcribe.enable).")
+
+
+def enabled(env=None) -> bool:
+    """Whether machine transcription is switched on (``QC_TRANSCRIBE``)."""
+    e = os.environ if env is None else env
+    return (e.get(SWITCH) or "").strip().lower() in ("1", "true", "yes", "on")
+
 
 def _clamp_threads(n: int | str | None) -> int:
     try:
@@ -111,7 +128,8 @@ class WhisperConfig:
     sets these): ``QC_WHISPER_BIN`` (default ``whisper-cli`` on PATH),
     ``QC_WHISPER_MODELS`` (name=path pairs), ``QC_WHISPER_MODEL`` (the default
     model's name, or a path), ``QC_WHISPER_VAD_MODEL`` (Silero, optional),
-    ``QC_WHISPER_THREADS`` (2, at most 3) and ``QC_WHISPER_LANGUAGE`` (en)."""
+    ``QC_WHISPER_THREADS`` (2, at most 3) and ``QC_WHISPER_LANGUAGE`` (en). Nothing
+    runs unless ``QC_TRANSCRIBE`` switches the feature on (``enabled``)."""
 
     binary: str = "whisper-cli"
     models: dict[str, str] = field(default_factory=dict)
@@ -119,6 +137,7 @@ class WhisperConfig:
     vad_model: str | None = None
     threads: int = DEFAULT_THREADS
     language: str = "en"
+    enabled: bool = False
 
     @classmethod
     def from_env(cls, env=None) -> "WhisperConfig":
@@ -136,6 +155,7 @@ class WhisperConfig:
             vad_model=(e.get("QC_WHISPER_VAD_MODEL") or "").strip() or None,
             threads=_clamp_threads(e.get("QC_WHISPER_THREADS")),
             language=(e.get("QC_WHISPER_LANGUAGE") or "en").strip() or "en",
+            enabled=enabled(e),
         )
 
     def binary_path(self) -> str | None:
@@ -153,7 +173,8 @@ class WhisperConfig:
 
     @property
     def available(self) -> bool:
-        return bool(self.binary_path()) and any(Path(p).is_file() for p in self.models.values())
+        return (self.enabled and bool(self.binary_path())
+                and any(Path(p).is_file() for p in self.models.values()))
 
     def describe(self) -> dict:
         """For /api/health and /api/config: what's installed, never secrets."""
@@ -165,6 +186,7 @@ class WhisperConfig:
                 size = None
             models.append({"name": name, "size": size, "present": size is not None})
         return {
+            "enabled": self.enabled,
             "available": self.available,
             "engine": ENGINE,
             "binary": bool(self.binary_path()),

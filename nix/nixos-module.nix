@@ -362,7 +362,8 @@ in
         whole file or a folder, so lines the subtitles leave out become searchable.
         Nothing ever runs on its own: there is no timer and no hook, only the buttons
         and commands that ask. Every run is idle priority (SCHED_IDLE, nice 19, idle
-        I/O) with `threads` threads, one at a time'';
+        I/O) with `threads` threads, one at a time. Experimental: off unless enabled here,
+        which sets the app's explicit switch, `QC_TRANSCRIBE=1`'';
 
       package = lib.mkOption {
         type = lib.types.package;
@@ -584,7 +585,9 @@ in
         QC_VAAPI_DEVICE = cfg.hardwareAcceleration.device;
         LIBVA_DRIVER_NAME = cfg.hardwareAcceleration.driverName;
       } // lib.optionalAttrs stt.enable {
-        # Machine transcription (M21): whisper-cli by store path, so PATH needn't carry it.
+        # Machine transcription (M21): the app's explicit switch (experimental, D-040),
+        # and whisper-cli by store path, so PATH needn't carry it.
+        QC_TRANSCRIBE = "1";
         QC_WHISPER_BIN = "${stt.package}/bin/whisper-cli";
         QC_WHISPER_MODELS = lib.concatMapStringsSep ","
           (name: "${name}=${sttFiles.${name}}") stt.models;
