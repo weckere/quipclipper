@@ -165,17 +165,19 @@ resolved stream URLs, so `split_channels` and `backend=mkvmerge` return 400 for
 |---|---|---|
 | GET | `/api/search?path=&query=&track=&limit=&min_score=&max_span=` | Rank dialogue matches in one file. |
 | GET | `/api/search/folder?path=&query=&limit=` | Search dialogue across a folder (repeat `path=` for several; `yt:` and EPUB books count). |
-| GET | `/api/search/folder/index-status?path=` | How much of a folder's subtitles are cached, for a folder of any size (a listing per folder and the cache's names: no extraction, no probe): `{total, indexed, no_subs, transcribed, audio_untranscribed, skipped, cap}`. `no_subs` counts files indexing found to have no subtitles at all (no sidecar, no text track); they are never offered for indexing. `cap` (500) is the most files `POST …/index` takes in one request; a bigger folder is indexed with `POST /api/search/library/index?path=`. `skipped` is always `false` now (kept for older clients). |
+| GET | `/api/search/folder/index-status?path=` | How much of a folder's subtitles are cached, for a folder of any size (a listing per folder and the cache's names: no extraction, no probe): `{total, indexed, no_subs, changed, changed_files, transcribed, audio_untranscribed, skipped, cap}`. `changed` counts files indexed before their subtitles changed (listed, up to 1000, in `changed_files`; see [below](#changed-subtitles)). `no_subs` counts files indexing found to have no subtitles at all (no sidecar, no text track); they are never offered for indexing. `cap` (500) is the most files `POST …/index` takes in one request; a bigger folder is indexed with `POST /api/search/library/index?path=`. `skipped` is always `false` now (kept for older clients). |
 | POST | `/api/search/folder/index?path=&force=` | Pre-extract subtitles for a folder of at most `cap` files (streams progress; 400 over it). |
 | POST | `/api/search/library/index?path=` | Start the **library index**: every media file under the library roots (or under `path`, a folder of any size) that isn't indexed yet, as a background job. Returns `{job_id, existing, paths}`; while one runs, this returns it with `existing: true` (one at a time). See below. |
 | GET | `/api/search/library/index` | `{job, last}`: the running library index job (as `GET /api/jobs/{id}`, or null), and the last run's summary, kept in the state dir across restarts (`status` `done`, `cancelled`, `failed`, or `interrupted` when a restart cut it short; null before the first run). |
+| GET | `/api/index/changes` | Files whose subtitles changed since indexing, as the hourly check and the views found them. See [below](#changed-subtitles). |
+| POST | `/api/index/changes/reindex` | Queue all of them for the re-index job. |
 | POST | `/api/index/file?path=&force=` | Re-index files whose subtitles changed (the [re-index hooks](#re-index-hooks)): repeat `path=`, or send a JSON body. Queued; 202. |
 | GET | `/api/index/file` | The re-index hooks' queue: `{job_id, job, pending, recent}`. |
 
 `/api/search` returns `{query, count, matches: [{index, score, text, speaker,
 start, end, start_ts, end_ts, cue_count, link}]}`. The `index` is what you pass back as
 `match_index` when clipping. `/api/search/folder` returns `{query, folders,
-files_scanned, not_indexed, books_not_searched, capped, count, matches: [{file, path, score,
+files_scanned, not_indexed, changed, changed_files, books_not_searched, capped, count, matches: [{file, path, score,
 text, speaker, start, end, start_ts, end_ts, cue_count, link}]}`: `limit` is the most matches
 per file (default 5, at most 20). It searches only **indexed** files, those whose subtitles
 are cached (opened once, or indexed with `POST …/index`), however many there are, and
@@ -183,8 +185,10 @@ never extracts subtitles itself; a file not indexed but with a stored machine tr
 searched on that. `files_scanned` counts the files searched, `not_indexed` the media files
 left out because they aren't indexed, and `books_not_searched` the read-along EPUB books
 found in the folders (a book has no index; pass a book itself as `path` to search it).
-`capped: true` means either is above 0, so a line not found may be in a file it didn't
-search. Its hits have no `index`: clip one with its
+`changed` counts the files left out because their subtitles changed since they were
+indexed (up to 1000 listed in `changed_files`, for a re-index), and `not_indexed` only files
+never indexed. `capped: true` means any of these is above 0, so a line not found may be in a
+file it didn't search. Its hits have no `index`: clip one with its
 `path`, `start`, `end` and `text` as `cue_text`. `link` (here, on `/api/search/folder` hits, bookmarks and
 clips-library entries) is a [deep link](#deep-links) to that line, present only when
 `QC_PUBLIC_URL` is set.
@@ -210,7 +214,7 @@ How Bazarr, Sonarr and Radarr (or anything) tell quipclipper that a file's subti
 changed, so it re-indexes that file instead of leaving it out of search. Setup, the hook
 script and the troubleshooting table: [HOOKS.md](HOOKS.md).
 
-`POST /api/index/file` takes the files as `path=` query parameters (repeat it; at most 200),
+`POST /api/index/file` takes the files as `path=` query parameters (repeat it; at most 1000),
 or a JSON body: `{"paths": [...], "force": false}`, or a Sonarr or Radarr webhook body as it
 comes (the paths in `episodeFile`, `episodeFiles`, `movieFile`, `renamedEpisodeFiles` and
 `renamedMovieFiles`; a `Test` event answers 200 with `queued: 0`). Each path is a media file
@@ -233,12 +237,28 @@ last 50 `recent` results, each `{path, status, at, error?}` with `status` `index
 `current`, `no_subs`, `missing`, `failed` or `cancelled`. Cancelling the job
 (`DELETE /api/jobs/{id}`) drops the files still waiting.
 
-These two routes are meant for machines: they take an API token, or a **hook token**
+<a id="changed-subtitles"></a>**Changed subtitles.** A file's index entry belongs to one version
+of its subtitle source (its sidecar's date, or the file's own for embedded subtitles), so
+`index_state` (library rows) is `changed` for a file that was indexed but whose subtitles
+changed since, as opposed to `not_indexed` for one never indexed. Index-status and folder
+search count and list such files, and remember them; so does a background pass over the
+library roots every `QC_INDEX_CHECK_INTERVAL` seconds (3600; `0` = off), which lists folders
+and reads file dates only, at idle priority, never extracting or reading a subtitle file,
+and is skipped while the previous one still runs. `GET /api/index/changes` returns
+`{changed, files, last_check: {at, files, changed, duration_s, error?}, interval_s,
+checking}` (up to 1000 `files`), and `POST /api/index/changes/reindex` queues every one of
+them for the re-index job (as `POST /api/index/file` answers; 200 with `queued: 0` when
+there are none). Nothing is ever re-indexed by the checks themselves. A file leaves the list
+when it is re-indexed (by that job, a library run or `POST /api/items/subtitles/reindex`)
+or when a check sees it current.
+
+The hooks call `/api/index/file` with an API token, or with a **hook token**
 (`QC_HOOK_TOKEN`, comma-separated to rotate, or a file named by `QC_HOOK_TOKEN_FILE`) sent the
-same ways (`X-API-Key`, `Bearer`, or `-u hook:<token>`). A hook token opens these two routes
-and nothing else: anywhere else it gets 403. Behind a password gate, the Docker image's nginx
-accepts the `hook` login when `QC_HOOK_TOKEN` is set on the `web` service. Without a token,
-a browser-style POST needs the CSRF header like any other.
+same ways (`X-API-Key`, `Bearer`, or `-u hook:<token>`). A hook token opens `GET` and
+`POST /api/index/file` and nothing else: anywhere else it gets 403. Behind a password gate,
+the Docker image's nginx accepts the `hook` login when `QC_HOOK_TOKEN` is set on the `web`
+service. Without a token (the web app's **Re-index them**), a POST needs the CSRF header like
+any other.
 
 `score` (0 to 100, one decimal) is 100 only when the line holds the query's words verbatim:
 in order and contiguous, after case, punctuation, apostrophes and subtitle markup are

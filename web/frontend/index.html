@@ -134,6 +134,12 @@
           <p id="yt-add-status" class="muted" hidden></p>
         </div>
         <p id="dialogue-search-status" class="muted" role="status" hidden></p>
+        <!-- Files here (or in these results) whose subtitles changed since they were indexed:
+             search leaves them out until they are re-indexed, which only this button starts. -->
+        <div id="changed-banner" class="changed-banner" hidden>
+          <p id="changed-banner-text" role="status"></p>
+          <button type="button" id="changed-banner-btn" data-action="index.file" class="btn" title="Re-index exactly these files, one after another in the background at low priority, so search reads their new subtitles">Re-index them</button>
+        </div>
         <div id="dialogue-search-bar" class="library-search-bar dialogue-search-bar" hidden>
           <!-- Dialogue index: how much of this folder dialogue search can see, and the tools
                that change it (index, re-index, fetch YouTube transcripts). -->
@@ -146,6 +152,7 @@
               <p id="fetch-folder-status" class="muted reindex-status" hidden></p>
               <p id="stt-folder-status" class="muted reindex-status" role="status" hidden></p>
               <p id="lib-index-status" class="muted reindex-status" data-action="index.library-status" role="status" hidden></p>
+              <p id="changes-badge" class="reindex-status" data-action="index.changes" role="status" hidden><span id="changes-badge-chip" class="badge idx-changed"></span> <span id="changes-badge-note" class="muted"></span></p>
             </div>
             <div class="index-actions">
               <button type="button" id="stt-folder-nosubs" data-action="index.transcribe" class="btn ghost" title="Transcribe every file here that has no subtitles (audio without a transcript too) with whisper, one after another in the background at low priority, so its dialogue can be searched. It can take hours; Cancel keeps what's done." hidden><span class="auto-chip" aria-hidden="true">auto</span>Transcribe files without subtitles</button>
@@ -156,6 +163,7 @@
               <button type="button" id="reindex-folder-btn" data-action="index.build" class="btn" title="Clear and re-extract subtitles for every file in this folder (use if subtitles changed)"><svg class="icon"><use href="#i-refresh"/></svg>Re-index all</button>
               <button type="button" id="index-btn" data-action="index.build" class="btn primary" title="Extract and cache the subtitles of the files here that aren't indexed yet, so dialogue search is fast" hidden>Index now</button>
               <button type="button" id="lib-index-btn" data-action="index.library" class="btn primary" title="Index every file in the library that isn't indexed yet, one after another in the background at low priority, so whole-library dialogue search covers all of it. It never starts on its own and can take days; Cancel keeps what's done, and starting it again picks up where it stopped." hidden>Index the whole library</button>
+              <button type="button" id="changes-reindex-btn" data-action="index.reindex-changed" class="btn" title="Re-index every file whose subtitles changed since it was indexed, one after another in the background at low priority. Nothing re-indexes on its own." hidden>Re-index them</button>
               <button type="button" id="lib-index-cancel" data-action="job.cancel" class="btn ghost" title="Stop the library index; the files done so far stay indexed, and starting it again picks up where it stopped" hidden><span aria-hidden="true">✕</span> Cancel</button>
             </div>
           </section>

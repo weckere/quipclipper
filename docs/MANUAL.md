@@ -166,10 +166,11 @@ current folder: folders, video files, audio files that have a transcript beside 
 (🎵) and EPUB3 audiobooks (📚). A **sub** chip marks a file with a
 sidecar subtitle file. An **indexed** chip marks a file whose
 dialogue is indexed (its subtitles are cached, so a search reads them at once), and a
-**no subs** chip one that indexing found has no text subtitles; a file with neither isn't
-indexed yet (or its subtitles changed since). The chips update when **Index N files** or
-**Re-index all** finishes; `quipclipper library.browse` (or `ls`) prints them as
-`[indexed]` / `[no subs]`.
+**no subs** chip one that indexing found has no text subtitles, and a **changed** chip one
+that was indexed but whose subtitles changed since (Bazarr upgraded them, or the file was
+replaced); a file with none isn't indexed yet. The chips update when **Index N files**,
+**Re-index all** or **Re-index them** finishes; `quipclipper library.browse` (or `ls`) prints
+them as `[indexed]` / `[changed]` / `[no subs]`.
 **Search library** filters the folder by name; the dialogue search then covers exactly
 the folders the filter found (the chip says **N folders**), and clearing it goes back to
 the current folder, searched recursively.
@@ -196,6 +197,20 @@ stay indexed. Starting it again picks up where it stopped, after a cancel or a s
 restart alike: files already indexed, or known to have no subtitles, are skipped. The home
 card also says how the last run ended. In the CLI, `quipclipper index.library-status`
 shows the same.
+
+<a id="changed-subtitles"></a>**Subtitles that changed since indexing.** Search reads a
+file's cached subtitles only while they match its subtitle file, so a file whose subtitles
+changed (a **changed** chip) is left out of search until it is indexed again. Opening a folder
+or searching checks the files it shows (file dates only, nothing is read), and when some
+changed, a banner says so: "3 files have new or changed subtitles since indexing — **Re-index
+them**". The button re-indexes exactly those files, in the background one after another at
+idle priority, and the chips and the folder's card update when it is done. Once an hour the
+server also checks the whole library the same way (listing folders and reading file dates
+only, at idle priority), and the library's home card shows what it found: **Index out of date:
+N files**, with the same **Re-index them** button. Nothing is re-indexed on its own: only these
+buttons, the CLI (`quipclipper index.changes`, `index.reindex-changed`, `index.file PATH…`) and
+the [Bazarr, Sonarr and Radarr hooks](HOOKS.md) do it. The check's interval is
+`QC_INDEX_CHECK_INTERVAL` (seconds, `0` = off; NixOS: `indexCheckInterval`).
 
 With Jellyfin set up, a **Now playing** card at the top of the library lists what each
 Jellyfin client is playing; see [Now playing (Jellyfin)](#now-playing-jellyfin).

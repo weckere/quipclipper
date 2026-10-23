@@ -122,23 +122,46 @@ class SubtitleCache:
     def index_state(self, video: Path, siblings: list[Path] | None = None,
                     names: set[str] | None = None) -> str:
         """For a library row: "indexed" (the auto-selected subtitles are cached and
-        current), "no_subs" (indexing found none to cache) or "not_indexed". One key,
-        so one stat of the source and at most two lookups here; ``siblings`` (the
+        current), "no_subs" (indexing found none to cache), "changed" (indexed once, but
+        its subtitle source changed since: see :meth:`_changed`) or "not_indexed". One
+        key, so one stat of the source and at most two lookups here; ``siblings`` (the
         folder's listing) spares listing the folder again, and ``names`` (from
-        :meth:`entry_names`) the lookups."""
+        :meth:`entry_names`) the lookups. Never reads a subtitle file."""
         try:
-            key = self._cache_key(video, siblings=siblings)
+            mtime = self._source_mtime(video, siblings)
+            key = self._key_at(video, mtime)
             if names is not None:
                 if key + ".json" in names:
                     return "indexed"
-                return "no_subs" if key + ".nosubs" in names else "not_indexed"
-            if (self._dir / (key + ".json")).exists():
-                return "indexed"
-            if (self._dir / (key + ".nosubs")).exists():
-                return "no_subs"
+                if key + ".nosubs" in names:
+                    return "no_subs"
+            else:
+                if (self._dir / (key + ".json")).exists():
+                    return "indexed"
+                if (self._dir / (key + ".nosubs")).exists():
+                    return "no_subs"
+            if self._changed(video, mtime):
+                return "changed"
         except OSError:
             pass
         return "not_indexed"
+
+    @staticmethod
+    def _key_at(video: Path | str, mtime: float, tkey: str = "auto") -> str:
+        return hashlib.sha256(f"{video}:{mtime}:{tkey}".encode()).hexdigest()
+
+    def _changed(self, video: Path, mtime: float) -> bool:
+        """True when ``video`` has cache entries (from the owner map, kept in memory)
+        but none was written at its subtitle source's current ``mtime``: it was indexed,
+        and its sidecar or the file itself changed since. A file only ever opened with
+        an explicit track, at the current mtime, is not "changed", just not indexed."""
+        target = str(video)
+        with self._owners_lock:
+            names = list(self._owners().get(target, ()))
+        if not names:
+            return False
+        current = {self._key_at(target, mtime, t) for t in ("auto", *map(str, range(16)))}
+        return not any(n.rsplit(".", 1)[0] in current for n in names)
 
     # --- files with no usable subtitles -------------------------------------
 

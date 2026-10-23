@@ -333,8 +333,10 @@ def _fmt_entries(data: dict) -> None:
         kind = e.get("type") or e.get("kind") or ("dir" if e.get("is_dir") else "file")
         icon = {"dir": "📁", "folder": "📁", "epub": "📚", "audio": "🎵",
                 "youtube": "▶", "video": "🎬"}.get(kind, "  ")
-        # The dialogue index (library.browse): "indexed", or "no subs" when indexing found none.
+        # The dialogue index (library.browse): "indexed", "changed" (its subtitles changed
+        # since indexing), or "no subs" when indexing found none.
         state = {"indexed": typer.style("  [indexed]", fg="green"),
+                 "changed": typer.style("  [changed]", fg="yellow"),
                  "no_subs": typer.style("  [no subs]", fg="yellow")}.get(e.get("index_state"), "")
         typer.echo(f"{icon} {e.get('name', '')}{state}  {typer.style(e.get('path', ''), dim=True)}")
 
@@ -435,6 +437,21 @@ def _fmt_index_file_status(data: dict) -> None:
                    + (f"  ({r['error']})" if r.get("error") else ""))
     if not job and not data.get("pending") and not data.get("recent"):
         typer.echo("Nothing re-indexed since the server started.")
+
+
+def _fmt_index_changes(data: dict) -> None:
+    n = data.get("changed", 0)
+    typer.echo(f"{n} file{'' if n == 1 else 's'} with subtitles changed since indexing"
+               + (" (re-index them with `quipclipper index.reindex-changed`)" if n else ""))
+    for f in data.get("files") or []:
+        typer.echo(f"changed        {f}")
+    last = data.get("last_check") or {}
+    if last:
+        typer.secho(f"last check: {last.get('files', 0)} files in {last.get('duration_s', 0)} s"
+                    + (f" ({last['error']})" if last.get("error") else ""), dim=True)
+    interval = data.get("interval_s") or 0
+    typer.secho(f"checked every {interval / 60:g} min" if interval else
+                "the timed check is off (QC_INDEX_CHECK_INTERVAL=0)", dim=True)
 
 
 def _fmt_jobs(data: dict) -> None:
@@ -596,6 +613,7 @@ _FORMATTERS = {
     "item.fetch-subs": _fmt_job, "index.fetch-subs": _fmt_job,
     "index.library": _fmt_lib_job, "index.library-status": _fmt_lib_index,
     "index.file": _fmt_index_file, "index.file-status": _fmt_index_file_status,
+    "index.changes": _fmt_index_changes, "index.reindex-changed": _fmt_index_file,
     "bookmark.list": _fmt_bookmarks, "clips.list": _fmt_clips,
     "item.script": _fmt_script, "item.info": _fmt_item, "server.health": _fmt_health,
     "jellyfin.sessions": _fmt_sessions, "jellyfin.lookup": _fmt_lookup,

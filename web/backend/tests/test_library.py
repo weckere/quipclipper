@@ -103,7 +103,8 @@ def test_browse_index_state_from_one_listing(tmp_path: Path, monkeypatch) -> Non
     cache.resolve(media / "stale.mkv")
     monkeypatch.setattr(sub_cache_mod, "list_embedded_tracks", lambda video: [])
     assert cache.mark_no_subs(media / "nosubs.mkv")
-    # The subtitles changed after indexing: the cached cues no longer count.
+    # The subtitles changed after indexing: the cached cues no longer count, and the row
+    # says it changed (not that it was never indexed).
     stale = media / "stale.srt"
     os.utime(stale, (stale.stat().st_atime, stale.stat().st_mtime + 10))
 
@@ -120,7 +121,7 @@ def test_browse_index_state_from_one_listing(tmp_path: Path, monkeypatch) -> Non
 
     state = {e.name: e.index_state for e in entries}
     assert state == {"Extras": None, "cached.mkv": "indexed", "nosubs.mkv": "no_subs",
-                     "fresh.mkv": "not_indexed", "stale.mkv": "not_indexed"}
+                     "fresh.mkv": "not_indexed", "stale.mkv": "changed"}
     # Without the predicate (other listings) the field stays empty.
     assert {e.index_state for e in browse(str(media), [media])} == {None}
 

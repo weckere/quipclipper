@@ -50,7 +50,8 @@ class Entry:
     is_book: bool = False  # EPUB3 media-overlay audiobook (browses into chapters)
     has_transcript: bool = False  # a machine transcript (M21), stored or in the library
     # The dialogue index (subtitle cache) for a media file in a browse listing: "indexed",
-    # "no_subs" or "not_indexed"; None for folders, books and other listings.
+    # "no_subs", "changed" (indexed, but its subtitles changed since) or "not_indexed";
+    # None for folders, books and other listings.
     index_state: str | None = None
 
 

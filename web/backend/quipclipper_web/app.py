@@ -79,6 +79,7 @@ from quipclipper_web import (
     __version__, clipmeta, deeplinks, epub_items, file_index, jellyfin, jellyfin_index, lib_index,
     library, lslink, lsset, media, peaks, youtube_items,
 )
+from quipclipper_web import index_changes as index_changes_mod
 from quipclipper_web.bookmarks import BookmarkStore
 from quipclipper_web.config import Settings
 from quipclipper_web.jobs import JobRegistry
@@ -480,6 +481,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     lib_submit = threading.Lock()
     # Re-index hooks (M20): files another app says changed, drained in the same pool.
     file_queue = file_index.FileQueue()
+    # Files whose subtitles changed since indexing (M20): noted by views and an hourly
+    # timestamp-only pass; only ever re-indexed on request (index_changes).
+    index_changes = index_changes_mod.ChangeLog(settings.state_dir)
+
+    def _changes_scan():
+        roots = list(settings.media_roots)
+        folders = [r for r in roots if r.is_dir()]
+        if len(folders) < len(roots):  # an unmounted pool would read as "all clear"
+            raise OSError("a media root is missing: "
+                          + ", ".join(str(r) for r in roots if r not in folders))
+        found, _, _ = _media_under(folders, set())
+        cached = sub_cache.entry_names()
+        for c, own in found:
+            yield c, sub_cache.index_state(c, siblings=own, names=cached)
+
+    index_check = index_changes_mod.HourlyCheck(index_changes, _changes_scan,
+                                                settings.index_check_interval)
     stt_submit = threading.Lock()  # one check-then-submit at a time (no twin jobs)
 
     def _stt_existing(key: str):
@@ -507,7 +525,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         if jf_index is not None:
             jf_index.refresh_if_stale()  # build (or freshen) the path index in the background
+        index_check.start()  # a check only: it never re-indexes
         yield
+        index_check.stop()
         if jf_refresher is not None:
             jf_refresher.cancel()
         jobs.shutdown()
@@ -1364,7 +1384,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # their subtitles are cached, so a search reads them and never runs ffmpeg
         # (extraction takes 1-9 s a file; the folder's Index does it). A file not
         # indexed is searched on its stored machine transcript if it has one, else
-        # counted in `not_indexed`. A read-along book found in a folder is counted in
+        # counted in `not_indexed`, or in `changed` when it was indexed but its subtitles
+        # changed since (listed in `changed_files` for the banner's Re-index, and noted
+        # for the out-of-date badge). A read-along book found in a folder is counted in
         # `books_not_searched`: it has no index, and parsing it each search is slow
         # (wizrock: 31 books, 30-40 s); a book given as a path is searched. One listing
         # per folder serves each file's sidecar lookups, and the per-file stats of the
@@ -1383,9 +1405,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         with ThreadPoolExecutor(max_workers=8) as pool:
             classified = list(pool.map(_classify, found))
-        videos = sorted((x for x in classified if x[2] != "not_indexed"),
+        videos = sorted((x for x in classified if x[2] not in ("not_indexed", "changed")),
                         key=lambda x: (x[0].name.lower(), str(x[0])))
-        not_indexed = len(classified) - len(videos)
+        changed_files = sorted(str(c) for c, _, st in classified if st == "changed")
+        not_indexed = len(classified) - len(videos) - len(changed_files)
+        index_changes.note((c, st) for c, _, st in classified)
         books.sort(key=lambda p: p.name.lower())
 
         def _search_one(item: tuple[Path, list[Path], str]) -> list[dict]:
@@ -1505,8 +1529,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # Not searched, so results may be partial: files whose subtitles aren't
             # indexed, and read-along books inside the folders.
             "not_indexed": not_indexed,
+            # Indexed once, but their subtitles changed since: left out until re-indexed
+            # (POST /api/index/file with these paths).
+            "changed": len(changed_files),
+            "changed_files": changed_files[:index_changes_mod.LIST_MAX],
             "books_not_searched": books_not_searched,
-            "capped": bool(not_indexed or books_not_searched),
+            "capped": bool(not_indexed or changed_files or books_not_searched),
             "count": len(all_hits),
             "matches": all_hits,
         }
@@ -1552,10 +1580,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # A file with no subtitles still has none to index, even with a machine transcript.
         indexed = sum(1 for st, _ in states if st == "indexed")
         no_subs = sum(1 for st, _ in states if st == "no_subs")
+        # Indexed once, but their subtitles changed since (the view's banner re-indexes
+        # exactly these); what this check saw also keeps the out-of-date badge current.
+        changed = sorted(str(c) for (c, _), (st, _) in zip(found, states) if st == "changed")
+        index_changes.note((c, st) for (c, _), (st, _) in zip(found, states))
         # Audio with no transcript of any kind isn't a media file yet (nothing to search),
         # but a folder transcription can give it one. ``skipped`` is always false now
         # (no folder is too big to count); over ``cap`` files, Index runs as a job.
         return {"total": len(found), "indexed": indexed, "no_subs": no_subs,
+                "changed": len(changed), "changed_files": changed[:index_changes_mod.LIST_MAX],
                 "transcribed": sum(1 for _, heard in states if heard),
                 "audio_untranscribed": bare if stt_on else 0, "skipped": False,
                 "cap": INDEX_CAP}
@@ -1637,6 +1670,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         def index(f: Path) -> str:
             try:
                 sub_cache.resolve(f)
+                index_changes.forget(f)
                 return "indexed"
             except (ValueError, FileNotFoundError, RuntimeError):
                 # Nothing to index (no sidecar, no text track)? Remember it, so no run
@@ -1683,6 +1717,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def _reindex_one(f: Path, force: bool) -> str:
         """Bring one file's index entry up to date: "indexed", "current" (it already
         was), "no_subs" or "missing". Runs inside at_idle_priority."""
+        outcome = _reindex_state(f, force)
+        index_changes.forget(f)
+        return outcome
+
+    def _reindex_state(f: Path, force: bool) -> str:
         if not f.is_file():
             return "missing"
         if force:
@@ -1725,9 +1764,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return lib_jobs.submit(_file_job, label="Re-index changed subtitles (low priority)",
                                cancellable=True).id
 
-    def _queue_files(raw: list[str], force: bool) -> dict:
+    def _queue_files(raw: list[str], force: bool, limit: bool = True) -> dict:
         """Map, check and queue ``raw`` paths; one result row per path."""
-        if len(raw) > file_index.MAX_PATHS:
+        if limit and len(raw) > file_index.MAX_PATHS:
             raise HTTPException(status_code=400,
                                 detail=f"At most {file_index.MAX_PATHS} paths at a time.")
         rows: list[dict] = []
@@ -1804,6 +1843,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         job = lib_jobs.get(st["job_id"] or "")
         return {**st, "job": _job_dict(job) if job is not None else None}
 
+    # --- subtitles changed since indexing (M20) --------------------------------------
+    # A check, never a re-index: these report what changed, and the one POST queues those
+    # files for the re-index job above, only because someone pressed its button.
+
+    @app.get("/api/index/changes")
+    def index_changes_status() -> dict:
+        """Files whose subtitles changed since they were indexed, as the hourly
+        timestamp-only check and the views since found them: ``{changed, files,
+        last_check, interval_s, checking}``."""
+        return {**index_changes.summary(), "interval_s": index_check.interval,
+                "checking": index_check.running}
+
+    @app.post("/api/index/changes/reindex")
+    def index_changes_reindex() -> JSONResponse:
+        """Queue every file the checks found changed for the re-index job (idle
+        priority, one at a time). Returns the job like POST /api/index/file."""
+        files = index_changes.files()
+        if not files:
+            return JSONResponse({"job_id": None, "queued": 0, "files": []})
+        result = _queue_files(files, False, limit=False)
+        for row in result["files"]:  # gone or moved since the check: drop it
+            if row["status"] not in ("queued", "already_queued"):
+                index_changes.forget(row["path"])
+        return JSONResponse(result, status_code=202 if result["queued"] else 200)
+
     # Query-string-only POST like /api/search/folder/index — same CSRF surface,
     # covered by the same X-Quipclipper requirement in _security_gate.
     @app.post("/api/items/subtitles/reindex")
@@ -1831,6 +1895,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             cues = sub_cache.resolve(p)
         except (ValueError, FileNotFoundError, RuntimeError) as exc:
             raise HTTPException(status_code=409, detail=str(exc))
+        index_changes.forget(p)
         return {"cleared": cleared, "cues": len(cues)}
 
     # --- subtitle backfill from YouTube ----------------------------------------

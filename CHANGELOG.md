@@ -185,6 +185,18 @@ scripts/release.sh leaves this block in Unreleased; delete the two marker lines 
   `hookTokenFile`, `pathMap`). A library run takes the hooks' files between its own. The
   hook script `contrib/hooks/quipclipper-reindex` needs only `sh` and `curl`; setup for each
   app: docs/HOOKS.md.
+- **Subtitles that changed since indexing are noticed, and re-indexed only when you ask:** a
+  file indexed before its subtitles changed (Bazarr upgraded them, the file was replaced) now
+  shows a **changed** chip instead of reading as never indexed (`index_state: "changed"`).
+  Opening a folder or searching checks what it shows, and a banner says "N files have new or
+  changed subtitles since indexing — **Re-index them**", which re-indexes exactly those files
+  in the background at idle priority. Folder search counts them apart (`changed`,
+  `changed_files`), as does index-status. Once an hour (`QC_INDEX_CHECK_INTERVAL`, `0` = off;
+  NixOS `indexCheckInterval`) the server checks the whole library the same way, listing
+  folders and reading file dates only, at idle priority, and the library's home card shows
+  **Index out of date: N files** with the same button (`quipclipper index.changes`,
+  `index.reindex-changed`, `GET /api/index/changes`). A library run now indexes changed files
+  too. The checks never re-index anything themselves.
 
 ### Fixed
 

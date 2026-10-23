@@ -181,6 +181,20 @@ in
       '';
     };
 
+    indexCheckInterval = lib.mkOption {
+      type = lib.types.ints.unsigned;
+      default = 3600;
+      example = 0;
+      description = ''
+        Seconds between the background checks for files whose subtitles changed since
+        they were indexed (`QC_INDEX_CHECK_INTERVAL`); `0` turns the timed check off
+        (opening a folder or searching still checks what it shows). A check lists
+        folders and reads file dates only, at idle priority, and skips its turn while
+        the last one still runs. It never re-indexes: the library page shows "Index out
+        of date: N files" with a button for that.
+      '';
+    };
+
     pathMap = lib.mkOption {
       type = lib.types.attrsOf lib.types.str;
       default = { };
@@ -596,6 +610,7 @@ in
         QC_PORT = toString cfg.listenPort;
         QC_MAX_CONCURRENT_JOBS = toString cfg.maxConcurrentJobs;
         QC_SUBTITLE_LANGS = lib.concatStringsSep "," cfg.subtitleLangs;
+        QC_INDEX_CHECK_INTERVAL = toString cfg.indexCheckInterval;
       } // lib.optionalAttrs (cfg.youtubeDir != null) {
         QC_YOUTUBE_DIR = toString cfg.youtubeDir;
       } // lib.optionalAttrs (cfg.publicUrl != null) {

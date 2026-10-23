@@ -86,7 +86,8 @@ def run(job, *, paths: list[str], scan: Callable[[], Iterable[tuple[Path, str]]]
     says whether ``paths`` are the library roots (else one folder of it).
 
     ``scan`` yields ``(file, state)`` for every media file, state being what the cache
-    says: "indexed", "no_subs" or "not_indexed"; only "not_indexed" ones are indexed.
+    says: "indexed", "no_subs", "changed" or "not_indexed"; only "not_indexed" and
+    "changed" ones (indexed before their subtitles changed) are indexed.
     ``index(file)`` extracts and caches one file's subtitles (it runs inside
     :func:`at_idle_priority`) and returns "indexed", "no_subs", or raises for a file
     it couldn't tell about. ``between()`` runs before each file, at the same priority:
@@ -120,7 +121,7 @@ def _run(job, result: dict[str, Any], scan, index, save, now, between=None) -> d
         if job.cancel_requested:
             break
         result["files"] += 1
-        if state == "not_indexed":
+        if state in ("not_indexed", "changed"):
             todo.append(f)
         else:
             result["already"] += 1

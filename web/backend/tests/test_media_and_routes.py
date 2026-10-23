@@ -1911,13 +1911,15 @@ def test_index_marks_subtitle_less_files_and_status_counts_them(tmp_path: Path, 
         {"QC_MEDIA_ROOTS": str(media), "QC_STATE_DIR": str(tmp_path / "state")}))))
 
     before = client.get("/api/search/folder/index-status", params={"path": str(media)}).json()
-    assert before == {"total": 2, "indexed": 0, "no_subs": 0, "skipped": False, "cap": 500,
+    assert before == {"total": 2, "indexed": 0, "no_subs": 0, "changed": 0, "changed_files": [],
+                      "skipped": False, "cap": 500,
                       "transcribed": 0, "audio_untranscribed": 0}
 
     resp = client.post("/api/search/folder/index", params={"path": str(media)})
     assert resp.status_code == 200
     after = client.get("/api/search/folder/index-status", params={"path": str(media)}).json()
-    assert after == {"total": 2, "indexed": 1, "no_subs": 1, "skipped": False, "cap": 500,
+    assert after == {"total": 2, "indexed": 1, "no_subs": 1, "changed": 0, "changed_files": [],
+                     "skipped": False, "cap": 500,
                      "transcribed": 0, "audio_untranscribed": 0}
 
     probes.clear()

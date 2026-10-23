@@ -358,10 +358,19 @@ COMMANDS: tuple[Command, ...] = (
                           required=True),
                     Param("force", "bool", "Re-read files even when their index is "
                           "current.", default=False)),
-            ui="—"),
+            ui="Re-index them (the changed-subtitles banner in a folder and in search "
+               "results)"),
     Command("index.file-status", "Show the re-index hooks' queue: the job draining it, "
             "the files waiting, and the last results.", "GET", "/api/index/file",
             ui="—"),
+    Command("index.changes", "Show the files whose subtitles changed since they were "
+            "indexed, as the hourly timestamp-only check (and the folders viewed since) "
+            "found them. It only checks: nothing is re-indexed until you ask.", "GET",
+            "/api/index/changes", ui="Index out of date: N files (library home)"),
+    Command("index.reindex-changed", "Re-index every file `index.changes` lists, in the "
+            "background at idle priority, one at a time.", "POST",
+            "/api/index/changes/reindex",
+            ui="Re-index them (the Index out of date badge)"),
     Command("index.fetch-subs", "Fetch missing YouTube subtitles for every video in a "
             "folder.", "POST", "/api/search/folder/fetch-subs",
             params=(Param("path", "str", "Folder.", main=True, required=True),)

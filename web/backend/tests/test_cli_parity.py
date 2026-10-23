@@ -386,3 +386,14 @@ def test_round_trip_index_file(served, capsys):
     assert code != 0
     cli.main(["index.file", str(video), "--force"], transport=transport)
     assert "queued" in capsys.readouterr().out
+
+
+def test_round_trip_index_changes(served, capsys):
+    """index.changes / index.reindex-changed (M20): the out-of-date badge from the CLI."""
+    transport, media, clips, video = served
+    code, out = _run(transport, ["index.changes"], capsys)
+    assert code == 0 and _last_json(out)["changed"] == 0
+    code, out = _run(transport, ["index.reindex-changed"], capsys)
+    assert code == 0 and _last_json(out)["queued"] == 0
+    assert cli.main(["index.changes"], transport=transport) == 0
+    assert "0 files with subtitles changed since indexing" in capsys.readouterr().out

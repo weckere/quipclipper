@@ -267,6 +267,14 @@ select {
 .index-bar { height: 6px; margin-top: 0.55rem; max-width: 26rem; background: var(--raised); border-radius: 3px; overflow: hidden; }
 .index-bar span { display: block; height: 100%; width: 0; background: var(--accent); border-radius: 3px; transition: width 0.2s; }
 .index-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+/* Subtitles changed since indexing (M20): the row chip, the out-of-date badge, the banner. */
+.badge.idx-changed { background: var(--accent-soft); color: var(--accent-text); font-weight: 600; }
+.changed-banner {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem; margin-bottom: 0.75rem;
+  background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--accent);
+  border-radius: var(--radius-lg); padding: 0.6rem 1rem;
+}
+.changed-banner p { margin: 0; flex: 1 1 16rem; font-size: 0.9rem; }
 
 /* ---- Now playing (Jellyfin) --------------------------------------------------------------- */
 .nowplaying-card { margin-bottom: 0.75rem; }

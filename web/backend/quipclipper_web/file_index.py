@@ -37,8 +37,8 @@ from .jellyfin import map_path
 MEDIA_EXTS = frozenset(VIDEO_EXTS) | frozenset(AUDIO_EXTS)
 # Results kept for GET /api/index/file (newest last).
 RECENT = 50
-# Most paths one request may name.
-MAX_PATHS = 200
+# Most paths one request may name (a view's Re-index sends up to index_changes.LIST_MAX).
+MAX_PATHS = 1000
 
 
 def map_in(path: str, path_map: tuple[tuple[str, str], ...]) -> str:

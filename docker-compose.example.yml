@@ -54,6 +54,9 @@ services:
       # QC_PASSWORD (it adds a "hook" login). See docs/HOOKS.md.
       # QC_HOOK_TOKEN: "paste-a-long-random-string-here"
       # QC_PATH_MAP: /tv=/media/shows:/movies=/media/movies
+      # How often (seconds) to look for subtitles changed since indexing: file dates
+      # only, never a re-index (the library page offers a button). 0 = off.
+      # QC_INDEX_CHECK_INTERVAL: "3600"
     volumes:
       # Your media, mounted READ-ONLY. Left = host path, right = the in-container
       # path referenced by QC_MEDIA_ROOTS above.

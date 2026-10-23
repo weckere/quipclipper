@@ -32,7 +32,7 @@ async function postJSON(url, body) {
     try { detail = (await resp.json()).detail || detail; } catch {}
     throw new Error(detail);
   }
-  if (/^\/api\/(clip|youtube|media|items\/transcribe|search\/folder\/(index|fetch-subs|transcribe)|search\/library\/index)/.test(url)) nudgeJobs();
+  if (/^\/api\/(clip|youtube|media|items\/transcribe|search\/folder\/(index|fetch-subs|transcribe)|search\/library\/index|index\/(file|changes))/.test(url)) nudgeJobs();
   return resp.json();
 }
 
@@ -422,6 +422,7 @@ async function browse(path, { fromLink = false } = {}) {
   $("global-search-input").value = "";
   $("dialogue-search-status").hidden = true;
   $("reindex-folder-status").hidden = true;
+  hideChangedBanner();
   resetIndexCard();
   libIndexReset();
   // The dialogue search bar: a folder's Dialogue index card, or the library's at home.
@@ -530,12 +531,18 @@ function jfArtFallback(root, fallback) {
 }
 
 /** The dialogue index chip for a library row (library.browse's index_state): "indexed"
- *  (subtitles cached, so a search reads them at once) or "no subs"; none before indexing. */
+ *  (subtitles cached, so a search reads them at once), "changed" (indexed, but its
+ *  subtitles changed since: search leaves it out) or "no subs"; none before indexing. */
 function indexChipHtml(state) {
-  const chip = (text, name, title) => `<span class="badge idx-chip" title="${title}">` +
+  const chip = (text, name, title, cls = "") => `<span class="badge idx-chip${cls}" title="${title}">` +
     `<span aria-hidden="true">${text}</span><span class="visually-hidden">${name}</span></span>`;
   if (state === "indexed") {
     return chip("indexed", "dialogue indexed", "Dialogue indexed: its subtitles are cached, so a search reads them at once");
+  }
+  if (state === "changed") {
+    return chip("changed", "subtitles changed since indexing",
+      "Its subtitles changed since it was indexed, so search leaves it out until it is re-indexed (Re-index them, above)",
+      " idx-changed");
   }
   if (state === "no_subs") {
     return chip("no subs", "no subtitles to index",
@@ -850,6 +857,7 @@ const countOf = (n, noun) => `${(n || 0).toLocaleString()} ${noun}${n === 1 ? ""
 function searchSkipped(data) {
   const parts = [];
   if (data.not_indexed) parts.push(`${countOf(data.not_indexed, "file")} not indexed yet (Index a folder to include it)`);
+  if (data.changed) parts.push(`${countOf(data.changed, "file")} with subtitles changed since indexing (Re-index them, above)`);
   if (data.books_not_searched) parts.push(`${countOf(data.books_not_searched, "read-along book")} (search a book on its own)`);
   return parts.length ? `. Not searched: ${parts.join("; ")}.` : "";
 }
@@ -864,6 +872,7 @@ async function dialogueSearch(query, folders) {
   $("browser").classList.remove("hits");
   $("browser-empty").hidden = true;
   const status = $("dialogue-search-status");
+  hideChangedBanner();
   status.textContent = "Searching subtitles…";
   status.hidden = false;
   clearTimeout(librarySearchTimer);
@@ -884,6 +893,7 @@ async function dialogueSearch(query, folders) {
 
   status.textContent = `${data.count} match${data.count !== 1 ? "es" : ""} across ${countOf(data.files_scanned, "indexed file")}` +
     searchSkipped(data);
+  showChangedBanner(data.changed_files, data.changed);
 
   if (!data.matches.length) {
     $("search-batch").hidden = true;
@@ -1126,6 +1136,7 @@ function showIndexScope(n) {
 let indexInBackground = false;
 
 function renderIndexStatus(data) {
+  showChangedBanner(data.changed_files, data.changed);
   const text = $("index-card-text");
   const index = $("index-btn");
   index.hidden = true;
@@ -1274,6 +1285,122 @@ $("reindex-folder-btn").addEventListener("click", async () => {
   setIndexBusy(false);
 });
 
+// --- subtitles changed since indexing (M20) ---------------------------------------------
+// A folder's index status and a folder search report the files whose subtitles changed
+// since they were indexed (search leaves them out); the banner offers to re-index exactly
+// those. The library home shows what the hourly timestamp-only check found ("Index out of
+// date: N files"). Both only check: re-indexing starts from these buttons, never by itself,
+// and runs as the server's idle-priority re-index job (POST /api/index/file).
+let changedPaths = [];
+let changedGen = 0;  // a newer banner (another folder or search) wins over a finished poll
+
+function hideChangedBanner() {
+  changedGen++;
+  changedPaths = [];
+  $("changed-banner").hidden = true;
+}
+
+function showChangedBanner(paths, total) {
+  hideChangedBanner();
+  const n = total || 0;
+  if (!n) return;
+  changedPaths = paths || [];
+  $("changed-banner-text").textContent =
+    `${plural(n, "file")} ${n === 1 ? "has" : "have"} new or changed subtitles since indexing —`;
+  const btn = $("changed-banner-btn");
+  btn.hidden = false;
+  btn.disabled = false;
+  $("changed-banner").hidden = false;
+  // One Re-index button on screen: the banner names these files, so the home badge waits.
+  $("changes-badge").hidden = $("changes-reindex-btn").hidden = true;
+}
+
+/** Follow the server's re-index job (GET /api/index/file) until nothing is waiting, telling
+ *  `say` how far it got; then `done()`. `alive()` false stops it (the view moved on). */
+async function followReindex(say, done, alive = () => true) {
+  while (alive()) {
+    await new Promise((r) => setTimeout(r, document.hidden ? 5000 : 1500));
+    if (!alive()) return;
+    let st;
+    try { st = await getJSON("/api/index/file"); } catch { continue; }
+    if (!st.job_id && !st.pending.length) { done(st); return; }
+    const p = st.job && st.job.progress ? ` · ${st.job.progress}` : "";
+    say(`Re-indexing at low priority: ${plural(st.pending.length, "file")} waiting${p}`);
+  }
+}
+
+/** The folder on screen, after a re-index: its card, its rows' chips and the badge. */
+function refreshAfterReindex() {
+  if (currentBrowsePath && !dialogueSearchScope && currentBrowsePath !== "yt:") {
+    checkFolderIndex(currentBrowsePath);
+    refreshIndexChips(currentBrowsePath);
+  } else if (!currentBrowsePath && !dialogueSearchScope) {
+    refreshChanges();
+  }
+}
+
+$("changed-banner-btn").addEventListener("click", async () => {
+  const paths = changedPaths.slice();
+  if (!paths.length) return;
+  const gen = changedGen;
+  const btn = $("changed-banner-btn"), text = $("changed-banner-text");
+  btn.disabled = true;
+  try {
+    await postJSON("/api/index/file", { paths });
+  } catch (err) {
+    text.textContent = `Couldn't re-index them: ${err.message}`;
+    btn.disabled = false;
+    return;
+  }
+  btn.hidden = true;
+  text.textContent = `Re-indexing ${plural(paths.length, "file")} in the background at low priority…`;
+  followReindex((msg) => { if (gen === changedGen) text.textContent = msg; }, () => {
+    if (gen !== changedGen) return;
+    text.textContent = `Re-indexed ${plural(paths.length, "file")}. Search reads their new subtitles now.`;
+    changedPaths = [];
+    refreshAfterReindex();
+  }, () => gen === changedGen);
+});
+
+let changesCheckId = 0;
+
+/** The library home's "Index out of date: N files" badge (GET /api/index/changes). */
+async function refreshChanges() {
+  const myId = ++changesCheckId;
+  let data;
+  try { data = await getJSON("/api/index/changes"); } catch { return; }
+  if (myId !== changesCheckId || currentBrowsePath || dialogueSearchScope) return;
+  if (!$("changed-banner").hidden) return;  // the banner offers the same button
+  const badge = $("changes-badge"), btn = $("changes-reindex-btn");
+  badge.hidden = btn.hidden = !data.changed;
+  if (!data.changed) return;
+  const last = data.last_check;
+  $("changes-badge-chip").textContent = `Index out of date: ${plural(data.changed, "file")}`;
+  $("changes-badge-note").textContent = last && last.at
+    ? `Checked ${new Date(last.at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.`
+    : "";
+  badge.title = "Files whose subtitles changed since they were indexed, found by the hourly check "
+    + "(file dates only) and by the folders you opened. Search leaves them out until they are "
+    + "re-indexed; nothing re-indexes on its own.";
+  btn.disabled = false;
+}
+
+$("changes-reindex-btn").addEventListener("click", async () => {
+  const btn = $("changes-reindex-btn"), note = $("changes-badge-note");
+  btn.disabled = true;
+  let r;
+  try {
+    r = await postJSON("/api/index/changes/reindex", {});
+  } catch (err) {
+    note.textContent = `Couldn't re-index them: ${err.message}`;
+    btn.disabled = false;
+    return;
+  }
+  note.textContent = `Re-indexing ${plural(r.queued || 0, "file")} in the background at low priority…`;
+  const home = () => !currentBrowsePath && !dialogueSearchScope;
+  followReindex((msg) => { if (home()) note.textContent = msg; }, () => refreshChanges(), home);
+});
+
 // --- library index (M20) -------------------------------------------------------------
 // The whole library, or a folder over the index cap, as one background job at low
 // priority (POST /api/search/library/index). It starts only from these buttons, after a
@@ -1291,6 +1418,8 @@ function libIndexReset() {
   $("lib-index-btn").hidden = true;
   $("lib-index-cancel").hidden = true;
   $("lib-index-status").hidden = true;
+  $("changes-badge").hidden = true;
+  $("changes-reindex-btn").hidden = true;
 }
 
 /** The library home: the card is the library's own. */
@@ -1301,6 +1430,7 @@ function libIndexHome() {
   for (const id of ["index-btn", "reindex-folder-btn", "fetch-folder-subs-btn", "stt-folder-nosubs", "stt-folder-gaps"]) $(id).hidden = true;
   $("lib-index-btn").hidden = false;
   refreshLibIndex();
+  refreshChanges();
 }
 
 const libClock = (s) => (s < 60 ? "under a minute" : s < 3600 ? `~${Math.round(s / 60)} min` : `~${Math.floor(s / 3600)} h ${Math.round((s % 3600) / 60)} min`);

@@ -73,6 +73,9 @@ class Settings:
     # that may only queue re-indexes (POST /api/index/file).
     path_map: tuple[tuple[str, str], ...] = ()
     hook_tokens: frozenset[str] = field(default=frozenset(), repr=False)
+    # Seconds between the timestamp-only checks for subtitles changed since indexing
+    # (quipclipper_web.index_changes); 0 = never.
+    index_check_interval: float = 3600.0
     # Machine transcription (M21): whisper.cpp and its models, from QC_WHISPER_* (the
     # NixOS module's transcribe.* options). No model = the feature reports itself off.
     whisper: WhisperConfig = field(default_factory=WhisperConfig)
@@ -155,6 +158,10 @@ class Settings:
             # file named by QC_HOOK_TOKEN_FILE; comma-separated for rotation) is a
             # low-privilege token: it may only queue re-indexes, nothing else.
             path_map=_path_map(e.get("QC_PATH_MAP")),
+            # How often (seconds) a background pass looks for files whose subtitles
+            # changed since indexing: listings and stats only, at idle priority, and it
+            # never re-indexes (the library page offers a button). 0 = never.
+            index_check_interval=float(e.get("QC_INDEX_CHECK_INTERVAL", "3600") or 0),
             hook_tokens=frozenset(
                 t.strip() for t in _secret(e, "QC_HOOK_TOKEN").split(",") if t.strip()
             ),
