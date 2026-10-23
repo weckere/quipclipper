@@ -555,7 +555,9 @@ def search_cmd(
              "Default: English. Local only.",
     ),
     limit: int = typer.Option(10, "--limit", "-n", help="Max matches to show."),
-    min_score: float = typer.Option(60.0, "--min-score", help="Drop matches below this score (0-100)."),
+    min_score: float = typer.Option(
+        60.0, "--min-score", help="Drop matches below this score (0-100; 100 is the words "
+                                  "verbatim, 75 and under the words in any order)."),
     max_span: int = typer.Option(3, "--max-span", help="Max consecutive captions a match may join."),
     machine: Literal["include", "exclude", "only"] = typer.Option(
         "include", "--machine", hidden=not stt_enabled(),
@@ -791,7 +793,9 @@ def clip(
     out: Optional[Path] = typer.Option(None, "--out", "-o", help="Output path (auto-named; not allowed when clipping multiple matches). Local only."),
     out_dir: Optional[Path] = typer.Option(None, "--out-dir", help="Server mode: download the finished clip here. Local mode: base folder for --template names."),
     wait: bool = typer.Option(True, "--wait/--no-wait", help="Server mode: wait for the clip job to finish."),
-    min_score: float = typer.Option(60.0, "--min-score", help="Drop matches below this score (0-100)."),
+    min_score: float = typer.Option(
+        60.0, "--min-score", help="Drop matches below this score (0-100; 100 is the words "
+                                  "verbatim, 75 and under the words in any order)."),
     max_span: int = typer.Option(3, "--max-span", help="Max consecutive captions a match may join."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip all confirmation prompts (including the remux disk-space confirmation)."),
 ):

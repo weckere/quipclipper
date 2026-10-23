@@ -145,6 +145,16 @@ scripts/release.sh leaves this block in Unreleased; delete the two marker lines 
   null for folders), worked out from one listing of the folder, and `library.browse` in the
   CLI prints `[indexed]` / `[no subs]`. Listing a folder no longer lists it again for every
   file's sidecar lookup.
+- **Dialogue search ranks the exact line first (D-041):** a score of 100 now means the line
+  holds the query's words verbatim, in order and next to each other, ignoring case,
+  punctuation, apostrophes and subtitle markup; whole-line matches come first. The words in
+  order with a typo, a word missing or an extra word score up to 99, and the words in any
+  order at most 75. Before, any line holding the query's words in any order scored 100
+  ("make it so" matched "You make it sound…" and "it… so… make" at 100), and a short line
+  inside the query did too ("HOT" for "tea earl grey hot"). Equal scores keep one order
+  across files (a subtitle line before a machine line, then the closer line, then file and
+  time), the score shows as a % with hover text in both searches, and a library-wide search
+  is about four times faster.
 
 ### Fixed
 

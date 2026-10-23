@@ -60,6 +60,10 @@ class Match:
     score: float  # 0-100, higher is better
     cues: tuple[Cue, ...]  # one cue, or several when a phrase spans captions
     text: str  # joined text of the matched cues
+    # How closely the whole matched text matches the whole query (0-100): the
+    # tiebreak among equal scores, so "Make it so." ranks above a longer line that
+    # also holds the phrase verbatim.
+    fit: float = 0.0
 
     @property
     def start(self) -> float:

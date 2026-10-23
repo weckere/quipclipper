@@ -919,7 +919,7 @@ async function dialogueSearch(query, folders) {
           `<span class="hit-text">${hit.machine ? `${AUTO_CHIP}<span class="visually-hidden">Machine transcript: </span>` : ""}${hit.speaker ? `<span class="hit-speaker">${escapeHtml(hit.speaker)}</span>` : ""}${highlightMatch(hit.text, query)}</span>` +
           `<span class="hit-time">${hit.start_ts} – ${hit.end_ts}</span>` +
         `</div>` +
-        `<span class="hit-score" title="Match score">${hit.score}%</span>` +
+        `<span class="hit-score" title="${SCORE_TITLE}">${hit.score}%</span>` +
         `<div class="hit-actions">` +
           `<button type="button" class="mark-icon-btn hit-bookmark" data-action="bookmark.add" title="Save this line as a bookmark" aria-label="Bookmark the line at ${hit.start_ts}"><span class="star" aria-hidden="true">★</span></button>` +
           `<button type="button" class="mark-icon-btn make-clip-btn hit-clip" data-action="clip.create" title="Cut a clip of this line with the bar's options" aria-label="Clip the line at ${hit.start_ts}"><span class="scissors" aria-hidden="true">✂</span></button>` +
@@ -2792,7 +2792,7 @@ async function doSearch(query, { focus = true } = {}) {
     li.innerHTML =
       `<span class="result-text">${m.machine ? `${AUTO_CHIP}<span class="visually-hidden">Machine transcript: </span>` : ""}${escapeHtml(m.text)}</span>` +
       `<span class="result-meta">` +
-        `<span class="result-score">${m.score}</span>` +
+        `<span class="result-score" title="${SCORE_TITLE}">${m.score}%</span>` +
         `<span>${m.start_ts} – ${m.end_ts}</span>` +
       `</span>`;
     makeActivatable(li, "Play from this line and select it");
@@ -3117,6 +3117,8 @@ let pendingCueSelect = null;
 // One tooltip for every script line (not one per line): what a click does.
 const SCRIPT_LINE_TITLE = "Click or Enter to play from here; Start / End (S / E) set the selection; ↑ ↓ move between lines";
 // A machine transcript line (M21) carries the "auto" chip, its own colour and this hover text.
+// What a search score means (D-041), on every score shown.
+const SCORE_TITLE = "Match score: 100% only when the line holds your words verbatim, in order; below 100 they differ (a typo, a word missing or added); 75% and under, the words in any order";
 const MACHINE_TITLE = "Machine transcript (whisper), not the subtitles: it may be wrong";
 const AUTO_CHIP = `<span class="auto-chip" aria-hidden="true" title="${MACHINE_TITLE}">auto</span>`;
 

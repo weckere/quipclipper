@@ -1315,6 +1315,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "end_ts": format_timestamp(m.end),
                     "cue_count": len(m.cues),
                     "machine": m.machine,
+                    "_fit": m.fit,
                 }
                 for m in matches
             ]
@@ -1334,7 +1335,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     limit=limit, min_score=min_score, max_span=max_span,
                 ):
                     cand.append((s, m))
-            cand.sort(key=lambda sm: -sm[1].score)
+            cand.sort(key=lambda sm: (-sm[1].score, -sm[1].fit, sm[0].index, sm[1].start))
             title = book.title or epub.stem
             return [
                 {
@@ -1348,6 +1349,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "start_ts": format_timestamp(m.start),
                     "end_ts": format_timestamp(m.end),
                     "cue_count": len(m.cues),
+                    "_fit": m.fit,
                 }
                 for s, m in cand[:limit]
             ]
@@ -1374,6 +1376,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "start_ts": format_timestamp(m.start),
                     "end_ts": format_timestamp(m.end),
                     "cue_count": len(m.cues),
+                    "_fit": m.fit,
                 }
                 for m in matches
             ]
@@ -1387,8 +1390,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             for fut in as_completed(futures):
                 all_hits.extend(fut.result())
 
-        all_hits.sort(key=lambda h: -h["score"])
+        # Best score first (D-041: 100 only for the words verbatim); at an equal score
+        # a subtitle line before a machine one, then the line closest to the whole
+        # query, then file and time, so equal hits keep one order however the
+        # threads finish.
+        all_hits.sort(key=lambda h: (-h["score"], h.get("machine", False),
+                                     -h["_fit"], h["path"], h["start"]))
         for h in all_hits:
+            del h["_fit"]  # a sort key only, not part of the response
             _with_link(h, _item_link(h["path"], sel=(h["start"], h["end"])))
 
         return {

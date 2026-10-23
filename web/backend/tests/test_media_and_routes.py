@@ -1502,6 +1502,34 @@ def test_folder_dialogue_search(tmp_path: Path) -> None:
     assert all(m["file"] == "episode2.mkv" for m in data["matches"])
 
 
+def test_folder_dialogue_search_ranks_verbatim_first(tmp_path: Path) -> None:
+    """Across files only a verbatim line scores 100 (D-041), the whole-line one
+    first; equal scores keep one order, and the sort key stays out of the hits."""
+    lines = {
+        "a_soup": "So, I make it.",
+        "b_sound": "You make it sound easy.",
+        "c_longer": "Make it so, Number One.",
+        "d_extra": "Make it all so.",
+        "e_exact": "Make it so.",
+    }
+    for name, text in lines.items():
+        (tmp_path / f"{name}.mkv").write_bytes(b"")
+        (tmp_path / f"{name}.srt").write_text(f"1\n00:00:01,000 --> 00:00:03,000\n{text}\n")
+
+    client = _client(tmp_path)
+    get = lambda: client.get(  # noqa: E731
+        "/api/search/folder", params={"path": str(tmp_path), "query": "make it so"}).json()
+    data = get()
+    files = [m["file"] for m in data["matches"]]
+    assert files[:3] == ["e_exact.mkv", "c_longer.mkv", "d_extra.mkv"]
+    scores = {m["file"]: m["score"] for m in data["matches"]}
+    assert scores["e_exact.mkv"] == scores["c_longer.mkv"] == 100
+    assert all(s < 100 for f, s in scores.items() if f not in ("e_exact.mkv", "c_longer.mkv"))
+    assert scores.get("a_soup.mkv", 0) < scores["d_extra.mkv"]
+    assert all("_fit" not in m for m in data["matches"])
+    assert [m["file"] for m in get()["matches"]] == files
+
+
 def test_folder_dialogue_search_no_subs(tmp_path: Path) -> None:
     """Files without subtitles are skipped gracefully."""
     (tmp_path / "nosubs.mkv").write_bytes(b"")

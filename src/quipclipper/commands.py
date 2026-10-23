@@ -88,7 +88,8 @@ class Command:
 # --- shared parameter sets ------------------------------------------------
 
 _SEARCH_TUNING = (
-    Param("min_score", "float", "Drop matches scoring below this (0-100).", default=60.0),
+    Param("min_score", "float", "Drop matches scoring below this (0-100; 100 is the words "
+          "verbatim, 75 and under the words in any order).", default=60.0),
     Param("max_span", "int", "Most consecutive captions one match may join.", default=3),
 )
 

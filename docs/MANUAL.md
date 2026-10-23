@@ -189,6 +189,19 @@ Jellyfin client is playing; see [Now playing (Jellyfin)](#now-playing-jellyfin).
 Type a line in the search box and press Enter. Search is fuzzy (typos and paraphrase are
 fine) and phrases that span two or three subtitles still match.
 
+<a id="search-scores"></a>Each match has a score, best first:
+
+- **100%** only when the line holds your words verbatim: in order and next to each other,
+  ignoring case, punctuation, apostrophes and subtitle markup (`<i>`, `♪`, speaker dashes).
+  "make it so" scores 100 against "Make it so, Number One." Among these, the line that is
+  just your words comes first.
+- **Up to 99%** for your words in order with a difference: a typo ("mak it so"), a word
+  missing, or an extra word ("Make it all so.").
+- **75% and under** for your words in any order ("It was so hard to make.").
+
+Matches under 60 are left out (`--min-score` in the CLI, `min_score` in the API). At an equal
+score a subtitle line comes before a machine transcript line.
+
 - **In a video**, the matches appear in the workspace's **Matches** tab.
 - **In a folder or the library**, the results are grouped by file, with the words of the
   query highlighted and a score on each line. On a wide screen (1250 px and up) clicking
@@ -424,7 +437,7 @@ quipclipper search QUERY [OPTIONS]
 | `--track` | — | Subtitle track by s:N index (from `tracks`); auto-selected when several exist (English full dialogue > SDH > forced). |
 | `--langs` | `en` | Preferred subtitle language(s) for auto-selection among sidecars/embedded tracks, comma-separated (e.g. `en,es`). |
 | `--limit`, `-n` | 10 | Maximum number of matches to show. |
-| `--min-score` | 60 | Drop matches scoring below this (0–100). |
+| `--min-score` | 60 | Drop matches scoring below this (0–100; see [Scores](#search-scores)). |
 | `--max-span` | 3 | Max consecutive captions a single match may join. |
 
 You must provide `--subs` or `--video` (or both).
@@ -498,7 +511,7 @@ quipclipper clip QUERY --video FILE [OPTIONS]
 | `--index`, `-i` | 0 | Which ranked match to cut (0 = best). Ignored with `--pick`. |
 | `--pick`, `-p` | off | Interactively choose one or more matches to clip. |
 | `--limit`, `-n` | 10 | How many candidate matches to offer with `--pick`. |
-| `--min-score` | 60 | Drop matches scoring below this (0–100). |
+| `--min-score` | 60 | Drop matches scoring below this (0–100; see [Scores](#search-scores)). |
 | `--max-span` | 3 | Max consecutive captions a single match may join. |
 
 Before cutting, quipclipper prints a preview (the selected match, the clip range and
@@ -690,8 +703,8 @@ quipclipper clip "i'll be back" -v movie.mkv -s movie.srt --pick
       I'll be back.
 [1]   742.00s  00:12:22.000–00:12:23.500  (score 100)
       I'll be back!
-[2]  1290.00s  00:21:30.000–00:21:33.000  (score 88)
-      You said you'll be back.
+[2]  1290.00s  00:21:30.000–00:21:33.000  (score 90)
+      I'll be right back.
 Select matches to clip (comma-separated indices, or 'all') [0]: 0,1
 ```
 

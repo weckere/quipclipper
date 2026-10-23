@@ -175,6 +175,14 @@ may be in a file it didn't search. Its hits have no `index`: clip one with its
 clips-library entries) is a [deep link](#deep-links) to that line, present only when
 `QC_PUBLIC_URL` is set.
 
+`score` (0 to 100, one decimal) is 100 only when the line holds the query's words verbatim:
+in order and contiguous, after case, punctuation, apostrophes and subtitle markup are
+normalised away. The words in order with a typo, a word missing or an extra word score up to
+99, and the words in any order at most 75 (D-041). Matches come best first; at an equal score
+a subtitle line comes before a machine line, then the line closest to the whole query, then
+(folder search) by path and time, so equal hits keep one order. `min_score` (default 60)
+drops matches below it; `min_score=100` keeps only verbatim lines.
+
 ### Media (preview/streaming)
 | Method | Path | Purpose |
 |---|---|---|

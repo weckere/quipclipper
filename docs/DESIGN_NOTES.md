@@ -71,8 +71,7 @@ the CLI-first scoping here describes the original engine.)
   model. Alternative `srt`/`webvtt-py` were narrower (single-format).
 - **[`rapidfuzz`](https://github.com/rapidfuzz/RapidFuzz)** — fast C++-backed fuzzy
   string matching (MIT-licensed, unlike `fuzzywuzzy` which is GPL and slower). Its
-  `partial_ratio`, `token_set_ratio` and `ratio` scorers are exactly the building
-  blocks needed for dialogue search (see §11).
+  `ratio` scorer rates misspelled words and whole-line fit in dialogue search (see §11).
 - **[`typer`](https://typer.tiangolo.com/)** — declarative CLI with type hints,
   automatic `--help`, and boolean `--flag/--no-flag` pairs. Rationale: minimal
   boilerplate for a CLI with many options; the `--x/--no-x` convention maps
@@ -337,16 +336,41 @@ the clip always includes the requested content.
 
 ## 11. Search ranking and span-variant collapse
 
-**Decision:** Score each candidate with `max(partial_ratio, token_set_ratio)`; rank
-by score with a `ratio` tiebreaker; and **collapse overlapping span-variants** so
-results never overlap.
+**Decision (D-041, 2026-10-23):** Score each candidate on words, so that **100 means
+verbatim**; rank by score with a `ratio` tiebreaker; and **collapse overlapping
+span-variants** so results never overlap.
 
-**Why these scorers (RapidFuzz):**
-- **`partial_ratio`** finds the best-matching substring, so a short query still
-  scores high against a longer caption that contains it — essential for locating a
-  line.
-- **`token_set_ratio`** rewards matches where word order differs or extra words are
-  present. The max of the two surfaces either kind of match.
+**How a candidate is scored.** Query and line are normalised alike: markup (`<i>`,
+`{\an8}`) dropped, case folded, apostrophes removed ("I'll" → "ill"), every other
+non-word character (punctuation, `♪`, speaker dashes) a word break. Then:
+- **100** when the query's words appear in the line as one contiguous run of whole
+  words. "make it so" is verbatim in "Make it so, Number One." but not in "You make it
+  sound…".
+- **Up to 99** for the query's words in order with differences. Each line word is
+  matched to query words exactly, or, for words of 3+ letters, at `fuzz.ratio` ≥ 80
+  (one misheard or misspelled word), credited by that similarity. The best in-order
+  run is rated with an F-measure weighted by word length: recall is the query weight
+  matched, precision the matched weight over the line's words from the run's first
+  match to its last. Beta 2 makes a missing query word cost more than an extra word
+  in between ("Make it all so." 92, "Make it." 76).
+- **Up to 75** for the query's words present in any order (75 × the weight found).
+
+**Why not the earlier scorers.** It used `max(partial_ratio, token_set_ratio)`.
+`token_set_ratio` is 100 whenever one side's words are a subset of the other's, so
+any line holding the query's words in any order scored 100 alongside the real line;
+`partial_ratio` aligns the *shorter* string inside the longer, so a one-word caption
+("HOT") scored 100 for a longer query ("tea earl grey hot"), and it matched inside
+words ("make it so" in "make it sound"). On wizrock's library, "make it so" had 315
+hits at 100 across 1,278 files, most of them not the line.
+
+**Cost.** Each cue is normalised once per search (not once per window), words are
+matched against the query through a per-search memo, and a window is aligned only if
+an upper bound from the query words it holds can reach `min_score`. A library-wide
+search over 641k cues takes about 2 s on one core, down from about 8 s.
+
+**Unspaced scripts.** A query in a script written without spaces (Chinese, Japanese,
+Korean, Thai) is matched on characters: 100 when it is a substring, else
+`partial_ratio` capped at 99.
 
 **Multi-caption windows:** A spoken line is often split across two or three
 captions, so the search scans not just single cues but sliding windows of
@@ -359,11 +383,10 @@ neighbours), which cluttered results and the picker. The fix collapses them: in
 ranked order, a candidate is accepted only if its cue-index span does not overlap an
 already-accepted one, yielding **one candidate per distinct region**.
 
-Getting the *representative* right required a second insight. `partial_ratio` scores
-a *fragment* (e.g. "Come with me if you") just as high (100) as the full match, so
-naively preferring the "tightest" span would wrongly pick a fragment over the joined
-window for a full-sentence query. The ranking therefore adds a **`fuzz.ratio`
-tiebreaker** among equal-scoring variants. `ratio` penalises both missing and extra
+Getting the *representative* right required a second insight. Several windows can
+tie, e.g. the verbatim line alone and the line joined with its neighbour both score
+100, so naively preferring the "tightest" span could pick the wrong one. The ranking
+therefore adds a **`fuzz.ratio` tiebreaker** (`Match.fit`) among equal-scoring variants. `ratio` penalises both missing and extra
 words, so it prefers the window whose *whole text* best matches the *whole query*:
 a one-line query keeps its tight single cue, while a sentence split across captions
 keeps the joined window. A `collapse_overlapping=False` switch preserves the old
