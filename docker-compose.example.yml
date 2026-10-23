@@ -48,6 +48,12 @@ services:
       # QC_JELLYFIN_URL: http://jellyfin:8096
       # QC_JELLYFIN_API_KEY: <key>
       # QC_JELLYFIN_PATH_MAP: /movies=/media/movies:/shows=/media/shows
+      # Re-index hooks: Bazarr (and Sonarr/Radarr) tell quipclipper when a file's
+      # subtitles change. A token that may only do that, and their container paths
+      # mapped onto the ones above. Set the token on the web service too if it has
+      # QC_PASSWORD (it adds a "hook" login). See docs/HOOKS.md.
+      # QC_HOOK_TOKEN: "paste-a-long-random-string-here"
+      # QC_PATH_MAP: /tv=/media/shows:/movies=/media/movies
     volumes:
       # Your media, mounted READ-ONLY. Left = host path, right = the in-container
       # path referenced by QC_MEDIA_ROOTS above.
@@ -98,6 +104,7 @@ services:
     #   QC_USERNAME: "quip"
     #   QC_PROXY_SECRET: "paste-a-long-random-string-here"
     #   QC_API_TOKEN: "paste-a-long-random-string-here"   # match the app service
+    #   QC_HOOK_TOKEN: "paste-a-long-random-string-here"  # match the app service
 
 volumes:
   quip-state:

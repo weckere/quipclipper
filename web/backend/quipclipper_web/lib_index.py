@@ -79,7 +79,8 @@ def _clock(seconds: float) -> str:
 
 def run(job, *, paths: list[str], scan: Callable[[], Iterable[tuple[Path, str]]],
         index: Callable[[Path], str], log: RunLog, whole_library: bool = True,
-        now: Callable[[], float] = time.time) -> dict[str, Any]:
+        now: Callable[[], float] = time.time,
+        between: Callable[[], None] | None = None) -> dict[str, Any]:
     """Index every file ``scan()`` yields as not indexed; the job's ``progress`` and
     ``result`` follow it, and so does ``log``. Returns the result. ``whole_library``
     says whether ``paths`` are the library roots (else one folder of it).
@@ -88,7 +89,9 @@ def run(job, *, paths: list[str], scan: Callable[[], Iterable[tuple[Path, str]]]
     says: "indexed", "no_subs" or "not_indexed"; only "not_indexed" ones are indexed.
     ``index(file)`` extracts and caches one file's subtitles (it runs inside
     :func:`at_idle_priority`) and returns "indexed", "no_subs", or raises for a file
-    it couldn't tell about."""
+    it couldn't tell about. ``between()`` runs before each file, at the same priority:
+    the re-index hooks' queue (:mod:`.file_index`) is drained there, so a hook's file
+    never waits for a whole library run."""
     started = now()
     result: dict[str, Any] = {
         "paths": paths, "whole_library": whole_library, "status": "scanning", "started": started, "files": 0,
@@ -101,7 +104,7 @@ def run(job, *, paths: list[str], scan: Callable[[], Iterable[tuple[Path, str]]]
         log.write({**result, "updated": now()})
 
     try:
-        return _run(job, result, scan, index, save, now)
+        return _run(job, result, scan, index, save, now, between)
     except Exception as exc:
         result.update(status="failed", current=None, eta_s=None, finished=now(),
                       summary=f"Failed: {exc}")
@@ -109,7 +112,7 @@ def run(job, *, paths: list[str], scan: Callable[[], Iterable[tuple[Path, str]]]
         raise
 
 
-def _run(job, result: dict[str, Any], scan, index, save, now) -> dict[str, Any]:
+def _run(job, result: dict[str, Any], scan, index, save, now, between=None) -> dict[str, Any]:
     job.progress = "Scanning for files not indexed yet…"
     save()
     todo: list[Path] = []
@@ -128,6 +131,11 @@ def _run(job, result: dict[str, Any], scan, index, save, now) -> dict[str, Any]:
     cancelled = lambda: job.cancel_requested  # noqa: E731
     with at_idle_priority(cancelled):
         for i, f in enumerate(todo, 1):
+            if between is not None and not job.cancel_requested:
+                try:
+                    between()
+                except Cancelled:
+                    break
             if job.cancel_requested:
                 break
             result["current"] = str(f)

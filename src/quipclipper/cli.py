@@ -416,6 +416,27 @@ def _fmt_lib_index(data: dict) -> None:
         typer.echo("No library index has run yet (start one with `quipclipper index.library`).")
 
 
+def _fmt_index_file(data: dict) -> None:
+    for f in data.get("files") or []:
+        typer.echo(f"{f.get('status', '?'):<14} {f.get('media') or f.get('path')}")
+    if data.get("job_id"):
+        typer.echo(f"job {data['job_id']} re-indexes them at idle priority (follow it with "
+                   "`quipclipper index.file-status`)")
+
+
+def _fmt_index_file_status(data: dict) -> None:
+    job = data.get("job")
+    if job:
+        typer.echo(f"{job.get('id')}  {job.get('status')}  {job.get('label', '')}")
+    for p in data.get("pending") or []:
+        typer.echo(f"waiting        {p}")
+    for r in data.get("recent") or []:
+        typer.echo(f"{r.get('status', '?'):<14} {r.get('path')}"
+                   + (f"  ({r['error']})" if r.get("error") else ""))
+    if not job and not data.get("pending") and not data.get("recent"):
+        typer.echo("Nothing re-indexed since the server started.")
+
+
 def _fmt_jobs(data: dict) -> None:
     for j in data.get("jobs") or []:
         _fmt_job(j)
@@ -574,6 +595,7 @@ _FORMATTERS = {
     "clip.create": _fmt_job, "clip.nowplaying": _fmt_job, "clips.backfill": _fmt_job, "youtube.add": _fmt_job, "youtube.download": _fmt_job,
     "item.fetch-subs": _fmt_job, "index.fetch-subs": _fmt_job,
     "index.library": _fmt_lib_job, "index.library-status": _fmt_lib_index,
+    "index.file": _fmt_index_file, "index.file-status": _fmt_index_file_status,
     "bookmark.list": _fmt_bookmarks, "clips.list": _fmt_clips,
     "item.script": _fmt_script, "item.info": _fmt_item, "server.health": _fmt_health,
     "jellyfin.sessions": _fmt_sessions, "jellyfin.lookup": _fmt_lookup,

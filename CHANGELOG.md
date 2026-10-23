@@ -174,6 +174,17 @@ scripts/release.sh leaves this block in Unreleased; delete the two marker lines 
   or a restart (`index.library-status`, `GET /api/search/library/index`, show the last run).
   A folder of over 500 files offers **Index N files in the background**, and its index-status
   now counts it instead of answering `skipped`.
+- **Re-index hooks for Bazarr, Sonarr and Radarr:** when Bazarr saves a subtitle, or Sonarr
+  or Radarr imports, upgrades or renames a file, it can tell quipclipper, which re-indexes
+  just that file in the background, one at a time at idle priority, each file once, and only
+  if its index is out of date (`POST /api/index/file`, `quipclipper index.file PATH…`;
+  `index.file-status` shows the queue and the last results). It takes a media file or a
+  subtitle file (whose video is found beside it), or a Sonarr/Radarr webhook body as it
+  comes. `QC_PATH_MAP` maps their container paths onto yours, and `QC_HOOK_TOKEN` is a
+  token that can only do this (the Docker nginx adds a `hook` login for it; NixOS:
+  `hookTokenFile`, `pathMap`). A library run takes the hooks' files between its own. The
+  hook script `contrib/hooks/quipclipper-reindex` needs only `sh` and `curl`; setup for each
+  app: docs/HOOKS.md.
 
 ### Fixed
 

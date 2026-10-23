@@ -1,0 +1,120 @@
+#!/bin/sh
+# quipclipper-reindex: tell quipclipper that files' subtitles changed, so it
+# re-indexes them (POST /api/index/file). POSIX sh + curl, nothing else.
+# Setup for Bazarr, Sonarr and Radarr: docs/HOOKS.md.
+#
+#   quipclipper-reindex [--url URL] [--token-file FILE] [--user USER] [--force] PATH...
+#
+# Each PATH is a media file or a subtitle file (quipclipper finds the media file
+# next to it), as this machine or container sees it; the server's QC_PATH_MAP maps
+# it onto its own paths. With no PATH, it reads a Sonarr or Radarr Custom Script
+# event from the environment (import, upgrade, rename; Test checks the connection).
+#
+# Settings (flags win over the environment):
+#   --url / QUIPCLIPPER_URL               the server, e.g. https://quip.example
+#   --token-file / QUIPCLIPPER_TOKEN_FILE a file holding a hook token (QC_HOOK_TOKEN)
+#                                         or an API token; QUIPCLIPPER_TOKEN also works
+#   --user / QUIPCLIPPER_USER             basic-auth user sent with the token: "hook"
+#                                         (default) or "api" for the full API token
+#
+# The token never reaches the command line, the process list or the output: curl
+# reads it from a pipe. Exit status: 0 when the server queued the files (or there
+# was nothing to send), 1 when it refused, 2 for a usage or setup error. Errors go
+# to stderr, which Bazarr logs as a post-processing error.
+set -u
+
+url=${QUIPCLIPPER_URL:-}
+token_file=${QUIPCLIPPER_TOKEN_FILE:-}
+user=${QUIPCLIPPER_USER:-hook}
+force=
+
+die() { printf 'quipclipper-reindex: %s\n' "$*" >&2; exit 2; }
+
+while [ $# -gt 0 ]; do
+    case $1 in
+        --url) [ $# -ge 2 ] || die "--url needs a value"; url=$2; shift 2 ;;
+        --url=*) url=${1#*=}; shift ;;
+        --token-file) [ $# -ge 2 ] || die "--token-file needs a value"; token_file=$2; shift 2 ;;
+        --token-file=*) token_file=${1#*=}; shift ;;
+        --user) [ $# -ge 2 ] || die "--user needs a value"; user=$2; shift 2 ;;
+        --user=*) user=${1#*=}; shift ;;
+        --force) force=1; shift ;;
+        -h|--help) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        --) shift; break ;;
+        -*) die "unknown option $1 (see --help)" ;;
+        *) break ;;
+    esac
+done
+
+[ -n "$url" ] || die "no server: pass --url or set QUIPCLIPPER_URL"
+command -v curl >/dev/null 2>&1 || die "curl is not installed"
+
+token=${QUIPCLIPPER_TOKEN:-}
+if [ -n "$token_file" ]; then
+    [ -r "$token_file" ] || die "cannot read the token file $token_file"
+    token=$(tr -d '\r\n' < "$token_file")
+fi
+[ -n "$token" ] || die "no token: pass --token-file or set QUIPCLIPPER_TOKEN_FILE"
+case $token$user in *'"'*|*'\'*) die "the token or user holds a quote or backslash" ;; esac
+
+# No paths: a Sonarr/Radarr Custom Script event, from the environment.
+event=
+if [ $# -eq 0 ]; then
+    event=${sonarr_eventtype:-${radarr_eventtype:-}}
+    case $event in
+        Download)
+            set -- "${sonarr_episodefile_path:-${radarr_moviefile_path:-}}" ;;
+        Rename)
+            # Several files, separated by "|".
+            paths=${sonarr_episodefile_paths:-${radarr_moviefile_paths:-}}
+            old_ifs=$IFS; IFS='|'
+            # shellcheck disable=SC2086
+            set -f; set -- $paths; set +f
+            IFS=$old_ifs ;;
+        Test) ;;
+        '') die "no paths given (and no Sonarr/Radarr event in the environment)" ;;
+        *) printf 'quipclipper-reindex: %s: nothing to re-index\n' "$event"; exit 0 ;;
+    esac
+fi
+
+# curl reads its options (the credential among them) from stdin, never argv. The
+# token goes twice, like the quipclipper CLI sends it: as the basic-auth password (to
+# pass a password-protected nginx in front) and as X-API-Key (so a wrong one is a
+# clear 401 from the server).
+call() {
+    printf 'user = "%s:%s"\nheader = "X-API-Key: %s"\n' "$user" "$token" "$token" |
+        curl -sS -K - --max-time 30 \
+        -H 'Accept: application/json' "$@"
+}
+
+base=${url%/}/api/index/file
+if [ "$event" = Test ]; then
+    out=$(call -o /dev/null -w '%{http_code}' "$base") || exit 1
+    [ "$out" = 200 ] || { echo "quipclipper-reindex: $url answered HTTP $out (check the URL and token)" >&2; exit 1; }
+    echo "quipclipper-reindex: $url is reachable and accepts the token"
+    exit 0
+fi
+
+# The paths become the curl arguments: one --data-urlencode each (empty ones dropped).
+for p do
+    shift
+    [ -n "$p" ] && set -- "$@" --data-urlencode "path=$p"
+done
+[ $# -gt 0 ] || { echo "quipclipper-reindex: no file to re-index"; exit 0; }
+[ -n "$force" ] && set -- "$@" --data-urlencode "force=true"
+
+# -G puts the data in the query string; -X POST keeps it a POST.
+resp=$(call -X POST -G -w '\n%{http_code}' "$@" "$base") || exit 1
+code=$(printf '%s\n' "$resp" | tail -n 1)
+body=$(printf '%s\n' "$resp" | sed '$d')
+case $code in
+    200|202)
+        queued=$(printf '%s' "$body" | sed -n 's/.*"queued": *\([0-9]*\).*/\1/p')
+        echo "quipclipper-reindex: queued ${queued:-0} file(s) for re-indexing" ;;
+    *)
+        detail=$(printf '%s' "$body" | sed -n 's/.*"detail": *"\([^"]*\)".*/\1/p')
+        echo "quipclipper-reindex: HTTP $code${detail:+: $detail}" >&2
+        # Which paths it couldn't use, and why (e.g. outside_roots: check QC_PATH_MAP).
+        printf '%s' "$body" | tr '{' '\n' | sed -n 's/.*"path": *"\([^"]*\)".*"status": *"\([^"]*\)".*/  \2: \1/p' >&2
+        exit 1 ;;
+esac

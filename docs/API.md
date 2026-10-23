@@ -32,6 +32,10 @@ basic auth. A programmatic client gets through it in one of two ways:
 
 If `QC_PASSWORD` is unset the site is open and no basic auth is needed.
 
+A **hook token** (`QC_HOOK_TOKEN`) is a low-privilege token for the
+[re-index hooks](#re-index-hooks) (Bazarr, Sonarr, Radarr): it is accepted the same ways
+(the gate's `hook` user, `X-API-Key`, `Bearer`), but only on `/api/index/file`.
+
 **2. Token identification (backend).** Present `QC_API_TOKEN` as **any** of:
 
 | Method | Header / form |
@@ -165,6 +169,8 @@ resolved stream URLs, so `split_channels` and `backend=mkvmerge` return 400 for
 | POST | `/api/search/folder/index?path=&force=` | Pre-extract subtitles for a folder of at most `cap` files (streams progress; 400 over it). |
 | POST | `/api/search/library/index?path=` | Start the **library index**: every media file under the library roots (or under `path`, a folder of any size) that isn't indexed yet, as a background job. Returns `{job_id, existing, paths}`; while one runs, this returns it with `existing: true` (one at a time). See below. |
 | GET | `/api/search/library/index` | `{job, last}`: the running library index job (as `GET /api/jobs/{id}`, or null), and the last run's summary, kept in the state dir across restarts (`status` `done`, `cancelled`, `failed`, or `interrupted` when a restart cut it short; null before the first run). |
+| POST | `/api/index/file?path=&force=` | Re-index files whose subtitles changed (the [re-index hooks](#re-index-hooks)): repeat `path=`, or send a JSON body. Queued; 202. |
+| GET | `/api/index/file` | The re-index hooks' queue: `{job_id, job, pending, recent}`. |
 
 `/api/search` returns `{query, count, matches: [{index, score, text, speaker,
 start, end, start_ts, end_ts, cue_count, link}]}`. The `index` is what you pass back as
@@ -197,6 +203,42 @@ no_subs, failed, current, eta_s, files_per_hour, errors, summary}`: `files` medi
 found, `already` of them needed nothing, and `done` of the `todo` rest are finished, with
 `eta_s` a rough estimate of the seconds left. A file it couldn't read is counted in
 `failed` (up to 20 listed in `errors`) and tried again next run.
+
+### Re-index hooks
+
+How Bazarr, Sonarr and Radarr (or anything) tell quipclipper that a file's subtitles
+changed, so it re-indexes that file instead of leaving it out of search. Setup, the hook
+script and the troubleshooting table: [HOOKS.md](HOOKS.md).
+
+`POST /api/index/file` takes the files as `path=` query parameters (repeat it; at most 200),
+or a JSON body: `{"paths": [...], "force": false}`, or a Sonarr or Radarr webhook body as it
+comes (the paths in `episodeFile`, `episodeFiles`, `movieFile`, `renamedEpisodeFiles` and
+`renamedMovieFiles`; a `Test` event answers 200 with `queued: 0`). Each path is a media file
+or a subtitle file (its media file is the one in the same folder whose name, up to its
+extension, starts the subtitle's name; the longest such name wins), in the caller's own
+paths: `QC_PATH_MAP` (`/tv=/media/shows:/movies=/media/movies`, `:` or `;` between pairs,
+longest prefix first) maps them onto this server's before they are checked against the media
+roots. It returns at once with `{job_id, queued, files: [{path, media, status}], event}`, a
+`status` per path: `queued`, `already_queued` (waiting already: Bazarr calls once per
+subtitle), `outside_roots` (with the `mapped` path), `not_found`, `no_media` (a subtitle with
+no media file beside it), `not_media` or `invalid`. 202 when any path was queued, 422 (same
+body plus `detail`) when none was, 400 with no path at all.
+
+The queued files are re-indexed by one job (label "Re-index changed subtitles (low
+priority)") in the library index's single-worker pool, so it never runs beside a library run;
+a running library run takes the queued files between its own instead. Each file is read at
+idle priority, like the library index, and only if its index entry is out of date
+(`force=true` re-reads it anyway). `GET /api/index/file` lists the files `pending` and the
+last 50 `recent` results, each `{path, status, at, error?}` with `status` `indexed`,
+`current`, `no_subs`, `missing`, `failed` or `cancelled`. Cancelling the job
+(`DELETE /api/jobs/{id}`) drops the files still waiting.
+
+These two routes are meant for machines: they take an API token, or a **hook token**
+(`QC_HOOK_TOKEN`, comma-separated to rotate, or a file named by `QC_HOOK_TOKEN_FILE`) sent the
+same ways (`X-API-Key`, `Bearer`, or `-u hook:<token>`). A hook token opens these two routes
+and nothing else: anywhere else it gets 403. Behind a password gate, the Docker image's nginx
+accepts the `hook` login when `QC_HOOK_TOKEN` is set on the `web` service. Without a token,
+a browser-style POST needs the CSRF header like any other.
 
 `score` (0 to 100, one decimal) is 100 only when the line holds the query's words verbatim:
 in order and contiguous, after case, punctuation, apostrophes and subtitle markup are

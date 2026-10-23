@@ -145,8 +145,14 @@ def test_it_never_starts_on_its_own(tmp_path, monkeypatch):
         assert c.get("/api/search/library/index").json() == {"job": None, "last": None}
         assert c.get("/api/jobs").json()["jobs"] == []
     src = inspect.getsource(web)
-    assert src.count("lib_jobs.submit(") == 1
-    assert "def library_index(" in src[src.index("lib_jobs.submit(") - 4000:src.index("lib_jobs.submit(")]
+    # Two submits: the library run (its POST), and the re-index hooks' drainer, which
+    # only POST /api/index/file queues (test_index_file.py).
+    assert src.count("lib_jobs.submit(") == 2
+    first = src.index("lib_jobs.submit(")
+    assert "def library_index(" in src[first - 4000:first]
+    second = src.index("lib_jobs.submit(", first + 1)
+    assert "def _submit_file_job(" in src[second - 200:second]
+    assert src.count("_submit_file_job") == 2  # defined, and used by POST /api/index/file
 
 
 def test_a_run_cut_short_by_a_restart_reads_interrupted(tmp_path, monkeypatch):

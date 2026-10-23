@@ -166,6 +166,36 @@ in
       };
     };
 
+    hookTokenFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      example = "/run/secrets/quipclipper-hook-token";
+      description = ''
+        File holding a hook token, and nothing else (`QC_HOOK_TOKEN_FILE`): a
+        low-privilege token Bazarr, Sonarr and Radarr use to tell quipclipper that a
+        file's subtitles changed (`POST /api/index/file`). It may only queue
+        re-indexes; every other endpoint refuses it. systemd reads the file as root
+        and hands the service a copy as a credential, so it can stay root-only (e.g. a
+        sops-nix secret). With `passwordFile`, add a `hook` line with the token as its
+        password. See docs/HOOKS.md.
+      '';
+    };
+
+    pathMap = lib.mkOption {
+      type = lib.types.attrsOf lib.types.str;
+      default = { };
+      example = {
+        "/tv" = "/srv/media/shows";
+        "/movies" = "/srv/media/movies";
+      };
+      description = ''
+        The re-index hooks' paths → the same folders here (`QC_PATH_MAP`). Bazarr,
+        Sonarr and Radarr report the paths they see, which inside their containers are
+        their mount points. The longest matching prefix wins; a path nothing matches is
+        used as it is, and must be inside `mediaRoots`/`writableMediaRoots`.
+      '';
+    };
+
     clipsDir = lib.mkOption {
       type = lib.types.path;
       default = "/var/lib/quipclipper-web/clips";
@@ -574,6 +604,11 @@ in
         QC_JELLYFIN_URL = cfg.jellyfin.url;
         QC_JELLYFIN_PATH_MAP = lib.concatStringsSep ":"
           (lib.mapAttrsToList (from: to: "${from}=${to}") cfg.jellyfin.pathMap);
+      } // lib.optionalAttrs (cfg.pathMap != { }) {
+        QC_PATH_MAP = lib.concatStringsSep ":"
+          (lib.mapAttrsToList (from: to: "${from}=${to}") cfg.pathMap);
+      } // lib.optionalAttrs (cfg.hookTokenFile != null) {
+        QC_HOOK_TOKEN_FILE = "/run/credentials/quipclipper-web.service/hook-token";
       } // lib.optionalAttrs (cfg.jellyfin.apiKeyFile != null) {
         # The credential below, where systemd puts it for this unit.
         QC_JELLYFIN_API_KEY_FILE = "/run/credentials/quipclipper-web.service/jellyfin-api-key";
@@ -614,8 +649,12 @@ in
         EnvironmentFile = lib.mkIf (cfg.apiTokenFile != null) cfg.apiTokenFile;
         # The Jellyfin API key: systemd reads the (root-only) file and exposes a copy
         # only this unit can read (see jellyfin.apiKeyFile).
-        LoadCredential = lib.mkIf (cfg.jellyfin.apiKeyFile != null)
-          [ "jellyfin-api-key:${toString cfg.jellyfin.apiKeyFile}" ];
+        LoadCredential =
+          lib.optional (cfg.jellyfin.apiKeyFile != null)
+            "jellyfin-api-key:${toString cfg.jellyfin.apiKeyFile}"
+          # The hook token (see hookTokenFile), the same way.
+          ++ lib.optional (cfg.hookTokenFile != null)
+            "hook-token:${toString cfg.hookTokenFile}";
 
         # Hardening. Media roots are exposed read-only; only the clips + state
         # dirs are writable. These are created up front by the tmpfiles rules

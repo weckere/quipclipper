@@ -365,3 +365,24 @@ def test_round_trip_item_link(tmp_path, capsys):
     # Without --json it prints the link alone, ready to paste.
     assert cli.main(["item.link", str(video), "--sel", "1-2"], transport=transport) == 0
     assert capsys.readouterr().out.strip() == f"https://quip.example/#/item?path={video}&t=1&sel=1-2"
+
+
+def test_round_trip_index_file(served, capsys):
+    """The re-index hook's command (M20): queue a subtitle's video, then read the queue."""
+    transport, media, clips, video = served
+    code, out = _run(transport, ["index.file", str(media / "movie.srt")], capsys)
+    assert code == 0, out
+    res = _last_json(out)
+    assert res["queued"] == 1 and res["files"][0]["media"] == str(video)
+    for _ in range(100):
+        code, out = _run(transport, ["index.file-status"], capsys)
+        st = _last_json(out)
+        if st["recent"] and not st["pending"] and st["job_id"] is None:
+            break
+        __import__("time").sleep(0.05)
+    assert [r["status"] for r in st["recent"]] == ["indexed"]
+    # Nothing it can use: the command fails.
+    code, out = _run(transport, ["index.file", "/etc/passwd"], capsys)
+    assert code != 0
+    cli.main(["index.file", str(video), "--force"], transport=transport)
+    assert "queued" in capsys.readouterr().out

@@ -23,6 +23,14 @@ if [ -n "${QC_PASSWORD:-}" ]; then
         printf '%s' "$token" | htpasswd -im "$htpw" api >/dev/null 2>&1
         echo "[quipclipper] API token accepted as basic-auth user 'api'"
     fi
+    # A hook token (Bazarr, Sonarr, Radarr: docs/HOOKS.md) gets its own "hook" user,
+    # so `-u hook:<token>` passes the gate; the backend then lets it queue re-indexes
+    # and nothing else.
+    if [ -n "${QC_HOOK_TOKEN:-}" ]; then
+        token=$(printf '%s' "$QC_HOOK_TOKEN" | cut -d, -f1)
+        printf '%s' "$token" | htpasswd -im "$htpw" hook >/dev/null 2>&1
+        echo "[quipclipper] hook token accepted as basic-auth user 'hook'"
+    fi
     # nginx workers run as the 'nginx' user, so the file must be readable by them
     # (root-only 600 makes credential checks fail with 500). Keep it off world.
     chown root:nginx "$htpw" 2>/dev/null || true

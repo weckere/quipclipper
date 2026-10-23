@@ -23,10 +23,11 @@ def _roots(raw: str | None) -> list[Path]:
 
 
 def _path_map(raw: str | None) -> tuple[tuple[str, str], ...]:
-    """``QC_JELLYFIN_PATH_MAP``: ``<jellyfin path>=<local path>`` pairs, separated like
-    ``QC_MEDIA_ROOTS`` (``:``), e.g. ``/movies=/srv/movies:/shows=/srv/shows``."""
+    """``QC_JELLYFIN_PATH_MAP`` / ``QC_PATH_MAP``: ``<their path>=<local path>`` pairs,
+    separated like ``QC_MEDIA_ROOTS`` (``:``) or by ``;``, e.g.
+    ``/movies=/srv/movies:/shows=/srv/shows``."""
     pairs = []
-    for part in (raw or "").split(os.pathsep):
+    for part in (raw or "").replace(";", os.pathsep).split(os.pathsep):
         src, sep, dst = part.partition("=")
         if sep and src.strip() and dst.strip():
             pairs.append((src.strip().rstrip("/") or "/", dst.strip().rstrip("/") or "/"))
@@ -68,6 +69,10 @@ class Settings:
     jellyfin_url: str = ""
     jellyfin_api_key: str = field(default="", repr=False)
     jellyfin_path_map: tuple[tuple[str, str], ...] = ()
+    # Re-index hooks (M20): paths other apps report -> the same files here, and tokens
+    # that may only queue re-indexes (POST /api/index/file).
+    path_map: tuple[tuple[str, str], ...] = ()
+    hook_tokens: frozenset[str] = field(default=frozenset(), repr=False)
     # Machine transcription (M21): whisper.cpp and its models, from QC_WHISPER_* (the
     # NixOS module's transcribe.* options). No model = the feature reports itself off.
     whisper: WhisperConfig = field(default_factory=WhisperConfig)
@@ -143,5 +148,15 @@ class Settings:
             jellyfin_url=e.get("QC_JELLYFIN_URL", "").strip().rstrip("/"),
             jellyfin_api_key=_secret(e, "QC_JELLYFIN_API_KEY"),
             jellyfin_path_map=_path_map(e.get("QC_JELLYFIN_PATH_MAP")),
+            # Re-index hooks (M20): Bazarr, Sonarr and Radarr tell the server a file's
+            # subtitles changed (POST /api/index/file). They usually run in containers
+            # and report their own mount points, so QC_PATH_MAP maps those prefixes onto
+            # the paths here (same format as QC_JELLYFIN_PATH_MAP). QC_HOOK_TOKEN (or a
+            # file named by QC_HOOK_TOKEN_FILE; comma-separated for rotation) is a
+            # low-privilege token: it may only queue re-indexes, nothing else.
+            path_map=_path_map(e.get("QC_PATH_MAP")),
+            hook_tokens=frozenset(
+                t.strip() for t in _secret(e, "QC_HOOK_TOKEN").split(",") if t.strip()
+            ),
             whisper=WhisperConfig.from_env(e),
         )

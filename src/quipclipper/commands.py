@@ -348,6 +348,20 @@ COMMANDS: tuple[Command, ...] = (
             "how far the last run got (kept across restarts).", "GET",
             "/api/search/library/index",
             ui="Dialogue index card (library root)"),
+    Command("index.file", "Re-index files whose subtitles changed (what the Bazarr, "
+            "Sonarr and Radarr hooks call): media or subtitle files, in the caller's own "
+            "paths (the server's QC_PATH_MAP maps them). Queued, each once, and re-indexed "
+            "by one job at idle priority; a file already current is left alone.", "POST",
+            "/api/index/file",
+            params=(Param("path", "list[str]", "Media or subtitle file(s); a subtitle "
+                          "file's media file is found next to it.", main=True,
+                          required=True),
+                    Param("force", "bool", "Re-read files even when their index is "
+                          "current.", default=False)),
+            ui="—"),
+    Command("index.file-status", "Show the re-index hooks' queue: the job draining it, "
+            "the files waiting, and the last results.", "GET", "/api/index/file",
+            ui="—"),
     Command("index.fetch-subs", "Fetch missing YouTube subtitles for every video in a "
             "folder.", "POST", "/api/search/folder/fetch-subs",
             params=(Param("path", "str", "Folder.", main=True, required=True),)

@@ -68,14 +68,16 @@ from quipclipper.subtitles import (
     AUDIO_EXTS,
     SUBTITLE_EXTS,
     VIDEO_EXTS,
+    Cancelled,
+    at_idle_priority,
     find_sidecar,
     is_text_subtitle,
     list_embedded_tracks,
     load_subtitles,
 )
 from quipclipper_web import (
-    __version__, clipmeta, deeplinks, epub_items, jellyfin, jellyfin_index, lib_index, library, lslink,
-    lsset, media, peaks, youtube_items,
+    __version__, clipmeta, deeplinks, epub_items, file_index, jellyfin, jellyfin_index, lib_index,
+    library, lslink, lsset, media, peaks, youtube_items,
 )
 from quipclipper_web.bookmarks import BookmarkStore
 from quipclipper_web.config import Settings
@@ -376,6 +378,9 @@ _PROXY_SECRET_HEADER = "x-quip-proxy-secret"
 # Programmatic clients (agents/scripts) present an API token here, as
 # `Authorization: Bearer <token>`, or as the HTTP Basic password.
 _API_KEY_HEADER = "x-api-key"
+# The only routes a hook token (Settings.hook_tokens) opens: queue re-indexes and read
+# how they went. Anything else it is presented to answers 403.
+_HOOK_ROUTES = frozenset({"/api/index/file"})
 
 
 def _token_ok(candidate: str, tokens: frozenset[str]) -> bool:
@@ -473,6 +478,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     lib_log = lib_index.RunLog(settings.state_dir)
     lib_active: list[str | None] = [None]
     lib_submit = threading.Lock()
+    # Re-index hooks (M20): files another app says changed, drained in the same pool.
+    file_queue = file_index.FileQueue()
     stt_submit = threading.Lock()  # one check-then-submit at a time (no twin jobs)
 
     def _stt_existing(key: str):
@@ -527,11 +534,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # a browser, so it's exempt from the CSRF-header requirement below. An
         # explicit but wrong token (X-API-Key / Bearer) is rejected outright.
         api_client = False
-        if settings.api_tokens:
-            status = _api_token_status(request, settings.api_tokens)
+        if settings.api_tokens or settings.hook_tokens:
+            status = _api_token_status(request, settings.api_tokens | settings.hook_tokens)
             if status == "bad":
                 return JSONResponse({"detail": "Invalid API token."}, status_code=401)
             api_client = status == "ok"
+            # A hook token (low privilege) only queues re-indexes: no other route.
+            if (api_client and settings.hook_tokens
+                    and request.url.path not in _HOOK_ROUTES
+                    and _api_token_status(request, settings.api_tokens) != "ok"):
+                return JSONResponse(
+                    {"detail": "This token may only queue re-indexes (/api/index/file)."},
+                    status_code=403)
         # S2 — CSRF: state-changing browser requests must carry the custom header.
         if (
             not api_client
@@ -1632,8 +1646,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 raise
 
         def run_job(job) -> list[Path]:
+            def hooks() -> None:
+                # Files the re-index hooks queued meanwhile go first (same thread, same
+                # priority), so a hook never waits for the whole run.
+                file_index.drain(file_queue, _reindex_one, take=file_queue.take_nowait,
+                                 cancelled=lambda: job.cancel_requested)
+
             lib_index.run(job, paths=paths, scan=scan, index=index, log=lib_log,
-                          whole_library=not path)
+                          whole_library=not path, between=hooks)
             return []
 
         with lib_submit:
@@ -1654,6 +1674,135 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         job = _lib_job()
         return {"job": _job_dict(job) if job is not None else None,
                 "last": lib_index.last_run(lib_log, live=job is not None)}
+
+    # --- re-index hooks (M20) ---------------------------------------------------------
+    # Bazarr, Sonarr, Radarr (or anything) say a file's subtitles changed; the file is
+    # queued and re-indexed by one job at idle priority (quipclipper_web.file_index).
+    # Callers are machines: an API token, or a hook token that opens nothing else.
+
+    def _reindex_one(f: Path, force: bool) -> str:
+        """Bring one file's index entry up to date: "indexed", "current" (it already
+        was), "no_subs" or "missing". Runs inside at_idle_priority."""
+        if not f.is_file():
+            return "missing"
+        if force:
+            sub_cache.clear(f)
+        state = sub_cache.index_state(f)
+        if state == "indexed":
+            return "current"
+        if state == "no_subs":
+            return "no_subs"
+        try:
+            sub_cache.resolve(f)
+            return "indexed"
+        except (ValueError, FileNotFoundError, RuntimeError):
+            if sub_cache.mark_no_subs(f):
+                return "no_subs"
+            raise
+
+    def _file_job(job) -> list[Path]:
+        done = [0]
+
+        def progress(name: str) -> None:
+            done[0] += 1
+            job.progress = f"{done[0]} {name}"
+
+        cancelled = lambda: job.cancel_requested  # noqa: E731
+        try:
+            with at_idle_priority(cancelled):
+                counts = file_index.drain(file_queue, _reindex_one, cancelled=cancelled,
+                                          progress=progress)
+        except Cancelled:
+            counts = {}
+        if job.cancel_requested:
+            file_queue.retire()
+        job.result = counts
+        job.progress = "Done: " + (", ".join(f"{n} {k}" for k, n in counts.items())
+                                   or "nothing to do")
+        return []
+
+    def _submit_file_job() -> str:
+        return lib_jobs.submit(_file_job, label="Re-index changed subtitles (low priority)",
+                               cancellable=True).id
+
+    def _queue_files(raw: list[str], force: bool) -> dict:
+        """Map, check and queue ``raw`` paths; one result row per path."""
+        if len(raw) > file_index.MAX_PATHS:
+            raise HTTPException(status_code=400,
+                                detail=f"At most {file_index.MAX_PATHS} paths at a time.")
+        rows: list[dict] = []
+        ok: list[tuple[int, Path]] = []
+        for given in raw:
+            row: dict = {"path": given}
+            rows.append(row)
+            mapped = file_index.map_in(given.strip(), settings.path_map)
+            if not mapped or "\0" in mapped:
+                row["status"] = "invalid"
+                continue
+            try:
+                p = library.resolve_within_roots(mapped, settings.media_roots)
+            except library.PathNotAllowed:
+                row.update(status="outside_roots", mapped=mapped)
+                continue
+            media = file_index.media_for(p)
+            if media is None:
+                row["status"] = ("no_media" if p.suffix.lower() in SUBTITLE_EXTS
+                                 else "not_media")
+            elif not media.is_file():
+                row.update(status="not_found", media=str(media))
+            else:
+                row["media"] = str(media)
+                ok.append((len(rows) - 1, media))
+        job_id, added = (file_queue.add([(m, force) for _, m in ok], _submit_file_job)
+                         if ok else (file_queue.status()["job_id"], []))
+        for (i, _), new in zip(ok, added):
+            rows[i]["status"] = "queued" if new else "already_queued"
+        return {"job_id": job_id, "queued": len(ok), "files": rows}
+
+    # A query-string POST (or a JSON body): the same CSRF guard as every other POST.
+    @app.post("/api/index/file")
+    async def index_files(request: Request, path: list[str] = Query([]),
+                          force: bool = Query(False)) -> JSONResponse:
+        """Re-index the files whose subtitles changed: each ``path`` a media file or a
+        subtitle file (its media file is found next to it), in the caller's own paths
+        (QC_PATH_MAP). Also takes a JSON body, ``{"paths": [...], "force": bool}`` or a
+        Sonarr/Radarr webhook. Queued and deduplicated; one job re-indexes them at idle
+        priority. 202 when at least one file was queued, 200 for a webhook event with
+        no file (Test), 422 when no path could be queued."""
+        raw = list(path)
+        event = None
+        if (request.headers.get("content-type") or "").startswith("application/json"):
+            try:
+                body = await request.json()
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Body is not JSON.")
+            if isinstance(body, dict) and isinstance(body.get("paths"), list):
+                raw += [x for x in body["paths"] if isinstance(x, str)]
+                force = force or body.get("force") is True
+            else:
+                found, event = file_index.webhook_paths(body)
+                raw += found
+        if not raw:
+            if event is not None:
+                return JSONResponse({"job_id": None, "queued": 0, "files": [],
+                                     "event": event})
+            raise HTTPException(status_code=400, detail="No path given.")
+        result = await asyncio.to_thread(_queue_files, raw, force)
+        if event is not None:
+            result["event"] = event
+        if not result["queued"]:
+            return JSONResponse({"detail": "Nothing to re-index.", **result},
+                                status_code=422)
+        return JSONResponse(result, status_code=202)
+
+    @app.get("/api/index/file")
+    def index_files_status() -> dict:
+        """The re-index hooks' queue: the job draining it (or null), the files waiting,
+        and the last results (status per file: indexed, current, no_subs, missing,
+        failed or cancelled)."""
+        st = file_queue.status()
+        job = lib_jobs.get(st["job_id"] or "")
+        return {**st, "job": _job_dict(job) if job is not None else None}
 
     # Query-string-only POST like /api/search/folder/index — same CSRF surface,
     # covered by the same X-Quipclipper requirement in _security_gate.

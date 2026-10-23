@@ -110,6 +110,8 @@
                 systemd.tmpfiles.rules = [
                   "d /srv/media 0755 root root - -"
                   "f /etc/jellyfin-key 0400 root root - test-key"
+                  # A root-only hook token, the same way (re-index hooks).
+                  "f /etc/qc-hook-token 0400 root root - hook-test-token"
                 ];
                 services.quipclipper-web = {
                   enable = true;
@@ -142,6 +144,9 @@
                     apiKeyFile = "/etc/jellyfin-key";
                     pathMap."/movies" = "/srv/media";
                   };
+                  # Re-index hooks: Bazarr's /tv is /srv/media here.
+                  hookTokenFile = "/etc/qc-hook-token";
+                  pathMap."/tv" = "/srv/media";
                 };
               };
               nodes.machine = { ... }: {
@@ -217,6 +222,15 @@
                 machine.succeed("grep -q '\"jellyfin\": *false' /tmp/health.json")
                 backendonly.succeed("curl -fsS http://localhost:8000/api/library/roots -o /tmp/r.json")
                 backendonly.succeed("grep -q /srv/media /tmp/r.json")
+                # Re-index hooks: the root-only hook token reached the service; a subtitle
+                # named in Bazarr's paths is mapped, queued and indexed; the token opens
+                # nothing else.
+                backendonly.succeed("touch /srv/media/hook.mkv && printf '1\\n00:00:01,000 --> 00:00:02,000\\nMake it so.\\n' > /srv/media/hook.en.srt")
+                hook = "-H 'Authorization: Bearer hook-test-token'"
+                backendonly.succeed(f"curl -fsS {hook} -X POST 'http://localhost:8000/api/index/file?path=/tv/hook.en.srt' -o /tmp/hook.json")
+                backendonly.succeed("grep -q '\"status\":\"queued\"' /tmp/hook.json")
+                backendonly.wait_until_succeeds(f"curl -fsS {hook} http://localhost:8000/api/index/file | grep -q '\"status\":\"indexed\"'", timeout=60)
+                backendonly.succeed(f"test $(curl -s -o /dev/null -w '%{{http_code}}' {hook} http://localhost:8000/api/library/roots) = 403")
                 # Machine transcription: whisper-cli and the model are there, capped at 2
                 # threads; it's off where it isn't enabled.
                 backendonly.succeed("grep -q '\"whisper-cli\": *true' /tmp/h.json")

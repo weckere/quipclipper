@@ -190,6 +190,16 @@ still reads and cuts the media from its own folders. From the CLI: `quipclipper
 nowplaying`, `quipclipper clip.nowplaying -t audio` and `quipclipper jellyfin.lookup PATH`.
 Setup and path mapping: [docs/MANUAL.md](docs/MANUAL.md#now-playing-jellyfin).
 
+### Bazarr, Sonarr and Radarr
+
+When Bazarr downloads or upgrades a subtitle, a one-line post-processing command tells
+quipclipper, and it re-indexes just that file in the background at idle priority, so
+search always has the current lines. Sonarr and Radarr can do the same on import,
+upgrade and rename with a plain webhook. A hook token can only queue re-indexes, and
+`QC_PATH_MAP` maps their container paths onto yours. The script
+([contrib/hooks/quipclipper-reindex](contrib/hooks/quipclipper-reindex), `sh` and `curl`)
+and copy-paste setup: [docs/HOOKS.md](docs/HOOKS.md).
+
 ## Accessibility
 
 The web app aims at WCAG 2.2 AA, and tests keep it there:
@@ -230,6 +240,7 @@ See [docs/MANUAL.md](docs/MANUAL.md#youtube-sources-experimental) and
 | [docs/DEPLOY.md](docs/DEPLOY.md) | Docker Compose, every setting, the NixOS module, versions and upgrades. |
 | [docs/CLI.md](docs/CLI.md) | Every CLI command (generated from the command registry). |
 | [docs/API.md](docs/API.md) | The HTTP API. |
+| [docs/HOOKS.md](docs/HOOKS.md) | Re-index hooks for Bazarr, Sonarr and Radarr. |
 | [docs/DESIGN_NOTES.md](docs/DESIGN_NOTES.md) | Why it is built the way it is. |
 | [CHANGELOG.md](CHANGELOG.md) | What changed in each release. |
 
