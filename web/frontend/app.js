@@ -1305,6 +1305,9 @@ function libIndexHome() {
 
 const libClock = (s) => (s < 60 ? "under a minute" : s < 3600 ? `~${Math.round(s / 60)} min` : `~${Math.floor(s / 3600)} h ${Math.round((s % 3600) / 60)} min`);
 
+/** "" for a run over the whole library, else " of <folder>". */
+const libRunWhere = (r) => (r.whole_library === false && r.paths?.length ? ` of ${r.paths[0].split("/").pop()}` : "");
+
 function libRunSummary(r) {
   const parts = [`${r.indexed || 0} indexed`, `${r.no_subs || 0} without subtitles`];
   if (r.failed) parts.push(`${r.failed} failed`);
@@ -1324,7 +1327,7 @@ async function refreshLibIndex() {
   if (job) {
     const r = job.result || {};
     status.textContent = job.status === "queued" ? "Library index: waiting to start…"
-      : r.status === "indexing" ? `Library index at low priority: ${r.done || 0} of ${plural(r.todo || 0, "file")}` +
+      : r.status === "indexing" ? `Library index${libRunWhere(r)} at low priority: ${r.done || 0} of ${plural(r.todo || 0, "file")}` +
         (r.eta_s != null ? `, ${libClock(r.eta_s)} left` : "") + (r.current ? ` · ${r.current.split("/").pop()}` : "")
       : `Library index: ${job.progress || "starting"}`;
     status.hidden = false;
@@ -1342,10 +1345,11 @@ async function refreshLibIndex() {
   if (!last) { status.hidden = true; return; }
   const ended = last.finished || last.updated;
   const when = ended ? new Date(ended * 1000).toLocaleString() : "";
-  status.textContent = last.status === "done" ? `Last run finished ${when}: ${libRunSummary(last)}.`
-    : last.status === "cancelled" ? `Last run stopped ${when} at ${last.done || 0} of ${plural(last.todo || 0, "file")}: ${libRunSummary(last)}. Index again to pick up where it stopped.`
-    : last.status === "interrupted" ? `Last run was cut short by a server restart (${when}) at ${last.done || 0} of ${plural(last.todo || 0, "file")}. Index again to pick up where it stopped.`
-    : `Last run: ${last.status}.`;
+  const run = `Last run${libRunWhere(last)}`;
+  status.textContent = last.status === "done" ? `${run} finished ${when}: ${libRunSummary(last)}.`
+    : last.status === "cancelled" ? `${run} stopped ${when} at ${last.done || 0} of ${plural(last.todo || 0, "file")}: ${libRunSummary(last)}. Index again to pick up where it stopped.`
+    : last.status === "interrupted" ? `${run} was cut short by a server restart (${when}) at ${last.done || 0} of ${plural(last.todo || 0, "file")}. Index again to pick up where it stopped.`
+    : `${run}: ${last.status}.`;
   status.hidden = false;
 }
 

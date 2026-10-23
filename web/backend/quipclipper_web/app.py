@@ -1632,7 +1632,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 raise
 
         def run_job(job) -> list[Path]:
-            lib_index.run(job, paths=paths, scan=scan, index=index, log=lib_log)
+            lib_index.run(job, paths=paths, scan=scan, index=index, log=lib_log,
+                          whole_library=not path)
             return []
 
         with lib_submit:

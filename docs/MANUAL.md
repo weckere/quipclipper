@@ -187,8 +187,10 @@ subtitles** backfills transcripts for videos that came from YouTube (see
 **Index the whole library** indexes every file in the library that isn't indexed yet, so a
 whole-library dialogue search covers all of it. It never starts on its own: only this button
 (after a confirm) or `quipclipper index.library [FOLDER]` start it. It runs in the
-background, one file after another at idle priority, so it never slows playback; on a large
-library it takes many hours, or days. The card, every folder's Dialogue index card and **Jobs** show its progress (files
+background, one file after another at idle priority, so it never slows playback. A file with
+a subtitle file beside it takes a moment; one with embedded subtitles is read in full, at
+about the disk's speed (some 15 TB of video a day from one hard disk), so a large library takes
+a day or more. The card, every folder's Dialogue index card and **Jobs** show its progress (files
 done, the file in hand, a rough time left); **Cancel** stops it, and the files done so far
 stay indexed. Starting it again picks up where it stopped, after a cancel or a server
 restart alike: files already indexed, or known to have no subtitles, are skipped. The home

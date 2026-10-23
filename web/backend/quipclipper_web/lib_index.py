@@ -78,10 +78,11 @@ def _clock(seconds: float) -> str:
 
 
 def run(job, *, paths: list[str], scan: Callable[[], Iterable[tuple[Path, str]]],
-        index: Callable[[Path], str], log: RunLog,
+        index: Callable[[Path], str], log: RunLog, whole_library: bool = True,
         now: Callable[[], float] = time.time) -> dict[str, Any]:
     """Index every file ``scan()`` yields as not indexed; the job's ``progress`` and
-    ``result`` follow it, and so does ``log``. Returns the result.
+    ``result`` follow it, and so does ``log``. Returns the result. ``whole_library``
+    says whether ``paths`` are the library roots (else one folder of it).
 
     ``scan`` yields ``(file, state)`` for every media file, state being what the cache
     says: "indexed", "no_subs" or "not_indexed"; only "not_indexed" ones are indexed.
@@ -90,7 +91,7 @@ def run(job, *, paths: list[str], scan: Callable[[], Iterable[tuple[Path, str]]]
     it couldn't tell about."""
     started = now()
     result: dict[str, Any] = {
-        "paths": paths, "status": "scanning", "started": started, "files": 0,
+        "paths": paths, "whole_library": whole_library, "status": "scanning", "started": started, "files": 0,
         "already": 0, "todo": 0, "done": 0, "indexed": 0, "no_subs": 0, "failed": 0,
         "current": None, "eta_s": None, "files_per_hour": None, "errors": [],
     }

@@ -191,7 +191,7 @@ priority (`SCHED_IDLE`, nice 19, the idle I/O class, through `quipclipper.idle`)
 player's HLS encodes always come first. A file whose subtitles are cached and current, or
 that is known to have none (`no_subs`), is skipped, so a rerun after a cancel, a failure or
 a restart picks up where the last one stopped. `DELETE /api/jobs/{id}` cancels it, killing
-the extraction in flight; what is done stays. The job's `result` is `{paths, status
+the extraction in flight; what is done stays. The job's `result` is `{paths, whole_library, status
 (scanning | indexing | done | cancelled | failed), files, already, todo, done, indexed,
 no_subs, failed, current, eta_s, files_per_hour, errors, summary}`: `files` media files were
 found, `already` of them needed nothing, and `done` of the `todo` rest are finished, with

@@ -61,7 +61,7 @@ def test_indexes_the_whole_library_and_a_rerun_skips_what_is_done(tmp_path, monk
     assert job["status"] == "done"
     res = job["result"]
     assert (res["files"], res["todo"], res["indexed"], res["no_subs"], res["failed"]) == (3, 3, 2, 1, 0)
-    assert "low priority" in job["label"]
+    assert "low priority" in job["label"] and res["whole_library"] is True
     # The folder's status sees it, and whole-library search now reads them.
     st = c.get("/api/search/folder/index-status", params={"path": str(media)}).json()
     assert (st["total"], st["indexed"], st["no_subs"]) == (3, 2, 1)
@@ -83,6 +83,7 @@ def test_a_folder_of_any_size_is_indexed_as_a_job(tmp_path, monkeypatch):
     assert (st["total"], st["skipped"], st["cap"]) == (4, False, 2)
     job = _wait(c, c.post("/api/search/library/index", params={"path": folder}).json()["job_id"])
     assert job["result"]["indexed"] == 4 and job["result"]["paths"] == [folder]
+    assert job["result"]["whole_library"] is False
 
 
 def test_every_extraction_runs_at_idle_priority(tmp_path, monkeypatch):
