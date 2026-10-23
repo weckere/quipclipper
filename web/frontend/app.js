@@ -32,7 +32,7 @@ async function postJSON(url, body) {
     try { detail = (await resp.json()).detail || detail; } catch {}
     throw new Error(detail);
   }
-  if (/^\/api\/(clip|youtube|media|items\/transcribe|search\/folder\/(index|fetch-subs|transcribe))/.test(url)) nudgeJobs();
+  if (/^\/api\/(clip|youtube|media|items\/transcribe|search\/folder\/(index|fetch-subs|transcribe)|search\/library\/index)/.test(url)) nudgeJobs();
   return resp.json();
 }
 
@@ -423,8 +423,9 @@ async function browse(path, { fromLink = false } = {}) {
   $("dialogue-search-status").hidden = true;
   $("reindex-folder-status").hidden = true;
   resetIndexCard();
-  // Show dialogue search bar only when inside a folder (not at root)
-  $("dialogue-search-bar").hidden = !path;
+  libIndexReset();
+  // The dialogue search bar: a folder's Dialogue index card, or the library's at home.
+  $("dialogue-search-bar").hidden = false;
   const isYtFolder = path === "yt:";
   // The add-URL bar lives in the ▶ YouTube pseudo-folder; the Dialogue index card
   // doesn't apply there (each item has its own ↻ in the item view).
@@ -458,7 +459,8 @@ async function browse(path, { fromLink = false } = {}) {
   }
   refocus(had, $("entries").querySelector(".entry-main") || $("entries"));
   autoScope();
-  if (!isYtFolder) checkFolderIndex(path);  // index-status is for real folders
+  if (!path) libIndexHome();
+  else if (!isYtFolder) checkFolderIndex(path);  // index-status is for real folders
   return true;
 }
 
@@ -683,7 +685,7 @@ async function librarySearch(query) {
     showIndexScope(folderPaths.length);
   } else {
     dialogueSearchScope = null;
-    $("dialogue-search-bar").hidden = !currentBrowsePath;
+    if (!currentBrowsePath) libIndexHome();
   }
   autoScope();  // a name search that found folders makes "folders" the scope
 }
@@ -1114,12 +1116,20 @@ function showIndexScope(n) {
   $("index-card-text").textContent = `${plural(n, "matching folder")}. Re-index covers all of them.`;
   setIndexBar(null);
   $("index-btn").hidden = true;
+  $("lib-index-btn").hidden = true;
+  $("reindex-folder-btn").hidden = false;
+  $("fetch-folder-subs-btn").hidden = false;
 }
+
+// A folder with more files than one request may index (index-status' `cap`) is indexed
+// by the library index job instead; Re-index all isn't offered there.
+let indexInBackground = false;
 
 function renderIndexStatus(data) {
   const text = $("index-card-text");
   const index = $("index-btn");
   index.hidden = true;
+  indexInBackground = !!data.cap && data.total > data.cap;
   if (data.skipped) {
     text.textContent = `Too many files here to index at once (over ${data.total}). Open a subfolder to index it.`;
     setIndexBar(null);
@@ -1136,7 +1146,7 @@ function renderIndexStatus(data) {
     $("reindex-folder-btn").hidden = true;
     return;
   }
-  $("reindex-folder-btn").hidden = false;
+  $("reindex-folder-btn").hidden = indexInBackground;
   // Files indexing found to have no subtitles at all (no sidecar, no text
   // track) aren't "missing": there is nothing to index, so don't offer it.
   const noSubs = data.no_subs || 0;
@@ -1161,7 +1171,10 @@ function renderIndexStatus(data) {
     text.textContent = (data.indexed === 0
       ? `None of the ${plural(withSubs, "file")} ${noSubs ? "with subtitles " : ""}are indexed yet. Indexing makes dialogue search fast.`
       : `${data.indexed} of ${plural(withSubs, "file")} have searchable subtitles.`) + none + heard;
-    index.textContent = `Index ${plural(missing, "file")}`;
+    index.textContent = `Index ${plural(missing, "file")}` + (indexInBackground ? " in the background" : "");
+    index.title = indexInBackground
+      ? "Too many files here to index in one go: index them one after another in the background at low priority (Jobs shows it; Cancel keeps what's done)"
+      : "Extract and cache the subtitles of the files here that aren't indexed yet, so dialogue search is fast";
     index.hidden = false;
   }
 }
@@ -1174,6 +1187,7 @@ async function checkFolderIndex(path) {
     const data = await getJSON(`/api/search/folder/index-status?path=${encodeURIComponent(path)}`);
     if (myId !== indexCheckId) return;
     renderIndexStatus(data);
+    refreshLibIndex();  // a library index in progress shows on every folder's card
   } catch {
     if (myId === indexCheckId) $("index-card-text").textContent = "Couldn't read the index status.";
   }
@@ -1210,6 +1224,7 @@ function setIndexBusy(on) {
 $("index-btn").addEventListener("click", async () => {
   const folder = currentBrowsePath;
   if (!folder || indexBusy) return;
+  if (indexInBackground) { startLibIndex(folder); return; }
   const text = $("index-card-text");
   setIndexBusy(true);
   text.textContent = "Indexing…";
@@ -1258,6 +1273,111 @@ $("reindex-folder-btn").addEventListener("click", async () => {
   }
   setIndexBusy(false);
 });
+
+// --- library index (M20) -------------------------------------------------------------
+// The whole library, or a folder over the index cap, as one background job at low
+// priority (POST /api/search/library/index). It starts only from these buttons, after a
+// confirm; starting it again picks up where the last run stopped. Every Dialogue index
+// card shows a run in progress; the library's home also shows how the last one ended.
+let libIndexTimer = null;
+let libIndexCheckId = 0;
+let libIndexJob = null;  // id of the running job, for Cancel
+
+function libIndexReset() {
+  clearTimeout(libIndexTimer);
+  libIndexTimer = null;
+  libIndexCheckId++;
+  libIndexJob = null;
+  $("lib-index-btn").hidden = true;
+  $("lib-index-cancel").hidden = true;
+  $("lib-index-status").hidden = true;
+}
+
+/** The library home: the card is the library's own. */
+function libIndexHome() {
+  $("index-card").hidden = false;
+  $("index-card-text").textContent = "Dialogue search reads only indexed files. Index the whole library to search all of it.";
+  setIndexBar(null);
+  for (const id of ["index-btn", "reindex-folder-btn", "fetch-folder-subs-btn", "stt-folder-nosubs", "stt-folder-gaps"]) $(id).hidden = true;
+  $("lib-index-btn").hidden = false;
+  refreshLibIndex();
+}
+
+const libClock = (s) => (s < 60 ? "under a minute" : s < 3600 ? `~${Math.round(s / 60)} min` : `~${Math.floor(s / 3600)} h ${Math.round((s % 3600) / 60)} min`);
+
+function libRunSummary(r) {
+  const parts = [`${r.indexed || 0} indexed`, `${r.no_subs || 0} without subtitles`];
+  if (r.failed) parts.push(`${r.failed} failed`);
+  return `${parts.join(", ")} (${r.already || 0} of ${plural(r.files || 0, "file")} were done already)`;
+}
+
+async function refreshLibIndex() {
+  clearTimeout(libIndexTimer);
+  const myId = ++libIndexCheckId;
+  const home = !currentBrowsePath && !dialogueSearchScope;
+  let data;
+  try { data = await getJSON("/api/search/library/index"); } catch { return; }
+  if (myId !== libIndexCheckId) return;
+  const status = $("lib-index-status"), cancel = $("lib-index-cancel"), btn = $("lib-index-btn");
+  const job = data.job, last = data.last;
+  libIndexJob = job ? job.id : null;
+  if (job) {
+    const r = job.result || {};
+    status.textContent = job.status === "queued" ? "Library index: waiting to start…"
+      : r.status === "indexing" ? `Library index at low priority: ${r.done || 0} of ${plural(r.todo || 0, "file")}` +
+        (r.eta_s != null ? `, ${libClock(r.eta_s)} left` : "") + (r.current ? ` · ${r.current.split("/").pop()}` : "")
+      : `Library index: ${job.progress || "starting"}`;
+    status.hidden = false;
+    cancel.hidden = false;
+    btn.hidden = true;
+    $("index-btn").disabled = true;  // one index at a time on this server
+    if (home && r.todo) setIndexBar((r.done || 0) / r.todo);
+    libIndexTimer = setTimeout(refreshLibIndex, document.hidden ? 10000 : 3000);
+    return;
+  }
+  cancel.hidden = true;
+  $("index-btn").disabled = indexBusy;
+  if (!home) { status.hidden = true; return; }
+  btn.hidden = false;
+  if (!last) { status.hidden = true; return; }
+  const ended = last.finished || last.updated;
+  const when = ended ? new Date(ended * 1000).toLocaleString() : "";
+  status.textContent = last.status === "done" ? `Last run finished ${when}: ${libRunSummary(last)}.`
+    : last.status === "cancelled" ? `Last run stopped ${when} at ${last.done || 0} of ${plural(last.todo || 0, "file")}: ${libRunSummary(last)}. Index again to pick up where it stopped.`
+    : last.status === "interrupted" ? `Last run was cut short by a server restart (${when}) at ${last.done || 0} of ${plural(last.todo || 0, "file")}. Index again to pick up where it stopped.`
+    : `Last run: ${last.status}.`;
+  status.hidden = false;
+}
+
+async function startLibIndex(folder) {
+  const what = folder ? "every file in this folder that isn't indexed yet" : "every file in the library that isn't indexed yet";
+  if (!confirm(`Index ${what}? It runs one file after another in the background at low ` +
+      "priority, so it can take hours (days for a whole library); Cancel keeps what's done, " +
+      "and starting it again picks up where it stopped.")) return;
+  const status = $("lib-index-status");
+  status.hidden = false;
+  status.textContent = "Starting…";
+  let r;
+  try {
+    r = await postJSON("/api/search/library/index" + (folder ? `?path=${encodeURIComponent(folder)}` : ""), {});
+  } catch (err) {
+    status.textContent = `Couldn't start: ${err.message}`;
+    return;
+  }
+  announce(r.existing ? "A library index is already running" : "Indexing in the background");
+  refreshLibIndex();
+}
+
+$("lib-index-btn").onclick = () => startLibIndex(null);
+$("lib-index-cancel").onclick = async () => {
+  if (!libIndexJob) return;
+  const cancel = $("lib-index-cancel");
+  cancel.disabled = true;
+  $("lib-index-status").textContent = "Stopping…";
+  try { await apiFetch(`/api/jobs/${encodeURIComponent(libIndexJob)}`, { method: "DELETE" }); } catch {}
+  cancel.disabled = false;
+  refreshLibIndex();
+};
 
 // --- folder transcription (M21) -----------------------------------------------------
 // Only from these two buttons, after a confirm: the folder's files one after another, in
@@ -5944,9 +6064,9 @@ function renderJobsList() {
     } else if (j.status === "done") {
       sub = (j.files || []).map((f) =>
         `<a class="job-file" data-action="job.download" href="/api/jobs/${encodeURIComponent(j.id)}/download/${encodeURIComponent(f.name)}" download title="Download this file"><span aria-hidden="true">⤓</span> ${escapeHtml(f.name)} (${fmtSize(f.size)})</a>`
-      ).join(" ") || "Done";
+      ).join(" ") || (j.result?.summary ? escapeHtml(j.result.summary) : "Done");
     } else if (j.status === "failed") sub = `<span class="job-failed">${escapeHtml(j.error || "Failed")}</span>`;
-    else sub = "Cancelled";
+    else sub = j.result?.summary ? `Cancelled · ${escapeHtml(j.result.summary)}` : "Cancelled";
     li.innerHTML =
       `<span class="job-mark" aria-hidden="true"></span>` +
       `<div class="job-main"><div class="job-title">${escapeHtml(j.label || j.id)}</div><div class="job-sub muted">${sub}</div></div>` +

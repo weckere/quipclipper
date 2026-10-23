@@ -69,6 +69,19 @@ def lower_priority() -> list[str]:
     return done
 
 
+def wrap(argv: list[str]) -> list[str]:
+    """``argv`` run through this module (idle CPU and I/O priority)."""
+    return [sys.executable, "-m", "quipclipper.idle", *argv]
+
+
+def child_env() -> dict[str, str]:
+    """The environment for :func:`wrap`: this process's import path as PYTHONPATH.
+    A packaged app (Nix's buildPythonApplication) sets its path up inside its own entry
+    script, so the bare interpreter it runs on wouldn't find ``quipclipper.idle``."""
+    paths = [p for p in sys.path if p and os.path.isdir(p)]
+    return {**os.environ, "PYTHONPATH": os.pathsep.join(paths)}
+
+
 def main(argv: list[str]) -> None:
     if not argv:
         sys.exit("usage: python -m quipclipper.idle CMD [ARGS...]")

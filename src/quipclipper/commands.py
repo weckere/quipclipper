@@ -331,6 +331,23 @@ COMMANDS: tuple[Command, ...] = (
             params=(Param("path", "str", "Folder.", main=True, required=True),
                     Param("force", "bool", "Re-read files already cached.", default=False)),
             response="lines", ui="Index N files; Re-index all (Dialogue index card)"),
+    Command("index.library", "Index every file under the library roots (or one folder of "
+            "any size) that isn't indexed yet, as a background job: one file at a time at "
+            "idle priority, cancellable, and a rerun resumes where the last one stopped "
+            "(files indexed, or known to have no subtitles, are skipped). Only ever on "
+            "request.", "POST", "/api/search/library/index",
+            params=(Param("path", "str", "Folder to index instead of the whole library.",
+                          main=True),
+                    Param("wait", "bool", "Wait for the job to finish and show its result "
+                          "(a whole library takes many hours; Ctrl-C cancels it).",
+                          where=CLIENT, default=False)),
+            response="job",
+            ui="Index the whole library (Dialogue index card, library root); Index N files "
+               "in the background (a folder over 500 files); ✕ Cancel"),
+    Command("index.library-status", "Show the library index job: the one running, and "
+            "how far the last run got (kept across restarts).", "GET",
+            "/api/search/library/index",
+            ui="Dialogue index card (library root)"),
     Command("index.fetch-subs", "Fetch missing YouTube subtitles for every video in a "
             "folder.", "POST", "/api/search/folder/fetch-subs",
             params=(Param("path", "str", "Folder.", main=True, required=True),)

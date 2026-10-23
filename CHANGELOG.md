@@ -164,8 +164,22 @@ scripts/release.sh leaves this block in Unreleased; delete the two marker lines 
   status line and the CLI say how many weren't searched. A file with a stored machine
   transcript is searched on it even when not indexed. Listing the library is quicker too:
   one listing per folder serves every file's sidecar lookups, and the EPUB check is cached.
+- **Index the whole library:** a button on the library's home page (and `quipclipper
+  index.library [FOLDER]`, `POST /api/search/library/index`) indexes every file not indexed
+  yet, or every file in one folder of any size, as a background job. It only ever starts when
+  someone starts it, never on its own. One file at a time, and every ffprobe and ffmpeg it
+  runs is at idle priority (`SCHED_IDLE`, nice 19, idle I/O). Jobs and the Dialogue index
+  cards show its progress with a rough time left; Cancel stops it mid-file, and starting it
+  again skips the files indexed or known to have no subtitles, so it resumes after a cancel
+  or a restart (`index.library-status`, `GET /api/search/library/index`, show the last run).
+  A folder of over 500 files offers **Index N files in the background**, and its index-status
+  now counts it instead of answering `skipped`.
 
 ### Fixed
+
+- Indexing no longer slows down as the subtitle cache grows: after each extraction the cache
+  read every entry it held to find the file's stale ones (on a library-sized cache, gigabytes
+  per file). It now knows each entry's file, read once.
 
 - Seeking out of a range started with ▶ lets playback carry on for a transcoded file and in
   the YouTube player too (it jumped back to the range later).

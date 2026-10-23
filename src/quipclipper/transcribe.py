@@ -41,7 +41,6 @@ import re
 import secrets
 import shutil
 import subprocess
-import sys
 import tempfile
 import threading
 import time
@@ -51,7 +50,7 @@ from pathlib import Path
 
 from rapidfuzz import fuzz
 
-from quipclipper import waveform
+from quipclipper import idle, waveform
 from quipclipper.models import Cue, format_timestamp
 from quipclipper.subtitles import SIDECAR_TOKEN, load_subtitles
 
@@ -409,17 +408,9 @@ def filter_machine(cues: list[Cue], mode: str) -> list[Cue]:
 # --- running whisper.cpp ---------------------------------------------------------------
 
 
-def idle_argv(argv: list[str]) -> list[str]:
-    """``argv`` run through :mod:`quipclipper.idle` (idle CPU and I/O priority)."""
-    return [sys.executable, "-m", "quipclipper.idle", *argv]
-
-
-def idle_env() -> dict[str, str]:
-    """The environment for :func:`idle_argv`: this process's import path as PYTHONPATH.
-    A packaged app (Nix's buildPythonApplication) sets its path up inside its own entry
-    script, so the bare interpreter it runs on wouldn't find ``quipclipper.idle``."""
-    paths = [p for p in sys.path if p and os.path.isdir(p)]
-    return {**os.environ, "PYTHONPATH": os.pathsep.join(paths)}
+# Kept under these names for the transcription code and its tests.
+idle_argv = idle.wrap
+idle_env = idle.child_env
 
 
 def extract_argv(source: str | Path, out_wav: str | Path, *, start: float, duration: float,

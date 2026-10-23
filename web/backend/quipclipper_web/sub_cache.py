@@ -39,6 +39,9 @@ from quipclipper.subtitles import (
 )
 
 _ENTRY_GLOBS = ("*.json", "*.nosubs")
+# How much of an entry to read for the video path it belongs to (written first).
+_HEAD = 32768
+_VIDEO_PREFIX = '{"video": '
 
 
 class SubtitleCache:
@@ -54,6 +57,10 @@ class SubtitleCache:
         # request the same subtitles when an item is opened.
         self._inflight: dict[str, threading.Lock] = {}
         self._inflight_guard = threading.Lock()
+        # video path -> its entry file names, read once on first need and kept current
+        # (see _owners).
+        self._owner_map: dict[str, set[str]] | None = None
+        self._owners_lock = threading.Lock()
 
     def _source_mtime(self, video: Path, siblings: list[Path] | None = None) -> float:
         """Mtime of the subtitle source — sidecar if present, else the video.
@@ -159,13 +166,64 @@ class SubtitleCache:
         except (OSError, RuntimeError, ValueError):
             return False
         with contextlib.suppress(OSError):
-            self._nosubs_path(video).write_text(json.dumps({"video": str(video)}))
+            marker = self._nosubs_path(video)
+            marker.write_text(json.dumps({"video": str(video)}))
+            self._own(video, marker.name)
             return True
         return False
 
     def _entries(self):
         for pattern in _ENTRY_GLOBS:
             yield from self._dir.glob(pattern)
+
+    # --- which entries belong to which file -----------------------------------
+    # Sweeping one file's stale entries (after every extraction) and clearing a file or
+    # a folder need that file's entries. Finding them by reading every entry cost a full
+    # read of the cache per extraction, so indexing a library took time quadratic in its
+    # size (wizrock: ~42 KB an entry, ~33k files). Instead each entry's owner is read
+    # once, from its head, and the map is kept current as entries come and go.
+
+    def _owners(self) -> dict[str, set[str]]:
+        """``video path -> its entry file names``. Call with ``_owners_lock`` held."""
+        if self._owner_map is None:
+            owners: dict[str, set[str]] = {}
+            for f in self._entries():
+                video = self._stored_video(f)
+                if video is not None:
+                    owners.setdefault(video, set()).add(f.name)
+            self._owner_map = owners
+        return self._owner_map
+
+    def _own(self, video: Path | str, name: str) -> None:
+        with self._owners_lock:
+            if self._owner_map is not None:  # else the first _owners() reads it from disk
+                self._owner_map.setdefault(str(video), set()).add(name)
+
+    def _disown(self, video: str, name: str) -> None:
+        with self._owners_lock:
+            if self._owner_map is not None and video in self._owner_map:
+                self._owner_map[video].discard(name)
+                if not self._owner_map[video]:
+                    del self._owner_map[video]
+
+    def _entries_of(self, videos) -> list[tuple[str, Path]]:
+        """``(video, entry)`` for every entry of the given video paths (a predicate on
+        the path, or one path)."""
+        match = videos if callable(videos) else (lambda v, t=str(videos): v == t)
+        with self._owners_lock:
+            return [(v, self._dir / n) for v, names in self._owners().items() if match(v)
+                    for n in sorted(names)]
+
+    def _unlink(self, video: str, entry: Path) -> bool:
+        try:
+            entry.unlink()
+        except FileNotFoundError:
+            self._disown(video, entry.name)
+            return False
+        except OSError:
+            return False
+        self._disown(video, entry.name)
+        return True
 
     def _read(self, cp: Path) -> list[Cue] | None:
         if not cp.exists():
@@ -206,6 +264,7 @@ class SubtitleCache:
             with os.fdopen(fd, "w") as f:
                 f.write(payload)
             os.replace(tmp, cp)
+            self._own(video, cp.name)
         except OSError:
             # Best-effort cleanup; extraction result is still returned.
             if tmp is not None:
@@ -265,10 +324,17 @@ class SubtitleCache:
     # --- cache maintenance ---------------------------------------------------
 
     def _stored_video(self, cache_file: Path) -> str | None:
-        """Return the video path recorded in a cache file, if any."""
+        """Return the video path recorded in a cache file, if any. Reads only the head
+        of an entry this class wrote (the path comes first), so not every cue."""
         try:
-            data = json.loads(cache_file.read_text())
-        except (json.JSONDecodeError, OSError):
+            with open(cache_file, encoding="utf-8") as fh:
+                head = fh.read(_HEAD)
+                if head.startswith(_VIDEO_PREFIX):
+                    with contextlib.suppress(json.JSONDecodeError):
+                        video, _ = json.JSONDecoder().raw_decode(head, len(_VIDEO_PREFIX))
+                        return video if isinstance(video, str) else None
+                data = json.loads(head + fh.read())
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
             return None
         return data.get("video") if isinstance(data, dict) else None
 
@@ -283,9 +349,7 @@ class SubtitleCache:
         removed = 0
         target = str(video)
         current_mtime = self._source_mtime(video)
-        for f in self._entries():
-            if self._stored_video(f) != target:
-                continue
+        for _, f in self._entries_of(target):
             # Recompute the key prefix for this file's video at the current
             # mtime; a stale file's name won't match any current-mtime key.
             key_stem = f.stem
@@ -296,21 +360,20 @@ class SubtitleCache:
             # instead reconstruct only the concrete track we might have dual-keyed
             # by reading the stored mtime portion — cheaper to just keep entries
             # whose mtime matches the current one.
-            if self._entry_mtime_matches(f, current_mtime):
+            if self._entry_mtime_matches(f, current_mtime, target):
                 continue
-            with contextlib.suppress(OSError):
-                f.unlink()
-                removed += 1
+            removed += self._unlink(target, f)
         return removed
 
-    def _entry_mtime_matches(self, cache_file: Path, mtime: float) -> bool:
+    def _entry_mtime_matches(self, cache_file: Path, mtime: float,
+                             stored: str | None = None) -> bool:
         """True if this cache entry's key was built from *mtime*.
 
         The key is a hash so the mtime isn't recoverable directly; instead we
         recompute the hash for the entry's stored video across the plausible
         track keys (auto + any small track index) at *mtime* and check for a
         match. Cheap and bounded — subtitle tracks are single digits."""
-        stored = self._stored_video(cache_file)
+        stored = stored or self._stored_video(cache_file)
         if stored is None:
             return False
         key_stem = cache_file.stem
@@ -327,20 +390,13 @@ class SubtitleCache:
         """
         removed = 0
         target = str(video)
-        # Current-key file (covers the common case fast).
+        # The current-key file, and older entries written under a different source
+        # mtime, and markers.
         cp = self._cache_path(video)
         if cp.exists():
-            with contextlib.suppress(OSError):
-                cp.unlink()
-                removed += 1
-        # Orphans: older entries written under a different source mtime, and markers.
-        for f in self._entries():
-            if f == cp:
-                continue
-            if self._stored_video(f) == target:
-                with contextlib.suppress(OSError):
-                    f.unlink()
-                    removed += 1
+            removed += self._unlink(target, cp)
+        for _, f in self._entries_of(target):
+            removed += self._unlink(target, f)
         return removed
 
     def clear_under(self, folder: Path) -> int:
@@ -348,12 +404,6 @@ class SubtitleCache:
 
         Returns the number of cache files removed.
         """
-        removed = 0
         prefix = str(folder)
-        for f in self._entries():
-            stored = self._stored_video(f)
-            if stored is not None and (stored == prefix or stored.startswith(prefix + os.sep)):
-                with contextlib.suppress(OSError):
-                    f.unlink()
-                    removed += 1
-        return removed
+        under = lambda v: v == prefix or v.startswith(prefix + os.sep)  # noqa: E731
+        return sum(self._unlink(v, f) for v, f in self._entries_of(under))

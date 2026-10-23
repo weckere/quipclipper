@@ -161,8 +161,10 @@ resolved stream URLs, so `split_channels` and `backend=mkvmerge` return 400 for
 |---|---|---|
 | GET | `/api/search?path=&query=&track=&limit=&min_score=&max_span=` | Rank dialogue matches in one file. |
 | GET | `/api/search/folder?path=&query=&limit=` | Search dialogue across a folder (repeat `path=` for several; `yt:` and EPUB books count). |
-| GET | `/api/search/folder/index-status?path=` | How much of a folder's subtitles are cached: `{total, indexed, no_subs, skipped}`. `no_subs` counts files indexing found to have no subtitles at all (no sidecar, no text track); they are never offered for indexing. `skipped: true` means the folder holds over 500 media files, too many to index in one request (`no_subs` is left out, and `POST …/index` answers 400). |
-| POST | `/api/search/folder/index?path=&force=` | Pre-extract subtitles for a folder (streams progress). |
+| GET | `/api/search/folder/index-status?path=` | How much of a folder's subtitles are cached, for a folder of any size (a listing per folder and the cache's names: no extraction, no probe): `{total, indexed, no_subs, transcribed, audio_untranscribed, skipped, cap}`. `no_subs` counts files indexing found to have no subtitles at all (no sidecar, no text track); they are never offered for indexing. `cap` (500) is the most files `POST …/index` takes in one request; a bigger folder is indexed with `POST /api/search/library/index?path=`. `skipped` is always `false` now (kept for older clients). |
+| POST | `/api/search/folder/index?path=&force=` | Pre-extract subtitles for a folder of at most `cap` files (streams progress; 400 over it). |
+| POST | `/api/search/library/index?path=` | Start the **library index**: every media file under the library roots (or under `path`, a folder of any size) that isn't indexed yet, as a background job. Returns `{job_id, existing, paths}`; while one runs, this returns it with `existing: true` (one at a time). See below. |
+| GET | `/api/search/library/index` | `{job, last}`: the running library index job (as `GET /api/jobs/{id}`, or null), and the last run's summary, kept in the state dir across restarts (`status` `done`, `cancelled`, `failed`, or `interrupted` when a restart cut it short; null before the first run). |
 
 `/api/search` returns `{query, count, matches: [{index, score, text, speaker,
 start, end, start_ts, end_ts, cue_count, link}]}`. The `index` is what you pass back as
@@ -180,6 +182,21 @@ search. Its hits have no `index`: clip one with its
 `path`, `start`, `end` and `text` as `cue_text`. `link` (here, on `/api/search/folder` hits, bookmarks and
 clips-library entries) is a [deep link](#deep-links) to that line, present only when
 `QC_PUBLIC_URL` is set.
+
+The **library index** (M20) is how a whole library becomes searchable. It runs only when
+someone starts it (`POST /api/search/library/index`, `quipclipper index.library`, or the
+library page's **Index the whole library**): no timer, no startup or scan hook, no setting
+starts it. It indexes one file at a time, and every ffprobe and ffmpeg it runs is at idle
+priority (`SCHED_IDLE`, nice 19, the idle I/O class, through `quipclipper.idle`), so a
+player's HLS encodes always come first. A file whose subtitles are cached and current, or
+that is known to have none (`no_subs`), is skipped, so a rerun after a cancel, a failure or
+a restart picks up where the last one stopped. `DELETE /api/jobs/{id}` cancels it, killing
+the extraction in flight; what is done stays. The job's `result` is `{paths, status
+(scanning | indexing | done | cancelled | failed), files, already, todo, done, indexed,
+no_subs, failed, current, eta_s, files_per_hour, errors, summary}`: `files` media files were
+found, `already` of them needed nothing, and `done` of the `todo` rest are finished, with
+`eta_s` a rough estimate of the seconds left. A file it couldn't read is counted in
+`failed` (up to 20 listed in `errors`) and tried again next run.
 
 `score` (0 to 100, one decimal) is 100 only when the line holds the query's words verbatim:
 in order and contiguous, after case, punctuation, apostrophes and subtitle markup are

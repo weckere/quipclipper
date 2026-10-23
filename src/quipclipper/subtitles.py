@@ -5,8 +5,12 @@ from __future__ import annotations
 import json
 import re
 import shutil
+import contextlib
 import subprocess
 import tempfile
+import threading
+import time
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -15,6 +19,7 @@ from pysubs2.exceptions import Pysubs2Error
 
 from collections import Counter
 
+from quipclipper import idle
 from quipclipper.models import Cue, format_timestamp
 
 # Subtitle/transcript extensions we look for next to a media file, in priority
@@ -36,6 +41,57 @@ _TAG_RE = re.compile(r"<[^>]+>|\{[^}]*\}")
 # timeout since it can transcode a whole track's worth of subtitles.
 _PROBE_TIMEOUT = 60
 _EXTRACT_TIMEOUT = 3600
+
+
+# A thread inside at_idle_priority() runs its ffprobe/ffmpeg through quipclipper.idle.
+_idle = threading.local()
+
+
+class Cancelled(Exception):
+    """An idle-priority extraction was stopped by its ``cancelled`` check. Not a
+    RuntimeError, so no caller mistakes it for a file with no subtitles."""
+
+
+@contextlib.contextmanager
+def at_idle_priority(cancelled: Callable[[], bool] | None = None) -> Iterator[None]:
+    """Run every ffprobe and ffmpeg this thread starts meanwhile at idle CPU and I/O
+    priority (:mod:`quipclipper.idle`), and kill the one in flight when ``cancelled()``
+    turns true (it raises :class:`Cancelled`). For background work such as the library
+    index (M20), which must never slow a player down. Give it absolute paths: the
+    children run in the temp folder (``python -m`` puts the working directory first on
+    the import path)."""
+    prev = getattr(_idle, "cancelled", None), getattr(_idle, "on", False)
+    _idle.on, _idle.cancelled = True, cancelled
+    try:
+        yield
+    finally:
+        _idle.cancelled, _idle.on = prev
+
+
+def _run(cmd: list[str], timeout: float) -> subprocess.CompletedProcess:
+    """``subprocess.run(cmd)`` capturing text output, through quipclipper.idle inside
+    :func:`at_idle_priority`. Raises ``subprocess.TimeoutExpired`` after ``timeout``."""
+    if not getattr(_idle, "on", False):
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    cancelled = _idle.cancelled
+    proc = subprocess.Popen(idle.wrap(cmd), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, env=idle.child_env(), cwd=tempfile.gettempdir(),
+                            start_new_session=True)
+    deadline = time.monotonic() + timeout
+    try:
+        while True:
+            try:
+                out, err = proc.communicate(timeout=0.5)
+                return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+            except subprocess.TimeoutExpired:
+                if cancelled is not None and cancelled():
+                    raise Cancelled() from None
+                if time.monotonic() > deadline:
+                    raise subprocess.TimeoutExpired(cmd, timeout) from None
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.communicate()
 
 
 def _argv_path(p: str | Path) -> str:
@@ -307,7 +363,7 @@ def list_embedded_tracks(video_path: str | Path) -> list[SubtitleTrack]:
         "-of", "json", _argv_path(video_path),
     ]
     try:
-        out = subprocess.run(cmd, capture_output=True, text=True, timeout=_PROBE_TIMEOUT)
+        out = _run(cmd, _PROBE_TIMEOUT)
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(f"ffprobe timed out reading {video_path}.") from exc
     if out.returncode != 0:
@@ -382,7 +438,7 @@ def list_streams(video_path: str | Path) -> list[StreamInfo]:
         "-of", "json", _argv_path(video_path),
     ]
     try:
-        out = subprocess.run(cmd, capture_output=True, text=True, timeout=_PROBE_TIMEOUT)
+        out = _run(cmd, _PROBE_TIMEOUT)
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(f"ffprobe timed out reading {video_path}.") from exc
     if out.returncode != 0:
@@ -457,7 +513,7 @@ def extract_embedded(video_path: str | Path, stream_index: int) -> list[Cue]:
             "-f", "srt", _argv_path(tmp_path),
         ]
         try:
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=_EXTRACT_TIMEOUT)
+            proc = _run(cmd, _EXTRACT_TIMEOUT)
         except subprocess.TimeoutExpired as exc:
             raise RuntimeError(
                 f"ffmpeg timed out extracting subtitle track s:{stream_index}."

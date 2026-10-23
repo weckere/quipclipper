@@ -74,8 +74,8 @@ from quipclipper.subtitles import (
     load_subtitles,
 )
 from quipclipper_web import (
-    __version__, clipmeta, deeplinks, epub_items, jellyfin, jellyfin_index, library, lslink, lsset, media,
-    peaks, youtube_items,
+    __version__, clipmeta, deeplinks, epub_items, jellyfin, jellyfin_index, lib_index, library, lslink,
+    lsset, media, peaks, youtube_items,
 )
 from quipclipper_web.bookmarks import BookmarkStore
 from quipclipper_web.config import Settings
@@ -468,6 +468,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     stt_on = settings.whisper.enabled
     stt_jobs = JobRegistry(max_workers=1)
     active_stt: dict[str, str] = {}
+    # The library index (M20): one job at a time, only when someone starts it.
+    lib_jobs = JobRegistry(max_workers=1)
+    lib_log = lib_index.RunLog(settings.state_dir)
+    lib_active: list[str | None] = [None]
+    lib_submit = threading.Lock()
     stt_submit = threading.Lock()  # one check-then-submit at a time (no twin jobs)
 
     def _stt_existing(key: str):
@@ -502,6 +507,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         dl_jobs.shutdown()
         yt_jobs.shutdown()
         stt_jobs.shutdown(cancel=True)  # stop whisper now, not after every queued run
+        lib_jobs.shutdown(cancel=True)  # a rerun resumes from the cache
         peak_store.shutdown()
 
     app = FastAPI(title="quipclipper-web", version=__version__, lifespan=lifespan)
@@ -1250,6 +1256,51 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # --- folder dialogue search ------------------------------------------------
 
+    def _media_under(folders: list[Path], stored: set[str], seen: set[Path] | None = None,
+                     seen_books: set[Path] | None = None
+                     ) -> tuple[list[tuple[Path, list[Path]]], int, int]:
+        """Every media file under ``folders``: ``(files, books, bare_audio)``.
+
+        ``files`` is ``(file, its own sidecar files)`` for each video, and each audio file
+        with a sidecar or (``stored``: ``transcripts.names()``) a machine transcript, once
+        each by real path (``seen`` carries that across calls). ``books`` counts the
+        read-along EPUBs (``seen_books`` likewise); ``bare_audio`` the audio files with
+        no transcript of any kind. One listing per folder serves each file's sidecar
+        lookups (a library is ~70k files on a FUSE mount)."""
+        seen = set() if seen is None else seen
+        seen_books = set() if seen_books is None else seen_books
+        found: list[tuple[Path, list[Path]]] = []
+        books = bare = 0
+        for folder in folders:
+            for d, files in _walk_dirs(folder):
+                real_dir = os.path.realpath(d)
+                named = [(e.name.lower(), os.path.splitext(e.name)[1].lower(), e.name)
+                         for e in files if not e.name.startswith(".")]  # no ._* (see _is_media_file)
+                subs = [(low, d / name) for low, ext, name in named if ext in SUBTITLE_EXTS]
+                for low, ext, name in named:
+                    if ext != ".epub" and ext not in VIDEO_EXTS and ext not in AUDIO_EXTS:
+                        continue
+                    rp = Path(real_dir, name)
+                    c = d / name
+                    if ext == ".epub":
+                        if rp not in seen_books and epub_items.is_epub_book(c):
+                            seen_books.add(rp)
+                            books += 1
+                        continue
+                    if rp in seen:
+                        continue
+                    # Its own sidecars (``<stem>.…``), the only siblings its lookups read.
+                    prefix = os.path.splitext(low)[0] + "."
+                    own = [p for n, p in subs if n.startswith(prefix)]
+                    if ext not in VIDEO_EXTS and find_sidecar(c, siblings=own) is None:
+                        if not _has_machine(c, own, stored):
+                            seen.add(rp)
+                            bare += 1
+                            continue
+                    seen.add(rp)
+                    found.append((c, own))
+        return found, books, bare
+
     @app.get("/api/search/folder")
     def search_dialogue_folder(
         path: list[str] = Query(...),
@@ -1304,34 +1355,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # (wizrock: 31 books, 30-40 s); a book given as a path is searched. One listing
         # per folder serves each file's sidecar lookups, and the per-file stats of the
         # index check run in threads (a library is ~70k files on a FUSE mount).
-        found: list[tuple[Path, list[Path]]] = []  # (file, its sidecar files)
-        books_not_searched = 0
         stored = transcripts.names() if stt_on and machine != "exclude" else set()
-        for folder in folders:
-            for d, files in _walk_dirs(folder):
-                real_dir = os.path.realpath(d)
-                named = [(e.name.lower(), os.path.splitext(e.name)[1].lower(), e.name)
-                         for e in files if not e.name.startswith(".")]  # no ._* (see _is_media_file)
-                subs = [(low, d / name) for low, ext, name in named if ext in SUBTITLE_EXTS]
-                for low, ext, name in named:
-                    if ext != ".epub" and ext not in VIDEO_EXTS and ext not in AUDIO_EXTS:
-                        continue
-                    rp = Path(real_dir, name)
-                    c = d / name
-                    if ext == ".epub":
-                        if rp not in seen_books and epub_items.is_epub_book(c):
-                            seen_books.add(rp)
-                            books_not_searched += 1
-                        continue
-                    # Its own sidecars (``<stem>.…``), the only siblings its lookups read.
-                    prefix = os.path.splitext(low)[0] + "."
-                    own = [p for n, p in subs if n.startswith(prefix)]
-                    if rp in seen or not (ext in VIDEO_EXTS or (
-                            find_sidecar(c, siblings=own) is not None
-                            or _has_machine(c, own, stored))):
-                        continue
-                    seen.add(rp)
-                    found.append((c, own))
+        found, books_not_searched, _ = _media_under(folders, stored, seen, seen_books)
 
         cached = sub_cache.entry_names()
 
@@ -1494,23 +1519,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/search/folder/index-status")
     def folder_index_status(path: str = Query(...)) -> dict:
-        videos, skipped = _folder_videos(path, cap=INDEX_CAP)
-        if skipped:
-            return {"total": len(videos), "indexed": 0, "skipped": True}
-        indexed = no_subs = transcribed = 0
-        for v in videos:
-            heard = _has_machine(v)
-            transcribed += heard
-            if sub_cache.is_cached(v):
-                indexed += 1
-            elif sub_cache.has_no_subs(v):
-                no_subs += 1  # still none to index, even with a machine transcript
+        """How much of a folder of any size is indexed. One listing per folder and the
+        cache's names (no extraction, no probe), so a whole library root takes seconds."""
+        folder = _resolve(path)
+        if not folder.is_dir():
+            raise HTTPException(status_code=400, detail=f"Not a directory: {path}")
+        stored = transcripts.names() if stt_on else set()
+        found, _, bare = _media_under([folder], stored)
+        cached = sub_cache.entry_names()
+
+        def _state(item: tuple[Path, list[Path]]) -> tuple[str, bool]:
+            c, own = item
+            return (sub_cache.index_state(c, siblings=own, names=cached),
+                    _has_machine(c, own, stored))
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            states = list(pool.map(_state, found))
+        # A file with no subtitles still has none to index, even with a machine transcript.
+        indexed = sum(1 for st, _ in states if st == "indexed")
+        no_subs = sum(1 for st, _ in states if st == "no_subs")
         # Audio with no transcript of any kind isn't a media file yet (nothing to search),
-        # but a folder transcription can give it one.
-        bare = sum(1 for c in _resolve(path).rglob("*") if _is_bare_audio(c)
-                   and not _has_machine(c)) if stt_on else 0
-        return {"total": len(videos), "indexed": indexed, "no_subs": no_subs,
-                "transcribed": transcribed, "audio_untranscribed": bare, "skipped": False}
+        # but a folder transcription can give it one. ``skipped`` is always false now
+        # (no folder is too big to count); over ``cap`` files, Index runs as a job.
+        return {"total": len(found), "indexed": indexed, "no_subs": no_subs,
+                "transcribed": sum(1 for _, heard in states if heard),
+                "audio_untranscribed": bare if stt_on else 0, "skipped": False,
+                "cap": INDEX_CAP}
 
     # This and /api/items/subtitles/reindex take their input via the query string
     # and no body, so they would be CORS "simple requests" — the classic CSRF
@@ -1553,6 +1587,72 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 yield f"{done}/{total} {v.name}\n"
 
         return StreamingResponse(generate(), media_type="text/plain")
+
+    # --- library index (M20) --------------------------------------------------------
+    # Every file under the library roots, or under one folder of any size, as one
+    # background job at idle priority (quipclipper_web.lib_index). Only these endpoints
+    # start it: no timer, no startup or scan hook (as D-037 holds for transcription).
+
+    def _lib_job():
+        """The queued or running library index job, if any."""
+        job = lib_jobs.get(lib_active[0] or "")
+        return job if job is not None and job.status.value in ("queued", "running") else None
+
+    # Query-string-only POST like /api/search/folder/index (same CSRF guard).
+    @app.post("/api/search/library/index")
+    def library_index(path: str | None = Query(None)) -> dict:
+        """Start indexing every file under the library roots (or ``path``) that isn't
+        indexed yet: one file at a time at idle priority, skipping what is indexed and
+        current or known to have no subtitles. One job at a time: while one runs this
+        returns it (``existing``)."""
+        if path:
+            folders = [_resolve(path)]
+            if not folders[0].is_dir():
+                raise HTTPException(status_code=400, detail=f"Not a directory: {path}")
+        else:
+            folders = [r for r in settings.media_roots if r.is_dir()]
+        paths = [str(f) for f in folders]
+
+        def scan():
+            stored = transcripts.names() if stt_on else set()
+            found, _, _ = _media_under(folders, stored)
+            cached = sub_cache.entry_names()
+            for c, own in found:
+                yield c, sub_cache.index_state(c, siblings=own, names=cached)
+
+        def index(f: Path) -> str:
+            try:
+                sub_cache.resolve(f)
+                return "indexed"
+            except (ValueError, FileNotFoundError, RuntimeError):
+                # Nothing to index (no sidecar, no text track)? Remember it, so no run
+                # tries it again; a file it can't tell about stays for the next run.
+                if sub_cache.mark_no_subs(f):
+                    return "no_subs"
+                raise
+
+        def run_job(job) -> list[Path]:
+            lib_index.run(job, paths=paths, scan=scan, index=index, log=lib_log)
+            return []
+
+        with lib_submit:
+            prev = _lib_job()
+            if prev is not None:
+                return {"job_id": prev.id, "existing": True,
+                        "paths": (prev.result or {}).get("paths", [])}
+            what = folders[0].name if path else "whole library"
+            job = lib_jobs.submit(run_job, label=f"Index subtitles: {what} (low priority)",
+                                  cancellable=True)
+            lib_active[0] = job.id
+        return {"job_id": job.id, "existing": False, "paths": paths}
+
+    @app.get("/api/search/library/index")
+    def library_index_status() -> dict:
+        """The running library index job (``job``, or null) and the last run's summary
+        (``last``: kept across restarts; "interrupted" if a restart cut it short)."""
+        job = _lib_job()
+        return {"job": _job_dict(job) if job is not None else None,
+                "last": lib_index.last_run(lib_log, live=job is not None)}
 
     # Query-string-only POST like /api/search/folder/index — same CSRF surface,
     # covered by the same X-Quipclipper requirement in _security_gate.
@@ -2931,7 +3031,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def _find_job(job_id: str):
         """A job from any pool (clips, downloads, or YouTube add/reindex), plus
         its registry — the /api/jobs surface presents them as one list."""
-        for registry in (jobs, dl_jobs, yt_jobs, stt_jobs):
+        for registry in (jobs, dl_jobs, yt_jobs, stt_jobs, lib_jobs):
             job = registry.get(job_id)
             if job is not None:
                 return job, registry
@@ -2951,7 +3051,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/jobs")
     def list_jobs() -> dict:
         merged = [*jobs.list_recent(), *dl_jobs.list_recent(), *yt_jobs.list_recent(),
-                  *stt_jobs.list_recent()]
+                  *stt_jobs.list_recent(), *lib_jobs.list_recent()]
         merged.sort(key=lambda j: j.created, reverse=True)
         return {"jobs": [_job_dict(j) for j in merged[:20]]}
 

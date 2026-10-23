@@ -163,6 +163,8 @@ by default land where they always did.
 |---|---|---|---|---|
 | `index.status` | Show how many files in a folder have cached subtitles. | `PATH` | `GET /api/search/folder/index-status` | Dialogue index card |
 | `index.build` | Cache the subtitles of every file in a folder (prints progress). | `PATH` `--force` | `POST /api/search/folder/index` | Index N files; Re-index all (Dialogue index card) |
+| `index.library` | Index every file under the library roots (or one folder of any size) that isn't indexed yet, as a background job: one file at a time at idle priority, cancellable, and a rerun resumes where the last one stopped (files indexed, or known to have no subtitles, are skipped). Only ever on request. | `PATH` `--wait` | `POST /api/search/library/index` | Index the whole library (Dialogue index card, library root); Index N files in the background (a folder over 500 files); ✕ Cancel |
+| `index.library-status` | Show the library index job: the one running, and how far the last run got (kept across restarts). |  | `GET /api/search/library/index` | Dialogue index card (library root) |
 | `index.fetch-subs` | Fetch missing YouTube subtitles for every video in a folder. | `PATH` `--wait` `--out-dir` | `POST /api/search/folder/fetch-subs` | ⬇ Fetch missing YouTube subtitles; ✕ Cancel |
 
 ## clip

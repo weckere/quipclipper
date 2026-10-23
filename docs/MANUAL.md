@@ -177,9 +177,23 @@ the current folder, searched recursively.
 The **Dialogue index** card says how many files in the folder have their subtitles
 cached. **Index N files** extracts and caches the rest, so dialogue search is fast;
 **Re-index all** starts over (use it when subtitles changed). Files with no text
-subtitles at all are counted separately and left out. **Fetch missing YouTube
+subtitles at all are counted separately and left out. A folder of more than 500 files is
+indexed in the background instead (**Index N files in the background**, as the library
+index below). **Fetch missing YouTube
 subtitles** backfills transcripts for videos that came from YouTube (see
 [below](#backfilling-subtitles-for-existing-videos)).
+
+<a id="library-index"></a>On the library's home page the card is the library's own:
+**Index the whole library** indexes every file in the library that isn't indexed yet, so a
+whole-library dialogue search covers all of it. It never starts on its own: only this button
+(after a confirm) or `quipclipper index.library [FOLDER]` start it. It runs in the
+background, one file after another at idle priority, so it never slows playback; on a large
+library it takes many hours, or days. The card, every folder's Dialogue index card and **Jobs** show its progress (files
+done, the file in hand, a rough time left); **Cancel** stops it, and the files done so far
+stay indexed. Starting it again picks up where it stopped, after a cancel or a server
+restart alike: files already indexed, or known to have no subtitles, are skipped. The home
+card also says how the last run ended. In the CLI, `quipclipper index.library-status`
+shows the same.
 
 With Jellyfin set up, a **Now playing** card at the top of the library lists what each
 Jellyfin client is playing; see [Now playing (Jellyfin)](#now-playing-jellyfin).
@@ -205,7 +219,7 @@ score a subtitle line comes before a machine transcript line.
 - **In a video**, the matches appear in the workspace's **Matches** tab.
 - **In a folder or the library**, only **indexed** files are searched (their subtitles are
   cached, so even the whole library takes seconds); the status line says how many files
-  weren't, and **Index** on a folder includes them. Read-along books in a folder aren't
+  weren't, and **Index** on a folder (or [the whole library](#library-index)) includes them. Read-along books in a folder aren't
   searched either: open a book and search it on its own.
 - The results are grouped by file, with the words of the
   query highlighted and a score on each line. On a wide screen (1250 px and up) clicking

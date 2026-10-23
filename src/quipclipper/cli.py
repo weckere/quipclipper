@@ -376,6 +376,46 @@ def _fmt_job(job: dict) -> None:
                    "(follow it with `quipclipper job.wait <id>`)")
 
 
+def _fmt_lib_run(r: dict) -> str:
+    eta = r.get("eta_s")
+    return (f"{r.get('status')}: {r.get('done', 0)}/{r.get('todo', 0)} to do "
+            f"({r.get('already', 0)} of {r.get('files', 0)} files already done); "
+            f"{r.get('indexed', 0)} indexed, {r.get('no_subs', 0)} without subtitles, "
+            f"{r.get('failed', 0)} failed"
+            + (f"; {r['files_per_hour']} files/h" if r.get("files_per_hour") else "")
+            + (f"; ~{eta // 60} min left" if isinstance(eta, int) else ""))
+
+
+def _fmt_lib_job(data: dict) -> None:
+    if data.get("job_id") and not data.get("id"):  # started (or already running), not waited
+        what = "already running" if data.get("existing") else "started"
+        typer.echo(f"library index {what}: job {data['job_id']} under "
+                   + ", ".join(data.get("paths") or []))
+        typer.echo("  follow it with `quipclipper job.wait <id>` or `quipclipper "
+                   "index.library-status`; cancel with `quipclipper job.cancel <id>`")
+        return
+    typer.echo(f"{data.get('id')}  {data.get('status')}  {data.get('label', '')}")
+    if isinstance(data.get("result"), dict):
+        typer.echo("  " + _fmt_lib_run(data["result"]))
+    if data.get("error"):
+        typer.secho(f"  error: {data['error']}", fg="red")
+
+
+def _fmt_lib_index(data: dict) -> None:
+    job, last = data.get("job"), data.get("last")
+    if job:
+        typer.echo(f"{job.get('id')}  {job.get('status')}  {job.get('label', '')}")
+        if job.get("progress"):
+            typer.echo(f"  progress: {job['progress']}")
+    if last:
+        typer.echo(("now " if job else "last run ") + _fmt_lib_run(last))
+        typer.echo("  under: " + ", ".join(last.get("paths") or []))
+        for e in last.get("errors") or []:
+            typer.secho(f"  failed: {e.get('path')}: {e.get('error')}", fg="red")
+    if not job and not last:
+        typer.echo("No library index has run yet (start one with `quipclipper index.library`).")
+
+
 def _fmt_jobs(data: dict) -> None:
     for j in data.get("jobs") or []:
         _fmt_job(j)
@@ -533,6 +573,7 @@ _FORMATTERS = {
     "job.get": _fmt_job, "job.wait": _fmt_job, "job.list": _fmt_jobs,
     "clip.create": _fmt_job, "clip.nowplaying": _fmt_job, "clips.backfill": _fmt_job, "youtube.add": _fmt_job, "youtube.download": _fmt_job,
     "item.fetch-subs": _fmt_job, "index.fetch-subs": _fmt_job,
+    "index.library": _fmt_lib_job, "index.library-status": _fmt_lib_index,
     "bookmark.list": _fmt_bookmarks, "clips.list": _fmt_clips,
     "item.script": _fmt_script, "item.info": _fmt_item, "server.health": _fmt_health,
     "jellyfin.sessions": _fmt_sessions, "jellyfin.lookup": _fmt_lookup,
