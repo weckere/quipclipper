@@ -6,9 +6,13 @@ All notable changes to quipclipper are written down here. The format follows
 for fixes).
 
 Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
-`scripts/release.sh X.Y.Z` turns that section into the release's, dated.
+`scripts/release.sh X.Y.Z` turns that section into the release's, dated. Entries between
+`<!-- held back -->` and `<!-- /held back -->` lines stay in Unreleased for a later release.
 
 ## [Unreleased]
+
+<!-- held back (D-040): machine transcription ships switched off and undocumented in 0.3.0.
+scripts/release.sh leaves this block in Unreleased; delete the two marker lines to release it. -->
 
 ### Machine transcription (M21)
 
@@ -90,6 +94,20 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   files against its 500-file cap, and keys a file reached through a link by the file itself.
   A request may name any model the server has (`QC_WHISPER_MODELS`), not only `small.en` and
   `medium.en`.
+- The transcript bar's messages ("Copied … to the library", "Transcription done", "That didn't
+  work: this folder is read-only") stay on screen instead of vanishing at once, and errors are
+  read out too. Going back to a file whose transcription still runs shows its progress and
+  Cancel again (the buttons stayed greyed out with no word why).
+- A transcript action or transcription started on one file no longer writes its result into,
+  or re-enables buttons of, a file opened meanwhile; a folder transcription started before
+  opening another folder no longer hides that folder's buttons. The page stops checking on a
+  transcription when you leave the file, or after a few failed tries, instead of every 5 s
+  for ever.
+- Machine lines in the waveform's line lane keep AA contrast inside the selection in the
+  light theme; a machine hit's highlighted words keep the violet; a script row's spoken name
+  starts with the visible "auto".
+
+<!-- /held back -->
 
 ### UI follow-ups (M20)
 
@@ -130,25 +148,16 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 
 ### Fixed
 
-- The transcript bar's messages ("Copied … to the library", "Transcription done", "That didn't
-  work: this folder is read-only") stay on screen instead of vanishing at once, and errors are
-  read out too. Going back to a file whose transcription still runs shows its progress and
-  Cancel again (the buttons stayed greyed out with no word why).
-- A transcript action or transcription started on one file no longer writes its result into,
-  or re-enables buttons of, a file opened meanwhile; a folder transcription started before
-  opening another folder no longer hides that folder's buttons. The page stops checking on a
-  transcription when you leave the file, or after a few failed tries, instead of every 5 s
-  for ever.
 - Seeking out of a range started with ▶ lets playback carry on for a transcoded file and in
   the YouTube player too (it jumped back to the range later).
 - Dragging a range on the waveform, loading a bookmark, or I / O on a selected line no longer
   changes Before / After for the lines you select afterwards.
 - The waveform no longer stays grey as if loading when the file is a little shorter than
   first measured.
-- Machine lines in the waveform's line lane keep AA contrast inside the selection in the
-  light theme; a machine hit's highlighted words keep the violet; a script row's spoken name
-  starts with the visible "auto"; a middle-click on the waveform no longer plays; Set in / Set
-  out say why they do nothing on a file without a waveform.
+- A middle-click on the waveform no longer plays; Set in / Set out say why they do nothing on a
+  file without a waveform.
+- Release: `scripts/release.sh` leaves a changelog block marked `<!-- held back -->` in
+  Unreleased for a later release (`scripts/changelog-cut.py`, now tested).
 - Release: `:latest` and `:X.Y` move only once both images are pushed. A failed image build
   used to leave `latest` pointing at the new app with the old web image (NIX-7, deferred in
   0.2.0's review).

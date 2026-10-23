@@ -3,7 +3,8 @@
 #
 # On a clean dev that matches origin/dev, this bumps the version in both
 # pyproject.toml files, turns CHANGELOG.md's Unreleased section into
-# "## [X.Y.Z] - <today>", commits "release: vX.Y.Z", tags vX.Y.Z, and pushes
+# "## [X.Y.Z] - <today>" (scripts/changelog-cut.py; a <!-- held back --> block
+# stays in Unreleased for a later release), commits "release: vX.Y.Z", tags vX.Y.Z, and pushes
 # dev, main (a fast-forward to the release commit) and the tag in one atomic
 # push. The tag starts .github/workflows/release.yml: tests, GHCR images and
 # the GitHub Release.
@@ -53,9 +54,6 @@ newest=$(printf '%s\n%s\n' "$current" "$version" | sort -t. -k1,1n -k2,2n -k3,3n
   || die "$version is not newer than the current $current"
 
 grep -q '^## \[Unreleased\]' CHANGELOG.md || die "CHANGELOG.md has no ## [Unreleased] section"
-unreleased=$(awk '/^## \[Unreleased\]/ { on = 1; next } on && /^## / { exit } on' CHANGELOG.md \
-  | grep -v -e '^\[' -e '^#' | grep -c '[^[:space:]]' || true)
-[ "$unreleased" -gt 0 ] || die "CHANGELOG.md's Unreleased section is empty: nothing to release"
 
 previous_tag=$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || true)
 today=$(date +%Y-%m-%d)
@@ -68,20 +66,8 @@ sed -i.bak -E "1,/^version = \"[^\"]*\"/s/^version = \"[^\"]*\"/version = \"$ver
   pyproject.toml web/backend/pyproject.toml
 rm -f pyproject.toml.bak web/backend/pyproject.toml.bak
 
-VERSION="$version" TODAY="$today" PREVIOUS="$previous_tag" python3 - <<'PY'
-import os, re
-from pathlib import Path
-
-v, today, prev = os.environ["VERSION"], os.environ["TODAY"], os.environ["PREVIOUS"]
-repo = "https://github.com/weckere/quipclipper"
-p = Path("CHANGELOG.md")
-text = p.read_text()
-text = text.replace("## [Unreleased]\n", f"## [Unreleased]\n\n## [{v}] - {today}\n", 1)
-links = [f"[Unreleased]: {repo}/compare/v{v}...dev",
-         f"[{v}]: {repo}/compare/{prev}...v{v}" if prev else f"[{v}]: {repo}/releases/tag/v{v}"]
-text = re.sub(r"^\[Unreleased\]: .*$", "\n".join(links), text, count=1, flags=re.M)
-p.write_text(text)
-PY
+# Fails (nothing to release) when only held-back entries are left.
+python3 scripts/changelog-cut.py "$version" "$today" "$previous_tag" || exit 1
 
 for f in pyproject.toml web/backend/pyproject.toml; do
   grep -q "^version = \"$version\"" "$f" || die "failed to bump $f"
