@@ -130,3 +130,22 @@ def test_local_copy_writes_what_the_server_would(tmp_path, monkeypatch):
     assert got == {"path": str(media), "sidecar": "ep.en.whisper.srt", "lines": 1}
     assert "way too fast" in (tmp_path / "ep.en.whisper.srt").read_text()
     assert "mine" not in (tmp_path / "ep.en.whisper.srt").read_text()
+
+
+def test_local_orphans_listed_then_cleaned(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    keep, gone = tmp_path / "keep.mkv", tmp_path / "gone.mkv"
+    store = tr.TranscriptStore(tr.default_store_dir())
+    for f in (keep, gone):
+        f.write_bytes(b"x")
+        store.add(f, (0, 5), [tr.Cue(0, 1, 2, "hi", source=tr.MACHINE)], model="small.en")
+    gone.unlink()
+    listed = _json(runner.invoke(cli.app, ["--json", "index.transcript-orphans"]))
+    assert listed["count"] == 1 and listed["orphans"][0]["path"] == str(gone)
+    plain = runner.invoke(cli.app, ["index.transcript-orphans"]).stdout
+    assert "Would delete 1 orphaned machine transcript" in plain and "media file deleted" in plain
+    # Destructive: --safe refuses it, and a plain run deletes only the orphan.
+    assert runner.invoke(cli.app, ["--safe", "index.transcript-clean"]).exit_code == 5
+    done = _json(runner.invoke(cli.app, ["--json", "index.transcript-clean"]))
+    assert done["count"] == 1 and store.load(keep) is not None and store.load(gone) is None
+    assert "No orphaned" in runner.invoke(cli.app, ["index.transcript-orphans"]).stdout

@@ -25,7 +25,8 @@ def switched_off(monkeypatch, tmp_path):
 def test_the_transcription_commands_are_the_experimental_ones():
     assert sorted(EXPERIMENTAL) == sorted([
         "item.transcribe", "item.transcript", "item.transcript-clear",
-        "item.transcript-copy", "item.transcript-uncopy", "index.transcribe"])
+        "item.transcript-copy", "item.transcript-uncopy", "index.transcribe",
+        "index.transcript-orphans", "index.transcript-clean"])
 
 
 def test_hidden_from_help_commands_and_docs():
@@ -49,7 +50,9 @@ def test_hidden_from_help_commands_and_docs():
 def test_refused_locally_with_the_reason(cmd, tmp_path):
     media = tmp_path / "a.mkv"
     media.write_bytes(b"")
-    out = runner.invoke(cli.app, [cmd, str(tmp_path if cmd == "index.transcribe" else media)])
+    arg = [] if reg.BY_ID[cmd].main_param is None else [
+        str(tmp_path if cmd == "index.transcribe" else media)]
+    out = runner.invoke(cli.app, [cmd, *arg])
     if cmd == "index.transcribe":  # server-only: it needs a server, as before
         assert out.exit_code != 0
         return

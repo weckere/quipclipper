@@ -333,3 +333,92 @@ def test_folder_cap_counts_audio_too(env, monkeypatch):
         (root / f"ep{n}.mp3").write_bytes(b"")
     r = _client(env).post("/api/search/folder/transcribe", json={"path": str(root)})
     assert r.status_code == 400 and "more than 2" in r.json()["detail"]
+
+
+def _stored(env: dict, media: Path, text: str = "way too fast") -> None:
+    """A stored transcript of ``media``, as a run would leave it (no whisper needed)."""
+    from quipclipper import transcribe as tr
+    from quipclipper.models import Cue
+
+    store = tr.TranscriptStore(Path(env["QC_STATE_DIR"]) / "transcripts")
+    store.add(media, (0, 10), [Cue(0, 1, 2, text, source=tr.MACHINE)], model="small.en")
+
+
+def test_a_replaced_file_loses_its_auto_badge(env):
+    # BE-8: the listing's badge follows load(): a transcript of the file this one replaced
+    # isn't this file's.
+    root = Path(env["QC_MEDIA_ROOTS"])
+    media = root / "a.mkv"
+    media.write_bytes(b"x" * 10)
+    _stored(env, media)
+    c = _client(env)
+
+    def badge() -> bool:
+        rows = c.get("/api/library/browse", params={"path": str(root)}).json()["entries"]
+        return next(e for e in rows if e["name"] == "a.mkv")["has_transcript"]
+
+    assert badge() is True
+    media.write_bytes(b"y" * 11)
+    assert badge() is False
+    status = c.get("/api/search/folder/index-status", params={"path": str(root)}).json()
+    assert status["transcribed"] == 0
+
+
+def test_orphaned_transcripts_are_listed_then_cleaned_on_request(env, tmp_path):
+    root = Path(env["QC_MEDIA_ROOTS"])
+    (root / "show").mkdir()
+    keep, gone, changed = (root / "show" / n for n in ("keep.mkv", "gone.mkv", "changed.mkv"))
+    for f in (keep, gone, changed):
+        f.write_bytes(b"x")
+        _stored(env, f)
+    gone.unlink()
+    changed.write_bytes(b"yy")
+    # A transcript of a file outside every root (a root since removed) is left alone.
+    outside = tmp_path / "elsewhere.mkv"
+    outside.write_bytes(b"x")
+    _stored(env, outside)
+    outside.unlink()
+    c = _client(env)
+    listed = c.get("/api/transcripts/orphans").json()
+    assert listed["count"] == 1 and listed["orphans"][0]["path"] == str(gone)
+    assert listed["orphans"][0]["reason"] == "gone"
+    stale = c.get("/api/transcripts/orphans", params={"stale": "true"}).json()
+    assert {o["path"] for o in stale["orphans"]} == {str(gone), str(changed)}
+    assert c.get("/api/transcripts/orphans").json()["count"] == 1  # listing deleted nothing
+    done = c.post("/api/transcripts/clean").json()
+    assert done["count"] == 1 and done["removed"][0]["path"] == str(gone)
+    assert c.get("/api/transcripts/orphans").json()["count"] == 0
+    assert c.post("/api/transcripts/clean", params={"stale": "true"}).json()["count"] == 1
+    store_files = list((Path(env["QC_STATE_DIR"]) / "transcripts").glob("*.json"))
+    assert len(store_files) == 2  # keep.mkv's and the one outside the library
+    # The clean needs the CSRF header like every write.
+    bare = TestClient(create_app(Settings.from_env(env)))
+    assert bare.post("/api/transcripts/clean").status_code == 403
+
+
+def test_gaps_jobs_extract_subtitles_at_idle_priority(env, monkeypatch):
+    # BE-4: the folder 'gaps' job (and an item's) extracts a file's subtitles as the
+    # folder index does: every ffprobe/ffmpeg of it through quipclipper.idle.
+    from quipclipper import subtitles
+    from quipclipper_web.sub_cache import SubtitleCache
+
+    seen = []
+    real_resolve = SubtitleCache.resolve
+
+    def resolve(self, video, *a, **k):
+        seen.append((Path(video).name, getattr(subtitles._idle, "on", False)))
+        return real_resolve(self, video, *a, **k)
+
+    monkeypatch.setattr(SubtitleCache, "resolve", resolve)
+    root = Path(env["QC_MEDIA_ROOTS"])
+    (root / "ep.mkv").write_bytes(b"")
+    (root / "ep.en.srt").write_text("1\n00:00:01,000 --> 00:00:03,000\nhello\n")
+    c = _client(env)
+    job = _wait(c, c.post("/api/search/folder/transcribe",
+                          json={"path": str(root), "mode": "gaps"}).json()["job_id"])
+    assert job["status"] == "done", job
+    item = _wait(c, c.post("/api/items/transcribe",
+                           json={"path": str(root / "ep.mkv"), "mode": "gaps"}).json()["job_id"])
+    assert item["status"] == "done", item
+    assert seen and all(on for _, on in seen), seen
+    assert not getattr(subtitles._idle, "on", False)  # this thread was never lowered

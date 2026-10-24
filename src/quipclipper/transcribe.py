@@ -585,16 +585,117 @@ def _stat(path: Path) -> tuple[float, int]:
     return st.st_mtime, st.st_size
 
 
+def _current(media: str | Path, mtime: float, size: int) -> bool:
+    """Whether ``media`` is still the file a transcript of ``(mtime, size)`` was made of.
+    A file that's gone or unreadable counts as current: still show what we have."""
+    try:
+        now_mtime, now_size = _stat(Path(media))
+    except OSError:
+        return True
+    return abs(now_mtime - mtime) <= 1e-3 and not (size and now_size != size)
+
+
+# A store file's media stamp: the (mtime, size) of the file it transcribes, or None when it
+# isn't a transcript this version reads.
+Stamp = tuple[float, int] | None
+# Why :meth:`TranscriptStore.orphans` lists a store file.
+GONE, STALE, UNREADABLE, PARTIAL = "gone", "stale", "unreadable", "partial"
+# A temp file a save left behind is a leftover only once it's this old (seconds).
+PARTIAL_AGE = 3600.0
+
+
+@dataclass(frozen=True)
+class Orphan:
+    """A store file no current transcript needs (:meth:`TranscriptStore.orphans`)."""
+
+    file: Path
+    path: str | None  # the media file it transcribed, when it can be read
+    reason: str  # GONE, STALE (the media changed since), UNREADABLE or PARTIAL
+
+    def to_json(self) -> dict:
+        return {"file": self.file.name, "path": self.path, "reason": self.reason}
+
+
+def _read_header(f: Path) -> dict | None:
+    """A store file's JSON when it is a transcript this version reads (its name is its
+    path's hash), else None."""
+    try:
+        d = json.loads(f.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(d, dict) or d.get("version") != STORE_VERSION:
+        return None
+    path = d.get("path")
+    if not isinstance(path, str) or hashlib.sha256(path.encode()).hexdigest() + ".json" != f.name:
+        return None
+    return d
+
+
+def _read_stamp(f: Path) -> Stamp:
+    d = _read_header(f)
+    try:
+        return (float(d["media_mtime"]), int(d.get("media_size") or 0)) if d else None
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _root_present(root: Path, mounted: dict[Path, bool]) -> bool:
+    """``root`` is there and has something in it (an unmounted disk's mount point is an
+    empty folder)."""
+    if root not in mounted:
+        try:
+            with os.scandir(root) as it:
+                mounted[root] = next(it, None) is not None
+        except OSError:
+            mounted[root] = False
+    return mounted[root]
+
+
+def _orphan_reason(f: Path, roots: list[Path] | None, mounted: dict[Path, bool],
+                   stale: bool) -> tuple[str | None, str | None]:
+    """Why store file ``f`` is an orphan (GONE, STALE, UNREADABLE), or None; and the
+    media path it names."""
+    d = _read_header(f)
+    if d is None:
+        try:
+            raw = json.loads(f.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return None, None
+        except (OSError, json.JSONDecodeError):
+            return UNREADABLE, None
+        if isinstance(raw, dict) and isinstance(raw.get("version"), int) \
+                and raw["version"] > STORE_VERSION:
+            return None, raw.get("path")  # a newer quipclipper's: not ours to judge
+        return UNREADABLE, raw.get("path") if isinstance(raw, dict) else None
+    media = Path(d["path"])
+    if media.exists():
+        if stale:
+            stamp = _read_stamp(f)
+            if stamp is None or not _current(media, *stamp):
+                return STALE, str(media)
+        return None, str(media)
+    if roots is None:
+        known = media.parent.is_dir()
+    else:
+        known = any(media.is_relative_to(r) and _root_present(r, mounted) for r in roots)
+    return (GONE if known else None), str(media)
+
+
 class TranscriptStore:
     """Machine transcripts in ``<dir>/<sha256(path)>.json``, one per media file.
 
     Keyed on the media file and checked against its mtime and size, not the subtitle
     source's, so changing a file's subtitles keeps its transcript; replacing the media
-    retires it. Writes are atomic (temp file + rename)."""
+    retires it (nothing reads it any more, and :meth:`clean` can delete it on request).
+    Writes are atomic (temp file + rename)."""
 
     def __init__(self, directory: str | Path) -> None:
         self.dir = Path(directory)
         self._lock = threading.Lock()
+        # file name -> ((its mtime_ns, size), its media stamp): each store file is read
+        # once per change, so a listing can tell a stale transcript without reading it.
+        self._stamps: dict[str, tuple[tuple[int, int], Stamp]] = {}
+        self._stamps_lock = threading.Lock()
 
     def _file(self, media: str | Path) -> Path:
         return self.dir / (hashlib.sha256(str(media).encode()).hexdigest() + ".json")
@@ -609,31 +710,109 @@ class TranscriptStore:
             t = Transcript.from_json(d)
         except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
             return None
-        try:
-            mtime, size = _stat(Path(media))
-        except OSError:
-            return t  # the media is gone or unreadable: still show what we have
-        if abs(mtime - t.media_mtime) > 1e-3 or (t.media_size and size != t.media_size):
-            return None
-        return t
+        return t if _current(media, t.media_mtime, t.media_size) else None
 
     def has(self, media: str | Path) -> bool:
         return self.load(media) is not None
 
-    def exists(self, media: str | Path, names: set[str] | None = None) -> bool:
-        """Cheap: a transcript file for ``media`` exists (not read, not checked for
-        staleness). For listings that check many files; ``names`` (from :meth:`names`)
-        spares a stat each."""
-        if names is not None:
-            return self._file(media).name in names
-        return self._file(media).exists()
+    def exists(self, media: str | Path, names: dict[str, Stamp] | None = None) -> bool:
+        """Cheap: ``media`` has a current transcript (one stat of the media, the store
+        file read only when it changed). For listings that check many files; ``names``
+        (from :meth:`names`) spares a stat of the store file each."""
+        name = self._file(media).name
+        if names is None:
+            names = self._stamp_of(name)
+        if names.get(name) is None:
+            return False
+        mtime, size = names[name]
+        return _current(media, mtime, size)
 
-    def names(self) -> set[str]:
-        """The store's file names, for :meth:`exists` over many files."""
+    def names(self) -> dict[str, Stamp]:
+        """The store's transcripts: file name -> the media stamp it was made of, for
+        :meth:`exists` over many files."""
+        out: dict[str, Stamp] = {}
         try:
-            return set(os.listdir(self.dir))
+            entries = [e for e in os.scandir(self.dir) if e.name.endswith(".json")]
         except OSError:
-            return set()
+            return out
+        with self._stamps_lock:
+            for e in entries:
+                with contextlib.suppress(OSError):
+                    out[e.name] = self._stamp(Path(e.path), e.stat())
+            for gone in set(self._stamps) - set(out):
+                del self._stamps[gone]
+        return out
+
+    def _stamp_of(self, name: str) -> dict[str, Stamp]:
+        f = self.dir / name
+        try:
+            st = f.stat()
+        except OSError:
+            return {}
+        with self._stamps_lock:
+            return {name: self._stamp(f, st)}
+
+    def _stamp(self, f: Path, st: os.stat_result) -> Stamp:
+        """``f``'s media stamp, read again only when ``f`` changed. Hold _stamps_lock."""
+        key = (st.st_mtime_ns, st.st_size)
+        hit = self._stamps.get(f.name)
+        if hit is None or hit[0] != key:
+            hit = (key, _read_stamp(f))
+            self._stamps[f.name] = hit
+        return hit[1]
+
+    def orphans(self, roots: Iterable[str | Path] | None = None, *,
+                stale: bool = False) -> list[Orphan]:
+        """Store files no current transcript needs: transcripts of media files that are
+        gone, unreadable ones (an older store format, a broken file), a save's leftover
+        temp files, and with ``stale`` those of media files replaced since.
+
+        A media file counts as gone only where that can be told: with ``roots`` (the
+        library), it is under a root that is there and not empty (a disk that isn't
+        mounted doesn't delete its transcripts) and the file isn't; a transcript of a
+        file under no root is left alone. Without ``roots``, its folder is still there
+        and the file isn't. Nothing is deleted here (:meth:`clean` does that)."""
+        live = None if roots is None else [Path(r) for r in roots]
+        mounted: dict[Path, bool] = {}
+        out: list[Orphan] = []
+        try:
+            entries = sorted(os.scandir(self.dir), key=lambda e: e.name)
+        except OSError:
+            return out
+        now = time.time()
+        for e in entries:
+            f = Path(e.path)
+            if e.name.endswith(".tmp"):
+                with contextlib.suppress(OSError):
+                    if now - e.stat().st_mtime > PARTIAL_AGE:
+                        out.append(Orphan(f, None, PARTIAL))
+                continue
+            if not e.name.endswith(".json"):
+                continue
+            reason, path = _orphan_reason(f, live, mounted, stale)
+            if reason:
+                out.append(Orphan(f, path, reason))
+        return out
+
+    def clean(self, roots: Iterable[str | Path] | None = None, *,
+              stale: bool = False) -> list[Orphan]:
+        """Delete what :meth:`orphans` lists (each checked again just before it goes, so
+        a transcript saved meanwhile stays). Returns what was deleted. Only ever on a
+        user's request (D-037): nothing calls this on a timer or a scan."""
+        roots = None if roots is None else [Path(r) for r in roots]
+        removed: list[Orphan] = []
+        for o in self.orphans(roots, stale=stale):
+            with self._lock:
+                if o.reason != PARTIAL:
+                    again, _ = _orphan_reason(o.file, roots, {}, stale)
+                    if again != o.reason:
+                        continue
+                try:
+                    o.file.unlink()
+                except FileNotFoundError:
+                    continue
+            removed.append(o)
+        return removed
 
     def save(self, t: Transcript) -> None:
         self.dir.mkdir(parents=True, exist_ok=True)

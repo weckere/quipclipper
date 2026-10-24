@@ -52,7 +52,12 @@ Machine lines print with `[auto]`; `--machine exclude` searches the subtitles al
 **Where transcripts live.** Not next to the media: in quipclipper's state (the server's
 state dir, or `~/.cache/quipclipper/transcripts` when the CLI runs whisper itself), keyed
 on the media file, so new subtitles don't throw a transcript away. `item.transcript-clear`
-deletes one.
+deletes one. A transcript belongs to the file it was made of: once the media file is
+replaced (a new release under the same name), it is no longer read or marked **auto**.
+Nothing is ever swept on its own: `index.transcript-orphans` lists the transcripts of media
+files that are gone (and, with `--stale`, of files replaced since), and
+`index.transcript-clean` deletes them. A media file on a disk that isn't mounted, or outside
+every library root, never counts as gone.
 
 **Copying to the library.** `item.transcript-copy` writes a file's transcript next to it
 as a subtitle file named **`<name>.<lang>.whisper.srt`** (for example
@@ -109,6 +114,8 @@ read-only root it says it can't.
   hours, with progress and **Cancel** (what's done is kept). Nothing transcribes a folder
   unless you press one of them. An audio file with a machine transcript is listed (🎵),
   and an **auto** chip marks any file that has one.
+- **The library's home** says when stored transcripts belong to files that are gone from
+  the library, and offers **Remove orphaned transcripts** (after a confirm).
 - **Settings** gains **Transcription model** (when the server has both): small.en, quicker,
   or medium.en, which hears more and is about three times slower. The transcript bar's
   **Model** picks another for one run.
@@ -127,6 +134,8 @@ Against a server, the server's switch decides (404 when it's off there).
 | `item.transcript-copy` ⚠ | Copy a file's machine transcript into the library as a subtitle sidecar, <name>.<lang>.whisper.srt, next to the file (writable folders only). From then on it also shows in the player's captions and in Jellyfin. | `PATH` | `POST /api/items/transcript/library` · local | Transcript card: Copy to library |
 | `item.transcript-uncopy` ⚠ | Remove the machine transcript sidecar (…whisper.srt) from the library; the transcript itself stays. | `PATH` | `DELETE /api/items/transcript/library` · local | Transcript card: Remove from library |
 | `index.transcribe` | Transcribe a folder's files with whisper.cpp, one after another at idle priority: whole files that have no subtitles (audio without a transcript included), or the gaps between every file's subtitle lines. Only ever on request; cancel it like any job. | `PATH` `--mode` `--model` `--wait` `--out-dir` | `POST /api/search/folder/transcribe` | Transcribe files without subtitles; Fill gaps in every file (Dialogue index card); ✕ Cancel |
+| `index.transcript-orphans` | List the stored machine transcripts no file needs any more: their media file was deleted (with --stale, also replaced since), or they can't be read. Deletes nothing. | `--stale` | `GET /api/transcripts/orphans` · local | Library home: the orphaned transcripts count |
+| `index.transcript-clean` ⚠ | Delete the stored machine transcripts `index.transcript-orphans` lists. Never runs on its own; copies in the library stay. A disk that isn't mounted counts as nothing deleted. | `--stale` | `POST /api/transcripts/clean` · local | Library home: Remove orphaned transcripts |
 
 ## API
 
@@ -145,11 +154,14 @@ reason; on but without whisper or a model, the ones that run whisper answer 503 
 | DELETE | `/api/items/transcript?path=` | Delete the stored transcript → `{deleted}` (a library copy stays). |
 | POST | `/api/items/transcript/library?path=` | Copy the machine lines (those no subtitle line has) next to the file as `<name>.<lang>.whisper.srt` → `{sidecar, lines}`. quipclipper reads that file as machine lines, never as the file's subtitles; the captions then show them, and Jellyfin offers it as a subtitle track. 403 = a read-only folder (needs `writableMediaRoots`), 404 = no transcript, 409 = no line left that the subtitles don't already have. |
 | DELETE | `/api/items/transcript/library?path=` | Remove this file's copies next to it (`<name>.<lang>.whisper.srt`/`.vtt`; never another file's, such as `<name>.Part2.en.whisper.srt`) → `{removed}`. 403 = a read-only folder. |
-| POST | `/api/search/folder/transcribe` | Transcribe a folder's files one after another (job): `{path, mode, model}`. `mode=nosubs` (default) does whole files that have no subtitles, audio files with no transcript included; `gaps` does the gaps in every subtitled file. Files already done are skipped, and so is a file whose subtitles can't be checked (an `error` in its `files` entry: a whole-file run of a subtitled film would cost hours). Returns `{job_id, candidates}`, or `{job_id: null, candidates: 0}` when there is nothing to do. Progress reads `"3/41 files, <name>: 1:10 of 4:00 transcribed"`; the `result` is `{path, mode, model, files: [{name, path, new_lines, error?}], new_lines, note}`. 400 = over 500 files (audio counted too) or not a folder; 422 = a model the server lacks. A server shutdown stops a running transcription (its finished chunks are kept) and drops queued ones. |
+| POST | `/api/search/folder/transcribe` | Transcribe a folder's files one after another (job): `{path, mode, model}`. `mode=nosubs` (default) does whole files that have no subtitles, audio files with no transcript included; `gaps` does the gaps in every subtitled file. Files already done are skipped, and so is a file whose subtitles can't be checked (an `error` in its `files` entry: a whole-file run of a subtitled film would cost hours). In `gaps` mode, a file not indexed yet has its subtitles extracted first, at idle priority as the folder index does (Cancel stops that too). Returns `{job_id, candidates}`, or `{job_id: null, candidates: 0}` when there is nothing to do. Progress reads `"3/41 files, <name>: 1:10 of 4:00 transcribed"`; the `result` is `{path, mode, model, files: [{name, path, new_lines, error?}], new_lines, note}`. 400 = over 500 files (audio counted too) or not a folder; 422 = a model the server lacks. A server shutdown stops a running transcription (its finished chunks are kept) and drops queued ones. |
+| GET | `/api/transcripts/orphans?stale=` | The stored transcripts a clean would delete, deleting nothing → `{count, orphans: [{file, path, reason}]}` (at most 200 listed). `reason` is `gone` (the media file was deleted), `stale` (only with `stale=true`: the media file was replaced since), `unreadable` (an older store format or a broken file) or `partial` (an interrupted save's temp file, over an hour old). A media file counts as gone only under a library root that is there and not empty, so a disk that isn't mounted loses nothing; a transcript of a file outside every root is left alone. |
+| POST | `/api/transcripts/clean?stale=` | Delete what the GET lists → `{count, removed}`. Only ever on request: nothing sweeps the store on a timer or a scan. Copies in the library are never touched. |
 
 `/api/items` adds `transcript: {stored, library, writable, sidecar_name}` for a library
 file. `/api/library/browse` lists an audio file with a machine transcript (stored or in the
-library) like one with a transcript beside it, and marks entries `has_transcript`.
+library) like one with a transcript beside it, and marks entries `has_transcript` (not for a
+transcript of the file a replaced one used to be).
 `/api/search/folder/index-status` adds `transcribed` (files with a machine transcript) and
 `audio_untranscribed` (audio files with no transcript of any kind, outside `total`).
 

@@ -35,6 +35,8 @@ def test_whisper_and_a_model_are_not_enough(env):  # noqa: F811
         c.post("/api/items/transcript/library", params={"path": str(root / "a.mkv")}),
         c.delete("/api/items/transcript/library", params={"path": str(root / "a.mkv")}),
         c.post("/api/search/folder/transcribe", json={"path": str(root)}),
+        c.get("/api/transcripts/orphans"),
+        c.post("/api/transcripts/clean"),
     ]
     for r in calls:
         assert r.status_code == 404 and "QC_TRANSCRIBE" in r.json()["detail"], r.request.url

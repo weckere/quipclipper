@@ -148,6 +148,105 @@ def test_store_add_merge_and_staleness(tmp_path):
     assert store.clear(media) is True and store.clear(media) is False
 
 
+def test_exists_is_false_for_a_replaced_media_file(tmp_path):
+    # BE-8: the listing's "auto" badge (exists) agrees with load() about staleness.
+    media = tmp_path / "ep.mkv"
+    media.write_bytes(b"x" * 10)
+    store = tr.TranscriptStore(tmp_path / "t")
+    assert not store.exists(media) and not store.exists(media, store.names())
+    store.add(media, (0, 10), machine((1, 2, "one")), model="small.en")
+    assert store.exists(media) and store.exists(media, store.names())
+    media.write_bytes(b"y" * 11)
+    assert not store.exists(media) and not store.exists(media, store.names())
+    # Transcribing the new file again brings the badge back (the stamp is read anew).
+    store.add(media, (0, 10), machine((1, 2, "won")), model="small.en")
+    assert store.exists(media, store.names())
+    # A media file that can't be read still shows what we have, as load() does.
+    media.unlink()
+    assert store.exists(media, store.names()) and store.load(media) is not None
+
+
+def test_names_reads_each_store_file_once_per_change(tmp_path, monkeypatch):
+    media = tmp_path / "ep.mkv"
+    media.write_bytes(b"x")
+    store = tr.TranscriptStore(tmp_path / "t")
+    store.add(media, (0, 10), machine((1, 2, "one")), model="small.en")
+    reads = []
+    real_read = tr._read_stamp
+    monkeypatch.setattr(tr, "_read_stamp", lambda f: reads.append(f.name) or real_read(f))
+    store.names(), store.names(), store.exists(media)
+    assert len(reads) == 1
+    store.clear(media)
+    assert store.names() == {} and not store.exists(media)
+
+
+def _orphan_store(tmp_path):
+    root = tmp_path / "lib"
+    (root / "show").mkdir(parents=True)
+    keep, gone, changed = (root / "show" / n for n in ("keep.mkv", "gone.mkv", "changed.mkv"))
+    for f in (keep, gone, changed):
+        f.write_bytes(b"x")
+    store = tr.TranscriptStore(tmp_path / "t")
+    for f in (keep, gone, changed):
+        store.add(f, (0, 10), machine((1, 2, f.stem)), model="small.en")
+    gone.unlink()
+    changed.write_bytes(b"yy")
+    return root, store, keep, gone, changed
+
+
+def test_orphans_lists_transcripts_of_deleted_media_and_clean_removes_them(tmp_path):
+    root, store, keep, gone, changed = _orphan_store(tmp_path)
+    (store.dir / "junk.json").write_text("{not json")
+    old = {"version": 0, "path": str(keep)}
+    (store.dir / ("0" * 64 + ".json")).write_text(json.dumps(old))
+    newer = {"version": tr.STORE_VERSION + 1, "path": "/x"}
+    (store.dir / ("1" * 64 + ".json")).write_text(json.dumps(newer))
+    leftover = store.dir / "abc.tmp"
+    leftover.write_text("partial")
+    os.utime(leftover, (1, 1))
+    (store.dir / "fresh.tmp").write_text("a save in progress")
+    found = {(o.path, o.reason) for o in store.orphans([root])}
+    assert found == {(str(gone), tr.GONE), (None, tr.UNREADABLE), (str(keep), tr.UNREADABLE),
+                     (None, tr.PARTIAL)}
+    assert (str(changed), tr.STALE) in {(o.path, o.reason) for o in store.orphans([root], stale=True)}
+    # Listing deletes nothing; cleaning deletes exactly what was listed.
+    assert store.load(gone) is not None
+    removed = store.clean([root])
+    assert {o.reason for o in removed} == {tr.GONE, tr.UNREADABLE, tr.PARTIAL}
+    assert store.orphans([root]) == []
+    assert store.load(gone) is None and store.load(keep) is not None
+    assert (store.dir / "fresh.tmp").exists() and (store.dir / ("1" * 64 + ".json")).exists()
+    # The replaced file's transcript stays unless asked for (a remux keeps nothing useful
+    # either, but that's the user's call).
+    assert store.exists(changed) is False and len(store.names()) == 3
+    assert [o.path for o in store.clean([root], stale=True)] == [str(changed)]
+
+
+def test_orphans_never_counts_media_on_an_absent_disk_as_gone(tmp_path):
+    root, store, keep, gone, changed = _orphan_store(tmp_path)
+    elsewhere = tmp_path / "unmounted"
+    elsewhere.mkdir()  # an unmounted disk's mount point: there, but empty
+    ghost = elsewhere / "film.mkv"
+    ghost.write_bytes(b"x")
+    store.add(ghost, (0, 5), machine((1, 2, "hi")), model="small.en")
+    ghost.unlink()
+    assert {o.path for o in store.orphans([root, elsewhere])} == {str(gone)}
+    # Under no root at all (the configuration changed): not ours to judge.
+    assert {o.path for o in store.orphans([elsewhere])} == set()
+    # Without roots (the CLI's own store): gone only where its folder is still there.
+    shutil.rmtree(root / "show")
+    assert {o.path for o in store.orphans()} == {str(ghost)}
+
+
+def test_clean_keeps_a_transcript_saved_after_the_listing(tmp_path, monkeypatch):
+    root, store, keep, gone, changed = _orphan_store(tmp_path)
+    listed = store.orphans([root])
+    gone.write_bytes(b"x")  # the file is back, and transcribed again, before the delete
+    store.add(gone, (0, 10), machine((1, 2, "back")), model="small.en")
+    monkeypatch.setattr(store, "orphans", lambda roots=None, stale=False: listed)
+    assert store.clean([root]) == [] and store.load(gone) is not None
+
+
 # --- sidecars --------------------------------------------------------------------------
 
 def test_machine_sidecar_name_and_recognition(tmp_path):

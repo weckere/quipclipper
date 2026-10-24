@@ -109,6 +109,17 @@ scripts/release.sh leaves this block in Unreleased; delete the two marker lines 
 
 - Folder and library search also search a file's stored machine transcript when the file
   isn't indexed.
+- A transcript belongs to the file it was made of: a media file replaced since (a new
+  release under the same name) loses its **auto** chip in the library and its count in the
+  Dialogue index card, as search and the script already ignored it. Transcripts of files gone
+  from the library are never swept on their own: `index.transcript-orphans` (`GET
+  /api/transcripts/orphans`) lists them, and `index.transcript-clean` (`POST
+  /api/transcripts/clean`, **Remove orphaned transcripts** on the library's home) deletes
+  them, with `--stale` also those of replaced files. A disk that isn't mounted, or a file
+  outside every library root, never counts as gone.
+- **Fill gaps** (one file or a folder) extracts the subtitles of a file not indexed yet at idle
+  priority, as the folder index does, and Cancel stops that extraction too (it ran at normal
+  priority).
 
 <!-- /held back -->
 

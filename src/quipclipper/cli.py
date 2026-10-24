@@ -603,9 +603,29 @@ def _fmt_transcript(data: dict) -> None:
         typer.echo(f"{line['start']:>9.2f}  {AUTO_MARK}{line['text']}")
 
 
+_ORPHAN_REASONS = {"gone": "media file deleted", "stale": "media file replaced since",
+                   "unreadable": "unreadable", "partial": "a save's leftover"}
+
+
+def _fmt_orphans(data: dict) -> None:
+    rows = data.get("orphans", data.get("removed")) or []
+    n = data.get("count", len(rows))
+    verb = "Would delete" if "orphans" in data else "Deleted"
+    if not n:
+        typer.secho("No orphaned machine transcripts.", dim=True)
+        return
+    typer.secho(f"{verb} {n} orphaned machine transcript{'' if n == 1 else 's'}:", bold=True)
+    for o in rows:
+        typer.echo(f"  {o.get('path') or o.get('file')}  "
+                   f"({_ORPHAN_REASONS.get(o.get('reason'), o.get('reason'))})")
+    if len(rows) < n:
+        typer.secho(f"  … and {n - len(rows)} more", dim=True)
+
+
 _FORMATTERS = {
     "item.transcribe": _fmt_transcribe, "index.transcribe": _fmt_transcribe,
     "item.transcript": _fmt_transcript,
+    "index.transcript-orphans": _fmt_orphans, "index.transcript-clean": _fmt_orphans,
     "library.browse": _fmt_entries, "library.find": _fmt_entries,
     "search.item": _fmt_matches, "search.folder": _fmt_matches,
     "job.get": _fmt_job, "job.wait": _fmt_job, "job.list": _fmt_jobs,
@@ -1773,8 +1793,20 @@ def _local_transcript_uncopy(c: Context, v: dict) -> Any:
     return {"path": str(media), "removed": removed}
 
 
+def _local_transcript_orphans(c: Context, v: dict) -> Any:
+    found = _store().orphans(stale=bool(v.get("stale")))
+    return {"count": len(found), "orphans": [o.to_json() for o in found]}
+
+
+def _local_transcript_clean(c: Context, v: dict) -> Any:
+    removed = _store().clean(stale=bool(v.get("stale")))
+    return {"count": len(removed), "removed": [o.to_json() for o in removed]}
+
+
 _LOCAL = {
     "item.transcribe": _local_transcribe,
+    "index.transcript-orphans": _local_transcript_orphans,
+    "index.transcript-clean": _local_transcript_clean,
     "item.transcript": _local_transcript,
     "item.transcript-clear": _local_transcript_clear,
     "item.transcript-copy": _local_transcript_copy,

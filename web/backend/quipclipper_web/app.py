@@ -510,10 +510,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return stt_jobs.get(active_stt.get(key, ""))
 
     def _has_machine(p: Path, siblings: list[Path] | None = None,
-                     stored: set[str] | None = None) -> bool:
-        """Cheap: ``p`` has a machine transcript, stored or copied to the library.
-        ``siblings`` (the folder's listing) and ``stored`` (``transcripts.names()``)
-        spare a listing and a stat when checking many files."""
+                     stored: dict[str, stt.Stamp] | None = None) -> bool:
+        """Cheap: ``p`` has a current machine transcript (not one of the file it
+        replaced), stored or copied to the library. ``siblings`` (the folder's listing)
+        and ``stored`` (``transcripts.names()``) spare a listing and a stat when checking
+        many files."""
         return stt_on and (transcripts.exists(p, stored)
                            or bool(stt.find_machine_sidecars(p, siblings)))
     # video id -> last download / add job id, so a repeat POST returns the
@@ -1290,7 +1291,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # --- folder dialogue search ------------------------------------------------
 
-    def _media_under(folders: list[Path], stored: set[str], seen: set[Path] | None = None,
+    def _media_under(folders: list[Path], stored: dict[str, stt.Stamp], seen: set[Path] | None = None,
                      seen_books: set[Path] | None = None
                      ) -> tuple[list[tuple[Path, list[Path]]], int, int]:
         """Every media file under ``folders``: ``(files, books, bare_audio)``.
@@ -1391,7 +1392,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # (wizrock: 31 books, 30-40 s); a book given as a path is searched. One listing
         # per folder serves each file's sidecar lookups, and the per-file stats of the
         # index check run in threads (a library is ~70k files on a FUSE mount).
-        stored = transcripts.names() if stt_on and machine != "exclude" else set()
+        stored = transcripts.names() if stt_on and machine != "exclude" else {}
         found, books_not_searched, _ = _media_under(folders, stored, seen, seen_books)
 
         cached = sub_cache.entry_names()
@@ -1566,7 +1567,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         folder = _resolve(path)
         if not folder.is_dir():
             raise HTTPException(status_code=400, detail=f"Not a directory: {path}")
-        stored = transcripts.names() if stt_on else set()
+        stored = transcripts.names() if stt_on else {}
         found, _, bare = _media_under([folder], stored)
         cached = sub_cache.entry_names()
 
@@ -1661,7 +1662,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         paths = [str(f) for f in folders]
 
         def scan():
-            stored = transcripts.names() if stt_on else set()
+            stored = transcripts.names() if stt_on else {}
             found, _, _ = _media_under(folders, stored)
             cached = sub_cache.entry_names()
             for c, own in found:
@@ -1942,9 +1943,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def _transcribe(job, p: Path, mode: str, *, start=None, end=None, model: str,
                     audio: int = 0, redo: bool = False, prefix: str = "") -> dict:
         """Transcribe what ``mode`` asks of one file; the job's progress follows it. Returns
-        the job's result (also used by the folder job)."""
+        the job's result (also used by the folder job). A file not indexed yet has its
+        subtitles extracted first, at idle priority as the folder index does (BE-4);
+        Cancel stops that with :class:`Cancelled`."""
         try:
-            real = sub_cache.resolve(p)
+            with at_idle_priority(lambda: job.cancel_requested):
+                real = sub_cache.resolve(p)
         except (ValueError, FileNotFoundError, RuntimeError):
             real = []
         duration = media.probe_duration(p)
@@ -1991,8 +1995,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "gaps": "the gaps", "file": "the whole file"}[mode]
 
         def run_job(job) -> list[Path]:
-            job.result = _transcribe(job, p, mode, start=req.start, end=req.end, model=model,
-                                     audio=req.audio, redo=req.redo)
+            with contextlib.suppress(Cancelled):  # cancelled while extracting subtitles
+                job.result = _transcribe(job, p, mode, start=req.start, end=req.end,
+                                         model=model, audio=req.audio, redo=req.redo)
             return []
 
         with stt_submit:
@@ -2068,6 +2073,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 removed.append(side.name)
         return {"path": path, "removed": removed}
 
+    # Stored transcripts no file needs any more: the media was deleted (or, with stale,
+    # replaced since). Never swept on a timer or a scan (D-037): listed here, and deleted
+    # only by the POST below. A transcript under a root that's missing or empty (a disk
+    # that isn't mounted) is never counted.
+    @app.get("/api/transcripts/orphans")
+    def transcript_orphans(stale: bool = Query(False)) -> dict:
+        """The stored transcripts a clean would delete (nothing is deleted)."""
+        _stt_on()
+        found = transcripts.orphans(settings.media_roots, stale=stale)
+        return {"count": len(found), "orphans": [o.to_json() for o in found[:200]]}
+
+    @app.post("/api/transcripts/clean")
+    def clean_transcripts(stale: bool = Query(False)) -> dict:
+        """Delete the stored transcripts of media files that are gone (with ``stale``,
+        also of files replaced since). Copies in the library are never touched."""
+        _stt_on()
+        removed = transcripts.clean(settings.media_roots, stale=stale)
+        return {"count": len(removed), "removed": [o.to_json() for o in removed[:200]]}
+
     @app.post("/api/search/folder/transcribe")
     def transcribe_folder(req: FolderTranscribeRequest) -> dict:
         """Transcribe a folder's files one after another (a job; cancellable): whole files
@@ -2130,30 +2154,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         def run_job(job) -> list[Path]:
             files = []
             todo = [*videos, *bare]
-            for i, v in enumerate(todo, 1):
-                if job.cancel_requested:
-                    break
-                job.progress = f"{i}/{len(todo)} files: checking {v.name}"
-                one = {"name": v.name, "path": str(v), "new_lines": 0}
-                v = inside(v)  # keyed and checked as the file itself (a link may lead out)
-                if v is None:
-                    continue
-                subbed = has_subs(v) if v in video_set else False
-                if subbed is None:
-                    one["error"] = "Couldn't tell whether it has subtitles; skipped."
-                    files.append(one)
-                    continue
-                if (req.mode == "gaps") != subbed:
-                    continue  # nosubs skips subtitled files; gaps skips the rest
-                try:
-                    r = _transcribe(job, v, "gaps" if subbed else "file", model=model,
-                                    prefix=f"{i}/{len(todo)} files, {v.name}: ")
-                    one["new_lines"] = r.get("new_lines", 0)
-                    if r.get("transcribed"):
-                        files.append(one)
-                except (ValueError, RuntimeError, OSError) as exc:
-                    one["error"] = str(exc)
-                    files.append(one)
+            # Telling a file's gaps needs its subtitle lines, and extracting them is the
+            # folder index's work: it runs at the same idle priority (BE-4), and Cancel
+            # stops an extraction in flight.
+            try:
+                with at_idle_priority(lambda: job.cancel_requested):
+                    for i, v in enumerate(todo, 1):
+                        if job.cancel_requested:
+                            break
+                        job.progress = f"{i}/{len(todo)} files: checking {v.name}"
+                        one = {"name": v.name, "path": str(v), "new_lines": 0}
+                        v = inside(v)  # keyed and checked as the file itself (a link may lead out)
+                        if v is None:
+                            continue
+                        subbed = has_subs(v) if v in video_set else False
+                        if subbed is None:
+                            one["error"] = "Couldn't tell whether it has subtitles; skipped."
+                            files.append(one)
+                            continue
+                        if (req.mode == "gaps") != subbed:
+                            continue  # nosubs skips subtitled files; gaps skips the rest
+                        try:
+                            r = _transcribe(job, v, "gaps" if subbed else "file", model=model,
+                                            prefix=f"{i}/{len(todo)} files, {v.name}: ")
+                            one["new_lines"] = r.get("new_lines", 0)
+                            if r.get("transcribed"):
+                                files.append(one)
+                        except (ValueError, RuntimeError, OSError) as exc:
+                            one["error"] = str(exc)
+                            files.append(one)
+            except Cancelled:
+                pass
             done = [f for f in files if not f.get("error")]
             job.result = {
                 "path": str(folder), "mode": req.mode, "model": model, "files": files,

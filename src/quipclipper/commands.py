@@ -128,6 +128,10 @@ _CLIP_OPTIONS = (
           "in the saved video clip.", where=BODY),
 )
 
+# Orphaned machine transcripts (M21): also those of a media file replaced since.
+_STALE = Param("stale", "bool", "Also transcripts of media files replaced since they were "
+               "made (a re-encode or a new release under the same name).", default=False)
+
 # Machine transcript lines (M21) in a script or search: mixed in (marked), left out, or alone.
 _MACHINE = Param("machine", "str", "Machine transcript lines (whisper): include them "
                  "(marked as machine-made), exclude them, or search only them.",
@@ -390,6 +394,16 @@ COMMANDS: tuple[Command, ...] = (
             response="job",
             ui="Transcribe files without subtitles; Fill gaps in every file (Dialogue index "
                "card); ✕ Cancel", experimental=True),
+    Command("index.transcript-orphans", "List the stored machine transcripts no file needs "
+            "any more: their media file was deleted (with --stale, also replaced since), or "
+            "they can't be read. Deletes nothing.", "GET", "/api/transcripts/orphans",
+            params=(_STALE,), mode="both",
+            ui="Library home: the orphaned transcripts count", experimental=True),
+    Command("index.transcript-clean", "Delete the stored machine transcripts "
+            "`index.transcript-orphans` lists. Never runs on its own; copies in the library "
+            "stay. A disk that isn't mounted counts as nothing deleted.", "POST",
+            "/api/transcripts/clean", params=(_STALE,), mode="both", destructive=True,
+            ui="Library home: Remove orphaned transcripts", experimental=True),
     # --- clip -----------------------------------------------------------------------------
     Command("clip.create", "Cut a clip: around a line of dialogue (QUERY) or between "
             "--start and --end.", "POST", "/api/clip",

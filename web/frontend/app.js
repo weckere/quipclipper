@@ -1420,6 +1420,9 @@ function libIndexReset() {
   $("lib-index-status").hidden = true;
   $("changes-badge").hidden = true;
   $("changes-reindex-btn").hidden = true;
+  sttOrphansCheckId++;
+  $("stt-orphans").hidden = true;
+  $("stt-orphans-btn").hidden = true;
 }
 
 /** The library home: the card is the library's own. */
@@ -1431,7 +1434,43 @@ function libIndexHome() {
   $("lib-index-btn").hidden = false;
   refreshLibIndex();
   refreshChanges();
+  refreshSttOrphans();
 }
+
+// Stored machine transcripts of files gone from the library (M21). Only counted here, on
+// the library's home; deleted only by this button, after a confirm (D-037: nothing is
+// swept on its own).
+let sttOrphansCheckId = 0;
+
+async function refreshSttOrphans() {
+  const myId = ++sttOrphansCheckId;
+  const line = $("stt-orphans"), btn = $("stt-orphans-btn");
+  if (!appConfig.transcribe) { line.hidden = btn.hidden = true; return; }  // off here (D-040)
+  let data;
+  try { data = await getJSON("/api/transcripts/orphans"); } catch { return; }
+  if (myId !== sttOrphansCheckId) return;
+  const n = data.count || 0;
+  line.textContent = n ? `${plural(n, "machine transcript")} belong${n === 1 ? "s" : ""} to files no longer in the library.` : "";
+  line.hidden = btn.hidden = !n;
+}
+
+$("stt-orphans-btn").onclick = async () => {
+  const btn = $("stt-orphans-btn"), line = $("stt-orphans");
+  if (!confirm("Delete the stored machine transcripts of files that are gone from the library? " +
+      "Transcripts copied into the library stay.")) return;
+  btn.disabled = true;
+  try {
+    const r = await postJSON("/api/transcripts/clean", {});
+    line.textContent = `Deleted ${plural(r.count || 0, "orphaned transcript")}.`;
+    announce(line.textContent);
+    btn.hidden = true;
+  } catch (err) {
+    line.textContent = `Couldn't delete them: ${err.message}`;
+    announce(line.textContent);
+  } finally {
+    btn.disabled = false;
+  }
+};
 
 const libClock = (s) => (s < 60 ? "under a minute" : s < 3600 ? `~${Math.round(s / 60)} min` : `~${Math.floor(s / 3600)} h ${Math.round((s % 3600) / 60)} min`);
 
