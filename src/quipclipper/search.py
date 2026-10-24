@@ -78,9 +78,11 @@ def _normalize(text: str) -> str:
     accent are one letter, and full-width "ｈｅｌｌｏ" is "hello"."""
     if "<" in text or "{" in text:
         text = _MARKUP.sub(" ", text)
-    if text.isascii():
-        return _NON_WORD.sub(" ", _APOSTROPHE.sub("", text.casefold())).strip()
-    text = _APOSTROPHE.sub("", unicodedata.normalize("NFKC", text).casefold())
+    if not text.isascii() and not unicodedata.is_normalized("NFKC", text):
+        text = unicodedata.normalize("NFKC", text)
+    text = _APOSTROPHE.sub("", text.casefold())
+    if text.isascii():  # most lines once a curly apostrophe is gone ("♪" isn't a mark)
+        return _NON_WORD.sub(" ", text).strip()
     if "\u0307" in text:  # casefolded Turkish "İ" is "i" + a dot above: just "i"
         text = text.replace("i\u0307", "i")
     return _non_word_any().sub(" ", text).strip()
