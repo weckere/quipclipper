@@ -220,7 +220,7 @@ select {
    (the extra .batch-bar selector outranks .clip-btn's accent background). */
 .batch-bar .batch-bookmark-btn { background: var(--raised); color: var(--text); border: 1px solid var(--line-strong); }
 .batch-bar .batch-bookmark-btn:hover:not(:disabled) { border-color: var(--accent-text); }
-/* Send to LeadStinger (M14): a small toggle, the placeholder glyph #i-leadstinger beside a
+/* Send to LeadStinger (M14): a small toggle, the cart icon #i-leadstinger beside a
    checkbox; with it on, the button next to it makes a LeadStinger set instead of clips. */
 .ls-toggle {
   display: inline-flex; align-items: center; gap: 0.25rem; padding: 0.2rem 0.45rem;

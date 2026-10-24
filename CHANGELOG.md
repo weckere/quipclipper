@@ -188,6 +188,12 @@ scripts/release.sh leaves this block in Unreleased; delete the two marker lines 
   from its `X-Forwarded-For` (or `QC_REAL_IP_HEADER` / `nginx.realIpHeader`), so the pairing
   banner's "From" and the pairing rate limit see the real caller, not the proxy.
 
+### Send to LeadStinger icon (M20)
+
+- **Send to LeadStinger draws a shopping cart** instead of the placeholder lightning bolt:
+  the workspace button, the batch-bar toggles and the Clips rows share one stroke icon in
+  the app's style. Tooltips, names and behaviour are unchanged.
+
 ## [0.3.0] - 2026-10-24
 
 ### UI follow-ups (M20)

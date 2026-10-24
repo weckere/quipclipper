@@ -73,7 +73,7 @@ mark the selected line's in and out points.
 
 ![Now playing from Jellyfin, with each item's poster](docs/screenshots/now-playing.png)
 
-**Send to LeadStinger:** the ⚡ button beside Make clip cuts the selection with its
+**Send to LeadStinger:** the cart button beside Make clip cuts the selection with its
 Before/After padding and sends it to LeadStinger as a new tile, the padding becoming the
 tile's handles.
 
@@ -169,7 +169,7 @@ example.
 ### LeadStinger
 
 [LeadStinger](https://github.com/weckere/leadstinger) is a soundboard for live shows.
-Click the **Send to LeadStinger** button (⚡) beside Make clip, or tick the toggle beside
+Click the **Send to LeadStinger** button (the cart icon) beside Make clip, or tick the toggle beside
 Clip / Export selected, and the line goes straight into LeadStinger as a new tile: quipclipper cuts it
 as a full-mix FLAC with its padding kept as handles, and the tile's trim sits exactly on
 the line, so it can still be nudged there. Several lines at once make a LeadStinger set
