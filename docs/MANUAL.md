@@ -312,8 +312,13 @@ Opening a file opens its workspace.
 - **The script** on the right lists every line. Click a line to seek; hover (or focus)
   a line for **Start** and **End**, which set the selection by whole lines. The first
   line, *Start of video*, lets a clip begin at 0:00. **Follow playback** keeps the
-  playing line in view. The tabs beside **Script** are **Matches** (after a search),
-  **Bookmarks** for this file and **Clips** made from it this visit.
+  playing line in view. The tabs
+  beside **Script** are **Matches** (after a search), **Bookmarks** for this file and
+  **Clips** made from it this visit. In **Matches**, click a match (or press Enter on it)
+  to select its line, or all its lines when it spans several, and play it: the selection
+  then holds playback, so **▶** and **Loop selection** play just that line, with Before /
+  After, and Make clip cuts it. A hit from a folder or library search opens its file with
+  the line selected the same way.
 - **The Selection panel** shows the selected range and acts on it: **★ Bookmark** (with
   a label you can edit; a range dragged on the waveform can be bookmarked too), **✂ Make clip**, and **⚡ Send to LeadStinger** (an icon button:
   hover or focus it for what it does; one click cuts and sends). Under

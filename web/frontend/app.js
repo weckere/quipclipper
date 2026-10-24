@@ -3163,14 +3163,14 @@ async function doSearch(query, { focus = true } = {}) {
         `<span class="result-score" title="${SCORE_TITLE}">${m.score}%</span>` +
         `<span>${m.start_ts} – ${m.end_ts}</span>` +
       `</span>`;
-    makeActivatable(li, "Play from this line and select it");
+    makeActivatable(li, "Select this line and play it; ▶ and Loop selection then play just this line");
     if (m.machine) li.title = `${MACHINE_TITLE}. ${li.title}`;
+    // A click selects the match's line(s), as a library hit opens with them selected, and
+    // plays from there: the selection holds playback, so ▶ and Loop play just those lines.
     li.onclick = () => {
-      seekTo(m.start);
-      // Select the matching cue(s) in Marks (highlighted yellow) — identical to
-      // clicking a library dialogue-search hit, so both search paths behave the
-      // same way.
       selectCueRange(m.start, m.end);
+      announceSelection();
+      seekTo(hasClipRange() ? clipStart() : m.start);
     };
     results.appendChild(li);
   }
@@ -3645,8 +3645,16 @@ function nearestCueIndex(t, edge) {
 /** Select the cue range covering [start, end] in Marks and scroll it in view. */
 function selectCueRange(start, end) {
   if (!scriptCues.length) return;
-  const first = nearestCueIndex(start, "start");
-  let last = nearestCueIndex(end, "end");
+  // The lines that start and end where the range does (a search hit's own cues), else the
+  // nearest ones.
+  const at = (edge, t) => scriptCues.findIndex((c) => !c.synthetic && Math.abs(c[edge] - t) < 0.002);
+  const exactFirst = at("start", start);
+  const first = exactFirst >= 0 ? exactFirst : nearestCueIndex(start, "start");
+  let last = -1;
+  for (let i = Math.max(0, first); i < scriptCues.length; i++) {
+    if (!scriptCues[i].synthetic && Math.abs(scriptCues[i].end - end) < 0.002) { last = i; break; }
+  }
+  if (last < 0) last = nearestCueIndex(end, "end");
   if (first < 0) return;
   if (last < first) last = first;
   clipFirst = first;

@@ -149,6 +149,10 @@ scripts/release.sh leaves this block in Unreleased; delete the two marker lines 
   Labels show a pointer and an outline on hover. A drag that starts on a label still
   drag-selects. From the keyboard the labels are one tab stop: ← → move between lines,
   Enter or Space selects, Shift adds, S and E set the start and end.
+- **A click on a match selects it for playback:** in the workspace's Matches tab, a click (or
+  Enter) on a match selects its line, or all of a multi-line match's lines, picking the
+  match's own cues even where lines overlap, then plays from it and says the selection. ▶ and
+  Loop selection then play just that line with Before/After, as with any line selection.
 - **Waveform zoom waits in grey:** after a zoom or a pan the wave turns grey (the strip is
   `aria-busy`) until the peaks for the new view arrive, instead of drawing the previous,
   coarser view stretched into blocks. Only sound at least as sharp as the view needs is
