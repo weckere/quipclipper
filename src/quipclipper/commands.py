@@ -612,8 +612,8 @@ COMMANDS: tuple[Command, ...] = (
                           "(search.item results).", where=CLIENT),
                     *_JOB_FOLLOW),
             mode="client", response="job",
-            ui="Send to LeadStinger button beside Make clip (no QC_PUBLIC_URL), or the "
-               "toggle beside Clip / Export selected"),
+            ui="Send to LeadStinger button beside Make clip (when the server can't name "
+               "its own address), or the toggle beside Clip / Export selected"),
     Command("leadstinger.send", "Put the clips on stdin straight into LeadStinger on this "
             "machine: a new set, or appended to an existing one with --set.", None, None,
             params=(Param("name", "str", "The new set's name (ignored with --set). "
@@ -636,8 +636,9 @@ COMMANDS: tuple[Command, ...] = (
 
     Command("leadstinger.quip", "Send one line to LeadStinger: cut it as FLAC with its padding "
             "into the clips library (LeadStinger/) and open its leadstinger://quip link, so "
-            "LeadStinger downloads it into a tile trimmed to the line. Needs QC_PUBLIC_URL on "
-            "the server.", "POST", "/api/leadstinger/quip",
+            "LeadStinger downloads it into a tile trimmed to the line. The link names "
+            "QC_PUBLIC_URL, else the advertised URL, else the address this CLI reached the "
+            "server at.", "POST", "/api/leadstinger/quip",
             params=(Param("path", "str", "Media file the line is in.", where=BODY, main=True,
                           required=True),
                     Param("start", "float", "Where the line starts (seconds).", where=BODY,
@@ -654,10 +655,10 @@ COMMANDS: tuple[Command, ...] = (
                     *_OPEN_LINK),
             mode="client", response="job",
             ui="Send to LeadStinger button beside Make clip, or the toggle with Clip / "
-               "Export selected on one line (needs QC_PUBLIC_URL)"),
+               "Export selected on one line"),
     Command("leadstinger.link", "The leadstinger://quip link for a clip already in the clips "
-            "library, opened here so LeadStinger downloads it into a new tile. Needs "
-            "QC_PUBLIC_URL on the server.", "GET", "/api/leadstinger/link",
+            "library, opened here so LeadStinger downloads it into a new tile. The server it "
+            "names is chosen as for leadstinger.quip.", "GET", "/api/leadstinger/link",
             params=(Param("clip", "str", "Path inside the clips library (as clips.download "
                           "takes it).", main=True, required=True),
                     Param("title", "str", "The tile's title (default: the file name)."),
@@ -668,7 +669,40 @@ COMMANDS: tuple[Command, ...] = (
                     *_OPEN_LINK),
             mode="client",
             ui="Send to LeadStinger on a clip row (Clips library), or the toggle with "
-               "Export selected on one clip (needs QC_PUBLIC_URL)"),
+               "Export selected on one clip"),
+
+    Command("leadstinger.connect", "Open LeadStinger's Connect prompt for this server (a "
+            "leadstinger://pair link): LeadStinger asks to connect, then pairs, so nobody "
+            "pastes a token. The server is QC_PUBLIC_URL, else the advertised URL, else the "
+            "address this CLI reached it at.", None, None,
+            params=_OPEN_LINK, mode="client",
+            ui="Connect LeadStinger (Settings ▸ Connected apps)"),
+
+    # --- pairing: an app such as LeadStinger asks for access, a person lets it in ----------
+    Command("pair.list", "List the apps waiting for access (pairing requests): their name, "
+            "host, code, address and expiry.", "GET", "/api/pair",
+            ui="The pairing banner on every page"),
+    Command("pair.approve", "Let an app in: approve its pairing request. Check first that "
+            "the code is the one the app shows. Its next poll collects its own client token.",
+            "POST", "/api/pair/{pair_id}/approve",
+            params=(Param("pair_id", "str", "Request id (from pair.list).", where=PATH,
+                          main=True, required=True),),
+            destructive=True, ui="Allow on the pairing banner"),
+    Command("pair.deny", "Turn down an app's pairing request.", "POST",
+            "/api/pair/{pair_id}/deny",
+            params=(Param("pair_id", "str", "Request id (from pair.list).", where=PATH,
+                          main=True, required=True),),
+            destructive=True, ui="Deny on the pairing banner"),
+
+    # --- connected apps (paired clients) ------------------------------------------------------
+    Command("clients.list", "List the connected apps: name, host, when they paired and when "
+            "they were last used.", "GET", "/api/clients",
+            ui="Settings ▸ Connected apps"),
+    Command("clients.revoke", "Disconnect an app: revoke its client token. 'self' revokes "
+            "the client token this CLI is using.", "DELETE", "/api/clients/{client_id}",
+            params=(Param("client_id", "str", "Client id (from clients.list), or self.",
+                          where=PATH, main=True, required=True),),
+            destructive=True, ui="Revoke (Settings ▸ Connected apps)"),
 
     # --- settings (the web UI's per-browser preferences) -------------------------------------
     Command("settings.list", "Show the CLI settings.", None, None, mode="client",
@@ -721,6 +755,12 @@ EXEMPT_ROUTES: dict[tuple[str, str], str] = {
                                               "(clips.download saves the same file)",
     ("GET", "/api/jellyfin/image/{item_id}"): "presentation: a poster for the browser "
                                               "(jellyfin.lookup names the image)",
+    # Pairing: the app's side. A person answers with pair.approve / pair.deny.
+    ("POST", "/api/pair"): "the app's side of pairing: LeadStinger asks for access",
+    ("GET", "/api/pair/{pair_id}"): "the app's side of pairing: LeadStinger polls its own "
+                                    "request with that request's poll secret",
+    ("GET", "/api/clients/check"): "the nginx password gate asks whether a client token is "
+                                   "current (clients.list shows the clients)",
 }
 # Web UI preferences with no CLI meaning.
 EXEMPT_UI_SETTINGS: dict[str, str] = {

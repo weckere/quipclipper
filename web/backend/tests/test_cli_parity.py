@@ -397,3 +397,49 @@ def test_round_trip_index_changes(served, capsys):
     assert code == 0 and _last_json(out)["queued"] == 0
     assert cli.main(["index.changes"], transport=transport) == 0
     assert "0 files with subtitles changed since indexing" in capsys.readouterr().out
+
+
+def test_round_trip_pairing_and_connected_apps(served, capsys):
+    """pair.list / pair.approve / pair.deny and clients.list / clients.revoke: the pairing
+    banner and Settings ▸ Connected apps from the CLI (with the server's own token)."""
+    transport, media, clips, video = served
+    web = transport.client
+    ask = lambda: web.post("/api/pair", json={"name": "LeadStinger", "host": "laptop"},
+                           headers={"X-Quipclipper": "1"}).json()
+    first, second = ask(), ask()
+    code, out = _run(transport, ["pair.list"], capsys)
+    assert code == 0
+    assert [r["code"] for r in _last_json(out)["requests"]] == [first["code"], second["code"]]
+    # Approving and denying change things: refused with --safe.
+    code, out = _run(transport, ["--safe", "pair.approve", first["id"]], capsys)
+    assert code == 5
+    code, out = _run(transport, ["pair.approve", first["id"]], capsys)
+    assert code == 0 and _last_json(out)["status"] == "approved"
+    client_id = _last_json(out)["client_id"]
+    code, out = _run(transport, ["pair.deny", second["id"]], capsys)
+    assert code == 0 and _last_json(out) == {"status": "denied"}
+    code, out = _run(transport, ["pair.deny", second["id"]], capsys)
+    assert code != 0   # answered already: 404
+    token = web.get(f"/api/pair/{first['id']}",
+                    headers={"X-Pair-Secret": first["poll_secret"]}).json()["token"]
+
+    code, out = _run(transport, ["clients.list"], capsys)
+    assert code == 0 and [c["id"] for c in _last_json(out)["clients"]] == [client_id]
+    assert cli.main(["clients.list"], transport=transport) == 0
+    assert f"{client_id}  LeadStinger on laptop" in capsys.readouterr().out
+    code, out = _run(transport, ["clients.revoke", client_id], capsys)
+    assert code == 0 and _last_json(out) == {"removed": True}
+    assert web.get("/api/clips", headers={"X-API-Key": token}).status_code == 401
+
+
+def test_round_trip_leadstinger_connect(served, capsys):
+    """leadstinger.connect: the Connect LeadStinger button's leadstinger://pair link."""
+    transport, media, clips, video = served
+    code, out = _run(transport, ["leadstinger.connect", "--no-open"], capsys)
+    assert code == 0, out
+    result = _last_json(out)
+    assert result["server"] == "http://testserver" and result["pairing"] is True
+    assert result["link"] == "leadstinger://pair?server=http%3A%2F%2Ftestserver"
+    assert result["opened"] is False
+    assert cli.main(["leadstinger.connect", "--no-open"], transport=transport) == 0
+    assert capsys.readouterr().out.strip() == result["link"]

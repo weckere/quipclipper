@@ -221,10 +221,26 @@ by default land where they always did.
 
 | Command | What it does | Arguments | API | Web UI |
 |---|---|---|---|---|
-| `leadstinger.set` | Make a LeadStinger set file (.lsset) from JSON lines on stdin: search hits, bookmarks or clips-library entries, each cut as FLAC with its padding and trimmed to its line. | `NAME` `--before` `--after` `--path` `--wait` `--out-dir` | `POST /api/leadstinger/set` | Send to LeadStinger button beside Make clip (no QC_PUBLIC_URL), or the toggle beside Clip / Export selected |
+| `leadstinger.set` | Make a LeadStinger set file (.lsset) from JSON lines on stdin: search hits, bookmarks or clips-library entries, each cut as FLAC with its padding and trimmed to its line. | `NAME` `--before` `--after` `--path` `--wait` `--out-dir` | `POST /api/leadstinger/set` | Send to LeadStinger button beside Make clip (when the server can't name its own address), or the toggle beside Clip / Export selected |
 | `leadstinger.send` | Put the clips on stdin straight into LeadStinger on this machine: a new set, or appended to an existing one with --set. | `NAME` `--set` `--before` `--after` `--path` `--leadstinger-cli` `--data-dir` | (client) | — |
-| `leadstinger.quip` | Send one line to LeadStinger: cut it as FLAC with its padding into the clips library (LeadStinger/) and open its leadstinger://quip link, so LeadStinger downloads it into a tile trimmed to the line. Needs QC_PUBLIC_URL on the server. | `PATH` `--start` `--end` `--title` `--before` `--after` `--set` `--open` | `POST /api/leadstinger/quip` | Send to LeadStinger button beside Make clip, or the toggle with Clip / Export selected on one line (needs QC_PUBLIC_URL) |
-| `leadstinger.link` | The leadstinger://quip link for a clip already in the clips library, opened here so LeadStinger downloads it into a new tile. Needs QC_PUBLIC_URL on the server. | `CLIP` `--title` `--start` `--end` `--set` `--open` | `GET /api/leadstinger/link` | Send to LeadStinger on a clip row (Clips library), or the toggle with Export selected on one clip (needs QC_PUBLIC_URL) |
+| `leadstinger.quip` | Send one line to LeadStinger: cut it as FLAC with its padding into the clips library (LeadStinger/) and open its leadstinger://quip link, so LeadStinger downloads it into a tile trimmed to the line. The link names QC_PUBLIC_URL, else the advertised URL, else the address this CLI reached the server at. | `PATH` `--start` `--end` `--title` `--before` `--after` `--set` `--open` | `POST /api/leadstinger/quip` | Send to LeadStinger button beside Make clip, or the toggle with Clip / Export selected on one line |
+| `leadstinger.link` | The leadstinger://quip link for a clip already in the clips library, opened here so LeadStinger downloads it into a new tile. The server it names is chosen as for leadstinger.quip. | `CLIP` `--title` `--start` `--end` `--set` `--open` | `GET /api/leadstinger/link` | Send to LeadStinger on a clip row (Clips library), or the toggle with Export selected on one clip |
+| `leadstinger.connect` | Open LeadStinger's Connect prompt for this server (a leadstinger://pair link): LeadStinger asks to connect, then pairs, so nobody pastes a token. The server is QC_PUBLIC_URL, else the advertised URL, else the address this CLI reached it at. | `--open` | (client) | Connect LeadStinger (Settings ▸ Connected apps) |
+
+## pair
+
+| Command | What it does | Arguments | API | Web UI |
+|---|---|---|---|---|
+| `pair.list` | List the apps waiting for access (pairing requests): their name, host, code, address and expiry. |  | `GET /api/pair` | The pairing banner on every page |
+| `pair.approve` ⚠ | Let an app in: approve its pairing request. Check first that the code is the one the app shows. Its next poll collects its own client token. | `PAIR_ID` | `POST /api/pair/{pair_id}/approve` | Allow on the pairing banner |
+| `pair.deny` ⚠ | Turn down an app's pairing request. | `PAIR_ID` | `POST /api/pair/{pair_id}/deny` | Deny on the pairing banner |
+
+## clients
+
+| Command | What it does | Arguments | API | Web UI |
+|---|---|---|---|---|
+| `clients.list` | List the connected apps: name, host, when they paired and when they were last used. |  | `GET /api/clients` | Settings ▸ Connected apps |
+| `clients.revoke` ⚠ | Disconnect an app: revoke its client token. 'self' revokes the client token this CLI is using. | `CLIENT_ID` | `DELETE /api/clients/{client_id}` | Revoke (Settings ▸ Connected apps) |
 
 ## settings
 

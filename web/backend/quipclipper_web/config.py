@@ -34,6 +34,17 @@ def _path_map(raw: str | None) -> tuple[tuple[str, str], ...]:
     return tuple(pairs)
 
 
+def _switch(raw: str | None, default: bool) -> bool:
+    """An on/off variable: 1, true, yes or on is on; 0, false, no or off is off (any case);
+    unset, empty or anything else is ``default``."""
+    v = (raw or "").strip().lower()
+    if v in ("1", "true", "yes", "on"):
+        return True
+    if v in ("0", "false", "no", "off"):
+        return False
+    return default
+
+
 def _secret(e, name: str) -> str:
     """A secret from ``<name>`` or from the file ``<name>_FILE`` names (the NixOS module
     passes it as a systemd credential). An unreadable file is a missing secret, not a
@@ -79,6 +90,15 @@ class Settings:
     # Machine transcription (M21): whisper.cpp and its models, from QC_WHISPER_* (the
     # NixOS module's transcribe.* options). No model = the feature reports itself off.
     whisper: WhisperConfig = field(default_factory=WhisperConfig)
+    # Pairing (quipclipper.pair/1): apps such as LeadStinger ask for access and a person
+    # approves them; QC_PAIRING=0 turns every /api/pair* route into 404.
+    pairing: bool = True
+    # The name apps show for this server (QC_SERVER_NAME); empty = the host name.
+    server_name: str = ""
+    # LAN advertising (QC_ADVERTISE=1, the `quipclipper-web advertise` process): the port
+    # browsers use (QC_ADVERTISE_PORT), which may differ from QC_PORT behind nginx.
+    advertise: bool = False
+    advertise_port: int | None = None
 
     @property
     def jellyfin_enabled(self) -> bool:
@@ -166,4 +186,8 @@ class Settings:
                 t.strip() for t in _secret(e, "QC_HOOK_TOKEN").split(",") if t.strip()
             ),
             whisper=WhisperConfig.from_env(e),
+            pairing=_switch(e.get("QC_PAIRING"), default=True),
+            server_name=e.get("QC_SERVER_NAME", "").strip(),
+            advertise=_switch(e.get("QC_ADVERTISE"), default=False),
+            advertise_port=int(e["QC_ADVERTISE_PORT"]) if e.get("QC_ADVERTISE_PORT") else None,
         )

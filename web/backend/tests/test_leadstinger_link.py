@@ -248,10 +248,13 @@ def test_quip_near_the_start_of_the_file(tmp_path):
     assert "title" not in p and "set" not in p
 
 
-def test_quip_needs_a_public_url(tmp_path):
+def test_quip_needs_an_address_for_the_server(tmp_path):
+    # No QC_PUBLIC_URL: the link names the address the request came in on (test_pairing.py);
+    # one it can't use is a 503 that says to set QC_PUBLIC_URL.
     client, media, _ = _client(tmp_path, public_url=None)
     resp = client.post("/api/leadstinger/quip", json={"path": str(media / "a.mkv"),
-                                                      "start": 1, "end": 2})
+                                                      "start": 1, "end": 2},
+                       headers={"host": "not a host"})
     assert resp.status_code == 503 and "QC_PUBLIC_URL" in resp.json()["detail"]
     client, media, _ = _client(tmp_path, public_url="quip.example", sub="bad")
     resp = client.post("/api/leadstinger/quip", json={"path": str(media / "a.mkv"),
@@ -304,7 +307,11 @@ def test_link_refuses_files_outside_or_missing(tmp_path):
         "clip": "a.flac", "start": 3, "end": 2}).status_code == 400
     off, _, offclips = _client(tmp_path, public_url=None, sub="off")
     (offclips / "a.flac").write_bytes(b"")
-    assert off.get("/api/leadstinger/link", params={"clip": "a.flac"}).status_code == 503
+    assert off.get("/api/leadstinger/link", params={"clip": "a.flac"},
+                   headers={"host": "not a host"}).status_code == 503
+    # Without QC_PUBLIC_URL the link names the address the request reached the app at.
+    assert off.get("/api/leadstinger/link", params={"clip": "a.flac"}).json()["link"].startswith(
+        "leadstinger://quip?server=http%3A%2F%2Ftestserver&")
 
 
 # --- the CLI side -------------------------------------------------------------------------

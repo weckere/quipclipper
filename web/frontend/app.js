@@ -5381,12 +5381,12 @@ function pollClipJob(jobId, row) {
 $("clip-btn").onclick = makeClip;
 
 // Send to LeadStinger beside Make clip: one click cuts the selection with its padding and
-// sends it (or, with no public URL, makes a one-tile set file). Its tooltip shows on hover
+// sends it (or, when the server can't name its own address, makes a one-tile set file). Its tooltip shows on hover
 // and keyboard focus; Esc hides it until the pointer or focus leaves (WCAG 1.4.13).
 $("ls-send").onclick = () => {
   if (!currentItem || clipRangeStart === null || clipRangeEnd === null) return;
-  announce(appConfig.public_url ? "Sending to LeadStinger" : "Making a LeadStinger set");
-  return appConfig.public_url ? sendLeadStingerClip() : makeLeadStingerClip();
+  announce(appConfig.link_server ? "Sending to LeadStinger" : "Making a LeadStinger set");
+  return appConfig.link_server ? sendLeadStingerClip() : makeLeadStingerClip();
 };
 for (const wrap of document.querySelectorAll(".tip-wrap")) {  // ls-send's, the transcript toggle's, the script help's
   const reset = () => wrap.classList.remove("tip-off");
@@ -5575,7 +5575,7 @@ async function browseClips(folder, { fromLink = false } = {}) {
       `<span class="icon-wrap">${iconSvg(/\.(flac|wav|mp3|m4a|opus|ogg|aac)$/i.test(c.name) ? "music" : "film")}</span>` +
       `<button type="button" class="label clip-name clip-open" title="Open this clip in the workspace to re-cut it">${escapeHtml(c.name)}</button>` +
       `<span class="chips"><span class="badge">${size}</span></span>` +
-      (appConfig.public_url
+      (appConfig.link_server
         ? `<button type="button" class="btn clip-ls" data-action="leadstinger.link" title="Send to LeadStinger: this clip in a new tile" aria-label="Send ${escapeHtml(c.name)} to LeadStinger"><svg class="icon" aria-hidden="true"><use href="#i-leadstinger"/></svg></button>`
         : "") +
       `<a class="download-link clip-dl" data-action="clips.download" href="${escapeHtml(c.download_url)}" download title="Download this clip" aria-label="Download ${escapeHtml(c.name)}">Download</a>`;
@@ -6039,7 +6039,7 @@ async function runLeadStingerBatch(prefix, onDone) {
   const btn = $(`${prefix}-batch-export`);
   const status = $(`${prefix}-batch-status`);
   btn.disabled = true;
-  if (items.length === 1 && appConfig.public_url) {
+  if (items.length === 1 && appConfig.link_server) {
     // One line or clip goes straight into LeadStinger by link; several make a set file.
     await sendLeadStingerLink(items[0], status);
     btn.disabled = false;
@@ -6110,8 +6110,9 @@ async function makeLeadStingerClip() {
   }
 }
 
-// Send to LeadStinger by link (M14, LeadStinger's D-076). When the server has a public
-// URL (QC_PUBLIC_URL, appConfig.public_url), one line or clip goes straight into
+// Send to LeadStinger by link (M14, LeadStinger's D-076). When the server can name its
+// address (appConfig.link_server: QC_PUBLIC_URL, else the advertised URL, else the one this
+// browser uses), one line or clip goes straight into
 // LeadStinger: POST /api/leadstinger/quip cuts the line as FLAC with its padding into
 // the clips library (a job whose result is the link), GET /api/leadstinger/link links
 // a clip already there, and the browser opens the leadstinger://quip link. LeadStinger
@@ -6694,6 +6695,7 @@ function toggleSettings(open, restore) {
   setPopover(pop, $("settings-btn"), show, restore);
   if (show && !was) {
     toggleScopeMenu(false); toggleJobs(false);
+    refreshClients();  // Connected apps: who is let in now
     // Into the appearance choice (its checked option is the group's tab stop).
     (pop.querySelector('[role="radio"][aria-checked="true"]') || pop).focus();
   }
@@ -6714,8 +6716,203 @@ function scheduleJobs() {
 /** Called after a request that starts a job, so the pill doesn't wait for the next poll. */
 function nudgeJobs() { setTimeout(async () => { await refreshJobs(); scheduleJobs(); }, 400); }
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) { refreshJobs(); scheduleJobs(); refreshNowPlaying(); }
+  if (!document.hidden) { refreshJobs(); scheduleJobs(); refreshNowPlaying(); refreshPairs(); }
 });
+
+// --- Pairing: apps asking for access, and the apps let in (quipclipper.pair/1) ----------------
+//
+// An app such as LeadStinger asks for access (POST /api/pair) and shows a code. The banner on
+// every page lists the requests waiting (GET /api/pair, pair.list) with Allow and Deny
+// (pair.approve, pair.deny): allow one only when the app shows the same code. It polls only
+// while the page is visible: every 3 s while a request waits (or just after Connect
+// LeadStinger), every 20 s otherwise, slower while the server is away, and never again after
+// a 401, 403 or 404 (pairing is off). LeadStinger may open this page as ?pair=<id>: that
+// request is highlighted and focused, and the parameter is dropped from the address.
+// Settings ▸ Connected apps lists the apps let in (GET /api/clients, clients.list) with Revoke
+// (DELETE /api/clients/{id}, clients.revoke); Connect LeadStinger opens
+// leadstinger://pair?server=<this server> (leadstinger.connect), the link_server that Send to
+// LeadStinger links name.
+
+const PAIR_POLL_MS = 3000;
+const PAIR_IDLE_MS = 20000;
+const PAIR_EAGER_MS = 120000;  // after Connect LeadStinger: poll quickly for its request
+let pairTimer = null;
+let pairFailures = 0;
+let pairStopped = false;   // a 401/403/404: this page can't see pairing requests
+let pairRequests = [];
+let pairEagerUntil = 0;
+let pairNoteTimer = null;
+let pairWanted = new URLSearchParams(location.search).get("pair");  // ?pair=<id>, read once
+
+const pairWho = (r) => (r.host ? `${r.name} on ${r.host}` : r.name);
+
+function schedulePairs() {
+  clearTimeout(pairTimer);
+  pairTimer = null;
+  if (pairStopped || !appConfig.pairing || document.hidden) return;  // visibilitychange restarts it
+  let delay = pairRequests.length || Date.now() < pairEagerUntil ? PAIR_POLL_MS : PAIR_IDLE_MS;
+  if (pairFailures) delay = Math.min(60000, delay * 2 ** pairFailures);
+  pairTimer = setTimeout(refreshPairs, delay);
+}
+
+async function refreshPairs() {
+  clearTimeout(pairTimer);
+  pairTimer = null;
+  if (pairStopped || !appConfig.pairing || document.hidden) return;
+  try {
+    pairRequests = (await getJSON("/api/pair")).requests || [];
+    pairFailures = 0;
+  } catch (err) {
+    if ([401, 403, 404].includes(err.status)) {
+      pairStopped = true;
+      pairRequests = [];
+    } else {
+      pairFailures++;
+    }
+  }
+  renderPairs();
+  schedulePairs();
+}
+
+/** Say something in the banner for a while (a ?pair= request that isn't waiting any more). */
+function pairNote(text) {
+  const note = $("pair-note");
+  note.textContent = text;
+  note.hidden = !text;
+  clearTimeout(pairNoteTimer);
+  if (text) pairNoteTimer = setTimeout(() => { note.hidden = true; renderPairs(); }, 20000);
+  $("pair-banner").hidden = !$("pair-list").children.length && note.hidden;
+}
+
+/** The banner's rows, kept in place between polls: only a new request is added (and read
+ *  out by the live region), only a gone one removed. */
+function renderPairs() {
+  const list = $("pair-list");
+  const waiting = new Set(pairRequests.map((r) => r.id));
+  for (const li of [...list.children]) {
+    if (!waiting.has(li.dataset.pairId)) {
+      if (li.contains(document.activeElement)) $("main").focus();
+      li.remove();
+    }
+  }
+  const shown = new Set([...list.children].map((li) => li.dataset.pairId));
+  for (const r of pairRequests) if (!shown.has(r.id)) list.appendChild(pairRow(r));
+  $("pair-banner").hidden = !list.children.length && $("pair-note").hidden;
+  if (pairWanted && !pairStopped && (pairFailures === 0)) {
+    const want = pairWanted;
+    pairWanted = null;
+    const params = new URLSearchParams(location.search);
+    params.delete("pair");
+    const qs = params.toString();
+    history.replaceState(history.state, "", location.pathname + (qs ? `?${qs}` : "") + location.hash);
+    const li = [...list.children].find((x) => x.dataset.pairId === want);
+    if (li) {
+      li.classList.add("pair-wanted");
+      li.scrollIntoView({ block: "nearest" });
+      li.focus();
+    } else {
+      pairNote("That request to connect isn't waiting any more: it expired, or was answered " +
+        "already. Start it again in the app.");
+    }
+  }
+}
+
+function pairRow(r) {
+  const li = document.createElement("li");
+  li.className = "pair-row";
+  li.dataset.pairId = r.id;
+  li.tabIndex = -1;  // ?pair=<id> focuses it, not its Allow button: a stray Enter allows nothing
+  const who = escapeHtml(pairWho(r));
+  const code = escapeHtml(r.code);
+  li.innerHTML =
+    `<p class="pair-text"><strong>${who}</strong> wants access, code <strong class="pair-code">${code}</strong>. ` +
+    `<span class="muted">From ${escapeHtml(r.address)}. Allow it only if the app shows this code.</span></p>` +
+    `<span class="pair-actions">` +
+    `<button type="button" class="btn primary pair-allow" data-action="pair.approve" title="Let ${who} in: it gets its own key to this server, which Settings, Connected apps can revoke" aria-label="Allow ${who}, code ${code}">Allow</button>` +
+    `<button type="button" class="btn pair-deny" data-action="pair.deny" title="Turn ${who} down" aria-label="Deny ${who}">Deny</button>` +
+    `</span>`;
+  li.querySelector(".pair-allow").onclick = () => answerPair(r, true, li);
+  li.querySelector(".pair-deny").onclick = () => answerPair(r, false, li);
+  return li;
+}
+
+async function answerPair(r, allow, li) {
+  for (const b of li.querySelectorAll("button")) b.disabled = true;
+  const url = allow ? `/api/pair/${encodeURIComponent(r.id)}/approve`
+    : `/api/pair/${encodeURIComponent(r.id)}/deny`;
+  try {
+    await postJSON(url, {});
+    announce(allow ? `Allowed ${pairWho(r)}. It connects in a moment.` : `Denied ${pairWho(r)}.`);
+    if (allow) refreshClients();
+  } catch (err) {
+    announce(`Couldn't ${allow ? "allow" : "deny"} ${pairWho(r)}: ${err.message}`);
+  }
+  pairRequests = pairRequests.filter((x) => x.id !== r.id);
+  renderPairs();
+  refreshPairs();
+}
+
+let clientsLoad = 0;  // generation: an older listing never replaces a newer one
+
+function fmtWhen(iso) {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}
+
+async function refreshClients() {
+  if (!appConfig.server_id) return;
+  const gen = ++clientsLoad;
+  let rows;
+  try {
+    rows = (await getJSON("/api/clients")).clients || [];
+  } catch (err) {
+    if (gen === clientsLoad) $("apps-status").textContent = `Couldn't list the connected apps: ${err.message}`;
+    return;
+  }
+  if (gen !== clientsLoad) return;
+  const list = $("apps-list");
+  const hadIdx = [...list.querySelectorAll("button")].indexOf(document.activeElement);
+  list.innerHTML = "";
+  $("apps-empty").hidden = rows.length > 0;
+  for (const c of rows) {
+    const li = document.createElement("li");
+    li.className = "app-row";
+    const who = escapeHtml(pairWho(c));
+    li.innerHTML = `<div class="app-main"><strong>${who}</strong>` +
+      `<span class="muted">Connected ${escapeHtml(fmtWhen(c.created))} · ` +
+      `${c.last_used ? "last used " + escapeHtml(fmtWhen(c.last_used)) : "not used yet"}</span></div>` +
+      `<button type="button" class="link-btn app-revoke" data-action="clients.revoke" title="Disconnect ${who}: its key to this server stops working; it can pair again" aria-label="Revoke ${who}">Revoke</button>`;
+    li.querySelector("button").onclick = () => revokeClient(c);
+    list.appendChild(li);
+  }
+  if (hadIdx >= 0) {
+    const buttons = list.querySelectorAll("button");
+    (buttons[Math.min(hadIdx, buttons.length - 1)]
+      || ($("connect-ls").hidden ? $("settings-popover") : $("connect-ls"))).focus();
+  }
+}
+
+async function revokeClient(c) {
+  const resp = await apiFetch(`/api/clients/${encodeURIComponent(c.id)}`, { method: "DELETE" }).catch(() => null);
+  $("apps-status").textContent = resp && resp.ok ? `Disconnected ${pairWho(c)}.`
+    : `Couldn't revoke ${pairWho(c)}${resp ? ` (${resp.status})` : ""}.`;
+  await refreshClients();
+}
+
+/** Settings ▸ Connected apps, on a server that pairs (its /api/config names a server_id). */
+function showConnectedApps() {
+  $("apps-setting").hidden = !appConfig.server_id;
+  $("connect-ls").hidden = !(appConfig.pairing && appConfig.link_server);
+}
+
+$("connect-ls").onclick = () => {
+  const link = `leadstinger://pair?server=${encodeURIComponent(appConfig.link_server)}`;
+  $("apps-status").innerHTML = "Opening LeadStinger. When it shows a code, Allow that code in the " +
+    `banner at the top of this page. <a class="ls-again" href="${escapeHtml(link)}" title="Open LeadStinger's Connect prompt again, if it didn't come up">Open it again</a>`;
+  followLink(link);
+  pairEagerUntil = Date.now() + PAIR_EAGER_MS;
+  schedulePairs();
+};
 
 // --- boot -------------------------------------------------------------------
 
@@ -6742,12 +6939,14 @@ async function loadStatus() {
     if (appConfig.subtitle_langs && $("ss-langs")) {
       $("ss-langs").placeholder = appConfig.subtitle_langs.join(",");
     }
-    // No public URL: Send to LeadStinger makes a set file instead of sending by link.
-    if (!appConfig.public_url) {
+    // No address for links: Send to LeadStinger makes a set file instead of sending by link.
+    if (!appConfig.link_server) {
       $("ls-send-tip").textContent = "Send to LeadStinger: cuts the selection with the " +
         "Before/After padding into a LeadStinger set file to import. The padding becomes the " +
         "tile's handles. (Sending straight into LeadStinger needs the server's QC_PUBLIC_URL.)";
     }
+    showConnectedApps();  // Settings ▸ Connected apps, and the pairing banner's polling
+    refreshPairs();
     // Jellyfin configured: offer the Now playing scope and card (M15).
     $("scope-nowplaying").hidden = !appConfig.jellyfin;
     showSttSetting();  // the Transcription model setting, when the server transcribes (M21)

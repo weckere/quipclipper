@@ -27,6 +27,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.parse
 import zipfile
 from pathlib import Path
 from typing import Any, List, Literal, Optional
@@ -578,6 +579,30 @@ def _fmt_link(data: dict) -> None:
     typer.echo(data.get("link") or "")
 
 
+def _fmt_pairs(data: dict) -> None:
+    rows = data.get("requests") or []
+    if not rows:
+        typer.secho("No apps are waiting for access.", dim=True)
+    for r in rows:
+        who = r.get("name") or "?"
+        if r.get("host"):
+            who += f" on {r['host']}"
+        typer.echo(f"{r.get('code')}  {who}  from {r.get('address')}  "
+                   f"(id {r.get('id')}, until {r.get('expires_at')})")
+
+
+def _fmt_clients(data: dict) -> None:
+    rows = data.get("clients") or []
+    if not rows:
+        typer.secho("No connected apps.", dim=True)
+    for r in rows:
+        who = r.get("name") or "?"
+        if r.get("host"):
+            who += f" on {r['host']}"
+        typer.echo(f"{r.get('id')}  {who}  paired {r.get('created')}  "
+                   f"last used {r.get('last_used') or 'never'}")
+
+
 def _fmt_transcribe(data: dict) -> None:
     if "status" in data:  # a server job
         _fmt_job(data)
@@ -648,6 +673,7 @@ _FORMATTERS = {
     "item.script": _fmt_script, "item.info": _fmt_item, "server.health": _fmt_health,
     "jellyfin.sessions": _fmt_sessions, "jellyfin.lookup": _fmt_lookup,
     "jellyfin.reindex": _fmt_reindex, "item.link": _fmt_link,
+    "leadstinger.connect": _fmt_link, "pair.list": _fmt_pairs, "clients.list": _fmt_clients,
     "settings.list": _fmt_settings, "settings.get": _fmt_settings,
     "settings.set": _fmt_settings,
 }
@@ -1606,6 +1632,22 @@ def _client_leadstinger_link(c: Context, v: dict) -> Any:
     return _deliver_link(v, call(c, method, path, query, body).json())
 
 
+# encodeURIComponent's unreserved set, as the web UI encodes the server in its links.
+_URI_SAFE = "-_.!~*'()"
+
+
+def _client_leadstinger_connect(c: Context, v: dict) -> Any:
+    """leadstinger://pair?server=<url>: the Connect LeadStinger button's twin."""
+    cfg = call(c, "GET", "/api/config").json() or {}
+    server = cfg.get("link_server") or (c.server or "").rstrip("/")
+    if not server.startswith(("http://", "https://")):
+        raise CliError("The server didn't say its address; set QC_PUBLIC_URL there.",
+                       code="leadstinger")
+    link = "leadstinger://pair?server=" + urllib.parse.quote(server, safe=_URI_SAFE)
+    return _deliver_link(v, {"link": link, "server": server,
+                             "pairing": bool(cfg.get("pairing"))})
+
+
 def format_clock(seconds: float) -> str:
     seconds = int(max(seconds, 0))
     h, rest = divmod(seconds, 3600)
@@ -1864,6 +1906,8 @@ def _run_client(c: Context, cmd: reg.Command, v: dict) -> Any:
         return _client_leadstinger_quip(c, v)
     if cmd.id == "leadstinger.link":
         return _client_leadstinger_link(c, v)
+    if cmd.id == "leadstinger.connect":
+        return _client_leadstinger_connect(c, v)
     if cmd.id == "clip.nowplaying":
         return _client_clip_nowplaying(c, v)
     if cmd.id == "job.wait":

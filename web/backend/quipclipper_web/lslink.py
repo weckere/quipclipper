@@ -20,10 +20,12 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass
+from collections.abc import Mapping
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
 PREFIX = "leadstinger://quip?"
+PAIR_PREFIX = "leadstinger://pair?"
 MAX_SECONDS = 86400.0   # LeadStinger reads start/end from 0 to 86400
 TITLE_MAX = 200
 SET_MAX = 100
@@ -93,6 +95,59 @@ def normalize_server(url: str) -> str:
     if parts.query or parts.fragment or raw.endswith(("?", "#")):
         raise LinkError(f"{raw!r} must have no ?query or #fragment")
     return raw.rstrip("/")
+
+
+# A Host / X-Forwarded-Host value: a DNS name or an IP literal, and an optional port.
+_LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+_HOST = re.compile(rf"^(?:{_LABEL}(?:\.{_LABEL})*\.?|\[[0-9A-Fa-f:.]+\])(?::[0-9]{{1,5}})?$")
+# A path prefix (X-Forwarded-Prefix, or the ASGI root_path): /segments, nothing else.
+_PATH_PREFIX = re.compile(r"^(?:/[A-Za-z0-9._~!$&'()*+,;=:@%-]+)*/?$")
+
+
+def _first(value: str | None) -> str:
+    """The first of a comma-separated forwarded value (the hop nearest the browser)."""
+    return (value or "").split(",", 1)[0].strip()
+
+
+def request_base(headers: Mapping[str, str], scheme: str, root_path: str = "") -> str | None:
+    """The base URL the browser (or CLI) used to reach this app, path prefix included, or
+    None when the request doesn't say well enough.
+
+    A front proxy's ``X-Forwarded-Proto``, ``X-Forwarded-Host`` and ``X-Forwarded-Prefix``
+    win (a TLS proxy in front of nginx, a prefix it strips); else the ``Host`` header and
+    the connection's scheme. The bundled nginx passes ``Host`` with its port
+    (``$http_host``) and leaves the ``X-Forwarded-*`` headers to a proxy in front of it.
+    A client can claim any of these, so the result only ever goes back to that client,
+    in a link that LeadStinger asks about before it trusts the server."""
+    proto = _first(headers.get("x-forwarded-proto")).lower() or (scheme or "").lower()
+    host = _first(headers.get("x-forwarded-host")) or (headers.get("host") or "").strip()
+    prefix = _first(headers.get("x-forwarded-prefix")) or root_path or ""
+    if proto not in ("http", "https") or not _HOST.match(host) or not _PATH_PREFIX.match(prefix):
+        return None
+    try:
+        return normalize_server(f"{proto}://{host}{prefix.rstrip('/')}")
+    except LinkError:
+        return None
+
+
+def link_server(public_url: str, advertised: str | None, base: str | None) -> str | None:
+    """The ``server`` a link names: ``QC_PUBLIC_URL`` (a bad one raises LinkError), else the
+    URL the advertiser announces, else the base URL of this request. None: none is known."""
+    if public_url:
+        return normalize_server(public_url)
+    for candidate in (advertised, base):
+        if candidate:
+            try:
+                return normalize_server(candidate)
+            except LinkError:
+                continue
+    return None
+
+
+def pair_link(server: str) -> str:
+    """``leadstinger://pair?server=<url>``: LeadStinger asks whether to connect to this
+    server, then pairs with it (``/api/pair``)."""
+    return PAIR_PREFIX + "server=" + quote(normalize_server(server), safe=_SAFE)
 
 
 def clip_path(path: Path, clips_dir: Path) -> str:

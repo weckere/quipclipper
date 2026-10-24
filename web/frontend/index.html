@@ -91,6 +91,14 @@
             <p class="muted set-help">The whisper model for Transcribe selection, Fill gaps and Transcribe file: small.en is quicker, medium.en hears more, about three times slower.</p>
             <select id="stt-default-model" data-action="settings.set" title="The whisper model a transcription uses unless you pick another for one run. Remembered in this browser."></select>
           </div>
+          <div class="set-row" id="apps-setting" hidden>
+            <h3 class="set-label" id="apps-label">Connected apps</h3>
+            <p class="muted set-help">Apps you let in on this server, each with its own key (for every browser, not just this one). Revoke one to disconnect it.</p>
+            <ul id="apps-list" class="apps-list" data-action="clients.list" aria-labelledby="apps-label"></ul>
+            <p id="apps-empty" class="muted set-help">No apps connected yet.</p>
+            <button type="button" id="connect-ls" class="btn" data-action="leadstinger.connect" title="Open LeadStinger on this computer and connect it to this server. It shows a code; Allow that code here." hidden><svg class="icon" aria-hidden="true"><use href="#i-leadstinger"/></svg>Connect LeadStinger</button>
+            <p id="apps-status" class="muted set-help" role="status"></p>
+          </div>
           <p class="muted set-help">The clip name template is the Name field in the clip bar. The YouTube player choice is on a YouTube video.</p>
         </div>
       </div>
@@ -102,6 +110,12 @@
     </header>
 
     <main id="main" tabindex="-1">
+      <!-- Pairing (quipclipper.pair/1): apps asking for access, on every page while one waits.
+           Allow / Deny answer them; app.js polls GET /api/pair only while the page is visible. -->
+      <div id="pair-banner" class="pair-banner" role="region" aria-label="Apps asking for access" data-action="pair.list" hidden>
+        <ul id="pair-list" class="pair-list" aria-live="polite"></ul>
+        <p id="pair-note" class="pair-note" role="status" hidden></p>
+      </div>
       <!-- Library browser -->
       <!-- Each view lists its hash routes in data-route (app.js ROUTES; test_frontend_routes.py). -->
       <section id="browser" class="library-layout" data-route="library search nowplaying">

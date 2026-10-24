@@ -17,6 +17,7 @@ import binascii
 import contextlib
 import hashlib
 import hmac
+import ipaddress
 import json
 import os
 import re
@@ -34,7 +35,7 @@ from urllib.parse import quote
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from quipclipper.clip import (
     ClipRange,
@@ -77,7 +78,7 @@ from quipclipper.subtitles import (
 )
 from quipclipper_web import (
     __version__, clipmeta, deeplinks, epub_items, file_index, jellyfin, jellyfin_index, lib_index,
-    library, lslink, lsset, media, peaks, youtube_items,
+    library, lslink, lsset, media, pairing, peaks, youtube_items,
 )
 from quipclipper_web import index_changes as index_changes_mod
 from quipclipper_web.bookmarks import BookmarkStore
@@ -368,6 +369,23 @@ class FolderTranscribeRequest(BaseModel):
     model: str | None = Field(None, pattern=STT_MODEL_NAME)
 
 
+class PairStart(BaseModel):
+    """Body of POST /api/pair (quipclipper.pair/1): who is asking. No token."""
+
+    name: str = Field(..., min_length=1, max_length=pairing.NAME_MAX)
+    host: str = Field("", max_length=pairing.HOST_MAX)
+
+    @field_validator("name")
+    @classmethod
+    def _name(cls, v: str) -> str:
+        return pairing.check_label(v, "name", 1, pairing.NAME_MAX)
+
+    @field_validator("host")
+    @classmethod
+    def _host(cls, v: str) -> str:
+        return pairing.check_label(v, "host", 0, pairing.HOST_MAX)
+
+
 class YouTubeAdd(BaseModel):
     """Body of POST /api/youtube. Module-level (like ClipRequest) so FastAPI can
     resolve the string annotation under ``from __future__ import annotations``."""
@@ -442,6 +460,70 @@ def _api_token_status(request: Request, tokens: frozenset[str]) -> str | None:
         if password and _token_ok(password, tokens):
             return "ok"
     return None
+
+
+def _basic_password(request: Request) -> str | None:
+    """The password in an HTTP Basic ``Authorization`` header, if there is one."""
+    scheme, _, value = request.headers.get("authorization", "").partition(" ")
+    if scheme.lower() != "basic" or not value:
+        return None
+    try:
+        return base64.b64decode(value).decode("utf-8", "replace").partition(":")[2] or None
+    except (binascii.Error, ValueError):
+        return None
+
+
+def _explicit_client_tokens(request: Request) -> list[str]:
+    """Every client token (``qcc_…``) the request names outright: in any ``X-API-Key``
+    header or any ``Authorization: Bearer``. The nginx password gate lets a request that
+    carries one through only once this backend has checked it (``/api/clients/check``), so
+    this must see at least everything that rule sees."""
+    found = []
+    for key in request.headers.getlist(_API_KEY_HEADER):
+        for part in key.split(","):  # a proxy may join repeated headers with ", "
+            if part.strip().startswith(pairing.TOKEN_PREFIX):
+                found.append(part.strip())
+    for auth in request.headers.getlist("authorization"):
+        scheme, _, value = auth.strip().partition(" ")
+        if scheme.lower() == "bearer" and value.strip().startswith(pairing.TOKEN_PREFIX):
+            found.append(value.strip())
+    return found
+
+
+def _client_token_status(request: Request, clients: pairing.ClientStore):
+    """("ok", client) for a paired app's token; ("bad", None) when a ``qcc_`` token is named
+    outright (X-API-Key / Bearer) and isn't a current one, so a revoked app learns it was
+    revoked (401); (None, None) when no client token is offered. A ``qcc_`` Basic password
+    that isn't a client's is no answer either way: it may be a person's password."""
+    explicit = _explicit_client_tokens(request)
+    if explicit:
+        found = [clients.authenticate(t) for t in explicit]
+        if any(c is None for c in found) or len({c["id"] for c in found}) != 1:
+            return "bad", None
+        return "ok", found[0]
+    password = _basic_password(request)
+    if pairing.is_client_token(password):
+        client = clients.authenticate(password)
+        if client is not None:
+            return "ok", client
+    return None, None
+
+
+def _client_address(request: Request) -> str:
+    """Where a request came from: the address the bundled nginx reports (``X-Real-IP``,
+    which it always sets), else the connection's peer."""
+    real = request.headers.get("x-real-ip", "").strip()
+    try:
+        return str(ipaddress.ip_address(real))
+    except ValueError:
+        return request.client.host if request.client else "unknown"
+
+
+_PAIR_ROUTE = re.compile(r"^/api/pair(?:/|$)")
+_CLIENT_REVOKED = {"detail": "This client token isn't valid: the app was disconnected "
+                             "(revoked) here, or never paired. Pair it again."}
+_PERSON_ONLY = ("A paired app can't approve, deny or list pairing requests, or list or revoke "
+                "apps: do it in QuipClipper's web UI, or with its own API token.")
 
 
 # Images the Jellyfin proxy passes on: raster formats only, so a crafted image (an SVG
@@ -547,6 +629,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                                 settings.index_check_interval,
                                                 busy=_lib_busy)
     stopping = [False]  # the server is shutting down (a library run reads "interrupted")
+    # Pairing (quipclipper.pair/1): apps that asked for access, and the ones a person let in.
+    clients = pairing.ClientStore(settings.state_dir)
+    pairs = pairing.Pairing(clients)
+    server_id: list[str] = []  # made on first use, so importing the app writes nothing
     stt_submit = threading.Lock()  # one check-then-submit at a time (no twin jobs)
 
     def _stt_existing(key: str):
@@ -605,9 +691,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # A programmatic client authenticated with an API token is a machine, not
         # a browser, so it's exempt from the CSRF-header requirement below. An
         # explicit but wrong token (X-API-Key / Bearer) is rejected outright.
+        # Pairing switched off (QC_PAIRING=0): every /api/pair* route is gone, before a
+        # body is even read, so an app sees the 404 of a QuipClipper without pairing.
+        if not settings.pairing and _PAIR_ROUTE.match(request.url.path):
+            return JSONResponse({"detail": "Not Found"}, status_code=404)
         api_client = False
         hook_route = request.url.path in _HOOK_ROUTES
-        if settings.api_tokens or settings.hook_tokens:
+        request.state.client = None
+        # A paired app's own token (qcc_…) counts as a machine client like QC_API_TOKEN,
+        # also when no QC_API_TOKEN is set. Named outright and not current: 401.
+        client_status, client = _client_token_status(request, clients)
+        if client_status == "bad":
+            return JSONResponse(_CLIENT_REVOKED, status_code=401)
+        if client_status == "ok":
+            api_client = True
+            request.state.client = client
+            request.state.token = True
+        elif settings.api_tokens or settings.hook_tokens:
             status = _api_token_status(request, settings.api_tokens | settings.hook_tokens)
             # With only hook tokens set, a token the hook route doesn't know is someone
             # else's (a front proxy's own Bearer): only that route refuses it.
@@ -657,17 +757,42 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             **({"transcribe": settings.whisper.describe()} if stt_on else {}),
         }
 
+    def _server_id() -> str:
+        if not server_id:
+            server_id.append(pairing.server_id(settings.state_dir))
+        return server_id[0]
+
+    def _link_server(request: Request) -> str | None:
+        """The ``server`` in Send to LeadStinger links: QC_PUBLIC_URL, else the URL the
+        advertiser announces, else the base URL this request reached the app at. Raises
+        LinkError for a bad QC_PUBLIC_URL."""
+        base = lslink.request_base(request.headers, request.url.scheme,
+                                   request.scope.get("root_path") or "")
+        return lslink.link_server(settings.public_url,
+                                  pairing.advertised_url(settings.state_dir), base)
+
     @app.get("/api/config")
-    def config() -> dict:
+    def config(request: Request) -> dict:
         """Non-secret configuration the frontend needs to render itself."""
+        try:
+            link_server = _link_server(request)
+        except lslink.LinkError:
+            link_server = None
         return {
             "media_roots": [str(p) for p in settings.media_roots],
             "auth_required": settings.auth_required,
             "max_concurrent_jobs": settings.max_concurrent_jobs,
             "hw_encode": _vaapi_h264_available(),  # iGPU H.264 (B23) for video re-encode
             "subtitle_langs": settings.subtitle_langs,  # default auto-select prefs (B14)
-            # Base URL in Send to LeadStinger links (QC_PUBLIC_URL); null = links are off.
+            # This server's base URL as set (QC_PUBLIC_URL); null = not set.
             "public_url": settings.public_url or None,
+            # The server Send to LeadStinger and Connect LeadStinger links name for this
+            # browser: QC_PUBLIC_URL, else the advertised URL, else the address it used.
+            "link_server": link_server,
+            # Pairing (quipclipper.pair/1): apps ask at /api/pair; and who this server is.
+            "pairing": settings.pairing,
+            "server_id": _server_id(),
+            "server_name": pairing.server_name(settings.server_name, settings.state_dir),
             # Jellyfin URL + API key set: the Now playing card and scope show (M15).
             "jellyfin": settings.jellyfin_enabled,
             # Machine transcription (M21): whether it's set up, and the models to offer;
@@ -3281,18 +3406,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # --- Send to LeadStinger by link (M14 phase 3, LeadStinger's D-076) --------------------
 
-    def _public_url() -> str:
-        """QC_PUBLIC_URL, checked: the server LeadStinger downloads the clip from."""
-        if not settings.public_url:
-            raise HTTPException(
-                status_code=503,
-                detail="Send to LeadStinger needs QC_PUBLIC_URL: this server's base URL as "
-                       "LeadStinger reaches it (e.g. https://quip.example).",
-            )
+    def _public_url(request: Request) -> str:
+        """The server LeadStinger downloads the clip from (``_link_server``), checked."""
         try:
-            return lslink.normalize_server(settings.public_url)
+            server = _link_server(request)
         except lslink.LinkError as exc:
             raise HTTPException(status_code=503, detail=f"QC_PUBLIC_URL: {exc}")
+        if not server:
+            raise HTTPException(
+                status_code=503,
+                detail="Send to LeadStinger can't tell this server's address from the "
+                       "request: set QC_PUBLIC_URL, its base URL as LeadStinger reaches it "
+                       "(e.g. https://quip.example).",
+            )
+        return server
 
     def _source_duration(path: str) -> float | None:
         """Best effort: the source's length, so the tail handle stops at its end."""
@@ -3307,14 +3434,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return None  # _plan_clip reports a bad path properly
 
     @app.post("/api/leadstinger/quip")
-    def send_to_leadstinger(req: LeadStingerQuipRequest) -> dict:
+    def send_to_leadstinger(req: LeadStingerQuipRequest, request: Request) -> dict:
         """Cut one line as FLAC with its padding into the clips library and make its
         ``leadstinger://quip`` link (a job; the link is in the finished job's ``result``).
 
         The clip goes to ``LeadStinger/`` in the clips library, where LeadStinger downloads
         it with its own API token; ``start``/``end`` in the link are the line inside the clip.
         """
-        server = _public_url()
+        server = _public_url(request)
         try:
             cut = lslink.handle_cut(req.start, req.end, req.before, req.after,
                                     _source_duration(req.path))
@@ -3353,6 +3480,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/leadstinger/link")
     def leadstinger_link(
+        request: Request,
         clip: str,
         title: str | None = None,
         start: float | None = Query(None, allow_inf_nan=False),
@@ -3363,7 +3491,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         ``clip`` is its path inside the library, as ``/api/clips/download/{path}`` takes
         it. No ``start``/``end``: the tile plays the whole clip."""
-        server = _public_url()
+        server = _public_url(request)
         target = _clip_target(clip)
         if not target.is_file():
             raise HTTPException(status_code=404, detail="Clip not found.")
@@ -3374,6 +3502,89 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except lslink.LinkError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         return {"link": link, "clip": rel}
+
+    # --- pairing (quipclipper.pair/1) and connected apps --------------------------------
+
+    def _person_only(request: Request) -> None:
+        """Approving, denying and listing requests, and listing or revoking apps, are for a
+        person (the web UI) or the server's own QC_API_TOKEN: never a paired app, so one
+        can't let others in or throw them out."""
+        if request.state.client is not None:
+            raise HTTPException(status_code=403, detail=_PERSON_ONLY)
+
+    @app.post("/api/pair")
+    def pair_start(req: PairStart, request: Request) -> dict:
+        """An app asks for access: a pending request with a code to show, and the secret
+        it polls with. No token; behind the password gate, nginx lets this through."""
+        try:
+            return pairs.start(req.name, req.host, _client_address(request))
+        except pairing.PairError as exc:
+            raise HTTPException(status_code=exc.status, detail=exc.detail)
+
+    @app.get("/api/pair")
+    def pair_list(request: Request) -> dict:
+        """The requests waiting for a person (no poll secrets)."""
+        _person_only(request)
+        return {"requests": pairs.pending()}
+
+    @app.get("/api/pair/{pair_id}")
+    def pair_poll(pair_id: str, request: Request) -> dict:
+        """The app's poll (``X-Pair-Secret``): pending, approved with its token (once),
+        denied or expired. An unknown id and a wrong or missing secret both answer 404."""
+        found = pairs.poll(pair_id, request.headers.get("x-pair-secret"))
+        if found is None:
+            raise HTTPException(status_code=404, detail="No such pairing request.")
+        return found
+
+    @app.post("/api/pair/{pair_id}/approve")
+    def pair_approve(pair_id: str, request: Request) -> dict:
+        """Let the app in: it becomes a client, and its next poll collects its token."""
+        _person_only(request)
+        try:
+            done = pairs.approve(pair_id)
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail=f"Can't save the client: {exc}")
+        if done is None:
+            raise HTTPException(status_code=404, detail="No such pending request (it may "
+                                "have expired, or been answered already).")
+        return done
+
+    @app.post("/api/pair/{pair_id}/deny")
+    def pair_deny(pair_id: str, request: Request) -> dict:
+        _person_only(request)
+        done = pairs.deny(pair_id)
+        if done is None:
+            raise HTTPException(status_code=404, detail="No such pending request (it may "
+                                "have expired, or been answered already).")
+        return done
+
+    @app.get("/api/clients")
+    def clients_list(request: Request) -> dict:
+        """The paired apps: name, host, when they paired and when last seen."""
+        _person_only(request)
+        return {"clients": clients.list()}
+
+    @app.get("/api/clients/check")
+    def clients_check(request: Request) -> dict:
+        """200 when the request carries a current client token, else 401: what the nginx
+        password gate asks before it lets a paired app through without a password."""
+        if request.state.client is None:
+            raise HTTPException(status_code=401, detail="No client token.")
+        return {"client_id": request.state.client["id"]}
+
+    @app.delete("/api/clients/{client_id}")
+    def clients_revoke(client_id: str, request: Request) -> dict:
+        """Revoke one app's token. ``self`` is the caller's own (with a client token)."""
+        if client_id == "self":
+            if request.state.client is None:
+                raise HTTPException(status_code=401, detail="DELETE /api/clients/self "
+                                    "revokes the client token it is sent with; none was.")
+            return {"removed": clients.remove(request.state.client["id"])}
+        _person_only(request)
+        try:
+            return {"removed": clients.remove(client_id)}
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail=f"Can't save the clients: {exc}")
 
     def _find_job(job_id: str):
         """A job from any pool (clips, downloads, or YouTube add/reindex), plus

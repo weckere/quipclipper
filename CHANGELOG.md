@@ -252,6 +252,30 @@ scripts/release.sh leaves this block in Unreleased; delete the two marker lines 
   `index.reindex-changed`, `GET /api/index/changes`). A library run now indexes changed files
   too. The checks never re-index anything themselves.
 
+### Connecting LeadStinger without a token (pairing)
+
+- **Pairing (`quipclipper.pair/1`):** an app such as LeadStinger asks for access
+  (`POST /api/pair` with its name and host, no token) and shows a 4-character code; a banner
+  on every page of the web UI says "LeadStinger on laptop wants access, code 7F3K" with
+  **Allow** and **Deny**, and the app's next poll (`GET /api/pair/{id}` with its poll secret)
+  collects a client token of its own, once. At most 5 requests wait at once, 10 a minute from
+  one address (429), each for 10 minutes. LeadStinger can open the page as `?pair=<id>` to
+  highlight its request. The banner polls only while the page is visible. CLI: `pair.list`,
+  `pair.approve`, `pair.deny`. `QC_PAIRING=0` turns every `/api/pair` route into 404.
+- **Client tokens:** `qcc_…` tokens work wherever `QC_API_TOKEN` does and mark a machine
+  client (no CSRF header needed), also when no `QC_API_TOKEN` is set; an unknown or revoked
+  one named outright is a 401. They are stored hashed in `state_dir/clients.json` (0600). A
+  paired app can't approve, deny or list requests or list or revoke apps (403);
+  `DELETE /api/clients/self` revokes its own token. **Settings ▸ Connected apps** lists the
+  apps with Revoke, and **Connect LeadStinger** opens `leadstinger://pair?server=…`. CLI:
+  `clients.list`, `clients.revoke`, `leadstinger.connect`.
+- `/api/config` gains `pairing`, `server_id` (made once, kept in `state_dir/server-id`),
+  `server_name` (`QC_SERVER_NAME`, else the host name) and `link_server`.
+- **Send to LeadStinger without `QC_PUBLIC_URL`:** links name the advertised URL
+  (`state_dir/advertise.json`), else the address the browser (or CLI) reached the server at,
+  so Send to LeadStinger works on a fresh install. `QC_PUBLIC_URL` still wins, and deep links
+  still need it.
+
 ### Fixed
 
 - An embedded subtitle track with no lines (an empty "Forced" track) reads as no lines

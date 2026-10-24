@@ -1275,3 +1275,26 @@ input[type="checkbox"].switch:checked::after { transform: translateX(1rem); }
 .global-search { min-width: 0; }
 .global-search input[type="text"] { width: 0; }
 .bm-browser-file, .bm-browser-item .bookmark-label { min-height: 24px; line-height: 24px; }
+
+/* ---- pairing: apps asking for access (banner), Settings ▸ Connected apps ------------------- */
+.pair-banner { margin: 1rem 0 0; }
+.pair-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.5rem; }
+.pair-row {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem;
+  background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--accent);
+  border-radius: var(--radius-lg); padding: 0.6rem 1rem;
+}
+/* The request LeadStinger opened this page for (?pair=<id>). */
+.pair-row.pair-wanted { border-color: var(--accent-text); box-shadow: 0 0 0 2px var(--accent-soft); }
+.pair-text { margin: 0; flex: 1 1 18rem; font-size: 0.9rem; }
+.pair-code { font-family: var(--font-mono); font-size: 1.05rem; letter-spacing: 0.12em; }
+.pair-actions { display: inline-flex; gap: 0.5rem; }
+.pair-note { margin: 0.5rem 0 0; padding: 0.5rem 0.8rem; border: 1px solid var(--line); border-radius: var(--radius); font-size: 0.9rem; }
+.apps-list { list-style: none; margin: 0 0 0.4rem; padding: 0; }
+.app-row { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; padding: 0.4rem 0; }
+.app-row + .app-row { border-top: 1px solid var(--line); }
+.app-main { display: flex; flex-direction: column; min-width: 0; font-size: 0.88rem; overflow-wrap: anywhere; }
+.app-main .muted { font-size: 0.8rem; }
+#connect-ls { margin: 0.2rem 0 0.4rem; }
+#apps-setting { border-top: 1px solid var(--line); padding-top: 0.8rem; }
+h3.set-label { margin-top: 0; }
