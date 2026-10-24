@@ -140,6 +140,49 @@ scripts/release.sh leaves this block in Unreleased; delete the two marker lines 
 
 <!-- /held back -->
 
+### Connecting LeadStinger without a token (pairing)
+
+- **Pairing (`quipclipper.pair/1`):** an app such as LeadStinger asks for access
+  (`POST /api/pair` with its name and host, no token) and shows a 4-character code; a banner
+  on every page of the web UI says "LeadStinger on laptop wants access, code 7F3K" with
+  **Allow** and **Deny**, and the app's next poll (`GET /api/pair/{id}` with its poll secret)
+  collects a client token of its own, once. At most 5 requests wait at once, 10 a minute from
+  one address (429), each for 10 minutes. LeadStinger can open the page as `?pair=<id>` to
+  highlight its request. The banner polls only while the page is visible. CLI: `pair.list`,
+  `pair.approve`, `pair.deny`. `QC_PAIRING=0` turns every `/api/pair` route into 404.
+- **Client tokens:** `qcc_…` tokens work wherever `QC_API_TOKEN` does and mark a machine
+  client (no CSRF header needed), also when no `QC_API_TOKEN` is set; an unknown or revoked
+  one named outright is a 401. They are stored hashed in `state_dir/clients.json` (0600). A
+  paired app can't approve, deny or list requests or list or revoke apps (403);
+  `DELETE /api/clients/self` revokes its own token. **Settings ▸ Connected apps** lists the
+  apps with Revoke, and **Connect LeadStinger** opens `leadstinger://pair?server=…`. CLI:
+  `clients.list`, `clients.revoke`, `leadstinger.connect`.
+- `/api/config` gains `pairing`, `server_id` (made once, kept in `state_dir/server-id`),
+  `server_name` (`QC_SERVER_NAME`, else the host name) and `link_server`.
+- **Send to LeadStinger without `QC_PUBLIC_URL`:** links name the advertised URL
+  (`state_dir/advertise.json`), else the address the browser (or CLI) reached the server at,
+  so Send to LeadStinger works on a fresh install. `QC_PUBLIC_URL` still wins, and deep links
+  still need it.
+- **LAN advertising (opt-in, `QC_ADVERTISE=1`):** `quipclipper-web advertise` announces the
+  server over mDNS as `_quipclipper._tcp` (instance = server name, port `QC_ADVERTISE_PORT`,
+  TXT `v=1`, `url`, `id`) on the LAN interfaces only, and writes `state_dir/advertise.json`
+  for the link fallback and the server name. The compose example has an optional, commented
+  `advertise` service on the host's network. Uses python-zeroconf (LGPL-2.1, a new
+  dependency). Tailnet-only installs should leave it off.
+- **Behind the password gate** (Docker image and NixOS module), nginx lets exactly
+  `POST /api/pair` and `GET /api/pair/<id>` through without the password, and lets a request
+  with a client token (`X-API-Key` or `Bearer`) through once the backend says it is current
+  (`satisfy any` with an `auth_request` to `/api/clients/check`); everything else still needs
+  the password. The API locations pass the browser's Host, port included, as `X-Quip-Host`,
+  so links without `QC_PUBLIC_URL` name the right port, and a proxy in front keeps its own
+  `X-Forwarded-*` headers. The VM test pairs through the gate.
+- **NixOS module:** `pairing.enable` (default true; false sets `QC_PAIRING=0`),
+  `serverName` (`QC_SERVER_NAME`), and `advertise.enable` / `advertise.port` (default off):
+  an Avahi service file with TXT `v=1` and `url` (`publicUrl`, else
+  `http://<hostName>.local:<port>`; no `id`, which is made at run time) and address
+  publishing, with a warning when every `nginx.listen` address looks unreachable from the
+  LAN (loopback, a Docker or private bridge, the tailnet).
+
 ## [0.3.0] - 2026-10-24
 
 ### UI follow-ups (M20)
@@ -251,49 +294,6 @@ scripts/release.sh leaves this block in Unreleased; delete the two marker lines 
   **Index out of date: N files** with the same button (`quipclipper index.changes`,
   `index.reindex-changed`, `GET /api/index/changes`). A library run now indexes changed files
   too. The checks never re-index anything themselves.
-
-### Connecting LeadStinger without a token (pairing)
-
-- **Pairing (`quipclipper.pair/1`):** an app such as LeadStinger asks for access
-  (`POST /api/pair` with its name and host, no token) and shows a 4-character code; a banner
-  on every page of the web UI says "LeadStinger on laptop wants access, code 7F3K" with
-  **Allow** and **Deny**, and the app's next poll (`GET /api/pair/{id}` with its poll secret)
-  collects a client token of its own, once. At most 5 requests wait at once, 10 a minute from
-  one address (429), each for 10 minutes. LeadStinger can open the page as `?pair=<id>` to
-  highlight its request. The banner polls only while the page is visible. CLI: `pair.list`,
-  `pair.approve`, `pair.deny`. `QC_PAIRING=0` turns every `/api/pair` route into 404.
-- **Client tokens:** `qcc_…` tokens work wherever `QC_API_TOKEN` does and mark a machine
-  client (no CSRF header needed), also when no `QC_API_TOKEN` is set; an unknown or revoked
-  one named outright is a 401. They are stored hashed in `state_dir/clients.json` (0600). A
-  paired app can't approve, deny or list requests or list or revoke apps (403);
-  `DELETE /api/clients/self` revokes its own token. **Settings ▸ Connected apps** lists the
-  apps with Revoke, and **Connect LeadStinger** opens `leadstinger://pair?server=…`. CLI:
-  `clients.list`, `clients.revoke`, `leadstinger.connect`.
-- `/api/config` gains `pairing`, `server_id` (made once, kept in `state_dir/server-id`),
-  `server_name` (`QC_SERVER_NAME`, else the host name) and `link_server`.
-- **Send to LeadStinger without `QC_PUBLIC_URL`:** links name the advertised URL
-  (`state_dir/advertise.json`), else the address the browser (or CLI) reached the server at,
-  so Send to LeadStinger works on a fresh install. `QC_PUBLIC_URL` still wins, and deep links
-  still need it.
-- **LAN advertising (opt-in, `QC_ADVERTISE=1`):** `quipclipper-web advertise` announces the
-  server over mDNS as `_quipclipper._tcp` (instance = server name, port `QC_ADVERTISE_PORT`,
-  TXT `v=1`, `url`, `id`) on the LAN interfaces only, and writes `state_dir/advertise.json`
-  for the link fallback and the server name. The compose example has an optional, commented
-  `advertise` service on the host's network. Uses python-zeroconf (LGPL-2.1, a new
-  dependency). Tailnet-only installs should leave it off.
-- **Behind the password gate** (Docker image and NixOS module), nginx lets exactly
-  `POST /api/pair` and `GET /api/pair/<id>` through without the password, and lets a request
-  with a client token (`X-API-Key` or `Bearer`) through once the backend says it is current
-  (`satisfy any` with an `auth_request` to `/api/clients/check`); everything else still needs
-  the password. The API locations pass the browser's Host, port included, as `X-Quip-Host`,
-  so links without `QC_PUBLIC_URL` name the right port, and a proxy in front keeps its own
-  `X-Forwarded-*` headers. The VM test pairs through the gate.
-- **NixOS module:** `pairing.enable` (default true; false sets `QC_PAIRING=0`),
-  `serverName` (`QC_SERVER_NAME`), and `advertise.enable` / `advertise.port` (default off):
-  an Avahi service file with TXT `v=1` and `url` (`publicUrl`, else
-  `http://<hostName>.local:<port>`; no `id`, which is made at run time) and address
-  publishing, with a warning when every `nginx.listen` address looks unreachable from the
-  LAN (loopback, a Docker or private bridge, the tailnet).
 
 ### Fixed
 
