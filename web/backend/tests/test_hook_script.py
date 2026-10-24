@@ -66,7 +66,8 @@ def test_bazarr_style_call(server):
     r = _run("--url", url, "--token-file", str(token),
              "/tv/Show/Show S01E01.mkv", "/tv/Show/Show S01E01.en.srt")
     assert r.returncode == 0, r.stderr
-    assert r.stdout.strip() == "quipclipper-reindex: queued 2 file(s) for re-indexing"
+    # Two paths, one file: the count is of files.
+    assert r.stdout.strip() == "quipclipper-reindex: queued 1 file(s) for re-indexing"
     assert r.stderr == "" and HOOK not in r.stdout
 
 
@@ -80,7 +81,7 @@ def test_sonarr_and_radarr_custom_script_events(server):
     assert r.returncode == 0 and "queued 1" in r.stdout, r.stderr
     r = _run(env={**env, "radarr_eventtype": "Rename",
                   "radarr_moviefile_paths": "/tv/Show/Show S01E01.mkv|/tv/Show/Show S01E01.en.srt"})
-    assert r.returncode == 0 and "queued 2" in r.stdout, r.stderr
+    assert r.returncode == 0 and "queued 1" in r.stdout, r.stderr
     grab = _run(env={**env, "sonarr_eventtype": "Grab"})
     assert grab.returncode == 0 and "nothing to re-index" in grab.stdout
 

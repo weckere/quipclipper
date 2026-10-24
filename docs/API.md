@@ -222,7 +222,8 @@ or a subtitle file (its media file is the one in the same folder whose name, up 
 extension, starts the subtitle's name; the longest such name wins), in the caller's own
 paths: `QC_PATH_MAP` (`/tv=/media/shows:/movies=/media/movies`, `:` or `;` between pairs,
 longest prefix first) maps them onto this server's before they are checked against the media
-roots. It returns at once with `{job_id, queued, files: [{path, media, status}], event}`, a
+roots. It returns at once with `{job_id, queued, files: [{path, media, status}], event}` (`queued` counts media files, so an
+episode and its subtitle count once), a
 `status` per path: `queued`, `already_queued` (waiting already: Bazarr calls once per
 subtitle), `outside_roots` (with the `mapped` path), `not_found`, `no_media` (a subtitle with
 no media file beside it), `not_media` or `invalid`. 202 when any path was queued, 422 (same

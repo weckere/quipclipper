@@ -1796,7 +1796,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                          if ok else (file_queue.status()["job_id"], []))
         for (i, _), new in zip(ok, added):
             rows[i]["status"] = "queued" if new else "already_queued"
-        return {"job_id": job_id, "queued": len(ok), "files": rows}
+        # Files, not paths: Bazarr names an episode and its subtitle, one file between them.
+        return {"job_id": job_id, "queued": len({m for _, m in ok}), "files": rows}
 
     # A query-string POST (or a JSON body): the same CSRF guard as every other POST.
     @app.post("/api/index/file")
