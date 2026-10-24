@@ -13,7 +13,11 @@ dashes dropped):
   one contiguous run of whole words ("Make it so, Number One." for "make it so").
 - **up to 99** for the query's words in order with small differences: a typo, a
   word missing or an extra word in between ("Make it all so.").
-- **up to 75** for the query's words present in any order ("So I make it.").
+- **up to 75** for the query's words present in any order ("So I make it."), less
+  the more other words lie between them, so word soup spread over a window of
+  captions falls below the default cut.
+
+A word the query gives twice ("no no") needs to be in the line twice.
 
 The in-order score aligns the query's words with the line's, matching each word
 exactly or within a typo, and rates the best aligned run with a recall-weighted
@@ -23,6 +27,7 @@ F-measure: a missing query word costs more than an extra word in the line.
 from __future__ import annotations
 
 import re
+import unicodedata
 from itertools import accumulate
 
 from rapidfuzz import fuzz
@@ -37,21 +42,48 @@ ANY_ORDER_MAX = 75.0  # every query word present, in no particular order
 _TYPO_CUTOFF = 80.0
 _BETA2 = 4.0  # F-beta with beta 2: recall (query words found) weighs 4x precision
 
-_MARKUP = re.compile(r"<[^>]*>|\{[^}]*\}")
+# Tags only ("<i>", "</font>"): a bare "<" in "x < 3 … y > 2" isn't markup.
+_MARKUP = re.compile(r"</?[A-Za-z][^<>]*>|\{[^}]*\}")
 _APOSTROPHE = re.compile(r"['’‘ʼ`´]")
 _NON_WORD = re.compile(r"[\W_]+")
+_NON_WORD_ANY: list[re.Pattern[str]] = []  # the same, but combining marks are word parts
 # Scripts written without spaces between words: there a "word" can't be told apart,
 # so these queries match on characters instead.
 _UNSPACED = re.compile(r"[฀-๿぀-ヿ㐀-䶿一-鿿"
                        r"가-힯豈-﫿]")
 
 
+def _non_word_any() -> re.Pattern[str]:
+    """``[\\W_]+`` that keeps combining marks (Unicode category M) inside words: ``\\w``
+    leaves them out, which split Devanagari, Thai or pointed Arabic words at every vowel
+    sign ("नमस्ते" became "नमस त", and "मैं" and "में" both "म"). Built on first need."""
+    if not _NON_WORD_ANY:
+        ranges: list[tuple[int, int]] = []
+        for cp in (*range(0x30000), *range(0xE0000, 0xE0200)):
+            if unicodedata.category(chr(cp))[0] == "M":
+                if ranges and ranges[-1][1] == cp - 1:
+                    ranges[-1] = (ranges[-1][0], cp)
+                else:
+                    ranges.append((cp, cp))
+        marks = "".join(re.escape(chr(a)) + ("-" + re.escape(chr(b)) if b != a else "")
+                        for a, b in ranges)
+        _NON_WORD_ANY.append(re.compile(rf"(?:[^\w{marks}]|_)+"))
+    return _NON_WORD_ANY[0]
+
+
 def _normalize(text: str) -> str:
     """Lowercase words separated by single spaces: markup dropped, apostrophes
-    removed ("I'll" -> "ill"), every other non-word character a separator."""
+    removed ("I'll" -> "ill"), every other non-word character a separator. Text beyond
+    ASCII is NFKC-normalised first, so a precomposed "é" and an "e" with a combining
+    accent are one letter, and full-width "ｈｅｌｌｏ" is "hello"."""
     if "<" in text or "{" in text:
         text = _MARKUP.sub(" ", text)
-    return _NON_WORD.sub(" ", _APOSTROPHE.sub("", text.casefold())).strip()
+    if text.isascii():
+        return _NON_WORD.sub(" ", _APOSTROPHE.sub("", text.casefold())).strip()
+    text = _APOSTROPHE.sub("", unicodedata.normalize("NFKC", text).casefold())
+    if "\u0307" in text:  # casefolded Turkish "İ" is "i" + a dot above: just "i"
+        text = text.replace("i\u0307", "i")
+    return _non_word_any().sub(" ", text).strip()
 
 
 def _f_beta(matched: float, query_weight: float, window_weight: float) -> float:
@@ -70,6 +102,11 @@ class _Query:
         self.total = float(sum(self.weights))
         self.unspaced = bool(_UNSPACED.search(self.text))
         self._memo: dict[str, tuple[tuple[int, float], ...]] = {}
+        # Words the query gives more than once -> their positions in it ("no no no").
+        at: dict[str, list[int]] = {}
+        for j, w in enumerate(self.words):
+            at.setdefault(w, []).append(j)
+        self._repeated = {w: js for w, js in at.items() if len(js) > 1}
 
     def hits(self, word: str) -> tuple[tuple[int, float], ...]:
         """``(query word index, similarity 0-1)`` for each query word ``word`` matches."""
@@ -123,17 +160,34 @@ class _Query:
             for j, s in hits:
                 if s > best[j]:
                     best[j] = s
-        coverage = sum(w * s for w, s in zip(self.weights, best)) / self.total
+        if self._repeated:
+            # A word the query repeats is covered once per time the line has it: one
+            # "no" in the line covered all of "no no no", scoring 75 on "No.".
+            got: dict[str, list[float]] = {}
+            for _, hits in found:
+                for j, s in hits:
+                    js = self._repeated.get(self.words[j])
+                    if js is not None and j == js[0]:
+                        got.setdefault(self.words[j], []).append(s)
+            for w, js in self._repeated.items():
+                sims = sorted(got.get(w, ()), reverse=True)
+                for k, j in enumerate(js):
+                    best[j] = sims[k] if k < len(sims) else 0.0
+        matched = sum(w * s for w, s in zip(self.weights, best))
+        coverage = matched / self.total
         # The best any run could do: every word found matched, in order, no extras.
         exact = min(best) == 1.0  # every query word is in the window as written
-        bound = VERBATIM if exact else max(PHRASE_MAX * _f_beta(coverage, 1.0, coverage),
-                                           ANY_ORDER_MAX * coverage)
+        bound = VERBATIM if exact else PHRASE_MAX * _f_beta(coverage, 1.0, coverage)
         if bound < min_score:
             return None
-        text = " ".join(norms)
+        text = " ".join(n for n in norms if n)  # a cue of only "♪" leaves no gap
         if exact and f" {self.text} " in f" {text} ":
             return VERBATIM, text
-        return max(ANY_ORDER_MAX * coverage, PHRASE_MAX * self.in_order(found, weights)), text
+        # In any order: the words found, over the words from the first to the last of
+        # them, so a match spread through a window of other words scores less.
+        span = sum(weights[found[0][0]:found[-1][0] + 1])
+        any_order = ANY_ORDER_MAX * _f_beta(matched, self.total, span)
+        return max(any_order, PHRASE_MAX * self.in_order(found, weights)), text
 
     def score_unspaced(self, text: str, min_score: float) -> float:
         """Character matching for scripts without spaces between words."""

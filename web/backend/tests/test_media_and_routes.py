@@ -1950,3 +1950,55 @@ def test_a_running_job_that_cannot_stop_is_409_and_finishes_done(tmp_path: Path)
     stoppable = reg.submit(lambda j: [] if j.cancel_requested else [], label="x",
                            cancellable=True)
     assert stoppable.cancellable
+
+
+# --- release review 2 (t-m20-review-2) -----------------------------------------------
+
+def test_folder_search_counts_a_linked_file_once(tmp_path: Path) -> None:
+    # SR-2: a "favourites" folder of links to episodes was searched twice (two hits at
+    # 100 for one line); 3cff628 keyed files by their folder's real path only.
+    shows, favs = tmp_path / "shows", tmp_path / "favourites"
+    shows.mkdir()
+    favs.mkdir()
+    (shows / "episode1.mkv").write_bytes(b"")
+    (shows / "episode1.srt").write_text(SRT2)
+    (favs / "episode1.mkv").symlink_to(shows / "episode1.mkv")
+    (favs / "episode1.srt").symlink_to(shows / "episode1.srt")
+    client = _client(tmp_path)
+    _index(client, shows)
+    data = client.get("/api/search/folder",
+                      params={"path": str(tmp_path), "query": "force"}).json()
+    assert data["files_scanned"] == 1 and data["count"] == 1
+
+
+def test_folder_search_skips_hidden_folders(tmp_path: Path) -> None:
+    # SR-11: a snapshot copy under .snapshots/ counted as "not indexed yet".
+    (tmp_path / "episode1.mkv").write_bytes(b"")
+    (tmp_path / "episode1.srt").write_text(SRT2)
+    snap = tmp_path / ".snapshots" / "1"
+    snap.mkdir(parents=True)
+    (snap / "episode1.mkv").write_bytes(b"")
+    client = _client(tmp_path)
+    _index(client, tmp_path)
+    data = client.get("/api/search/folder",
+                      params={"path": str(tmp_path), "query": "force"}).json()
+    assert (data["files_scanned"], data["not_indexed"], data["capped"]) == (1, 0, False)
+
+
+def test_folder_search_caps_the_query_and_the_matches(tmp_path: Path, monkeypatch) -> None:
+    # SR-5/SR-6: scoring is quadratic in the query's words, over every indexed line; and
+    # 5 matches per file across a whole library was an unbounded response.
+    import quipclipper_web.app as web
+
+    for i in range(3):
+        (tmp_path / f"episode{i}.mkv").write_bytes(b"")
+        (tmp_path / f"episode{i}.srt").write_text(SRT2)
+    monkeypatch.setattr(web, "FOLDER_MATCHES_MAX", 2)
+    client = _client(tmp_path)
+    _index(client, tmp_path)
+    long = client.get("/api/search/folder",
+                      params={"path": str(tmp_path), "query": "force " * 61})
+    assert long.status_code == 422
+    data = client.get("/api/search/folder",
+                      params={"path": str(tmp_path), "query": "force"}).json()
+    assert data["count"] == 3 and data["truncated"] is True and len(data["matches"]) == 2

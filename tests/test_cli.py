@@ -462,3 +462,20 @@ def test_browse_listing_marks_the_dialogue_index(capsys):
     lines = capsys.readouterr().out.splitlines()
     assert "[indexed]" in lines[1] and "[no subs]" in lines[2]
     assert "[" not in lines[0] and "[" not in lines[3]
+
+
+def test_folder_search_says_what_it_left_out_even_with_no_matches(capsys):
+    # SR-3/PA-1 (review 2): "No matches." returned before the notice, which is when it is
+    # needed (nothing indexed yet), and changed files were never mentioned.
+    cli._fmt_matches({"matches": [], "files_scanned": 0, "not_indexed": 40, "changed": 3,
+                      "capped": True})
+    out = capsys.readouterr()
+    assert "No matches." in out.out
+    assert "40 files not indexed yet" in out.err and "index.library" in out.err
+    assert "3 files whose subtitles changed" in out.err and "index.reindex-changed" in out.err
+
+
+def test_folder_search_says_when_it_shows_only_the_best(capsys):
+    cli._fmt_matches({"matches": [{"index": 0, "text": "x", "score": 100}],
+                      "count": 900, "truncated": True})
+    assert "the best 1 of 900 matches" in capsys.readouterr().err

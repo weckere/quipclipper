@@ -121,12 +121,19 @@ CLIPS_CONTRACT = "quipclipper.clips/1"
 # (indexing, transcription) will touch. The nginx-side timeout is 600s,
 # so a huge tree can't be swept in one request — cap it and tell the client.
 INDEX_CAP = 500
+# A folder or library search: the longest query (scoring is quadratic in its words, and
+# a whole-library search runs it over every indexed line: 300 characters is ~0.9 s per
+# 20k lines) and the most matches returned (5 per file over ~30k files otherwise).
+QUERY_MAX = 300
+FOLDER_MATCHES_MAX = 500
 
 
 def _walk_dirs(top: Path) -> Iterator[tuple[Path, list[os.DirEntry]]]:
     """``(folder, its files)`` for ``top`` and every folder below it. The
     entries' cached file types spare a stat per file (a library holds ~70k files on a
-    FUSE mount); symlinked folders aren't followed, as with ``Path.rglob``."""
+    FUSE mount); symlinked folders aren't followed, as with ``Path.rglob``, and hidden
+    ones (``.snapshots``, ``.Trash-1000``) are skipped, as the library browser hides
+    them."""
     stack = [top]
     while stack:
         d = stack.pop()
@@ -139,7 +146,8 @@ def _walk_dirs(top: Path) -> Iterator[tuple[Path, list[os.DirEntry]]]:
         for e in entries:
             try:
                 if e.is_dir(follow_symlinks=False):
-                    stack.append(Path(e.path))
+                    if not e.name.startswith("."):
+                        stack.append(Path(e.path))
                 elif e.is_file():
                     files.append(e)
             except OSError:
@@ -1358,13 +1366,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         for folder in folders:
             for d, files in _walk_dirs(folder):
                 real_dir = os.path.realpath(d)
-                named = [(e.name.lower(), os.path.splitext(e.name)[1].lower(), e.name)
+                named = [(e.name.lower(), os.path.splitext(e.name)[1].lower(), e.name, e)
                          for e in files if not e.name.startswith(".")]  # no ._* (see _is_media_file)
-                subs = [(low, d / name) for low, ext, name in named if ext in SUBTITLE_EXTS]
-                for low, ext, name in named:
+                subs = [(low, d / name) for low, ext, name, _ in named if ext in SUBTITLE_EXTS]
+                for low, ext, name, e in named:
                     if ext != ".epub" and ext not in VIDEO_EXTS and ext not in AUDIO_EXTS:
                         continue
-                    rp = Path(real_dir, name)
+                    # Once per real file: a linked file (a "favourites" folder of links)
+                    # is the file it points at.
+                    rp = (Path(os.path.realpath(e.path)) if e.is_symlink()
+                          else Path(real_dir, name))
                     c = d / name
                     if ext == ".epub":
                         if rp not in seen_books and epub_items.is_epub_book(c):
@@ -1388,7 +1399,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/search/folder")
     def search_dialogue_folder(
         path: list[str] = Query(...),
-        query: str = Query(..., min_length=1),
+        query: str = Query(..., min_length=1, max_length=QUERY_MAX),
         limit: int = Query(5, ge=1, le=20),
         min_score: float = Query(60.0, ge=0, le=100),
         max_span: int = Query(3, ge=1, le=10),
@@ -1568,7 +1579,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # threads finish.
         all_hits.sort(key=lambda h: (-h["score"], h.get("machine", False),
                                      -h["_fit"], h["path"], h["start"]))
-        for h in all_hits:
+        shown = all_hits[:FOLDER_MATCHES_MAX]
+        for h in shown:
             del h["_fit"]  # a sort key only, not part of the response
             _with_link(h, _item_link(h["path"], sel=(h["start"], h["end"])))
 
@@ -1585,8 +1597,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "changed_files": changed_files[:index_changes_mod.LIST_MAX],
             "books_not_searched": books_not_searched,
             "capped": bool(not_indexed or changed_files or books_not_searched),
+            # Every match is counted; the best FOLDER_MATCHES_MAX are returned.
             "count": len(all_hits),
-            "matches": all_hits,
+            "truncated": len(all_hits) > FOLDER_MATCHES_MAX,
+            "matches": shown,
         }
 
     # --- folder subtitle index -------------------------------------------------

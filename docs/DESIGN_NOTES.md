@@ -353,7 +353,15 @@ non-word character (punctuation, `♪`, speaker dashes) a word break. Then:
   matched, precision the matched weight over the line's words from the run's first
   match to its last. Beta 2 makes a missing query word cost more than an extra word
   in between ("Make it all so." 92, "Make it." 76).
-- **Up to 75** for the query's words present in any order (75 × the weight found).
+- **Up to 75** for the query's words present in any order: 75 × the same F-measure, of
+  the weight found over the window's words from the first word found to the last, so
+  words scattered through a three-caption window of other talk score well under 60. A
+  query word given twice is found once per time the window has it ("no no no" no longer
+  scores 75 on "No."). Before splitting into words, text beyond ASCII is NFKC-normalised
+  and combining marks (category M) count as part of their word, not as breaks: `\w`
+  leaves them out, which split Devanagari or pointed Arabic words at every vowel sign.
+  A folder search's query is capped at 300 characters (the in-order alignment is
+  quadratic in its words) and returns the best 500 matches (review 2, SR-1/4/5/6).
 
 **Why not the earlier scorers.** It used `max(partial_ratio, token_set_ratio)`.
 `token_set_ratio` is 100 whenever one side's words are a subset of the other's, so

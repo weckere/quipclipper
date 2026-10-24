@@ -343,15 +343,22 @@ def _fmt_entries(data: dict) -> None:
 
 def _fmt_matches(data: dict) -> None:
     matches = data.get("matches") or []
-    if not matches:
-        typer.secho("No matches.", fg="yellow")
-        return
+    # What a folder search left out, said first: most of all when it found nothing.
     skipped = [f"{n} {what}" for n, what in (
-        (data.get("not_indexed"), "files not indexed yet (index.build a folder to include it)"),
+        (data.get("not_indexed"), "files not indexed yet (index.build a folder, or "
+                                  "index.library for a big one, to include them)"),
+        (data.get("changed"), "files whose subtitles changed since indexing "
+                              "(index.reindex-changed)"),
         (data.get("books_not_searched"), "read-along books (search a book on its own)")) if n]
     if skipped:
         typer.secho(f"(searched {data.get('files_scanned')} indexed files; not searched: "
                     f"{'; '.join(skipped)})", fg="yellow", err=True)
+    if not matches:
+        typer.secho("No matches.", fg="yellow")
+        return
+    if data.get("truncated"):
+        typer.secho(f"(the best {len(matches)} of {data.get('count')} matches)",
+                    fg="yellow", err=True)
     for m in matches:
         where = f"{m['file']}  " if m.get("file") else ""
         typer.echo(f"[{m.get('index', '?')}] {where}"

@@ -179,9 +179,12 @@ resolved stream URLs, so `split_channels` and `backend=mkvmerge` return 400 for
 `/api/search` returns `{query, count, matches: [{index, score, text, speaker,
 start, end, start_ts, end_ts, cue_count, link}]}`. The `index` is what you pass back as
 `match_index` when clipping. `/api/search/folder` returns `{query, folders,
-files_scanned, not_indexed, changed, changed_files, books_not_searched, capped, count, matches: [{file, path, score,
+files_scanned, not_indexed, changed, changed_files, books_not_searched, capped, count, truncated, matches: [{file, path, score,
 text, speaker, start, end, start_ts, end_ts, cue_count, link}]}`: `limit` is the most matches
-per file (default 5, at most 20). It searches only **indexed** files, those whose subtitles
+per file (default 5, at most 20); `count` is every match found, `matches` the best 500 of
+them (`truncated` when there were more). `query` is at most 300 characters (422 beyond:
+scoring grows with the square of the query's words, over every indexed line). Hidden folders
+(`.snapshots`) are not searched, and a linked file counts once. It searches only **indexed** files, those whose subtitles
 are cached (opened once, or indexed with `POST …/index`), however many there are, and
 never extracts subtitles itself; a file not indexed but with a stored machine transcript is
 searched on that. `files_scanned` counts the files searched, `not_indexed` the media files
@@ -279,7 +282,10 @@ any other.
 `score` (0 to 100, one decimal) is 100 only when the line holds the query's words verbatim:
 in order and contiguous, after case, punctuation, apostrophes and subtitle markup are
 normalised away. The words in order with a typo, a word missing or an extra word score up to
-99, and the words in any order at most 75 (D-041). Matches come best first; at an equal score
+99, and the words in any order at most 75, less the more other words lie between them
+(D-041). A word the query gives twice needs to be in the line twice. Text beyond ASCII is
+NFKC-normalised, and combining marks (accents, Indic vowel signs) belong to their word.
+Matches come best first; at an equal score
 a subtitle line comes before a machine line, then the line closest to the whole query, then
 (folder search) by path and time, so equal hits keep one order. `min_score` (default 60)
 drops matches below it; `min_score=100` keeps only verbatim lines.

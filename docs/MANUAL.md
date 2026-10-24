@@ -230,7 +230,8 @@ fine) and phrases that span two or three subtitles still match.
   just your words comes first.
 - **Up to 99%** for your words in order with a difference: a typo ("mak it so"), a word
   missing, or an extra word ("Make it all so.").
-- **75% and under** for your words in any order ("It was so hard to make.").
+- **75% and under** for your words in any order ("It was so hard to make."), less the more
+  other words lie between them. A word you type twice ("no no") has to be there twice.
 
 Matches under 60 are left out (`--min-score` in the CLI, `min_score` in the API). At an equal
 score a subtitle line comes before a machine transcript line.

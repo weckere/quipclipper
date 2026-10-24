@@ -227,3 +227,48 @@ def test_unspaced_scripts_match_on_characters():
     hits = search("東京に行", cues)
     assert hits[0].text == "東京に行きます。" and hits[0].score == 100
     assert all(m.score < 100 for m in hits[1:])
+
+
+# --- release review 2 (t-m20-review-2) -----------------------------------------------
+
+def _scores(query, *texts, **kw):
+    return [(round(m.score, 1), m.text) for m in search(query, _lines(*texts), **kw)]
+
+
+def test_a_repeated_query_word_needs_repeating_in_the_line():
+    # SR-1: one "no" in the line covered all of "no no no" (75 on "No.").
+    assert _scores("no no no", "No.") == []
+    assert _scores("no no", "No, no.") == [(100.0, "No, no.")]
+    assert _scores("make make make", "make") == []
+
+
+def test_words_in_any_order_spread_over_other_words_score_less():
+    # SR-1: three cues of 30 words holding "so", "make" and "it" scored 75.
+    soup = ("So, what do you want to do today, Number One?",
+            "I do not know, Captain, maybe make a cake or bake bread?",
+            "It is very late already.")
+    assert _scores("make it so", *soup) == []
+    assert all(score < 60 for score, _ in _scores("make it so", *soup, min_score=0))
+    assert 60 <= _scores("make it so", "It was so hard to make.")[0][0] <= 75
+
+
+def test_unicode_text_is_normalised_and_marks_stay_in_words():
+    # SR-4: NFD vs NFC never matched; combining marks split words, so "मैं" was "में".
+    nfc, nfd = "café", "café"
+    assert _scores(nfc, nfd)[0][0] == 100 and _scores(nfd, nfc)[0][0] == 100
+    assert _scores("मैं", "में") == []
+    assert _scores("नमस्ते दोस्त", "नमस्ते दोस्त!")[0][0] == 100
+    assert _scores("hello", "ｈｅｌｌｏ")[0][0] == 100  # full width
+    assert _scores("istanbul", "İstanbul")[0][0] == 100
+
+
+def test_an_empty_cue_between_does_not_break_a_verbatim_run():
+    # SR-7: "♪" or "{\an8}" alone left a double space, so 99 instead of 100.
+    assert _scores("make it so", "Make it", "♪", "so.")[0][0] == 100
+    assert _scores("make it so", "Make it", "{\\an8}", "so.")[0][0] == 100
+
+
+def test_a_bare_less_than_is_not_markup():
+    # SR-8: "<" … ">" ate the text between them.
+    assert _scores("is less", "x < 3 is less and y > 2")[0][0] == 100
+    assert _scores("make it so", "<i>Make it so.</i>")[0][0] == 100

@@ -892,6 +892,7 @@ async function dialogueSearch(query, folders) {
   if (myId !== librarySearchId) return;  // the user went elsewhere meanwhile
 
   status.textContent = `${data.count} match${data.count !== 1 ? "es" : ""} across ${countOf(data.files_scanned, "indexed file")}` +
+    (data.truncated ? ` (the best ${data.matches.length} shown)` : "") +
     searchSkipped(data);
   showChangedBanner(data.changed_files, data.changed);
 
