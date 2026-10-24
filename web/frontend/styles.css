@@ -767,6 +767,9 @@ footer { padding: 2rem 1.25rem; font-size: 0.8rem; }
   background: var(--machine-soft); font-size: var(--text-sm);
 }
 .stt-bar.open { padding-bottom: 0.45rem; }
+/* In the script pane's column: never shrunk under its content (it spilled over the first
+   script line in a short pane), and in line with the script bar's 1rem sides. */
+.ws-side .stt-bar { flex-shrink: 0; margin: 0 1rem 0.4rem; }
 .stt-head { display: flex; flex-wrap: nowrap; gap: 0 0.6rem; align-items: center; min-height: 1.6rem; min-width: 0; }
 .stt-toggle {
   display: inline-flex; align-items: center; gap: 0.3rem; flex-shrink: 0;

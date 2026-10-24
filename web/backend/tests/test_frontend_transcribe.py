@@ -301,6 +301,8 @@ def test_the_transcript_bar_is_one_slim_row_until_opened():
     css = (FRONTEND / "styles.css").read_text()
     assert re.search(r"\.stt-head \{[^}]*flex-wrap: nowrap", css)
     assert re.search(r"\.stt-summary, \.stt-job \{[^}]*text-overflow: ellipsis", css)
+    # Never squeezed over the script: the pane is a flex column (wiz's Bambi screenshot).
+    assert re.search(r"\.ws-side \.stt-bar \{[^}]*flex-shrink: 0", css)
 
 
 def test_the_transcript_bar_opens_closes_and_is_remembered():
