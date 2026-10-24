@@ -478,7 +478,12 @@
             </div>
             <div id="pane-script" class="tabpane" role="tabpanel" aria-labelledby="tab-script">
               <div class="script-bar">
-                <span id="marks-hint" class="script-hint" hidden>Click a line to seek · hover for <strong>Start</strong> / <strong>End</strong> (keys: ↑ ↓ move, <kbd>S</kbd> / <kbd>E</kbd> set them). The first line, <em>Start of video</em>, lets a clip begin at 0:00.</span>
+                <!-- The script's help: a "?" whose text shows as a tooltip on hover and keyboard
+                     focus, and stays open as a popover on a click or Enter (Esc closes it). -->
+                <span id="marks-hint" class="tip-wrap script-help" hidden>
+                  <button type="button" id="script-help-btn" class="help-btn" aria-label="Script help" aria-describedby="script-help-text" aria-expanded="false" aria-controls="script-help-text" data-notitle="the visible tooltip #script-help-text is its hover text">?</button>
+                  <span id="script-help-text" class="tip tip-below script-help-tip" role="tooltip">Click a line to seek; hover or focus it for <strong>Start</strong> / <strong>End</strong>. Keys: ↑ ↓ move between lines, Enter plays from one, <kbd>S</kbd> / <kbd>E</kbd> set the selection's start and end. The first line, <em>Start of video</em>, lets a clip begin at 0:00. On the waveform, click a line's label to select that line (Shift-click adds it). In <strong>Matches</strong>, click a match to select its lines and play them.</span>
+                </span>
                 <label class="checkbox-label script-follow" title="Keep the script scrolled to the line that's playing"><input id="script-follow" class="switch" type="checkbox" checked /> Follow playback</label>
               </div>
               <!-- Machine transcription (M21): what whisper has heard in this file, and the

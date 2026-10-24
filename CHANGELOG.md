@@ -153,6 +153,10 @@ scripts/release.sh leaves this block in Unreleased; delete the two marker lines 
   Enter) on a match selects its line, or all of a multi-line match's lines, picking the
   match's own cues even where lines overlap, then plays from it and says the selection. ▶ and
   Loop selection then play just that line with Before/After, as with any line selection.
+- **Script help is a "?":** the four lines of help under the Script tab are now a small
+  **?** button (named "Script help") beside Follow playback. Hover or focus shows the text,
+  a click or Enter keeps it open, and Esc closes it and returns focus to the button. It now
+  also covers the waveform label click and the match click.
 - **Waveform zoom waits in grey:** after a zoom or a pan the wave turns grey (the strip is
   `aria-busy`) until the peaks for the new view arrive, instead of drawing the previous,
   coarser view stretched into blocks. Only sound at least as sharp as the view needs is

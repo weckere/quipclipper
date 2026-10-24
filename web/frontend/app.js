@@ -5373,7 +5373,7 @@ $("ls-send").onclick = () => {
   announce(appConfig.public_url ? "Sending to LeadStinger" : "Making a LeadStinger set");
   return appConfig.public_url ? sendLeadStingerClip() : makeLeadStingerClip();
 };
-for (const wrap of document.querySelectorAll(".tip-wrap")) {  // ls-send's, the transcript toggle's
+for (const wrap of document.querySelectorAll(".tip-wrap")) {  // ls-send's, the transcript toggle's, the script help's
   const reset = () => wrap.classList.remove("tip-off");
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && (wrap.matches(":hover") || wrap.contains(document.activeElement))) {
@@ -5383,6 +5383,27 @@ for (const wrap of document.querySelectorAll(".tip-wrap")) {  // ls-send's, the 
   wrap.addEventListener("pointerleave", reset);
   wrap.addEventListener("focusout", reset);
 }
+
+// The script's help "?": its text is the button's tooltip (hover, keyboard focus), and a
+// click or Enter keeps it open as a popover until Esc (focus stays on the button), another
+// click, or a click elsewhere.
+function setScriptHelp(open, hide) {
+  const wrap = $("marks-hint"), btn = $("script-help-btn");
+  const was = btn.getAttribute("aria-expanded") === "true";
+  wrap.classList.toggle("tip-open", open);
+  if (open) wrap.classList.remove("tip-off");
+  else if (hide && was) wrap.classList.add("tip-off");  // not the hover tooltip again, until the pointer leaves
+  btn.setAttribute("aria-expanded", String(open));
+  return was;
+}
+$("script-help-btn").onclick = (e) => {
+  e.stopPropagation();
+  setScriptHelp($("script-help-btn").getAttribute("aria-expanded") !== "true", true);
+};
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && setScriptHelp(false, true)) $("script-help-btn").focus();
+});
+document.addEventListener("click", (e) => { if (!e.target.closest("#marks-hint")) setScriptHelp(false); });
 
 // --- clip name template (B9) ------------------------------------------------
 // {folder} is the name {title} gave before titles came from Jellyfin (D-032), so a

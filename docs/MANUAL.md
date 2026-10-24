@@ -312,7 +312,8 @@ Opening a file opens its workspace.
 - **The script** on the right lists every line. Click a line to seek; hover (or focus)
   a line for **Start** and **End**, which set the selection by whole lines. The first
   line, *Start of video*, lets a clip begin at 0:00. **Follow playback** keeps the
-  playing line in view. The tabs
+  playing line in view. The **?** beside it says all this, and the keys, as a tooltip on
+  hover or focus; click it (or press Enter) to keep it open, Esc to close it. The tabs
   beside **Script** are **Matches** (after a search), **Bookmarks** for this file and
   **Clips** made from it this visit. In **Matches**, click a match (or press Enter on it)
   to select its line, or all its lines when it spans several, and play it: the selection
