@@ -167,13 +167,13 @@ resolved stream URLs, so `split_channels` and `backend=mkvmerge` return 400 for
 |---|---|---|
 | GET | `/api/search?path=&query=&track=&limit=&min_score=&max_span=` | Rank dialogue matches in one file. |
 | GET | `/api/search/folder?path=&query=&limit=` | Search dialogue across a folder (repeat `path=` for several; `yt:` and EPUB books count). |
-| GET | `/api/search/folder/index-status?path=` | How much of a folder's subtitles are cached, for a folder of any size (a listing per folder and the cache's names: no extraction, no probe): `{total, indexed, no_subs, changed, changed_files, transcribed, audio_untranscribed, skipped, cap}`. `changed` counts files indexed before their subtitles changed (listed, up to 1000, in `changed_files`; see [below](#changed-subtitles)). `no_subs` counts files indexing found to have no subtitles at all (no sidecar, no text track); they are never offered for indexing. `cap` (500) is the most files `POST …/index` takes in one request; a bigger folder is indexed with `POST /api/search/library/index?path=`. `skipped` is always `false` now (kept for older clients). |
+| GET | `/api/search/folder/index-status?path=` | How much of a folder's subtitles are cached, for a folder of any size (a listing per folder and the cache's names: no extraction, no probe): `{total, indexed, no_subs, changed, changed_files, skipped, cap}`. `changed` counts files indexed before their subtitles changed (listed, up to 1000, in `changed_files`; see [below](#changed-subtitles)). `no_subs` counts files indexing found to have no subtitles at all (no sidecar, no text track); they are never offered for indexing. `cap` (500) is the most files `POST …/index` takes in one request; a bigger folder is indexed with `POST /api/search/library/index?path=`. `skipped` is always `false` now (kept for older clients). |
 | POST | `/api/search/folder/index?path=&force=` | Pre-extract subtitles for a folder of at most `cap` files (streams progress; 400 over it). |
-| POST | `/api/search/library/index?path=` | Start the **library index**: every media file under the library roots (or under `path`, a folder of any size) that isn't indexed yet, as a background job. Returns `{job_id, existing, paths}`; while one runs, this returns it with `existing: true` (one at a time). See below. |
-| GET | `/api/search/library/index` | `{job, last}`: the running library index job (as `GET /api/jobs/{id}`, or null), and the last run's summary, kept in the state dir across restarts (`status` `done`, `cancelled`, `failed`, or `interrupted` when a restart cut it short; null before the first run). |
+| POST | `/api/search/library/index?path=` | Start the **library index**: every media file under the library roots (or under `path`, a folder of any size) that isn't indexed yet, as a background job. Returns `{job_id, existing, paths}`; while one runs, this returns it with `existing: true` (one at a time). 400 when `path` isn't a folder. See below. |
+| GET | `/api/search/library/index` | `{job, last}`: the running library index job (as `GET /api/jobs/{id}`, or null), and `last`: the last run's `result` (the current one's while it runs) plus `updated`, kept in the state dir across restarts; `status` is `scanning` or `indexing` while it runs, then `done`, `cancelled`, `failed`, or `interrupted` when a restart (or a server stop) cut it short; null before the first run. |
 | GET | `/api/index/changes` | Files whose subtitles changed since indexing, as the hourly check and the views found them. See [below](#changed-subtitles). |
 | POST | `/api/index/changes/reindex` | Queue all of them for the re-index job. |
-| POST | `/api/index/file?path=&force=` | Re-index files whose subtitles changed (the [re-index hooks](#re-index-hooks)): repeat `path=`, or send a JSON body. Queued; 202. |
+| POST | `/api/index/file?path=&force=` | Re-index files whose subtitles changed (the [re-index hooks](#re-index-hooks)): repeat `path=`, or send a JSON body. Queued; 202 (422 when no path could be queued, 400 for more than 1000 paths or a body that isn't JSON). |
 | GET | `/api/index/file` | The re-index hooks' queue: `{job_id, job, pending, recent, token}`. |
 
 `/api/search` returns `{query, count, matches: [{index, score, text, speaker,
@@ -186,8 +186,7 @@ them (`truncated` when there were more). `query` is at most 300 characters (422 
 scoring grows with the square of the query's words, over every indexed line). Hidden folders
 (`.snapshots`) are not searched, and a linked file counts once. It searches only **indexed** files, those whose subtitles
 are cached (opened once, or indexed with `POST …/index`), however many there are, and
-never extracts subtitles itself; a file not indexed but with a stored machine transcript is
-searched on that. `files_scanned` counts the files searched, `not_indexed` the media files
+never extracts subtitles itself. `files_scanned` counts the files searched, `not_indexed` the media files
 left out because they aren't indexed, and `books_not_searched` the read-along EPUB books
 found in the folders (a book has no index; pass a book itself as `path` to search it).
 `changed` counts the files left out because their subtitles changed since they were
@@ -286,8 +285,8 @@ normalised away. The words in order with a typo, a word missing or an extra word
 (D-041). A word the query gives twice needs to be in the line twice. Text beyond ASCII is
 NFKC-normalised, and combining marks (accents, Indic vowel signs) belong to their word.
 Matches come best first; at an equal score
-a subtitle line comes before a machine line, then the line closest to the whole query, then
-(folder search) by path and time, so equal hits keep one order. `min_score` (default 60)
+the line closest to the whole query comes first, then (folder search) by path and time, so
+equal hits keep one order. `min_score` (default 60)
 drops matches below it; `min_score=100` keeps only verbatim lines.
 
 ### Media (preview/streaming)

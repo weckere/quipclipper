@@ -175,22 +175,22 @@ scripts/release.sh leaves this block in Unreleased; delete the two marker lines 
   holds the query's words verbatim, in order and next to each other, ignoring case,
   punctuation, apostrophes and subtitle markup; whole-line matches come first. The words in
   order with a typo, a word missing or an extra word score up to 99, and the words in any
-  order at most 75 (less when other words lie between them; a word typed twice must be
-  there twice). Before, any line holding the query's words in any order scored 100
-  ("make it so" matched "You make it sound…" and "it… so… make" at 100), and a short line
-  inside the query did too ("HOT" for "tea earl grey hot"). Equal scores keep one order
-  across files (a subtitle line before a machine line, then the closer line, then file and
-  time), the score shows as a % with hover text in both searches, and a library-wide search
-  is about four times faster.
+  order at most 75 (less when other words lie between them; a word typed twice must be there
+  twice). Before, any line holding the query's words in any order scored 100 ("make it so"
+  matched "You make it sound…" and "it… so… make" at 100), and a short line inside the query
+  did too ("HOT" for "tea earl grey hot"). Equal scores keep one order across files (the
+  closer line first, then file and time), the score shows as a % with hover text in both
+  searches, and a library-wide search is about four times faster.
 - **Folder and library search read every indexed file, and only those:** the 500-file cap is
   gone, so a whole-library search reaches every file whose subtitles are cached (it used to
   stop after 500 files, often before reaching the show you wanted), and it no longer runs
   ffmpeg to extract a file's subtitles mid-search. Files not indexed yet, and read-along
   books found in a folder, are left out and counted: `/api/search/folder` gains
-  `not_indexed` and `books_not_searched` (`capped` now means either is above 0), and the web
-  status line and the CLI say how many weren't searched (the CLI even when nothing matched).
-  A search returns the best 500 matches with the full count, takes queries of up to 300
-  characters, skips hidden folders such as `.snapshots`, and counts a linked file once. Listing the library is quicker too:
+  `not_indexed` and `books_not_searched` (`capped` now means any of `not_indexed`,
+  `changed`, `books_not_searched` is above 0), and the web status line and the CLI say how
+  many weren't searched (the CLI even when nothing matched). A search returns the best 500
+  matches with the full count, takes queries of up to 300 characters, skips hidden folders
+  such as `.snapshots`, and counts a linked file once. Listing the library is quicker too:
   one listing per folder serves every file's sidecar lookups, and the EPUB check is cached.
 - **Index the whole library:** a button on the library's home page (and `quipclipper
   index.library [FOLDER]`, `POST /api/search/library/index`) indexes every file not indexed

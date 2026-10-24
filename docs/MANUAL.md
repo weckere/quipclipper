@@ -233,8 +233,7 @@ fine) and phrases that span two or three subtitles still match.
 - **75% and under** for your words in any order ("It was so hard to make."), less the more
   other words lie between them. A word you type twice ("no no") has to be there twice.
 
-Matches under 60 are left out (`--min-score` in the CLI, `min_score` in the API). At an equal
-score a subtitle line comes before a machine transcript line.
+Matches under 60 are left out (`--min-score` in the CLI, `min_score` in the API).
 
 - **In a video**, the matches appear in the workspace's **Matches** tab.
 - **In a folder or the library**, only **indexed** files are searched (their subtitles are

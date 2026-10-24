@@ -176,5 +176,6 @@ Switched on, the rest of the API changes too:
   gives them alone. The captions carry only machine lines copied into the library, as
   `<c.machine>≈ …</c>`.
 - `/api/search` and `/api/search/folder` take the same `machine=` and mark a hit on a machine
-  line `machine: true`; at an equal score a subtitle line ranks first.
+  line `machine: true`; at an equal score a subtitle line ranks first. A folder search also
+  searches a file that isn't indexed on its stored machine transcript.
 - Off, machine lines are left out everywhere and `machine=only` answers 404.

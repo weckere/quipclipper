@@ -415,6 +415,35 @@ transcript store are listed once instead of stat-ed per file, the index check's 
 run in 8 threads, and the EPUB overlay check is cached per path and mtime. A warm
 library search there takes ~10 s (the first after a restart ~17 s).
 
+**The library index is a job someone starts (D-043, 2026-10-23).** Indexing the rest of
+the library is one background job (`POST /api/search/library/index`, `index.library`),
+never started by a timer, a scan or a restart. It reads one file at a time, since the
+media is on HDD pools whose schedulers ignore I/O classes and two readers would seek,
+and runs every ffprobe and ffmpeg it starts through `quipclipper.idle` (`SCHED_IDLE`,
+nice 19, idle I/O) via a per-thread `at_idle_priority()` context, so search requests
+on other threads keep normal priority. The subtitle cache is its resume state: a rerun
+skips files indexed and current or marked as having none. A full run on wizrock is
+about two days.
+
+**Other apps say when subtitles change (D-044, 2026-10-23).** `POST /api/index/file`
+takes a media or subtitle path, or a Sonarr/Radarr webhook body, mapped through
+`QC_PATH_MAP`. Files are queued once each and drained by one job in the library index's
+single-worker pool, so a hook never adds a second reader; a running library run takes
+them between its own files. `QC_HOOK_TOKEN` opens that route and nothing else, and the
+password gate's `hook` login is refused everywhere else even when the server doesn't
+know its token. The queue asks whether its job is still alive, so a job cancelled while
+queued (or one that failed) never leaves later hooks waiting on it.
+
+**Changed subtitles are noticed, never re-indexed on their own (D-045, 2026-10-23).** An
+entry is keyed by its subtitle source's mtime, so a file with entries but none at the
+current mtime is `changed`. Views note what they classify, and an hourly pass over the
+roots does the same with listings and stats only. That pass runs in the web server's
+process on a thread of its own, with only its I/O class lowered: at `SCHED_IDLE` the
+kernel parks a thread that holds the interpreter lock, and every request thread waits
+behind it (review 2 measured up to a second per request with the CPU busy). It waits
+while a library run or re-index job is reading the disks, and treats an empty root (an
+unmounted pool) as missing rather than as "nothing changed".
+
 ---
 
 ## 12. The interactive picker
