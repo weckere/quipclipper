@@ -28,9 +28,17 @@ in one job, on a server (the CLI on its own transcribes one file at a time). A f
 subtitles can't be checked is skipped and listed with the reason, rather than transcribed
 whole. Parts transcribed before are skipped, so asking again only does what's new (`--redo`
 does it again, say with a bigger model). English only. **Models:** `small.en` (the
-default: quick, a few word errors) or `medium.en` (closer to subtitle quality, about three
-times slower). Set your default with `quipclipper settings.set stt_model medium.en`, or
-pass `--model` per run.
+default: quick, a few word errors) or `medium.en` (better punctuation and names in
+dialogue, three to five times slower, and no better on songs: measured on three songs it
+dropped more sung lines than `small.en`, D-047). Set your default with
+`quipclipper settings.set stt_model medium.en`, or pass `--model` per run.
+
+**Songs get a second look.** whisper hears audio 30 s at a time and sometimes drops a sung
+line at the end of one of those windows. In a range or the gaps, every stretch of 4 s or
+more where it heard nothing (and that isn't quiet, and has no subtitle line) is heard again
+on its own. That finds most of what the first pass dropped, for an extra short whisper run
+or two per minute of music; dialogue rarely leaves such a stretch, so it costs nothing
+there. A whole-file run uses voice detection instead.
 
 **It runs at idle priority.** whisper gets the CPU only when nothing else wants it (Linux
 `SCHED_IDLE` and nice 19, idle I/O), with 2 threads (3 at most), one transcription at a

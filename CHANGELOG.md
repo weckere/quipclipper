@@ -120,6 +120,14 @@ scripts/release.sh leaves this block in Unreleased; delete the two marker lines 
 - **Fill gaps** (one file or a folder) extracts the subtitles of a file not indexed yet at idle
   priority, as the folder index does, and Cancel stops that extraction too (it ran at normal
   priority).
+- **Songs get a second look (D-047):** whisper hears audio 30 s at a time and sometimes drops
+  a sung line at the end of one of those windows, depending only on where the decode starts.
+  A range or gaps run now hears every stretch of 4 s or more where it heard nothing (not
+  quiet, no subtitle line there) again on its own, starting at a breath just before it.
+  Measured on wizrock, the worst start of three songs found 88 % instead of 83 % of
+  Darkplace's lines and 73 % instead of 64 % of a Glee song's, with no line made up; dialogue
+  is unchanged and costs nothing more. medium.en stays an option but isn't the fix: on the
+  same songs it dropped more lines than small.en and took three to five times as long.
 - The workspace's machine transcript bar is one slim row above the script, about a line tall,
   instead of three or four: **auto Machine transcript**, the state in a few words ("14 lines",
   "none yet"), and a running job's progress or the last message with Cancel. Hover or keyboard

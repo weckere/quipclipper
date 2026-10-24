@@ -472,6 +472,8 @@ def test_clean_text_drops_subtitle_markup_whisper_learnt():
 
 def test_vad_only_for_whole_files():
     assert tr.use_vad("file") and not tr.use_vad("gaps") and not tr.use_vad("range")
+    # Range and gaps runs (songs) take a second look at their holes; a whole file has VAD.
+    assert tr.use_second_look("gaps") and tr.use_second_look("range") and not tr.use_second_look("file")
 
 
 # --- release review (t-m21-review) ------------------------------------------------------
@@ -566,3 +568,132 @@ def test_idle_launcher_refuses_to_run_at_full_priority(monkeypatch):
     with pytest.raises(SystemExit) as exc:
         idle.main(["true"])
     assert "priority" in str(exc.value)
+
+
+# --- the second look -------------------------------------------------------------------
+
+def test_holes_skip_subtitle_lines_and_short_stretches():
+    cues = machine((10, 12, "a"), (20, 22, "b"))
+    assert tr.holes(cues, (8, 40)) == [(12, 20), (22, 40)]
+    assert tr.holes(cues, (8, 40), skip=[(25, 40)]) == [(12, 20)]
+    assert tr.holes(machine((1, 5, "a"), (7, 9, "b")), (0, 9)) == []  # 2 s and 1 s: too short
+
+
+def test_a_second_look_repeating_the_line_before_adds_nothing():
+    before = machine((392.2, 398.1, "And I knew our loving was too hot to last"))
+    assert tr._is_repeat(machine((397.6, 399.6, "Last"))[0], before)
+    assert tr._is_repeat(machine((397.0, 399.0, "was too hot to last"))[0], before)
+    assert not tr._is_repeat(machine((399.0, 402.0, "She's smooth like ice"))[0], before)
+    assert not tr._is_repeat(machine((366.2, 370.2, "I'm a one-track lover"))[0],
+                             machine((364.7, 366.7, "Still won't can only dream")))
+    # More than a neighbour says is new, even when it holds the neighbour's words.
+    assert not tr._is_repeat(machine((368.4, 372.4, "I'm a one track lover, down a two way lane"))[0],
+                             machine((373.0, 375.0, "Two-way lane")))
+
+
+def test_look_windows_share_one_whisper_window_and_keep_a_budget():
+    span = (0.0, 300.0)
+    # Two holes 10 s apart share a window; one far off gets its own. A window starts just
+    # before its hole: one that starts inside the line before hears only that line.
+    got = tr.look_windows([(20, 26), (36, 40), (100, 106)], span, budget=300)
+    assert got == [((19.5, 43), [(20, 26), (36, 40)]), ((99.5, 109), [(100, 106)])]
+    # A hole longer than a window is heard a window at a time.
+    long = tr.look_windows([(50, 100)], span, budget=300)
+    assert [w for w, _ in long] == [(49.5, 77.5), (74, 102), (98.5, 103)]
+    assert all(we - ws <= tr.LOOK_SPAN for (ws, we), _ in long)
+    # The budget stops it: no more than that much audio again.
+    assert len(tr.look_windows([(50, 100)], span, budget=30)) == 1
+    # A window never reaches outside the range.
+    assert tr.look_windows([(0.2, 6)], (0, 8), budget=30) == [((0, 8), [(0.2, 6)])]
+
+
+SEQ_WHISPER = textwrap.dedent('''\
+    #!{python}
+    import json, os, sys
+    a = sys.argv[1:]
+    out = a[a.index("-of") + 1]
+    seq = os.environ["FAKE_WHISPER_SEQ"]
+    calls = json.load(open(seq))
+    segs = calls.pop(0) if len(calls) > 1 else calls[0]
+    json.dump(calls, open(seq, "w"))
+    with open(seq + ".log", "a") as fh:
+        fh.write(a[a.index("-f") + 1] + "\\n")
+    json.dump({{"transcription": [{{"offsets": {{"from": s * 1000, "to": e * 1000}}, "text": t}}
+                                  for s, e, t in segs]}}, open(out + ".json", "w"))
+''')
+
+
+@pytest.fixture
+def seq_whisper(tmp_path, monkeypatch):
+    exe = tmp_path / "whisper-cli"
+    exe.write_text(SEQ_WHISPER.format(python=sys.executable))
+    exe.chmod(0o755)
+    model = tmp_path / "ggml-small.en.bin"
+    model.write_bytes(b"model")
+    monkeypatch.setenv("PYTHONPATH", os.pathsep.join(sys.path))
+    seq = tmp_path / "seq.json"
+    monkeypatch.setenv("FAKE_WHISPER_SEQ", str(seq))
+
+    def calls(*runs):
+        seq.write_text(json.dumps(list(runs)))
+        Path(str(seq) + ".log").unlink(missing_ok=True)
+        return seq
+
+    return tr.WhisperConfig(binary=str(exe), models={"small.en": str(model)}), calls
+
+
+def _tone_then_silence(path: Path, tone: float, total: float) -> Path:
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i",
+                    f"sine=frequency=440:duration={tone},apad=whole_dur={total}",
+                    "-ar", "48000", "-y", str(path)], check=True)
+    return path
+
+
+@needs_ffmpeg
+def test_second_look_hears_a_line_the_first_pass_dropped(tmp_path, seq_whisper):
+    cfg, calls = seq_whisper
+    media = _tone(tmp_path / "song.flac", 20.0)
+    # The first pass (decoded 0-20) hears one line at 2.5-4 s and drops the rest; the
+    # hole 4-20 is heard on its own (decoded from 3.5 s), and says a line at 3.5 + 1 = 4.5 s
+    # plus the line the first pass had (a repeat, dropped).
+    seq = calls([[2.5, 4.0, " Driving way too fast"]],
+                [[0.0, 0.5, " Driving way too fast"], [1.0, 3.5, " I'm a one-track lover"]])
+    got = tr.transcribe_range(media, 0.0, 20.0, cfg=cfg, second_look=True, media_duration=20)
+    assert [(c.start, c.end, c.text) for c in got] == [
+        (2.5, 4.0, "Driving way too fast"), (4.5, 7.0, "I'm a one-track lover")]
+    assert all(c.machine for c in got)
+    assert len(Path(str(seq) + ".log").read_text().splitlines()) == 2
+    # Without it, one pass only.
+    seq = calls([[2.5, 4.0, " Driving way too fast"]])
+    got = tr.transcribe_range(media, 0.0, 20.0, cfg=cfg, media_duration=20)
+    assert [c.text for c in got] == ["Driving way too fast"]
+
+
+@needs_ffmpeg
+def test_second_look_skips_quiet_holes_and_subtitle_lines(tmp_path, seq_whisper):
+    cfg, calls = seq_whisper
+    media = _tone_then_silence(tmp_path / "ep.flac", 9.0, 30.0)
+    seq = calls([[1.0, 4.0, " one"], [4.0, 8.5, " two"]], [[1.0, 2.0, " never"]])
+    got = tr.transcribe_range(media, 0.0, 30.0, cfg=cfg, second_look=True, media_duration=30)
+    assert [c.text for c in got] == ["one", "two"]  # 8.5-30 is silence: no second run
+    assert len(Path(str(seq) + ".log").read_text().splitlines()) == 1
+    # A loud hole that a subtitle line covers isn't heard again either.
+    media = _tone(tmp_path / "song.flac", 20.0)
+    seq = calls([[1.0, 4.0, " one"]], [[1.0, 2.0, " never"]])
+    got = tr.transcribe_range(media, 0.0, 20.0, cfg=cfg, second_look=True, media_duration=20,
+                              skip=[(3.5, 20.0)])
+    assert [c.text for c in got] == ["one"]
+    assert len(Path(str(seq) + ".log").read_text().splitlines()) == 1
+
+
+@needs_ffmpeg
+def test_quiet_start_finds_the_breath_between_lines(tmp_path):
+    wav = tmp_path / "a.wav"
+    # 2 s of tone, 0.3 s of silence, then tone again.
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i",
+                    "sine=frequency=440:duration=2,apad=pad_dur=0.3[a];"
+                    "sine=frequency=440:duration=2[b];[a][b]concat=n=2:v=0:a=1",
+                    "-ar", "16000", "-ac", "1", "-y", str(wav)], check=True)
+    assert tr.quiet_start(wav, 1.5, 3.5) == pytest.approx(2.0, abs=0.11)
+    assert tr.quiet_start(wav, 5.0, 6.0) == 5.0  # past the end: nothing to measure
+    assert tr._loud_seconds(wav, 0, 4.3) == pytest.approx(4.0, abs=0.15)

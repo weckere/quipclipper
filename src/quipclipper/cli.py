@@ -1737,6 +1737,7 @@ def _local_transcribe(c: Context, v: dict) -> Any:
     try:
         t = tr.run(store, media, ranges, cfg=cfg, model=model, audio=int(v.get("audio") or 0),
                    real=real, duration=_probe_duration(media), vad=tr.use_vad(mode),
+                   second_look=tr.use_second_look(mode),
                    progress=progress)
     except RuntimeError as exc:
         raise CliError(str(exc), code="failed") from None

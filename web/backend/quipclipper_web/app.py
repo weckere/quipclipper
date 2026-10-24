@@ -2069,6 +2069,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             t = stt.run(transcripts, p, ranges, cfg=settings.whisper, model=model,
                         audio=audio, real=real, duration=duration, vad=stt.use_vad(mode),
+                        second_look=stt.use_second_look(mode),
                         progress=progress, cancelled=lambda: job.cancel_requested)
         except stt.Cancelled:
             t = transcripts.load(p)

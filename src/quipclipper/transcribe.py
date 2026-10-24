@@ -505,21 +505,26 @@ def transcribe_range(source: str | Path, start: float, end: float, *, cfg: Whisp
                      model: str | None = None, audio: int = 0, src_rate: int | None = None,
                      prompt: str | None = None, vad: bool = False,
                      cancelled: Callable[[], bool] | None = None,
-                     media_duration: float | None = None, workdir: str | Path | None = None
+                     media_duration: float | None = None, workdir: str | Path | None = None,
+                     second_look: bool = False, skip: Iterable[Range] = ()
                      ) -> list[Cue]:
     """Transcribe one stretch (at most a chunk or so) of ``source``'s audio. Returns its
     machine cues in file time. Decodes ``CONTEXT`` seconds either side and keeps only
-    the lines that belong inside ``start..end``."""
+    the lines that belong inside ``start..end``.
+
+    With ``second_look`` (range and gaps runs, :func:`use_second_look`), every stretch
+    of ``HOLE`` seconds or more where whisper heard nothing, outside ``skip`` (the
+    subtitle lines) and not quiet, is heard again on its own (:func:`_second_look`)."""
     model_path = cfg.model_path(model)
     source = os.path.abspath(source)
     lo = max(0.0, start - CONTEXT)
     hi = end + CONTEXT
     if media_duration:
         hi = min(hi, media_duration)
+    model = model or cfg.default_model
     with tempfile.TemporaryDirectory(prefix="qc-stt-", dir=workdir) as tmp:
         tmp = os.path.abspath(tmp)
         wav = Path(tmp) / "a.wav"
-        out = Path(tmp) / "out"
         # The decode's first sample is at the anchored start, which can differ from lo
         # by under a sample: count from where it really starts.
         t0 = waveform.anchored_start(lo, src_rate) if (lo and src_rate) else lo
@@ -527,15 +532,195 @@ def transcribe_range(source: str | Path, start: float, end: float, *, cfg: Whisp
                           src_rate=src_rate), cancelled=cancelled, timeout=600, cwd=tmp)
         if not wav.exists() or wav.stat().st_size <= 44:
             return []
-        _run(whisper_argv(cfg, model_path, wav, out, prompt=prompt, vad=vad),
-             cancelled=cancelled, timeout=max(600.0, (hi - lo) * 20), cwd=tmp)
-        js = out.with_suffix(".json")
-        try:
-            data = json.loads(js.read_text(encoding="utf-8", errors="replace"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise RuntimeError(f"whisper-cli wrote no readable transcript: {exc}") from exc
-    return parse_whisper_json(data, offset=t0, keep=(start, end),
-                              model=model or cfg.default_model)
+        data = _whisper(cfg, model_path, wav, Path(tmp) / "out", prompt=prompt, vad=vad,
+                        cancelled=cancelled, seconds=hi - lo, cwd=tmp)
+        cues = parse_whisper_json(data, offset=t0, keep=(start, end), model=model)
+        if second_look and not vad:
+            cues = _second_look(cfg, model_path, wav, t0, (start, end), cues, skip=skip,
+                                model=model, cancelled=cancelled, cwd=tmp)
+    return cues
+
+
+def _whisper(cfg: WhisperConfig, model_path: str, wav: Path, out: Path, *, seconds: float,
+             cwd: str, prompt: str | None = None, vad: bool = False,
+             cancelled: Callable[[], bool] | None = None) -> dict:
+    """One whisper-cli run over ``wav``; its JSON."""
+    _run(whisper_argv(cfg, model_path, wav, out, prompt=prompt, vad=vad),
+         cancelled=cancelled, timeout=max(600.0, seconds * 20), cwd=cwd)
+    try:
+        return json.loads(out.with_suffix(".json").read_text(encoding="utf-8", errors="replace"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"whisper-cli wrote no readable transcript: {exc}") from exc
+
+
+# --- the second look (D-047) ----------------------------------------------------------
+# whisper hears audio 30 s at a time and moves on from the last timestamp it wrote. A sung
+# line near the end of one of those windows is sometimes dropped, and which lines that hits
+# depends only on where the decode starts: measured on wizrock, small.en missed two of
+# Darkplace S01E06's sung lines from one start and none 4 s later; medium.en missed none,
+# then three, and heard nothing of a Glee song from one start. No decoding option (-nfa,
+# -mc 0, -dtw) helped. So a stretch of a range or a gap where whisper heard
+# nothing, and that isn't quiet, is heard again on its own, starting at a breath just
+# before it: only the holes (an extra whisper window or two a minute of music, none in
+# dialogue), and it finds lines the first pass dropped without trusting either pass alone.
+
+# A stretch this long with no line in it (nor a subtitle line) gets a second look.
+HOLE = 4.0
+# Audio heard before and after a hole on its second look. Little before: a look that starts
+# inside the line before the hole (1 s or more back, on Darkplace S01E06) hears only that
+# line, stretched over the whole window. Where the first pass says a line ends is only
+# roughly where the singing stops, so a look starts at the quietest moment (a breath) from
+# LOOK_BEFORE before the hole to QUIET_SEEK into it.
+LOOK_BEFORE = 0.5
+QUIET_SEEK = 2.0
+LOOK_AFTER = 3.0
+# Holes this close together share one second look (whisper hears 30 s at a time).
+LOOK_SPAN = 28.0
+# A hole with less than MIN_LOUD seconds louder than QUIET_DB (RMS, dBFS) has nothing to hear.
+QUIET_DB = -45.0
+MIN_LOUD = 1.0
+# At most this much audio is heard a second time, as a share of the range.
+LOOK_SHARE = 0.5
+
+
+def holes(cues: list[Cue], span: Range, skip: Iterable[Range] = (),
+          min_len: float = HOLE) -> list[Range]:
+    """The stretches of ``span``, at least ``min_len`` long, with no cue and no ``skip``
+    range in them."""
+    return subtract([span], [*((c.start, c.end) for c in cues), *skip], min_len=min_len)
+
+
+def look_windows(found: list[Range], span: Range, budget: float) -> list[tuple[Range, list[Range]]]:
+    """Group holes into second-look windows: ``(window, its holes)``, each window the holes
+    from ``LOOK_BEFORE`` before to ``LOOK_AFTER`` after, at most ``LOOK_SPAN`` long, inside
+    ``span``. Windows stop once they'd take more than ``budget`` seconds of audio."""
+    out: list[tuple[Range, list[Range]]] = []
+    longest = LOOK_SPAN - LOOK_BEFORE - LOOK_AFTER
+    for s, e in found:
+        # A hole longer than a window is looked at from its start, a window at a time.
+        while e - s > 0:
+            piece = (s, min(e, s + longest))
+            if out and piece[1] + LOOK_AFTER - out[-1][0][0] <= LOOK_SPAN:
+                (ws, _), hs = out[-1]
+                out[-1] = ((ws, min(span[1], piece[1] + LOOK_AFTER)), [*hs, piece])
+            else:
+                out.append(((max(span[0], piece[0] - LOOK_BEFORE),
+                             min(span[1], piece[1] + LOOK_AFTER)), [piece]))
+            s = piece[1]
+    kept, used = [], 0.0
+    for w, hs in out:
+        used += w[1] - w[0]
+        if used > budget:
+            break
+        kept.append((w, hs))
+    return kept
+
+
+def _wav_slice(wav: Path, a: float, b: float, out: Path) -> float:
+    """Write seconds ``a..b`` of a 16 kHz mono WAV to ``out``; returns the slice's start
+    (on the sample grid)."""
+    import wave
+
+    with wave.open(str(wav), "rb") as r:
+        rate = r.getframerate()
+        i = max(0, int(round(a * rate)))
+        n = max(0, min(r.getnframes(), int(round(b * rate))) - i)
+        r.setpos(min(i, r.getnframes()))
+        frames = r.readframes(n)
+        params = r.getparams()
+    with wave.open(str(out), "wb") as w:
+        w.setparams(params)
+        w.writeframes(frames)
+    return i / rate
+
+
+def _wav_frames(wav: Path, a: float, b: float, frame: float = 0.1) -> tuple[list[float], float]:
+    """Mean square of each ``frame``-second frame of seconds ``a..b`` of a 16-bit WAV, and
+    the time (from the WAV's start) of the first frame."""
+    import array
+    import wave
+
+    with wave.open(str(wav), "rb") as r:
+        rate = r.getframerate()
+        i = min(max(0, int(a * rate)), r.getnframes())
+        r.setpos(i)
+        raw = r.readframes(max(0, int((b - a) * rate)))
+    samples = array.array("h")
+    samples.frombytes(raw[: len(raw) // 2 * 2])
+    n = max(1, int(frame * rate))
+    return [sum(x * x for x in samples[j:j + n]) / n
+            for j in range(0, len(samples) - n + 1, n)], i / rate
+
+
+def quiet_start(wav: Path, a: float, b: float, frame: float = 0.1) -> float:
+    """The start of the quietest ``frame`` in seconds ``a..b`` of a WAV (the earliest on a
+    tie), or ``a`` when there's nothing to measure."""
+    frames, t0 = _wav_frames(wav, a, b, frame)
+    if not frames:
+        return a
+    k = min(range(len(frames)), key=lambda j: frames[j])
+    return t0 + k * frame
+
+
+def _loud_seconds(wav: Path, a: float, b: float, frame: float = 0.1) -> float:
+    """How much of seconds ``a..b`` of a 16-bit WAV is louder than ``QUIET_DB`` (RMS over
+    ``frame``-second frames)."""
+    frames, _ = _wav_frames(wav, a, b, frame)
+    floor = (32768 * 10 ** (QUIET_DB / 20)) ** 2
+    return sum(1 for f in frames if f > floor) * frame
+
+
+def _is_repeat(c: Cue, cues: list[Cue]) -> bool:
+    """``c`` says what a line near it already says: the same line, or a part of it (a
+    second look that starts in the line before a hole hears its last word: "Last" after
+    "…was too hot to last"). A line that holds a neighbour and more ("I'm a one-track
+    lover, down a two-way lane" beside "Two-way lane") is new."""
+    n = _norm(c.text)
+    for o in cues:
+        if o.start > c.end + 2.0 or o.end < c.start - 2.0:
+            continue
+        on = _norm(o.text)
+        if fuzz.ratio(n, on) >= 85:
+            return True
+        if len(n) <= len(on) and fuzz.partial_ratio(n, on) >= (90 if len(n) > 8 else 100):
+            return True
+    return False
+
+
+def _second_look(cfg: WhisperConfig, model_path: str, wav: Path, t0: float, span: Range,
+                 cues: list[Cue], *, skip: Iterable[Range], model: str,
+                 cancelled: Callable[[], bool] | None, cwd: str) -> list[Cue]:
+    """``cues`` plus what whisper hears in each of its holes when it hears them on their
+    own (see the comment above :data:`HOLE`)."""
+    found = [h for h in holes(cues, span, skip)
+             if _loud_seconds(wav, h[0] - t0, h[1] - t0) >= MIN_LOUD]
+    if not found:
+        return cues
+    added: list[Cue] = []
+    budget = max(LOOK_SPAN, (span[1] - span[0]) * LOOK_SHARE)
+    # A window may reach into the context decoded around the range (a hole at its edge).
+    around = (max(t0, span[0] - CONTEXT), span[1] + CONTEXT)
+    for n, ((ws, we), hs) in enumerate(look_windows(found, around, budget)):
+        first = hs[0]
+        seek_end = min(first[1], first[0] + QUIET_SEEK)
+        ws = max(around[0], t0 + quiet_start(wav, ws - t0, seek_end - t0))
+        piece = Path(cwd) / f"look{n}.wav"
+        off = t0 + _wav_slice(wav, ws - t0, we - t0, piece)
+        data = _whisper(cfg, model_path, piece, Path(cwd) / f"look{n}", seconds=we - ws,
+                        cwd=cwd, cancelled=cancelled)
+        for c in parse_whisper_json(data, offset=off, model=model):
+            mid = (c.start + c.end) / 2
+            if any(a <= mid < b for a, b in hs) and not _is_repeat(c, [*cues, *added]):
+                added.append(c)
+    both = sorted([*cues, *added], key=lambda c: (c.start, c.end))
+    return [Cue(i, c.start, c.end, c.text, source=MACHINE) for i, c in enumerate(both)]
+
+
+def use_second_look(mode: str) -> bool:
+    """Whether a run of ``mode`` takes a second look at its holes: a range or the gaps
+    (songs and lines over music, where whisper drops the most) yes; a whole file, whose
+    VAD already skips what isn't speech, no."""
+    return mode != "file"
 
 
 # --- the transcript store -------------------------------------------------------------
@@ -928,19 +1113,22 @@ def plan_ranges(mode: str, *, real: list[Cue], duration: float | None, done: lis
 
 def run(store: TranscriptStore, media: str | Path, ranges: list[Range], *, cfg: WhisperConfig,
         model: str | None = None, audio: int = 0, real: list[Cue] | None = None,
-        duration: float | None = None, vad: bool = False,
+        duration: float | None = None, vad: bool = False, second_look: bool = False,
         progress: Callable[[float, float], None] | None = None,
         cancelled: Callable[[], bool] | None = None) -> Transcript | None:
     """Transcribe ``ranges`` of ``media`` chunk by chunk, saving each chunk as it finishes.
 
-    ``progress(done_seconds, total_seconds)`` is called after each chunk. Raises
-    :class:`Cancelled` when ``cancelled()`` turns true (finished chunks are kept)."""
+    ``second_look`` hears each hole whisper left again (:func:`use_second_look`; the
+    subtitle lines in ``real`` aren't holes). ``progress(done_seconds, total_seconds)``
+    is called after each chunk. Raises :class:`Cancelled` when ``cancelled()`` turns
+    true (finished chunks are kept)."""
     model = model or cfg.default_model
     cfg.model_path(model)  # fail before decoding anything
     media = Path(media)
     pieces = [c for s, e in ranges for c in chunks(s, e)]
     total = sum(e - s for s, e in pieces)
     src_rate = waveform.native_rate(media, audio)
+    subtitled = [(c.start, c.end) for c in real or [] if not c.machine]
     done = 0.0
     t = None
     if progress:
@@ -951,7 +1139,8 @@ def run(store: TranscriptStore, media: str | Path, ranges: list[Range], *, cfg: 
                 raise Cancelled()
             cues = transcribe_range(media, s, e, cfg=cfg, model=model, audio=audio,
                                     src_rate=src_rate, vad=vad, cancelled=cancelled,
-                                    media_duration=duration)
+                                    media_duration=duration, second_look=second_look,
+                                    skip=subtitled)
             t = store.add(media, (s, e), cues, model=model, language=cfg.language)
             done += e - s
             if progress:
