@@ -38,7 +38,7 @@ line at the end of one of those windows. In a range or the gaps, every stretch o
 more where it heard nothing (and that isn't quiet, and has no subtitle line) is heard again
 on its own. That finds most of what the first pass dropped, for an extra short whisper run
 or two per minute of music; dialogue rarely leaves such a stretch, so it costs nothing
-there. A whole-file run uses voice detection instead.
+there. A whole-file run uses voice detection instead. A long stretch is transcribed in 3-minute pieces, each heard with 2 s of the next; a line heard by both pieces where they meet is kept once.
 
 **It runs at idle priority.** whisper gets the CPU only when nothing else wants it (Linux
 `SCHED_IDLE` and nice 19, idle I/O), with 2 threads (3 at most), one transcription at a

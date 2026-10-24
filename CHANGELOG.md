@@ -128,6 +128,9 @@ scripts/release.sh leaves this block in Unreleased; delete the two marker lines 
   Darkplace's lines and 73 % instead of 64 % of a Glee song's, with no line made up; dialogue
   is unchanged and costs nothing more. medium.en stays an option but isn't the fix: on the
   same songs it dropped more lines than small.en and took three to five times as long.
+- A line spoken across the edge of two 3-minute pieces of a long transcription is kept once
+  (it could come out twice, with slightly different words). Measured on wizrock at 8 edges
+  of a podcast and an episode: 3 lines were doubled and none was lost.
 - The workspace's machine transcript bar is one slim row above the script, about a line tall,
   instead of three or four: **auto Machine transcript**, the state in a few words ("14 lines",
   "none yet"), and a running job's progress or the last message with Cancel. Hover or keyboard

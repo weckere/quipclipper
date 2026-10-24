@@ -697,3 +697,42 @@ def test_quiet_start_finds_the_breath_between_lines(tmp_path):
     assert tr.quiet_start(wav, 1.5, 3.5) == pytest.approx(2.0, abs=0.11)
     assert tr.quiet_start(wav, 5.0, 6.0) == 5.0  # past the end: nothing to measure
     assert tr._loud_seconds(wav, 0, 4.3) == pytest.approx(4.0, abs=0.15)
+
+
+# --- chunk seams (EN-7) ------------------------------------------------------------------
+
+def test_a_line_heard_by_both_chunks_at_a_seam_is_kept_once():
+    # The podcast case: chunk 0-180 kept its version (midpoint 179.95), chunk 180-360 its
+    # own (midpoint 180.25). The longer one stays.
+    a = machine((170.0, 176.0, "Something before"),
+                (178.10, 181.79, "Actually. So those of you that aren't aware or whatever, like I'm."))
+    b = machine((178.03, 182.47, "bit actually. So those of you that aren't aware or whatever, "
+                 "like I'm converting the"), (183.0, 186.0, "the next line"))
+    old, new = tr.seam_repeats(a, b, (180.0, 360.0))
+    assert [c.text for c in old] == ["Something before"]
+    assert [c.text for c in new] == [b[0].text, "the next line"]
+    # The other way round: the earlier chunk had the longer version.
+    old, new = tr.seam_repeats(machine((356.43, 361.79, "Well, that's where you just run "
+                                        "ethernet instead and then use the balloon adapters.")),
+                               machine((359.40, 362.66, "and then use the balloon adapters, you know.")),
+                               (360.0, 540.0))
+    assert len(old) == 1 and new == []
+    # Different words at the seam are two lines; so is the same phrase far from an edge.
+    old, new = tr.seam_repeats(machine((178.0, 181.0, "Hello there")),
+                               machine((179.5, 182.0, "General Kenobi")), (180.0, 360.0))
+    assert len(old) == 1 and len(new) == 1
+    old, new = tr.seam_repeats(machine((100.0, 104.0, "say it again")),
+                               machine((250.0, 254.0, "say it again")), (180.0, 360.0))
+    assert len(old) == 1 and len(new) == 1
+
+
+def test_the_store_keeps_a_seam_line_once_across_runs(tmp_path):
+    # Two requests that meet: the second range starts where the first ended.
+    media = tmp_path / "pod.mp3"
+    media.write_bytes(b"x")
+    store = tr.TranscriptStore(tmp_path / "t")
+    store.add(media, (0, 180), machine((178.1, 181.8, "so those of you that aren't aware")),
+              model="small.en")
+    t = store.add(media, (180, 360), machine((178.0, 182.5, "bit so those of you that aren't "
+                                              "aware converting the")), model="small.en")
+    assert [c.text for c in t.cues] == ["bit so those of you that aren't aware converting the"]

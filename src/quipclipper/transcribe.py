@@ -765,6 +765,45 @@ class Transcript:
                 "updated": self.updated, "engine": ENGINE}
 
 
+# EN-7, measured on wizrock at 8 chunk edges of a podcast (VAD) and a Darkplace episode: a
+# line that runs across a chunk's edge is heard by both chunks, each with the CONTEXT
+# decoded past the edge, and each can place its midpoint on its own side, so 3 lines were
+# kept twice ("So those of you that aren't aware…" at 178-182 s from both chunks). None of
+# the 42 lines near an edge was lost. A line of one chunk that overlaps a line of the other
+# at their shared edge and says the same words is a repeat: the longer of the two stays.
+SEAM_OVERLAP = 0.4  # of the shorter line's length
+SEAM_SAME = 70.0  # partial_ratio of the two lines' words
+
+
+def seam_repeats(old: list[Cue], new: list[Cue], span: Range) -> tuple[list[Cue], list[Cue]]:
+    """``old`` (the lines kept around ``span``) and ``new`` (the lines heard in it) with a
+    line heard on both sides of one of ``span``'s edges kept once, the longer version.
+    Only lines within ``CONTEXT`` of an edge are compared."""
+    s, e = span
+    near = lambda c, x: c.start < x + CONTEXT and c.end > x - CONTEXT  # noqa: E731
+    dropped_old: set[int] = set()
+    kept_new: list[Cue] = []
+    for n in new:
+        edge = s if near(n, s) else e if near(n, e) else None
+        twin = None
+        if edge is not None:
+            for i, o in enumerate(old):
+                if i in dropped_old or not near(o, edge):
+                    continue
+                shorter = max(min(o.end - o.start, n.end - n.start), 0.001)
+                overlap = min(o.end, n.end) - max(o.start, n.start)
+                if overlap >= SEAM_OVERLAP * shorter and \
+                        fuzz.partial_ratio(_norm(o.text), _norm(n.text)) >= SEAM_SAME:
+                    twin = i
+                    break
+        if twin is None:
+            kept_new.append(n)
+        elif len(_norm(n.text)) > len(_norm(old[twin].text)):
+            dropped_old.add(twin)
+            kept_new.append(n)
+    return [o for i, o in enumerate(old) if i not in dropped_old], kept_new
+
+
 def _stat(path: Path) -> tuple[float, int]:
     st = path.stat()
     return st.st_mtime, st.st_size
@@ -1015,7 +1054,8 @@ class TranscriptStore:
     def add(self, media: str | Path, done: Range, cues: list[Cue], *, model: str,
             language: str = "en") -> Transcript:
         """Record that ``done`` was transcribed with ``model``, saying ``cues``. Lines the
-        store held inside ``done`` are replaced (a re-run with a better model wins)."""
+        store held inside ``done`` are replaced (a re-run with a better model wins), and a
+        line heard on both sides of one of its edges is kept once (:func:`seam_repeats`)."""
         media = Path(media)
         with self._lock:
             t = self.load(media)
@@ -1025,6 +1065,7 @@ class TranscriptStore:
                                language=language)
             s, e = done
             keep = [c for c in t.cues if not (s <= (c.start + c.end) / 2 < e)]
+            keep, cues = seam_repeats(keep, cues, done)
             merged = sorted([*keep, *cues], key=lambda c: (c.start, c.end))
             t.cues = [Cue(i, c.start, c.end, c.text, source=MACHINE) for i, c in enumerate(merged)]
             t.ranges = union([*t.ranges, done], join=0.05)
