@@ -90,6 +90,11 @@ def test_refusals(log, why):
 
 def test_the_real_changelog_releases_without_its_held_blocks():
     text = (ROOT / "CHANGELOG.md").read_text()
+    if not cc.has_entries(cc.HELD.sub("", _section(text, "## [Unreleased]"))):
+        # Right after a release only the held-back blocks are left: nothing to cut yet.
+        with pytest.raises(ValueError, match="nothing to release"):
+            cc.cut(text, "99.0.0", "2099-01-01", "v0.2.0")
+        return
     out = cc.cut(text, "99.0.0", "2099-01-01", "v0.2.0")
     release = _section(out, "## [99.0.0] - 2099-01-01")
     for block in cc.HELD.findall(_section(text, "## [Unreleased]")):
