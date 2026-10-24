@@ -210,6 +210,29 @@
                 machine.succeed("runuser -u reader -- rm /var/lib/quipclipper-web/clips/probe/clip.txt")
                 machine.fail("test -e /var/lib/quipclipper-web/clips/probe/clip.txt")
 
+                # Pairing behind the gate: an app asks and polls without the password,
+                # listing and approving stay behind it, and the client token it collects
+                # then passes the gate on its own (nginx asks the backend about it).
+                import json
+                ask = machine.succeed(
+                    "curl -fsS -H 'X-Quipclipper: 1' -H 'Content-Type: application/json'"
+                    " -d '{\"name\": \"LeadStinger\", \"host\": \"vm\"}'"
+                    " http://localhost/api/pair")
+                pair = json.loads(ask)
+                poll = f"curl -fsS -H 'X-Pair-Secret: {pair['poll_secret']}' http://localhost/api/pair/{pair['id']}"
+                machine.succeed(f"{poll} -o /tmp/poll.json")
+                machine.succeed("grep -q pending /tmp/poll.json")
+                machine.fail("curl -fsS http://localhost/api/pair")
+                machine.fail(f"curl -fsS -X POST -H 'X-Quipclipper: 1' http://localhost/api/pair/{pair['id']}/approve")
+                machine.succeed(f"curl -fsS -u quip:test123 -X POST -H 'X-Quipclipper: 1' http://localhost/api/pair/{pair['id']}/approve")
+                token = json.loads(machine.succeed(poll))["token"]
+                machine.succeed(f"curl -fsS -H 'X-API-Key: {token}' http://localhost/api/library/roots -o /tmp/roots2.json")
+                machine.succeed("grep -q /srv/media /tmp/roots2.json")
+                machine.fail("curl -fsS -H 'X-API-Key: qcc_unknown' http://localhost/api/library/roots")
+                machine.succeed("curl -fsS -u quip:test123 http://localhost/api/config -o /tmp/cfg.json")
+                machine.succeed("grep -q '\"server_id\"' /tmp/cfg.json")
+                machine.succeed("test $(stat -c %a /var/lib/quipclipper-web/state/clients.json) = 600")
+
                 # nginx.enable = false: backend runs alone, no nginx, nothing on :80.
                 backendonly.wait_for_unit("quipclipper-web.service")
                 backendonly.wait_for_open_port(8000)

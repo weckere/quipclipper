@@ -35,9 +35,14 @@ if [ -n "${QC_PASSWORD:-}" ]; then
     # (root-only 600 makes credential checks fail with 500). Keep it off world.
     chown root:nginx "$htpw" 2>/dev/null || true
     chmod 640 "$htpw"
+    # A paired app (docs/API.md, Pairing) has its own client token instead of a login:
+    # `satisfy any` lets a request through when either the password or the token checks
+    # out, and the token is checked by the backend (location /_quip_client).
     {
         echo 'auth_basic "quipclipper";'
         echo "auth_basic_user_file $htpw;"
+        echo 'satisfy any;'
+        echo 'auth_request /_quip_client;'
     } > "$conf"
     echo "[quipclipper] HTTP basic auth enabled (user: $user)"
 else

@@ -281,6 +281,19 @@ scripts/release.sh leaves this block in Unreleased; delete the two marker lines 
   for the link fallback and the server name. The compose example has an optional, commented
   `advertise` service on the host's network. Uses python-zeroconf (LGPL-2.1, a new
   dependency). Tailnet-only installs should leave it off.
+- **Behind the password gate** (Docker image and NixOS module), nginx lets exactly
+  `POST /api/pair` and `GET /api/pair/<id>` through without the password, and lets a request
+  with a client token (`X-API-Key` or `Bearer`) through once the backend says it is current
+  (`satisfy any` with an `auth_request` to `/api/clients/check`); everything else still needs
+  the password. The API locations pass the browser's Host, port included, as `X-Quip-Host`,
+  so links without `QC_PUBLIC_URL` name the right port, and a proxy in front keeps its own
+  `X-Forwarded-*` headers. The VM test pairs through the gate.
+- **NixOS module:** `pairing.enable` (default true; false sets `QC_PAIRING=0`),
+  `serverName` (`QC_SERVER_NAME`), and `advertise.enable` / `advertise.port` (default off):
+  an Avahi service file with TXT `v=1` and `url` (`publicUrl`, else
+  `http://<hostName>.local:<port>`; no `id`, which is made at run time) and address
+  publishing, with a warning when every `nginx.listen` address looks unreachable from the
+  LAN (loopback, a Docker or private bridge, the tailnet).
 
 ### Fixed
 

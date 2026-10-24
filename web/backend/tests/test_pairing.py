@@ -562,6 +562,9 @@ def test_send_to_leadstinger_links_work_without_qc_public_url(tmp_path):
 
 @pytest.mark.parametrize("headers,expected", [
     ({"host": "nas:8896"}, "http://nas:8896"),
+    ({"host": "nas", "x-quip-host": "nas:8896"}, "http://nas:8896"),
+    ({"host": "nas", "x-quip-host": "nas:8896", "x-forwarded-host": "quip.example"},
+     "http://quip.example"),
     ({"host": "[::1]:8080"}, "http://[::1]:8080"),
     ({"host": "nas.example."}, "http://nas.example."),
     ({"host": "user@evil"}, None),

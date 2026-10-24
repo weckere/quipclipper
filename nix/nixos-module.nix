@@ -68,6 +68,39 @@ let
   # Local model files outside the store must be bound into the sandbox (ProtectHome).
   sttLocalFiles = lib.filter (p: !lib.hasPrefix builtins.storeDir p)
     (map (name: toString sttFiles.${name}) stt.models);
+  # Proxy headers for the API locations: X-Quip-Host is the Host the browser sent, port
+  # included ($host drops it; and nixpkgs' config check refuses `Host $http_host`), so
+  # links without publicUrl name the address it reached this site at; X-Real-IP is where a
+  # pairing request came from. Set here, with recommendedProxySettings off on these
+  # locations, so the global recommended settings don't put their own X-Forwarded-Proto
+  # and -Host over those of a proxy in front.
+  apiProxyHeaders = ''
+    proxy_set_header Host $host;
+    proxy_set_header X-Quip-Host $http_host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  '';
+  gated = cfg.passwordFile != null;
+  # A pairing request and its poll get past the password gate; nothing else does.
+  pairOpen = ''
+    auth_basic off;
+  '' + lib.optionalString gated ''
+    auth_request off;
+  '';
+  # LAN advertising (Avahi): where browsers reach this server, and what to call it.
+  advertisePort = cfg.advertise.port;
+  advertiseUrl =
+    if cfg.publicUrl != null then lib.removeSuffix "/" cfg.publicUrl
+    else "http://${config.networking.hostName}.local"
+      + lib.optionalString (advertisePort != 80) ":${toString advertisePort}";
+  # nginx listen addresses no other machine on the LAN can reach (loopback, a Docker or
+  # other private bridge, the tailnet): advertising those only tells the LAN it's there.
+  unreachableFromLan = addr:
+    let a = lib.removeSuffix "]" (lib.removePrefix "[" addr); in
+    a == "localhost" || a == "::1" || lib.hasPrefix "127." a
+    || builtins.match "172\\.(1[6-9]|2[0-9]|3[01])\\..*" a != null
+    || builtins.match "100\\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\..*" a != null
+    || lib.hasPrefix "fd7a:115c:a1e0:" a;
 in
 {
   options.services.quipclipper-web = {
@@ -119,6 +152,59 @@ in
         LeadStinger downloads the clip from there with the API token it was
         connected with (`apiTokenFile`). `null` turns those links off.
       '';
+    };
+
+    serverName = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      example = "Living room";
+      description = ''
+        The name paired apps show for this server (`QC_SERVER_NAME`, at most 63
+        characters), and the advertised name with `advertise.enable`. `null` uses the
+        host name.
+      '';
+    };
+
+    pairing.enable = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = ''
+        Pairing: an app such as LeadStinger asks for access (`POST /api/pair`), a person
+        approves it in the web UI (or with `pair.approve`), and the app gets its own
+        client token, revoked one at a time under Settings ▸ Connected apps. Behind
+        `passwordFile` the bundled nginx lets exactly `POST /api/pair` and
+        `GET /api/pair/<id>` through without the password, and lets a request with a
+        current client token through as the `api` login is. `false` sets
+        `QC_PAIRING=0`: every `/api/pair` route answers 404 (apps already paired keep
+        their tokens).
+      '';
+    };
+
+    advertise = {
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = ''
+          Announce this server on the local network with mDNS/Bonjour (Avahi), as
+          `_quipclipper._tcp` with TXT `v=1` and `url` (`publicUrl`, else
+          `http://<hostName>.local:<port>`), so LeadStinger lists it under "Find on
+          network". It turns on `services.avahi` with publishing (service and address
+          records). Off by default.
+
+          **Tailnet-only installs must leave this off**: it tells every device on the
+          LAN that quipclipper runs here, and where. Turn it on only when the site is
+          meant to be used from this LAN anyway (nginx listening on a LAN address). The
+          record leaves out the server's id (it is made at run time); LeadStinger reads
+          it from `/api/config`.
+        '';
+      };
+
+      port = lib.mkOption {
+        type = lib.types.port;
+        default = if cfg.nginx.enable then (builtins.head nginxListen).port or 80 else cfg.listenPort;
+        defaultText = lib.literalMD "the first `nginx.listen` port (`listenPort` without nginx)";
+        description = "The port browsers use, advertised in the record and its `url`.";
+      };
     };
 
     jellyfin = {
@@ -550,6 +636,14 @@ in
       members can't read clips created after startup. Use a setgid mode like
       "2775" so subdirs inherit clipsGroup.
     '' ++ lib.optional
+      (cfg.advertise.enable && cfg.nginx.enable
+        && lib.all (l: unreachableFromLan (l.addr or "0.0.0.0")) nginxListen) ''
+      services.quipclipper-web.advertise.enable is on, but every nginx.listen address
+      (${lib.concatMapStringsSep ", " (l: l.addr or "0.0.0.0") nginxListen}) looks
+      unreachable from the LAN (loopback, a Docker or private bridge, or the tailnet). The
+      LAN learns that quipclipper runs here and can't use it: tailnet-only installs should
+      leave advertising off.
+    '' ++ lib.optional
       (cfg.nginx.enable && !(builtins.elem cfg.listenAddress [ "127.0.0.1" "::1" "localhost" ])) ''
       services.quipclipper-web.listenAddress = "${cfg.listenAddress}" is not a
       loopback address, so the backend port (${toString cfg.listenPort}) is
@@ -611,6 +705,10 @@ in
         QC_MAX_CONCURRENT_JOBS = toString cfg.maxConcurrentJobs;
         QC_SUBTITLE_LANGS = lib.concatStringsSep "," cfg.subtitleLangs;
         QC_INDEX_CHECK_INTERVAL = toString cfg.indexCheckInterval;
+      } // lib.optionalAttrs (cfg.serverName != null) {
+        QC_SERVER_NAME = cfg.serverName;
+      } // lib.optionalAttrs (!cfg.pairing.enable) {
+        QC_PAIRING = "0";
       } // lib.optionalAttrs (cfg.youtubeDir != null) {
         QC_YOUTUBE_DIR = toString cfg.youtubeDir;
       } // lib.optionalAttrs (cfg.publicUrl != null) {
@@ -653,6 +751,15 @@ in
         # QC_PASSWORD; the Nix path takes a ready-made htpasswd `passwordFile`.)
         QC_PASSWORD = "set";
       };
+
+      # The advertised URL is the links' fallback without publicUrl (state_dir/advertise.json,
+      # as the Docker advertiser writes it); removed again when advertising is off.
+      preStart = if cfg.advertise.enable then ''
+        printf '%s\n' ${lib.escapeShellArg (builtins.toJSON { url = advertiseUrl; })} \
+          > ${stateDir}/advertise.json
+      '' else ''
+        rm -f ${stateDir}/advertise.json
+      '';
 
       serviceConfig = {
         ExecStart = lib.getExe webPkg;
@@ -721,7 +828,7 @@ in
 
     services.nginx = lib.mkIf cfg.nginx.enable {
       enable = true;
-      virtualHosts.${vhostName} = {
+      virtualHosts.${vhostName} = lib.mkMerge [ {
         # Catch-all only when asked and unnamed — a named vhost shouldn't grab
         # every unmatched request, and two services can't both be default_server.
         default = cfg.nginx.defaultServer && cfg.virtualHost == null;
@@ -751,6 +858,8 @@ in
         };
         locations."/api/" = {
           proxyPass = proxyTarget;
+          recommendedProxySettings = false;
+          extraConfig = apiProxyHeaders;
         };
         # Raw media streaming: don't spool large files through nginx's proxy
         # temp dir. Longest-prefix matching keeps /api/media/transcode (below)
@@ -836,7 +945,76 @@ in
           alias = "${cfg.clipsDir}/";
         };
         basicAuthFile = lib.mkIf (cfg.passwordFile != null) cfg.passwordFile;
-      };
+      } (lib.mkIf cfg.pairing.enable {
+        # Pairing (docs/API.md): an app asking for access (POST /api/pair) and polling its
+        # own request (GET /api/pair/<id>, which needs that request's poll secret) get past
+        # the password gate. Listing, approving and denying stay behind it.
+        locations."= /api/pair" = {
+          proxyPass = proxyTarget;
+          recommendedProxySettings = false;
+          extraConfig = apiProxyHeaders + ''
+            error_page 418 = @quipclipper_pair_open;
+            if ($request_method = POST) { return 418; }
+          '';
+        };
+        locations."@quipclipper_pair_open" = {
+          proxyPass = proxyTarget;
+          recommendedProxySettings = false;
+          extraConfig = apiProxyHeaders + pairOpen;
+        };
+        locations."~ ^/api/pair/[A-Za-z0-9_-]+$" = {
+          proxyPass = proxyTarget;
+          recommendedProxySettings = false;
+          extraConfig = apiProxyHeaders + pairOpen + ''
+            limit_except GET { deny all; }
+          '';
+        };
+      }) (lib.mkIf gated {
+        # A paired app's client token (qcc_..., as X-API-Key or Bearer) passes the gate like
+        # the api login: `satisfy any` takes the password or a token the backend says is
+        # current. A request with no client token is answered here, without the backend.
+        extraConfig = ''
+          satisfy any;
+          auth_request /_quipclipper_client;
+        '';
+        locations."= /_quipclipper_client" = {
+          proxyPass = "${proxyTarget}/api/clients/check";
+          recommendedProxySettings = false;
+          extraConfig = ''
+            internal;
+            set $quipclipper_client_token "";
+            if ($http_x_api_key ~ "^qcc_") { set $quipclipper_client_token 1; }
+            if ($http_authorization ~* "^bearer +qcc_") { set $quipclipper_client_token 1; }
+            if ($quipclipper_client_token = "") { return 401; }
+            proxy_pass_request_body off;
+            proxy_set_header Content-Length "";
+            proxy_set_header Host $host;
+          '';
+        };
+      }) ];
+    };
+
+    # LAN advertising (opt-in): a static Avahi service file, published with the host's
+    # address records so the advertised <hostName>.local resolves.
+    services.avahi = lib.mkIf cfg.advertise.enable {
+      enable = true;
+      publish.enable = true;
+      publish.addresses = lib.mkDefault true;
+      extraServiceFiles.quipclipper = ''
+        <?xml version="1.0" standalone="no"?>
+        <!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+        <service-group>
+          ${if cfg.serverName != null
+            then "<name>${lib.escapeXML cfg.serverName}</name>"
+            else ''<name replace-wildcards="yes">%h</name>''}
+          <service>
+            <type>_quipclipper._tcp</type>
+            <port>${toString advertisePort}</port>
+            <txt-record>v=1</txt-record>
+            <txt-record>url=${lib.escapeXML advertiseUrl}</txt-record>
+          </service>
+        </service-group>
+      '';
     };
 
     networking.firewall = lib.mkIf (cfg.openFirewall && cfg.nginx.enable) {

@@ -114,13 +114,15 @@ def request_base(headers: Mapping[str, str], scheme: str, root_path: str = "") -
     None when the request doesn't say well enough.
 
     A front proxy's ``X-Forwarded-Proto``, ``X-Forwarded-Host`` and ``X-Forwarded-Prefix``
-    win (a TLS proxy in front of nginx, a prefix it strips); else the ``Host`` header and
-    the connection's scheme. The bundled nginx passes ``Host`` with its port
-    (``$http_host``) and leaves the ``X-Forwarded-*`` headers to a proxy in front of it.
+    win (a TLS proxy in front of nginx, a prefix it strips); else ``X-Quip-Host``, the Host
+    the browser sent as the bundled nginx passes it on, port included (its own ``Host`` is
+    ``$host``, which drops the port); else ``Host``; and the connection's scheme. The
+    bundled nginx leaves the ``X-Forwarded-*`` headers to a proxy in front of it.
     A client can claim any of these, so the result only ever goes back to that client,
     in a link that LeadStinger asks about before it trusts the server."""
     proto = _first(headers.get("x-forwarded-proto")).lower() or (scheme or "").lower()
-    host = _first(headers.get("x-forwarded-host")) or (headers.get("host") or "").strip()
+    host = (_first(headers.get("x-forwarded-host")) or (headers.get("x-quip-host") or "").strip()
+            or (headers.get("host") or "").strip())
     prefix = _first(headers.get("x-forwarded-prefix")) or root_path or ""
     if proto not in ("http", "https") or not _HOST.match(host) or not _PATH_PREFIX.match(prefix):
         return None
