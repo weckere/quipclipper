@@ -283,6 +283,13 @@ Opening a file opens its workspace.
   from it (I) or up to it (O), and pressing them again moves that end. A clip of a range
   with no line has an empty `{cue}`, which the default name drops:
   `{source}/{timestamp}_{folder}`.
+  **Click a line's label** in the subtitle lane along the top (tap it on a touch screen) to
+  select exactly that line, as if you had picked it in the script: Before / After, the
+  dialogue map's amber band, play, Loop selection and Make clip follow, and the view stays
+  where it is. **Shift-click** another label to widen the selection to take it in (a range
+  dragged on the waveform grows to cover the line). Only a click selects the line: a drag
+  that starts on a label still drags out a range, and Shift-drag still pans. Machine
+  transcript lines (marked auto) work the same way.
   The selection's **in and out handles** are the Before / After padding: drag one (or
   focus it and use the arrow keys) and the fields follow; a negative value trims into the
   line. **Snap** pulls a dropped handle to the nearest **zero crossing** (on by default,
@@ -363,6 +370,10 @@ The web app aims at WCAG 2.2 AA.
   Alt one frame, Page Up/Down 1 s), **[** and **]** jump between them, **+** and **−**
   zoom. **I** and **O** set the in and out points at the playhead (and say where: "In at
   5:53.2"); the **Set in** and **Set out** buttons do the same.
+  The waveform's subtitle labels are one tab stop: **← →** move between lines (bringing
+  the line into view, and saying it), Home/End go to the first and last, **Enter** or
+  **Space** selects the line, **Shift+Enter** adds it to the selection, and **S** and **E**
+  set the selection's start and end on it, as in the script.
 - Jobs and Settings are dialogs: focus moves in, **Esc** closes them and returns focus.
   When a folder, a file or a page opens, focus moves to it.
 - One polite announcement says when a job finishes or fails, what the selection now is,

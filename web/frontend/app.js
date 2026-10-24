@@ -3589,9 +3589,13 @@ function selectCueRange(start, end) {
   clipLast = last;
   updateClipUI();  // sets the range, clears any match, highlights cues yellow
   scriptTabStop(first, false);  // Tab into the script lands on the selection
-  // Center the selection in the script panel.
+  scriptCenter(first);
+}
+
+/** Scroll line `idx` to the middle of the script panel. */
+function scriptCenter(idx) {
   const list = $("script-list");
-  const row = list.children[first];
+  const row = list.children[idx];
   if (row) {
     scriptProgScroll = true;
     const listRect = list.getBoundingClientRect();
@@ -3889,6 +3893,8 @@ const wf = {
   fromHandle: false, // the selection change came from a handle: don't move the view
   raf: 0, lastHead: null, nudgeTimer: null,
   auditionEnd: null, auditionTimer: null,
+  cue: -1,           // the line the cue lane's keyboard focus is on (an index into scriptCues)
+  hover: -1,         // the line whose label the pointer is over
 };
 let clipTargetOn = false;  // showClipTarget's state: a range is ready to clip
 
@@ -3970,7 +3976,7 @@ function wfReset(path, info, primaryVideo) {
   Object.assign(wf, {
     path, dur, view: [0, dur], data: null, base: null, filePeak: 0, keyframes: null, failed: false,
     audio: getSelectedAudio() ?? 0, hasVideo: !!primaryVideo,
-    fps: (primaryVideo && primaryVideo.frame_rate) || 0, lastHead: null,
+    fps: (primaryVideo && primaryVideo.frame_rate) || 0, lastHead: null, cue: -1, hover: -1,
   });
   $("waveform").hidden = false;
   wfNote("");
@@ -4233,7 +4239,10 @@ function wfDraw() {
   // Subtitle lines as labelled spans along the top.
   ctx.font = `11px ${getComputedStyle(document.body).fontFamily}`;
   ctx.textBaseline = "middle";
-  for (const cue of scriptCues) {
+  const lane = $("wf-cues");
+  lane.hidden = !scriptCues.some((cue) => !cue.synthetic);
+  for (let i = 0; i < scriptCues.length; i++) {
+    const cue = scriptCues[i];
     if (cue.synthetic || cue.end < a || cue.start > b) continue;
     const x0 = wfX(cue.start), x1 = wfX(cue.end);
     const l = Math.max(0, x0), r = Math.min(w, x1);
@@ -4256,13 +4265,27 @@ function wfDraw() {
       ctx.rect(l + 3, 0, r - l - 6, WF_CUE_LANE);
       ctx.clip();
       ctx.fillStyle = machine ? c.machine : c.text;
-      ctx.fillText((machine ? "auto: " : "") + (cue.speaker ? cue.speaker + ": " : "") + cue.text.replace(/\s+/g, " "), l + 4, WF_CUE_LANE / 2);
+      ctx.fillText((machine ? "auto: " : "") + wfCueText(cue), l + 4, WF_CUE_LANE / 2);
       ctx.restore();
+    }
+    if (i === wf.hover) {  // the label under the pointer: a click selects its line
+      ctx.strokeStyle = c.accent;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(l + 0.5, 1.5, r - l - 1, WF_CUE_LANE - 3);
     }
     // Faint cue edges down through the wave, so you see where the line sits in the sound.
     ctx.fillStyle = c.line;
     if (x0 >= 0) ctx.fillRect(x0, top, 1, bottom - top);
     if (x1 <= w) ctx.fillRect(x1 - 1, top, 1, bottom - top);
+  }
+  // The keyboard's line in the lane gets a focus ring, at least 8 px wide however short it is.
+  const fc = scriptCues[wf.cue];
+  if (fc && document.activeElement === lane && lane.matches(":focus-visible") && fc.end >= a && fc.start <= b) {
+    let l = Math.max(0, wfX(fc.start)), r = Math.min(w, wfX(fc.end));
+    if (r - l < 8) { const m = (l + r) / 2; l = Math.max(0, m - 4); r = Math.min(w, m + 4); }
+    ctx.strokeStyle = c.text;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(l + 1, 1, r - l - 2, WF_CUE_LANE - 2);
   }
 
   // Centre line, then the wave.
@@ -4600,6 +4623,144 @@ function wfSetPoint(k) {
 $("pb-set-in").onclick = () => wfSetPoint(0);
 $("pb-set-out").onclick = () => wfSetPoint(1);
 
+// --- the cue lane: a line's label selects it --------------------------------------------------
+//
+// A click (or a tap) on a line's label selects that line, as picking it in the script does,
+// and Shift-click widens the selection to take it in; a drag that starts on a label still
+// drag-selects. The lane is one tab stop (#wf-cues, its ring drawn on the canvas): ← → move
+// between lines, Enter or Space selects, Shift adds, S and E set the start and end as in the
+// script. It is a line selection, cut by clip.create --start/--end: no command of its own.
+
+/** The text a line's label shows. */
+const wfCueText = (cue) => (cue.speaker ? cue.speaker + ": " : "") + cue.text.replace(/\s+/g, " ");
+
+function wfPointerY(e) { return e.clientY - $("wf-stage").getBoundingClientRect().top; }
+
+/** The real line whose label is at (x, y) on the strip, or -1. A later line draws on top. */
+function wfCueAt(x, y) {
+  if (y < 0 || y >= WF_CUE_LANE) return -1;
+  const t = wfT(x);
+  for (let i = scriptCues.length - 1; i >= 0; i--) {
+    const c = scriptCues[i];
+    if (!c.synthetic && t >= c.start && t <= c.end) return i;
+  }
+  return -1;
+}
+
+/** Select line `i` as the script would. `extend` widens the selection to take it in (a
+ *  free range grows to cover it, keeping its own pads). The view stays: the label is on screen. */
+function wfSelectCue(i, extend) {
+  const cue = scriptCues[i];
+  if (!cue || cue.synthetic) return;
+  wf.cue = i;
+  wf.snapSeq++;  // a snap still on its way belongs to the selection this replaces
+  if (pb) pb.pause();
+  const lines = extend && hasClipRange();
+  const free = extend && !hasClipRange() ? wfAnchor() : null;
+  wf.fromHandle = true;
+  try {
+    if (free) {
+      showFreeRange(round6(Math.min(free[0], cue.start)), round6(Math.max(free[1], cue.end)));
+    } else {
+      clipFirst = lines ? Math.min(clipFirst, i) : i;
+      clipLast = lines ? Math.max(clipLast, i) : i;
+      updateClipUI();
+      scriptTabStop(i, false);
+      scriptCenter(i);
+    }
+  } finally {
+    wf.fromHandle = false;
+  }
+  wfCueName();
+  if (free) {
+    const sel = wfSel();
+    if (sel) announce(`Selected ${formatTimePrecise(sel[0], 1)} to ${formatTimePrecise(sel[1], 1)}`);
+  } else {
+    announceSelection();
+  }
+}
+
+/** Name the lane after the line it is on. */
+function wfCueName() {
+  const cue = scriptCues[wf.cue];
+  $("wf-cues").setAttribute("aria-label", cue && !cue.synthetic
+    ? `Select line: ${wfCueText(cue)}${cue.source === "machine" ? " (machine transcript)" : ""}`
+    : "Subtitle lines");
+}
+
+/** The pointer is over line `i`'s label (-1: none): outline it, and say what a click does. */
+function wfHover(i) {
+  const cue = scriptCues[i];
+  $("wf-cues").title = cue ? `${wfCueText(cue)}: click to select this line, Shift-click to add it to the selection`
+    : "Subtitle lines: click a label to select its line, Shift-click to add it";
+  if (i === wf.hover) return;
+  wf.hover = i;
+  $("wf-stage").classList.toggle("wf-on-cue", i >= 0);
+  wfDraw();
+}
+
+/** Put the lane's focus on line `i`, bringing it on screen, and say it when asked. */
+function wfFocusCue(i, say) {
+  const cue = scriptCues[i];
+  if (!cue || cue.synthetic) return;
+  wf.cue = i;
+  const [a, b] = wf.view, span = b - a;
+  if (cue.start < a || cue.end > b) {
+    if (cue.end - cue.start < span * 0.8) {
+      const m = (cue.start + cue.end) / 2;
+      wfSetView(m - span / 2, m + span / 2);
+    } else {
+      wfReveal(cue.start);
+    }
+  }
+  wfCueName();
+  wfDraw();
+  if (say) announce(`${cue.source === "machine" ? "Auto: " : ""}${wfCueText(cue)}, ${formatTime(cue.start)}`);
+}
+
+/** The next real line from `i` in direction `dir` (±1), or `i` at the ends. */
+function wfCueStep(i, dir) {
+  for (let j = i + dir; j >= 0 && j < scriptCues.length; j += dir) if (!scriptCues[j].synthetic) return j;
+  return i;
+}
+
+$("wf-cues").addEventListener("focus", () => {
+  // Start on the line already in hand if it is on screen, else the first one that is.
+  const [a, b] = wf.view;
+  const shown = (c) => c && !c.synthetic && c.end >= a && c.start <= b;
+  if (!shown(scriptCues[wf.cue])) {
+    const i = scriptCues.findIndex(shown);
+    wf.cue = i >= 0 ? i : wfCueStep(-1, 1);
+  }
+  wfFocusCue(wf.cue, false);
+});
+$("wf-cues").addEventListener("blur", wfDraw);
+// A mouse press is the strip's (a click selects, a drag drag-selects): it doesn't focus the lane.
+$("wf-cues").addEventListener("mousedown", (e) => e.preventDefault());
+// A screen reader's activation arrives as a click with no pointer behind it (detail 0).
+$("wf-cues").addEventListener("click", (e) => { if (!e.detail && wf.cue >= 0) wfSelectCue(wf.cue, e.shiftKey); });
+$("wf-cues").addEventListener("keydown", (e) => {
+  if (!wf.path || e.ctrlKey || e.metaKey || e.altKey || wf.cue < 0) return;
+  const last = wfCueStep(scriptCues.length, -1);
+  const to = { ArrowRight: wfCueStep(wf.cue, 1), ArrowLeft: wfCueStep(wf.cue, -1),
+    Home: wfCueStep(-1, 1), End: last }[e.key];
+  if (to !== undefined) {
+    e.preventDefault();
+    wfFocusCue(to, true);
+  } else if (e.key === "Enter" || e.key === " ") {
+    e.preventDefault();  // no click: the key is the activation
+    wfSelectCue(wf.cue, e.shiftKey);
+  } else if (e.key === "s" || e.key === "S" || e.key === "e" || e.key === "E") {
+    e.preventDefault();
+    wf.fromHandle = true;
+    try {
+      if (e.key === "s" || e.key === "S") setClipInAt(wf.cue); else setClipOutAt(wf.cue);
+    } finally {
+      wf.fromHandle = false;
+    }
+  }
+});
+
 // --- audition ---------------------------------------------------------------------------------
 
 /** Play `a..b` once and stop. A 20 ms timer watches the end (it keeps running in a
@@ -4678,7 +4839,8 @@ $("wf-stage").addEventListener("pointerdown", (e) => {
   if (e.button === 1) e.preventDefault();  // no autoscroll
   const touch = e.pointerType === "touch";
   const d = { kind: touch || e.shiftKey || e.button === 1 ? "pan" : "select",
-    x: wfPointerX(e), t: wfT(wfPointerX(e)), view: [...wf.view], moved: false, middle: e.button === 1 };
+    x: wfPointerX(e), t: wfT(wfPointerX(e)), view: [...wf.view], moved: false, middle: e.button === 1,
+    cue: wfCueAt(wfPointerX(e), wfPointerY(e)), shift: e.shiftKey };
   if (touch) {
     d.hold = setTimeout(() => {
       if (wf.drag !== d || d.moved) return;
@@ -4696,7 +4858,9 @@ $("wf-stage").addEventListener("contextmenu", (e) => { if (wf.drag) e.preventDef
 
 $("wf-stage").addEventListener("pointermove", (e) => {
   if (!wf.drag || !wf.pointers.has(e.pointerId)) {
-    if (wf.path && !e.target.closest(".wf-handle")) {
+    const free = wf.path && !e.target.closest(".wf-handle");
+    if (wf.path) wfHover(free ? wfCueAt(wfPointerX(e), wfPointerY(e)) : -1);
+    if (free) {
       $("wf-stage").title = `${formatTimePrecise(wfT(wfPointerX(e)), wfDecimals())}: click to play from here, ` +
         "drag to select, Shift-drag or scroll to pan, Ctrl/⌘-scroll or pinch to zoom";
     }
@@ -4717,6 +4881,7 @@ $("wf-stage").addEventListener("pointermove", (e) => {
     if (!d.moved) return;
     clearTimeout(d.hold);
     $("wf-stage").classList.add("wf-panning");
+    if (wf.hover >= 0) wfHover(-1);
     const dt = (-dx / wfWidth()) * (d.view[1] - d.view[0]);
     wfSetView(d.view[0] + dt, d.view[1] + dt);
   } else if (d.kind === "select") {
@@ -4724,6 +4889,7 @@ $("wf-stage").addEventListener("pointermove", (e) => {
     if (!d.moved && Math.abs(x - d.x) <= WF_DRAG_PX) return;
     if (!d.moved) {
       d.moved = true;
+      if (wf.hover >= 0) wfHover(-1);  // a drag from a label selects across, not the line
       d.t = wfCueSnap(d.t);
       if (pb) pb.pause();
       wf.snapSeq++;  // a snap still on its way belongs to the selection this replaces
@@ -4752,10 +4918,12 @@ function wfPointerEnd(e) {
   } else if (d.kind === "select" && d.moved) {
     wfSnapRange();
   } else if (!d.moved && !d.held && !d.middle && e.type === "pointerup") {
-    seekTo(Math.max(0, Math.min(wf.dur, wfT(wfPointerX(e)))));  // a click plays from there
+    if (d.cue >= 0) wfSelectCue(d.cue, d.shift);  // a click on a line's label selects the line
+    else seekTo(Math.max(0, Math.min(wf.dur, wfT(wfPointerX(e)))));  // elsewhere it plays from there
   }
 }
 $("wf-stage").addEventListener("pointerup", wfPointerEnd);
+$("wf-stage").addEventListener("pointerleave", () => { if (wf.path && !wf.drag) wfHover(-1); });
 $("wf-stage").addEventListener("pointercancel", wfPointerEnd);
 
 $("wf-in").addEventListener("keydown", (e) => wfHandleKey(e, 0));

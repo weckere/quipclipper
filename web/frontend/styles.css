@@ -909,6 +909,8 @@ footer { padding: 2rem 1.25rem; font-size: 0.8rem; }
   background: var(--sunken); border-radius: var(--radius-sm); overflow: hidden;
   user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
 }
+/* A line's label in the cue lane: a click selects the line. */
+.wf-stage.wf-on-cue { cursor: pointer; }
 .wf-stage.wf-panning { cursor: grabbing; }
 /* A held touch is about to drag out a selection. */
 .wf-stage.wf-holding { box-shadow: inset 0 0 0 2px var(--accent); }
@@ -922,6 +924,13 @@ footer { padding: 2rem 1.25rem; font-size: 0.8rem; }
 }
 .wf-stage[aria-busy="true"] .wf-veil { opacity: 0.85; }
 @media (prefers-reduced-motion: reduce) { .wf-veil { transition: none; } }
+/* The cue lane's one tab stop: the labels, and its focus ring around the line the arrow keys
+   are on, are drawn on the canvas under it. */
+.wf-cues {
+  position: absolute; left: 0; right: 0; top: 0; height: 18px; margin: 0; padding: 0;
+  border: 0; background: transparent; cursor: inherit; outline: none;
+}
+.wf-cues[hidden] { display: none; }
 .wf-head { position: absolute; top: 0; bottom: 16px; width: 2px; margin-left: -1px; background: var(--playhead); pointer-events: none; }
 .wf-handle {
   position: absolute; top: 0; bottom: 16px; width: 2px; margin-left: -1px; background: var(--accent);

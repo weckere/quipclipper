@@ -137,6 +137,12 @@ scripts/release.sh leaves this block in Unreleased; delete the two marker lines 
   **O** (and **Set in** / **Set out** by the play button) put the in or out point at the
   playhead, and start a 2 s range when nothing is selected. ★ Bookmark now saves a free
   range (a waveform range, a loaded bookmark, a whole clip) instead of staying disabled.
+- **Click a subtitle label on the waveform to select its line:** a click (or a tap) on a line's
+  label along the top of the waveform selects exactly that line, as picking it in the script
+  does, and Shift-click widens the selection to take it in (a dragged range grows to cover it).
+  Labels show a pointer and an outline on hover. A drag that starts on a label still
+  drag-selects. From the keyboard the labels are one tab stop: ← → move between lines,
+  Enter or Space selects, Shift adds, S and E set the start and end.
 - **Waveform zoom waits in grey:** after a zoom or a pan the wave turns grey (the strip is
   `aria-busy`) until the peaks for the new view arrive, instead of drawing the previous,
   coarser view stretched into blocks. Only sound at least as sharp as the view needs is

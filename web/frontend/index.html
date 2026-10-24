@@ -370,11 +370,12 @@
               <div id="wf-stage" class="wf-stage" title="Click to play from here, drag to select, Shift-drag or scroll to pan, Ctrl/⌘-scroll or pinch to zoom">
                 <canvas id="wf-canvas" aria-hidden="true"></canvas>
                 <div class="wf-veil" aria-hidden="true"></div>
+                <button type="button" id="wf-cues" class="wf-cues" aria-label="Subtitle lines" aria-describedby="wf-cues-help" title="Subtitle lines: click a label to select its line, Shift-click to add it" hidden></button>
                 <div id="wf-head" class="wf-head" hidden></div>
                 <div id="wf-in" class="wf-handle wf-in" role="slider" tabindex="0" aria-label="In point" title="In point: drag it, or ← → 10 ms (Shift 100 ms, Alt one frame); [ and ] jump between the handles" hidden><span class="wf-grip" aria-hidden="true"></span></div>
                 <div id="wf-out" class="wf-handle wf-out" role="slider" tabindex="0" aria-label="Out point" title="Out point: drag it, or ← → 10 ms (Shift 100 ms, Alt one frame); [ and ] jump between the handles" hidden><span class="wf-grip" aria-hidden="true"></span></div>
               </div>
-              <p class="wf-hint"><span class="wf-hint-fine">Drag to select, Shift-drag or scroll to pan, click to play from there.</span><span class="wf-hint-touch">Long-press, then drag, to select; drag to pan; tap to play from there.</span> <kbd>I</kbd> and <kbd>O</kbd> set the in and out points at the playhead.</p>
+              <p class="wf-hint"><span class="wf-hint-fine">Drag to select, Shift-drag or scroll to pan, click to play from there; click a line's label to select the line, Shift-click to add it.</span><span class="wf-hint-touch">Long-press, then drag, to select; drag to pan; tap to play from there, or tap a line's label to select the line.</span> <kbd>I</kbd> and <kbd>O</kbd> set the in and out points at the playhead.<span id="wf-cues-help" class="visually-hidden"> On the subtitle lines, ← and → move between lines, Enter selects the line, Shift+Enter adds it to the selection, and S and E set the start and end.</span></p>
               <p class="wf-notes"><span id="wf-cut-note"></span> <span id="wf-note" role="status"></span></p>
             </div>
             <div id="playback-controls" class="playback-controls">
