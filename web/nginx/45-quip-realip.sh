@@ -8,7 +8,10 @@
 set -e
 
 conf="${QC_REALIP_CONF:-/etc/nginx/quip-realip.conf}"  # overridable for tests
+# The same list for nginx.conf's geo, which passes Tailscale-User-* on only from these.
+geo="$(dirname "$conf")/quip-trusted-proxies.conf"
 : > "$conf"
+: > "$geo"
 
 if [ -n "${QC_TRUSTED_PROXIES:-}" ]; then
     header="${QC_REAL_IP_HEADER:-X-Forwarded-For}"
@@ -21,6 +24,7 @@ if [ -n "${QC_TRUSTED_PROXIES:-}" ]; then
             *[!0-9A-Fa-f.:/]*|'') echo "[quipclipper] QC_TRUSTED_PROXIES: '$p' isn't an IP address or CIDR range; skipped" >&2; continue ;;
         esac
         printf 'set_real_ip_from %s;\n' "$p" >> "$conf"
+        printf '%s 1;\n' "$p" >> "$geo"
     done
     if [ -s "$conf" ]; then
         printf 'real_ip_header %s;\n' "$header" >> "$conf"

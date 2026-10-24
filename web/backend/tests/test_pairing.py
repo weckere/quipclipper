@@ -24,11 +24,13 @@ CSRF = {"X-Quipclipper": "1"}
 ASK = {"name": "LeadStinger", "host": "laptop"}
 
 
-def _client(tmp_path: Path, **env: str) -> TestClient:
+def _client(tmp_path: Path, peer: str = "127.0.0.1", **env: str) -> TestClient:
+    """A client whose requests come from ``peer``: by default loopback, where the bundled
+    nginx connects from, so its X-Real-IP and Tailscale-User-* headers are believed."""
     clips = tmp_path / "clips"
-    clips.mkdir(exist_ok=True)
+    clips.mkdir(parents=True, exist_ok=True)
     base = {"QC_STATE_DIR": str(tmp_path / "state"), "QC_CLIPS_DIR": str(clips)}
-    return TestClient(create_app(Settings.from_env({**base, **env})))
+    return TestClient(create_app(Settings.from_env({**base, **env})), client=(peer, 50000))
 
 
 def _start(c: TestClient, body: dict | None = None, **headers: str):
@@ -70,8 +72,8 @@ def test_pairing_happy_path(tmp_path):
     listed = c.get("/api/pair").json()["requests"]
     assert len(listed) == 1
     row = listed[0]
-    assert set(row) == {"id", "name", "host", "code", "address", "created", "expires_at",
-                        "scopes"}
+    assert set(row) == {"id", "name", "host", "code", "address", "user", "user_name",
+                        "created", "expires_at", "scopes"}
     assert row["scopes"] is None   # asked for none: full access
     assert (row["id"], row["name"], row["host"], row["code"]) == (
         req["id"], "LeadStinger", "laptop", req["code"])
@@ -91,7 +93,8 @@ def test_pairing_happy_path(tmp_path):
     clients = c.get("/api/clients").json()["clients"]
     assert [(x["id"], x["name"], x["host"]) for x in clients] == [
         (client_id, "LeadStinger", "laptop")]
-    assert set(clients[0]) == {"id", "name", "host", "created", "last_used", "scopes"}
+    assert set(clients[0]) == {"id", "name", "host", "address", "user", "user_name",
+                               "created", "last_used", "scopes"}
     assert clients[0]["scopes"] is None
 
 
@@ -193,7 +196,100 @@ def test_the_request_shows_where_it_came_from(tmp_path):
     _start(c, **{"X-Real-IP": "192.168.1.20"})
     _start(c, **{"X-Real-IP": "not an address"})
     assert [r["address"] for r in c.get("/api/pair").json()["requests"]] == [
-        "192.168.1.20", "testclient"]
+        "192.168.1.20", "127.0.0.1"]
+
+
+# --- who is asking (quipclipper_web.caller) ------------------------------------------------
+
+TS = {"X-Real-IP": "100.116.110.76", "Tailscale-User-Login": "wiz@example.com",
+      "Tailscale-User-Name": "Wiz Example"}
+
+
+def _asked(c: TestClient) -> dict:
+    (row,) = c.get("/api/pair").json()["requests"]
+    return row
+
+
+def test_behind_tailscale_serve_the_request_names_the_tailnet_user(tmp_path):
+    c = _client(tmp_path)
+    _start(c, **TS)
+    row = _asked(c)
+    assert (row["address"], row["user"], row["user_name"]) == (
+        "100.116.110.76", "wiz@example.com", "Wiz Example")
+    # Allowed, the app keeps who asked for it: Connected apps shows it.
+    c.post(f"/api/pair/{row['id']}/approve", headers=CSRF)
+    (app,) = c.get("/api/clients").json()["clients"]
+    assert (app["address"], app["user"], app["user_name"]) == (
+        "100.116.110.76", "wiz@example.com", "Wiz Example")
+
+
+def test_a_direct_caller_cannot_say_who_it_is(tmp_path):
+    # Not the bundled nginx (not in QC_FORWARDED_ALLOW_IPS): its headers count for nothing.
+    c = _client(tmp_path, peer="192.168.1.50")
+    _start(c, **TS)
+    row = _asked(c)
+    assert (row["address"], row["user"], row["user_name"]) == ("192.168.1.50", "", "")
+
+
+def test_a_spoofed_address_does_not_dodge_the_rate_limit(tmp_path):
+    c = _client(tmp_path, peer="192.168.1.50")
+    for i in range(10):
+        req = _start(c, **{"X-Real-IP": f"10.0.0.{i}"}).json()
+        c.post(f"/api/pair/{req['id']}/deny", headers=CSRF)
+    assert _start(c, **{"X-Real-IP": "10.0.0.99"}).status_code == 429
+
+
+def test_trusted_proxies_are_configurable(tmp_path):
+    c = _client(tmp_path, peer="172.18.0.5", QC_FORWARDED_ALLOW_IPS="172.18.0.0/16, ::1")
+    _start(c, **TS)
+    assert _asked(c)["user"] == "wiz@example.com"
+    # Loopback is no longer trusted once the list leaves it out.
+    c = _client(tmp_path / "b", QC_FORWARDED_ALLOW_IPS="172.18.0.0/16")
+    _start(c, **TS)
+    assert (_asked(c)["address"], _asked(c)["user"]) == ("127.0.0.1", "")
+    with pytest.raises(ValueError, match="QC_FORWARDED_ALLOW_IPS"):
+        Settings.from_env({"QC_FORWARDED_ALLOW_IPS": "nginx"})
+
+
+def test_the_proxy_secret_vouches_for_any_peer(tmp_path):
+    # With QC_PROXY_SECRET only nginx gets a request in at all, from any address.
+    c = _client(tmp_path, peer="172.20.0.3", QC_PROXY_SECRET="s3cret")
+    c.headers["X-Quip-Proxy-Secret"] = "s3cret"
+    _start(c, **TS)
+    row = _asked(c)
+    assert (row["address"], row["user"]) == ("100.116.110.76", "wiz@example.com")
+
+
+def test_forwarded_names_are_plain_text(tmp_path):
+    c = _client(tmp_path)
+    _start(c, **{"X-Real-IP": "100.64.0.9", "Tailscale-User-Login": "jo@example.com",
+                 "Tailscale-User-Name": "=?utf-8?q?Jos=C3=A9?="})
+    assert _asked(c)["user_name"] == "José"
+    # A name without a login is no identity; and control characters never get through.
+    from quipclipper_web import caller
+    got = caller.caller({"tailscale-user-name": "Mallory"}, "127.0.0.1",
+                        caller.parse_networks(caller.DEFAULT_TRUSTED))
+    assert (got["user"], got["user_name"]) == ("", "")
+    got = caller.caller({"tailscale-user-login": "a\x1b[31mb@example.com" + "x" * 300},
+                        "::ffff:127.0.0.1", caller.parse_networks("127.0.0.1"))
+    assert got["user"].startswith("a[31mb@example.com") and len(got["user"]) == 200
+
+
+def test_unknown_peer_and_bad_real_ip(tmp_path):
+    from quipclipper_web import caller
+    nets = caller.parse_networks(caller.DEFAULT_TRUSTED)
+    assert caller.caller({"x-real-ip": "1.2.3.4"}, None, nets)["address"] == "unknown"
+    assert caller.caller({"x-real-ip": "1.2.3.4"}, "testclient", nets)["address"] == "testclient"
+    assert caller.caller({"x-real-ip": "nope"}, "::1", nets)["address"] == "::1"
+
+
+def test_clients_from_before_the_caller_fields_still_list(tmp_path):
+    store = pairing.ClientStore(tmp_path)
+    store.path.write_text(json.dumps({"clients": [{
+        "id": "old", "name": "LeadStinger", "host": "mac", "token_sha256": "0" * 64,
+        "created": "2026-10-24T00:00:00Z", "last_used": None}]}))
+    (row,) = store.list()
+    assert (row["address"], row["user"], row["user_name"]) == ("", "", "")
 
 
 # --- expiry, with a clock ------------------------------------------------------------------
@@ -399,7 +495,8 @@ def test_the_store_keeps_only_a_hash_in_a_private_file(tmp_path):
     text = path.read_text()
     assert token not in text
     row = json.loads(text)["clients"][0]
-    assert set(row) == {"id", "name", "host", "token_sha256", "created", "last_used"}
+    assert set(row) == {"id", "name", "host", "address", "user", "user_name",
+                        "token_sha256", "created", "last_used"}
     assert row["token_sha256"] == hashlib.sha256(token.encode()).hexdigest()
     assert not [p for p in path.parent.iterdir() if p.name.startswith(".clients.json")]
 
@@ -638,6 +735,18 @@ def test_a_request_names_its_scopes_and_the_token_keeps_them(tmp_path):
         "index.file", "transcripts.read"]
     saved = json.loads((tmp_path / "state" / "clients.json").read_text())["clients"][0]
     assert saved["scopes"] == ["index.file", "transcripts.read"]
+
+
+def test_a_scoped_request_shows_its_scopes_and_who_asked(tmp_path):
+    c = _client(tmp_path)
+    req = _start(c, {"name": "Jellyfin", "host": "tv", "scopes": ["index.file"]}, **TS).json()
+    row = _asked(c)
+    assert (row["scopes"], row["user"], row["address"]) == (
+        ["index.file"], "wiz@example.com", "100.116.110.76")
+    c.post(f"/api/pair/{req['id']}/approve", headers=CSRF)
+    (app,) = c.get("/api/clients").json()["clients"]
+    assert (app["scopes"], app["user"], app["user_name"], app["address"]) == (
+        ["index.file"], "wiz@example.com", "Wiz Example", "100.116.110.76")
 
 
 @pytest.mark.parametrize("scopes", [[], ["everything"], ["index.file", "clips.delete"], "index.file",

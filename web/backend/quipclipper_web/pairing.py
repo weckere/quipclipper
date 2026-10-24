@@ -47,6 +47,7 @@ CODE_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ"  # no 0/O, 1/I/L
 CODE_LENGTH = 4
 EXPIRES_IN = 600          # s a request waits for a person
 MAX_PENDING = 5           # pending requests at once, from everyone
+CALLER_FIELDS = ("address", "user", "user_name")   # who asked to pair (quipclipper_web.caller)
 RATE_PER_MINUTE = 10      # new requests a minute from one client address
 # A denied or expired request still answers its poller for this long, then it is gone.
 # An approved one waits at least this long for its poll to collect the token.
@@ -239,8 +240,9 @@ def _new_id(nbytes: int) -> str:
             return rid
 
 class ClientStore:
-    """Paired apps, in ``state_dir/clients.json``: ``{"clients": [{id, name, host,
-    token_sha256, created, last_used, scopes?}]}`` (no ``scopes``: full access). The token itself is never stored; it is handed
+    """Paired apps, in ``state_dir/clients.json``: ``{"clients": [{id, name, host, address,
+    user, user_name, token_sha256, created, last_used, scopes?}]}`` (no ``scopes``: full
+    access). The token itself is never stored; it is handed
     to the app once, by the poll that collects an approval."""
 
     def __init__(self, state_dir: Path, clock: Callable[[], float] = time.time):
@@ -290,14 +292,17 @@ class ClientStore:
     def public(row: dict) -> dict:
         out = {k: row.get(k) for k in ("id", "name", "host", "created", "last_used")}
         out["scopes"] = row_scopes(row)
+        # Who asked to pair it (quipclipper_web.caller); "" in rows paired before it was kept.
+        out.update({k: row.get(k) or "" for k in CALLER_FIELDS})
         return out
 
-    def add(self, name: str, host: str,
-            scopes: tuple[str, ...] | None = None) -> tuple[dict, str]:
+    def add(self, name: str, host: str, scopes: tuple[str, ...] | None = None,
+            caller: dict | None = None) -> tuple[dict, str]:
         """A new client and its token (the only copy of it). ``scopes``: what the token
-        may do; None for everything."""
+        may do; None for everything. ``caller`` is who asked (quipclipper_web.caller)."""
         token = TOKEN_PREFIX + secrets.token_urlsafe(32)
         row = {"id": _new_id(9), "name": name, "host": host,
+               **{k: (caller or {}).get(k) or "" for k in CALLER_FIELDS},
                "token_sha256": token_sha256(token), "created": iso(self.clock()),
                "last_used": None}
         if scopes is not None:
@@ -387,10 +392,15 @@ class _Request:
     token: str | None = field(default=None, repr=False)
     client_id: str | None = None
     scopes: tuple[str, ...] | None = None   # None: the app asked for full access
+    user: str = ""                   # the tailnet login behind Tailscale serve, if any
+    user_name: str = ""
+
+    def caller(self) -> dict:
+        return {"address": self.address, "user": self.user, "user_name": self.user_name}
 
     def public(self) -> dict:
         return {"id": self.id, "name": self.name, "host": self.host, "code": self.code,
-                "address": self.address, "created": iso(self.created),
+                **self.caller(), "created": iso(self.created),
                 "expires_at": iso(self.expires_at),
                 "scopes": list(self.scopes) if self.scopes is not None else None}
 
@@ -431,10 +441,14 @@ class Pairing:
             if code not in taken:
                 return code
 
-    def start(self, name: str, host: str, address: str,
+    def start(self, name: str, host: str, caller: dict | str,
               scopes: tuple[str, ...] | None = None) -> dict:
-        """A new pending request (for ``scopes``, checked by :func:`check_scopes`; None
-        for full access). Raises PairError(429) past either cap."""
+        """A new pending request from ``caller`` (quipclipper_web.caller's dict, or a bare
+        address), for ``scopes`` (checked by :func:`check_scopes`; None for full access).
+        Raises PairError(429) past either cap."""
+        if isinstance(caller, str):
+            caller = {"address": caller}
+        address = caller.get("address") or "unknown"
         now = self.clock()
         with self._lock:
             self._tidy(now)
@@ -449,7 +463,8 @@ class Pairing:
             times.append(now)
             r = _Request(id=_new_id(16), name=name, host=host, code=self._code(),
                          address=address, poll_secret=secrets.token_urlsafe(32),
-                         created=now, expires_at=now + EXPIRES_IN, scopes=scopes)
+                         created=now, expires_at=now + EXPIRES_IN, scopes=scopes,
+                         user=caller.get("user") or "", user_name=caller.get("user_name") or "")
             self._requests[r.id] = r
             return {"id": r.id, "code": r.code, "poll_secret": r.poll_secret,
                     "expires_in": EXPIRES_IN}
@@ -491,7 +506,7 @@ class Pairing:
             r = self._requests.get(request_id)
             if r is None or r.status != "pending":
                 return None
-            client, token = self.clients.add(r.name, r.host, r.scopes)
+            client, token = self.clients.add(r.name, r.host, r.scopes, r.caller())
             r.status, r.settled_at, r.token, r.client_id = "approved", now, token, client["id"]
             return {"status": "approved", "client_id": client["id"]}
 

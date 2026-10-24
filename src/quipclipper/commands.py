@@ -705,8 +705,8 @@ COMMANDS: tuple[Command, ...] = (
 
     # --- pairing: an app such as LeadStinger asks for access, a person lets it in ----------
     Command("pair.list", "List the apps waiting for access (pairing requests): their name, "
-            "host, code, address, expiry, and the scopes they ask for (none: full access).",
-            "GET", "/api/pair",
+            "host, code, who asked (address, tailnet user), expiry, and the scopes they ask "
+            "for (none: full access).", "GET", "/api/pair",
             ui="The pairing banner on every page"),
     Command("pair.approve", "Let an app in: approve its pairing request. Check first that "
             "the code is the one the app shows. Its next poll collects its own client token.",
@@ -722,8 +722,8 @@ COMMANDS: tuple[Command, ...] = (
 
     # --- connected apps (paired clients) ------------------------------------------------------
     Command("clients.list", "List the connected apps: name, host, what each may do (its "
-            "scopes, or full access), when they paired and when they were last used.",
-            "GET", "/api/clients",
+            "scopes, or full access), who paired them (address, tailnet user), when they "
+            "paired and when they were last used.", "GET", "/api/clients",
             ui="Settings ▸ Connected apps"),
     Command("clients.revoke", "Disconnect an app: revoke its client token. 'self' revokes "
             "the client token this CLI is using.", "DELETE", "/api/clients/{client_id}",

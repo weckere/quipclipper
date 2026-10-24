@@ -17,7 +17,6 @@ import binascii
 import contextlib
 import hashlib
 import hmac
-import ipaddress
 import json
 import os
 import re
@@ -80,6 +79,7 @@ from quipclipper_web import (
     __version__, clipmeta, deeplinks, epub_items, file_index, jellyfin, jellyfin_index, lib_index,
     library, lslink, lsset, media, pairing, peaks, youtube_items,
 )
+from quipclipper_web import caller as caller_mod
 from quipclipper_web import index_changes as index_changes_mod
 from quipclipper_web.bookmarks import BookmarkStore
 from quipclipper_web.config import Settings
@@ -532,14 +532,11 @@ def _client_token_status(request: Request, clients: pairing.ClientStore):
     return None, None
 
 
-def _client_address(request: Request) -> str:
-    """Where a request came from: the address the bundled nginx reports (``X-Real-IP``,
-    which it always sets), else the connection's peer."""
-    real = request.headers.get("x-real-ip", "").strip()
-    try:
-        return str(ipaddress.ip_address(real))
-    except ValueError:
-        return request.client.host if request.client else "unknown"
+def _caller(request: Request, settings: Settings) -> dict:
+    """Who sent a request (quipclipper_web.caller): what the bundled nginx says, when the
+    connection is from a trusted proxy or carried the proxy secret, else its own peer."""
+    return caller_mod.caller(request.headers, request.client.host if request.client else None,
+                             settings.trusted_proxies, proxied=bool(settings.proxy_secret))
 
 
 _PAIR_ROUTE = re.compile(r"^/api/pair(?:/|$)")
@@ -3747,7 +3744,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         it polls with. No token; behind the password gate, nginx lets this through.
         ``scopes`` limits what the token will open (M22); the banner names them."""
         try:
-            return pairs.start(req.name, req.host, _client_address(request),
+            return pairs.start(req.name, req.host, _caller(request, settings),
                                tuple(req.scopes) if req.scopes is not None else None)
         except pairing.PairError as exc:
             raise HTTPException(status_code=exc.status, detail=exc.detail)

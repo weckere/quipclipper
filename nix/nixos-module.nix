@@ -76,14 +76,34 @@ let
   # Proxy headers for the API locations: X-Quip-Host is the Host the browser sent, port
   # included ($host drops it; and nixpkgs' config check refuses `Host $http_host`), so
   # links without publicUrl name the address it reached this site at; X-Real-IP is where a
-  # pairing request came from. Set here, with recommendedProxySettings off on these
-  # locations, so the global recommended settings don't put their own X-Forwarded-Proto
-  # and -Host over those of a proxy in front.
+  # pairing request came from, and Tailscale-User-Login/-Name who (only from a
+  # `nginx.trustedProxies` peer, else blanked: see trustedProxyHttp). Set here, with
+  # recommendedProxySettings off on these locations, so the global recommended settings
+  # don't put their own X-Forwarded-Proto and -Host over those of a proxy in front.
   apiProxyHeaders = ''
     proxy_set_header Host $host;
     proxy_set_header X-Quip-Host $http_host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header Tailscale-User-Login $quipclipper_ts_login;
+    proxy_set_header Tailscale-User-Name $quipclipper_ts_name;
+  '';
+  # Who the caller is, behind Tailscale serve: $realip_remote_addr is the connection's own
+  # peer, so only a `nginx.trustedProxies` peer's Tailscale-User-* headers get through; from
+  # anyone else they're blanked (an empty proxy_set_header drops them).
+  trustedProxyHttp = ''
+    geo $realip_remote_addr $quipclipper_via_proxy {
+      default 0;
+    '' + lib.concatMapStrings (p: "  ${p} 1;\n") cfg.nginx.trustedProxies + ''
+    }
+    map $quipclipper_via_proxy $quipclipper_ts_login {
+      1 $http_tailscale_user_login;
+      default "";
+    }
+    map $quipclipper_via_proxy $quipclipper_ts_name {
+      1 $http_tailscale_user_name;
+      default "";
+    }
   '';
   gated = cfg.passwordFile != null;
   # A pairing request and its poll get past the password gate; nothing else does.
@@ -428,7 +448,9 @@ in
           as a Tailscale serve sidecar, Caddy or Traefik. For requests from them, nginx takes
           the client's address from `nginx.realIpHeader` (`set_real_ip_from`), so the
           pairing banner's "From", its per-address rate limit and nginx's own `allow`/`deny`
-          see the real caller instead of the proxy. List only proxies you control: a client
+          see the real caller instead of the proxy. Their `Tailscale-User-Login` / `-Name`
+          headers (Tailscale serve's tailnet user) are passed on too; anyone else's are
+          dropped. List only proxies you control: a client
           that can reach nginx from a listed address can claim any address.
         '';
       };
@@ -868,6 +890,7 @@ in
 
     services.nginx = lib.mkIf cfg.nginx.enable {
       enable = true;
+      appendHttpConfig = trustedProxyHttp;
       virtualHosts.${vhostName} = lib.mkMerge [ {
         # Catch-all only when asked and unnamed — a named vhost shouldn't grab
         # every unmatched request, and two services can't both be default_server.

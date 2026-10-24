@@ -17,6 +17,8 @@ from pathlib import Path
 
 from quipclipper.transcribe import WhisperConfig
 
+from quipclipper_web import caller
+
 log = logging.getLogger(__name__)
 
 
@@ -142,6 +144,9 @@ class Settings:
     # browsers use (QC_ADVERTISE_PORT), which may differ from QC_PORT behind nginx.
     advertise: bool = False
     advertise_port: int | None = None
+    # Peers whose X-Real-IP and Tailscale-User-* headers say who the caller is
+    # (QC_FORWARDED_ALLOW_IPS; quipclipper_web.caller): the bundled nginx. Default loopback.
+    trusted_proxies: tuple = caller.parse_networks(caller.DEFAULT_TRUSTED)
 
     @property
     def jellyfin_enabled(self) -> bool:
@@ -233,4 +238,6 @@ class Settings:
             server_name=e.get("QC_SERVER_NAME", "").strip(),
             advertise=_switch(e.get("QC_ADVERTISE"), default=False),
             advertise_port=int(e["QC_ADVERTISE_PORT"]) if e.get("QC_ADVERTISE_PORT") else None,
+            trusted_proxies=caller.parse_networks(
+                e.get("QC_FORWARDED_ALLOW_IPS", caller.DEFAULT_TRUSTED)),
         )

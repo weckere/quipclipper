@@ -11,7 +11,8 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends apache2-utils ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \
     && : > /etc/nginx/quip-auth.conf \
-    && : > /etc/nginx/quip-proxy.conf
+    && : > /etc/nginx/quip-proxy.conf \
+    && : > /etc/nginx/quip-trusted-proxies.conf
 
 COPY web/nginx/nginx.conf /etc/nginx/conf.d/default.conf
 COPY web/nginx/40-quip-auth.sh /docker-entrypoint.d/40-quip-auth.sh

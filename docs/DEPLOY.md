@@ -299,6 +299,15 @@ With `X-Forwarded-For`, nginx reads the last entry, the one the nearest proxy ad
 caller can't forge it. List only proxies you run: anything that can reach nginx from a
 listed address can claim to be anyone, including to nginx's own `allow`/`deny` rules.
 
+Behind Tailscale serve, nginx also passes on the tailnet user it names
+(`Tailscale-User-Login`/`-Name`) from those proxies only, so the banner says "From
+wiz@example.com, 100.101.102.103" and Connected apps keeps it; anyone else's such headers
+are dropped. The backend in turn believes nginx's word only from `QC_FORWARDED_ALLOW_IPS`
+(default loopback; the Docker app image sets the private ranges its web container connects
+from) or with `QC_PROXY_SECRET`. If you publish the app container's port 8000, narrow
+`QC_FORWARDED_ALLOW_IPS` to nginx's address or set the proxy secret. See
+[API.md](API.md#pairing).
+
 ## The Jellyfin plugin
 
 [jellyfin-plugin-quipclipper](https://github.com/weckere/jellyfin-plugin-quipclipper) (Jellyfin

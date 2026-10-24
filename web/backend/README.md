@@ -60,6 +60,7 @@ Environment variables (mirrored by the NixOS module options):
 | `QC_INDEX_CHECK_INTERVAL` | `3600` | seconds between the timestamp-only checks for subtitles changed since indexing (idle I/O priority; never re-indexes); `0` = off |
 | `QC_PATH_MAP` | (unset) | the hooks' paths → the media roots: `<theirs>=<local>` pairs separated by `:` or `;` (`\` makes the next character literal), or JSON (`{"/tv": "/srv/shows"}`); longest prefix wins |
 | `QC_PROXY_SECRET` | (unset) | defence-in-depth: when set on **both** services, nginx injects it and the backend rejects any request that reaches port 8000 without it (except `/api/health`), blocking direct hits that bypass nginx |
+| `QC_FORWARDED_ALLOW_IPS` | `127.0.0.1,::1` | peers (addresses or CIDR networks) whose `X-Real-IP` and `Tailscale-User-Login`/`-Name` say who a pairing request came from: the bundled nginx. From anyone else they're ignored. The Docker app image sets the private ranges. See [`../../docs/API.md`](../../docs/API.md) (Pairing, Who is asking) |
 | `QC_API_TOKEN` | (unset) | token(s) for programmatic clients (comma-separated for rotation); a client sends it as `X-API-Key`/`Bearer`/`-u api:<token>` and is then exempt from the CSRF header. Set on **both** services so `-u api:<token>` also passes the basic-auth gate. See [`../../docs/API.md`](../../docs/API.md) |
 
 The backend has **no auth of its own** — the nginx front is the only gate. Two

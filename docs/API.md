@@ -462,10 +462,10 @@ laptop wants access, code 7F3K. Allow / Deny") or with the CLI (`pair.list`, `pa
 |---|---|---|---|
 | POST | `/api/pair` | the app (CSRF header, no token) | Ask for access: `{name, host, scopes?}` → `{id, code, poll_secret, expires_in}`. |
 | GET | `/api/pair/{id}` | the app (`X-Pair-Secret`) | Poll: `pending`, `approved` with `token`, `client_id` and `scopes` (once), `denied` or `expired`. |
-| GET | `/api/pair` | a person | The requests waiting: `{requests: [{id, name, host, code, address, created, expires_at, scopes}]}`. |
+| GET | `/api/pair` | a person | The requests waiting: `{requests: [{id, name, host, code, address, user, user_name, created, expires_at, scopes}]}`. |
 | POST | `/api/pair/{id}/approve` | a person | Let it in: `{status: "approved", client_id}`. |
 | POST | `/api/pair/{id}/deny` | a person | Turn it down: `{status: "denied"}`. |
-| GET | `/api/clients` | a person | The paired apps: `{clients: [{id, name, host, created, last_used, scopes}]}`. |
+| GET | `/api/clients` | a person | The paired apps: `{clients: [{id, name, host, address, user, user_name, created, last_used, scopes}]}`. |
 | DELETE | `/api/clients/{id}` | a person | Revoke one: `{removed: true\|false}`. |
 | DELETE | `/api/clients/self` | the app (its client token) | Revoke its own token: `{removed: true}`; `401` without a client token. |
 | GET | `/api/clients/check` | the password gate | `200 {client_id}` for a current client token, else `401`. |
@@ -479,8 +479,22 @@ throw them out. Times are UTC ISO 8601 with `Z`.
   characters, `poll_secret` 43; `code` is 4 characters from `23456789ABCDEFGHJKMNPQRSTUVWXYZ`
   (no 0/O, 1/I/L), shown by the app and in the banner so the person can compare them.
   `expires_in` is 600 seconds. At most 5 requests wait at once and at most 10 new ones a
-  minute come from one address (`X-Real-IP` from the bundled nginx, else the connection's);
-  past either, `429 {"detail": …}`.
+  minute come from one address (the caller's, below); past either, `429 {"detail": …}`.
+- **Who is asking:** the banner says "From wiz@example.com, 100.101.102.103", and Connected
+  apps keeps it with the app. `address` is the caller's IP; `user` and `user_name` are the
+  tailnet login and display name Tailscale serve names (`Tailscale-User-Login`/`-Name`),
+  else `""` (a tagged device, or no Tailscale in front). Tailscale serve doesn't say which
+  device. Only a trusted proxy is believed, at both hops, so a caller can't name itself:
+  - **nginx** takes the client address from the last `X-Forwarded-For` entry and passes the
+    `Tailscale-User-*` headers on only when its own peer is a proxy you list (the NixOS
+    module's `nginx.trustedProxies`, the Docker image's `QC_TRUSTED_PROXIES`: addresses or
+    CIDR networks, e.g. a Tailscale serve sidecar's address). From anyone else it blanks
+    them and its peer is the caller. It sends the result as `X-Real-IP`.
+  - **The backend** believes `X-Real-IP` and `Tailscale-User-*` only from a peer in
+    `QC_FORWARDED_ALLOW_IPS` (default `127.0.0.1,::1`, where the NixOS module's nginx connects
+    from; the Docker app image sets the private ranges, where the web container connects
+    from), or from any peer once the `QC_PROXY_SECRET` check passed. From anyone else the
+    connection's own address is the caller.
 - **Polling:** every 2 s, with `X-Pair-Secret: <poll_secret>`. An unknown id and a wrong or
   missing secret both answer `404`, so a poll reveals nothing. `approved` hands out the
   token once and the request is gone after that (a later poll is `404`); `denied` and
@@ -504,8 +518,9 @@ throw them out. Times are UTC ISO 8601 with `Z`.
   access.
 - **Storage:** requests live in memory (a restart forgets them; the app asks again). Clients
   live in `state_dir/clients.json` (0600, written atomically): `{clients: [{id, name, host,
-  token_sha256, created, last_used, scopes?}]}` (no `scopes`: full access; a `scopes` that
-  isn't a list of known names opens nothing). The token itself is never stored. `last_used` is
+  address, user, user_name, token_sha256, created, last_used, scopes?}]}` (no `scopes`: full
+  access; a `scopes` that isn't a list of known names opens nothing; the three caller fields
+  are `""` for apps paired before quipclipper kept them). The token itself is never stored. `last_used` is
   written at most once a minute.
 - **Behind the password gate** (`QC_PASSWORD` / `passwordFile`), nginx lets exactly
   `POST /api/pair` and `GET /api/pair/<id>` through without the password. Listing, approving

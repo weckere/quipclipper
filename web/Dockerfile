@@ -30,10 +30,15 @@ RUN pip install --no-cache-dir ./engine
 COPY web/backend ./backend
 RUN pip install --no-cache-dir ./backend yt-dlp
 
+# QC_FORWARDED_ALLOW_IPS: the web (nginx) container reaches this one from the compose
+# network's private address, so the backend takes its word for who a pairing request came
+# from (X-Real-IP, Tailscale-User-*). Port 8000 is only `expose`d to that network; if you
+# publish it, narrow this to nginx's address or set QC_PROXY_SECRET.
 ENV QC_BIND=0.0.0.0 \
     QC_PORT=8000 \
     QC_CLIPS_DIR=/clips \
-    QC_STATE_DIR=/state
+    QC_STATE_DIR=/state \
+    QC_FORWARDED_ALLOW_IPS="10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7"
 
 EXPOSE 8000
 CMD ["quipclipper-web"]

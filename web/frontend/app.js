@@ -7005,6 +7005,14 @@ const pairWho = (r) => (r.host ? `${r.name} on ${r.host}` : r.name);
 const SCOPE_LABELS = { "index.file": "queue subtitle re-indexes", "transcripts.read": "read transcripts" };
 const pairCan = (scopes) => (scopes == null ? null
   : scopes.map((s) => SCOPE_LABELS[s] || s).join(" and ") || "nothing but check its key");
+// Who asked (a pairing request, or a connected app): the tailnet user behind Tailscale
+// serve, as the server's trusted proxy names them, and the address; else the address.
+function pairFrom(r) {
+  const user = r.user || "";
+  const name = user && r.user_name && r.user_name !== user && !user.startsWith(`${r.user_name}@`)
+    ? `${r.user_name} (${user})` : user;
+  return [name, r.address].filter(Boolean).join(", ");
+}
 
 function schedulePairs() {
   clearTimeout(pairTimer);
@@ -7087,7 +7095,7 @@ function pairRow(r) {
   const can = pairCan(r.scopes);
   li.innerHTML =
     `<p class="pair-text"><strong>${who}</strong> wants ${can ? "to " + escapeHtml(can) : "access"}, code <strong class="pair-code">${code}</strong>. ` +
-    `<span class="muted">From ${escapeHtml(r.address)}. Allow it only if the app shows this code.</span></p>` +
+    `<span class="muted">From ${escapeHtml(pairFrom(r))}. Allow it only if the app shows this code.</span></p>` +
     `<span class="pair-actions">` +
     `<button type="button" class="btn primary pair-allow" data-action="pair.approve" title="Let ${who} in: it gets its own key to this server, which Settings, Connected apps can revoke" aria-label="Allow ${who}, code ${code}">Allow</button>` +
     `<button type="button" class="btn pair-deny" data-action="pair.deny" title="Turn ${who} down" aria-label="Deny ${who}">Deny</button>` +
@@ -7141,7 +7149,8 @@ async function refreshClients() {
     const who = escapeHtml(pairWho(c));
     const can = pairCan(c.scopes);
     li.innerHTML = `<div class="app-main"><strong>${who}</strong>` +
-      `<span class="muted">${can ? "May only " + escapeHtml(can) : "Full access"} · Connected ${escapeHtml(fmtWhen(c.created))} · ` +
+      `<span class="muted">${can ? "May only " + escapeHtml(can) : "Full access"} · Connected ${escapeHtml(fmtWhen(c.created))}` +
+      `${pairFrom(c) ? " from " + escapeHtml(pairFrom(c)) : ""} · ` +
       `${c.last_used ? "last used " + escapeHtml(fmtWhen(c.last_used)) : "not used yet"}</span></div>` +
       `<button type="button" class="link-btn app-revoke" data-action="clients.revoke" title="Disconnect ${who}: its key to this server stops working; it can pair again" aria-label="Revoke ${who}">Revoke</button>`;
     li.querySelector("button").onclick = () => revokeClient(c);

@@ -240,7 +240,7 @@ by default land where they always did.
 
 | Command | What it does | Arguments | API | Web UI |
 |---|---|---|---|---|
-| `pair.list` | List the apps waiting for access (pairing requests): their name, host, code, address, expiry, and the scopes they ask for (none: full access). |  | `GET /api/pair` | The pairing banner on every page |
+| `pair.list` | List the apps waiting for access (pairing requests): their name, host, code, who asked (address, tailnet user), expiry, and the scopes they ask for (none: full access). |  | `GET /api/pair` | The pairing banner on every page |
 | `pair.approve` ⚠ | Let an app in: approve its pairing request. Check first that the code is the one the app shows. Its next poll collects its own client token. | `PAIR_ID` | `POST /api/pair/{pair_id}/approve` | Allow on the pairing banner |
 | `pair.deny` ⚠ | Turn down an app's pairing request. | `PAIR_ID` | `POST /api/pair/{pair_id}/deny` | Deny on the pairing banner |
 
@@ -248,7 +248,7 @@ by default land where they always did.
 
 | Command | What it does | Arguments | API | Web UI |
 |---|---|---|---|---|
-| `clients.list` | List the connected apps: name, host, what each may do (its scopes, or full access), when they paired and when they were last used. |  | `GET /api/clients` | Settings ▸ Connected apps |
+| `clients.list` | List the connected apps: name, host, what each may do (its scopes, or full access), who paired them (address, tailnet user), when they paired and when they were last used. |  | `GET /api/clients` | Settings ▸ Connected apps |
 | `clients.revoke` ⚠ | Disconnect an app: revoke its client token. 'self' revokes the client token this CLI is using. | `CLIENT_ID` | `DELETE /api/clients/{client_id}` | Revoke (Settings ▸ Connected apps) |
 
 ## settings

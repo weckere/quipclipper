@@ -38,6 +38,10 @@ def main(argv: list[str] | None = None) -> int | None:
         "quipclipper_web.app:app",
         host=settings.listen_address,
         port=settings.listen_port,
+        # The connection's own peer, not uvicorn's reading of X-Forwarded-For: who the
+        # caller is comes from the bundled nginx only when the peer is a trusted proxy
+        # (QC_FORWARDED_ALLOW_IPS, quipclipper_web.caller).
+        proxy_headers=False,
     )
     return None
 

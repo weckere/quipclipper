@@ -602,8 +602,17 @@ def _fmt_pairs(data: dict) -> None:
         who = r.get("name") or "?"
         if r.get("host"):
             who += f" on {r['host']}"
-        typer.echo(f"{r.get('code')}  {who}  from {r.get('address')}  asks for {_scopes(r)}  "
+        typer.echo(f"{r.get('code')}  {who}  from {_from(r) or '?'}  asks for {_scopes(r)}  "
                    f"(id {r.get('id')}, until {r.get('expires_at')})")
+
+
+def _from(row: dict) -> str:
+    """Who asked to pair (a pairing request or a client), as the web app's banner says it:
+    the tailnet user behind Tailscale serve, and the address; "" when the server kept none."""
+    user, name = row.get("user") or "", row.get("user_name") or ""
+    if user and name and name != user and not user.startswith(f"{name}@"):
+        user = f"{name} ({user})"
+    return ", ".join(x for x in (user, row.get("address") or "") if x)
 
 
 def _scopes(row: dict) -> str:
@@ -620,7 +629,8 @@ def _fmt_clients(data: dict) -> None:
         who = r.get("name") or "?"
         if r.get("host"):
             who += f" on {r['host']}"
-        typer.echo(f"{r.get('id')}  {who}  {_scopes(r)}  paired {r.get('created')}  "
+        by = f" from {_from(r)}" if _from(r) else ""
+        typer.echo(f"{r.get('id')}  {who}  {_scopes(r)}  paired {r.get('created')}{by}  "
                    f"last used {r.get('last_used') or 'never'}")
 
 

@@ -11,6 +11,19 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 
 ## [Unreleased]
 
+### Pairing (M23)
+
+- **The banner says who is really asking:** behind Tailscale serve it also names the tailnet
+  user ("From wiz@example.com, 100.101.102.103"), and Settings ▸ Connected apps keeps who
+  paired each app (`address`, `user`, `user_name` in `/api/pair` and `/api/clients`). nginx
+  passes Tailscale serve's `Tailscale-User-Login`/`-Name` on only from a trusted proxy (`QC_TRUSTED_PROXIES`, `nginx.trustedProxies`)
+  and drops them from anyone else, and the backend believes nginx's `X-Real-IP` and those
+  headers only from a peer in the new `QC_FORWARDED_ALLOW_IPS` (default loopback, where the
+  NixOS module's nginx connects from; the Docker app image sets the private ranges) or with
+  the proxy secret. uvicorn no longer rewrites the client address from `X-Forwarded-For`
+  itself. A caller who sends those headers itself names nobody and can't dodge the
+  per-address rate limit.
+
 ### Fixed
 
 - A seek into a file whose audio the browser can't play (DTS, TrueHD) while its transcode
