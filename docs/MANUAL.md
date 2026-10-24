@@ -362,6 +362,12 @@ Saved per browser:
 The clip name template is the Name field in the Selection panel, and the YouTube player
 choice is on each YouTube video.
 
+**Connected apps** is for the whole server, not just this browser: the apps you let in by
+[pairing](#connecting-leadstinger-pairing), each with its name, host, when it connected and
+when it was last used, and **Revoke** to disconnect one (its key stops working; it can pair
+again). **Connect LeadStinger** opens LeadStinger on this computer to connect it to this
+server. CLI: `clients.list`, `clients.revoke`, `leadstinger.connect`.
+
 ### Keyboard, screen readers and low vision
 
 The web app aims at WCAG 2.2 AA.
@@ -861,7 +867,7 @@ the command line, `quipclipper leadstinger.quip` / `leadstinger.link`. quipclipp
 the line, then opens a `leadstinger://quip` link; LeadStinger downloads the clip from the
 quipclipper server into a new tile whose trim is exactly the line. (With several lines
 ticked, the toggle makes a LeadStinger set file instead; so does the button when the server
-has no `QC_PUBLIC_URL`.)
+can't tell its own address, which is rare: see step 1 below.)
 
 The line is cut with **handles**: its padding, kept as extra audio either side (the clip
 bar's Before/After, a bookmark's saved padding, none for a search hit; `--before`/`--after`
@@ -887,12 +893,16 @@ LeadStinger converts video or AC-3/DTS clips on import).
 
 **Setup, once:**
 
-1. **Tell quipclipper its own address**, as the machine with LeadStinger reaches it:
-   `QC_PUBLIC_URL=https://quipclipper.example.net` on the `app` service (Docker), or
-   `services.quipclipper-web.publicUrl` (NixOS). The link carries this URL, never a
-   value from the request. Without it, the toggle makes set files only, the Clips
-   library has no Send to LeadStinger buttons, and the link endpoints answer 503.
-2. **Have an API token.** LeadStinger downloads with quipclipper's `QC_API_TOKEN`. If
+1. **quipclipper's own address** goes in each link. It is `QC_PUBLIC_URL` when set
+   (`https://quipclipper.example.net` on the `app` service in Docker, or
+   `services.quipclipper-web.publicUrl` on NixOS); else the address the
+   [LAN advertiser](#advertising-on-the-local-network) announces; else the address your
+   browser is using for quipclipper, so a fresh install works without setting anything.
+   Set `QC_PUBLIC_URL` when the machine with LeadStinger reaches quipclipper at a different
+   address than your browser does, and for the CLI's and agents' links.
+2. **Connect LeadStinger**: the easy way is [pairing](#connecting-leadstinger-pairing), below,
+   with nothing to copy. Or, by hand, with an API token:
+3. **Have an API token.** LeadStinger downloads with quipclipper's `QC_API_TOKEN`. If
    there is none yet, make one (`openssl rand -hex 32`) and set it:
    - **Docker:** `QC_API_TOKEN: "<token>"` on **both** the `app` and `web` services in
      `docker-compose.yml` (the `web` one lets `api:<token>` through the password gate).
@@ -902,7 +912,7 @@ LeadStinger converts video or AC-3/DTS clips on import).
 
    To find an existing token, look in that same place: the compose file's environment,
    or the file `apiTokenFile` points at (readable by root).
-3. **Connect LeadStinger to the server** on the machine where it runs, pasting the token
+4. **Connect LeadStinger to the server** on the machine where it runs, pasting the token
    when asked (`--token -` reads it from stdin, keeping it out of `ps` and your history):
 
    ```bash
@@ -922,7 +932,7 @@ leadstinger://quip?server=<QC_PUBLIC_URL>&clip=<clip path>&title=<text>&start=<s
 
 | Parameter | |
 |---|---|
-| `server` | `QC_PUBLIC_URL`, without a trailing `/`. |
+| `server` | quipclipper's address (step 1 above), without a trailing `/`. |
 | `clip` | The clip's path inside the clips library, as `/api/clips/download/{path}` takes it (`LeadStinger/S03E26_00-33-20_Resistance_is_futile.flac`). |
 | `title` | The tile's title: the line (one line, at most 200 characters), or the clip's name. |
 | `start`, `end` | Where the line sits *inside the clip*, in seconds: the tile's trim. With 2 s before, a line from 33:22.4 to 33:24.0 gives `start=2&end=3.6`. Left out for a whole library clip. |
@@ -930,6 +940,39 @@ leadstinger://quip?server=<QC_PUBLIC_URL>&clip=<clip path>&title=<text>&start=<s
 
 Every value is percent-encoded the way a browser's `encodeURIComponent` does, so a `+`
 in a title goes out as `%2B`. The link holds no token.
+
+#### Connecting LeadStinger (pairing)
+
+LeadStinger can connect without anyone copying a token: it asks, and you let it in.
+
+1. Start it from either side: **Connect LeadStinger** in quipclipper's Settings (on the
+   computer with LeadStinger), **Send to LeadStinger** on a line, which offers to connect
+   when LeadStinger doesn't know this server yet, or LeadStinger's own Connect or "Find on
+   network".
+2. LeadStinger asks whether to connect, then shows a **code** such as `7F3K`.
+3. A banner appears at the top of every quipclipper page: **"LeadStinger on laptop wants
+   access, code 7F3K."** Check that the code is the one LeadStinger shows, then **Allow**
+   (or **Deny**). LeadStinger may open quipclipper for you with that request highlighted.
+4. LeadStinger now has its own key to this server, and links and Browse just work.
+   Settings ▸ Connected apps lists it; **Revoke** disconnects it.
+
+A request waits 10 minutes. Behind a password (`QC_PASSWORD`), LeadStinger can ask and wait
+without the password, but only someone signed in to quipclipper can allow it. From the
+command line: `quipclipper pair.list`, `pair.approve ID`, `pair.deny ID`, `clients.list`,
+`clients.revoke ID` (behind a password, with `QC_API_TOKEN`). `QC_PAIRING=0` (NixOS:
+`pairing.enable = false`) turns pairing off.
+
+#### Advertising on the local network
+
+On a home network, quipclipper can announce itself so LeadStinger finds it ("QuipClipper on
+nas") without anyone typing an address. It is off by default:
+
+- **Docker:** uncomment the `advertise` service in `docker-compose.yml` (it needs host
+  networking, because announcements don't cross Docker's own network).
+- **NixOS:** `services.quipclipper-web.advertise.enable = true` (Avahi).
+
+**Leave it off when quipclipper is only reached over a tailnet or VPN**: it tells every
+device on the LAN that quipclipper runs there. See [DEPLOY.md](DEPLOY.md#advertising-on-the-local-network).
 
 From the CLI (it needs a server, `--server`/`QC_URL`):
 
@@ -1079,8 +1122,9 @@ media; the integration behaviour was verified against real `ffmpeg` and
 | `None of the requested --audio-track indices exist` | Check indices with `quipclipper tracks`. |
 | Clip starts slightly early | Expected for lossless cuts (keyframe lead-in); use `--no-lossless` for frame-exact boundaries. |
 | `--out can't be used when clipping multiple matches` | Drop `--out`; clips are auto-named per match. |
-| `Send to LeadStinger needs QC_PUBLIC_URL` (503), or the toggle only makes set files | Set `QC_PUBLIC_URL` (NixOS: `publicUrl`) to the server's base URL; see [Sending clips to LeadStinger](#sending-clips-to-leadstinger). |
-| LeadStinger refuses the link as not connected | Run `leadstinger-cli quip.connect <the same URL as QC_PUBLIC_URL> --token -` on that machine. |
+| `Send to LeadStinger can't tell this server's address` (503), or the toggle only makes set files | Set `QC_PUBLIC_URL` (NixOS: `publicUrl`) to the server's base URL; see [Sending clips to LeadStinger](#sending-clips-to-leadstinger). |
+| LeadStinger refuses the link as not connected | Connect it: Settings ▸ Connected apps ▸ **Connect LeadStinger** ([pairing](#connecting-leadstinger-pairing)), or `leadstinger-cli quip.connect <the link's server> --token -` on that machine. |
+| No banner appears when LeadStinger asks to connect | The banner checks every 20 s (every 3 s while a request waits, or right after Connect LeadStinger), only while the page is visible; reload the page. `QC_PAIRING=0` turns pairing off. |
 | No Now playing card | Jellyfin isn't configured: set `QC_JELLYFIN_URL` and the API key (`/api/health` says `jellyfin: true` when it is). |
 | `Jellyfin answered 401 (check the API key)` / `Jellyfin is unreachable` (502) | The key is wrong or revoked, or `QC_JELLYFIN_URL` isn't reachable from the server. |
 | Now playing says "Not in quipclipper's library" | Jellyfin's path for that file has no `QC_JELLYFIN_PATH_MAP` entry, or it maps outside the media roots. |

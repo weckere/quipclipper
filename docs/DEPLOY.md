@@ -8,6 +8,8 @@ For the CLI on its own, see the [README](../README.md#install).
 - [Configuration](#configuration)
 - [NixOS module](#nixos-module)
   - [Sharing the clips directory](#sharing-the-clips-directory)
+- [Pairing behind the password gate](#pairing-behind-the-password-gate)
+- [Advertising on the local network](#advertising-on-the-local-network)
 - [Architecture](#architecture)
 - [Versions and upgrades](#versions-and-upgrades)
 
@@ -114,7 +116,10 @@ All settings are environment variables on the `app` service:
 | `QC_USERNAME` | `quip` | Basic-auth username (only used when `QC_PASSWORD` is set). |
 | `QC_SUBTITLE_LANGS` | `en` | Ordered subtitle-language preference for auto-selection (comma-separated, e.g. `eng,spa`). The UI's **Subtitle languages** setting (the sliders button in the top bar) overrides it per browser; the same menu switches between light and dark. |
 | `QC_API_TOKEN` | *(none)* | Token(s) for programmatic clients — agents and scripts (comma-separated to rotate). Set the same value on **both** services so `-u api:<token>` passes the basic-auth gate too. See [API.md](API.md). |
-| `QC_PUBLIC_URL` | *(none)* | This server's base URL as other machines reach it (e.g. `https://quipclipper.example.net`). **Send to LeadStinger** puts it in a `leadstinger://quip` link, and LeadStinger downloads the clip from there with `QC_API_TOKEN`. Unset = Send to LeadStinger makes set files only. See [docs/MANUAL.md](MANUAL.md#sending-clips-to-leadstinger). |
+| `QC_PUBLIC_URL` | *(none)* | This server's base URL as other machines reach it (e.g. `https://quipclipper.example.net`). **Send to LeadStinger** puts it in a `leadstinger://quip` link, and LeadStinger downloads the clip from there with the key it got by pairing (or `QC_API_TOKEN`). Unset = links name the advertised URL, else the address the browser is using. Deep links (Copy link) need it. See [docs/MANUAL.md](MANUAL.md#sending-clips-to-leadstinger). |
+| `QC_PAIRING` | `1` | **Pairing**: an app such as LeadStinger asks for access and a person allows it in the web UI; it gets its own client token, revoked under Settings ▸ Connected apps. `0` turns every `/api/pair` route into 404 (apps already paired keep working). See [Pairing](API.md#pairing). |
+| `QC_SERVER_NAME` | *(host name)* | The name apps show for this server, at most 63 characters. In Docker the app's host name is the container's, so set it, or run the advertiser (whose host name is the machine's). |
+| `QC_ADVERTISE` / `QC_ADVERTISE_PORT` | *(off)* | For the `quipclipper-web advertise` process only: `1` to announce the server on the LAN, and the port browsers use. See [Advertising on the local network](#advertising-on-the-local-network). |
 | `QC_JELLYFIN_URL` | *(none)* | Jellyfin's base URL, for **Now playing** (what each Jellyfin client is playing, opened at its playhead). Needs the key below. See [docs/MANUAL.md](MANUAL.md#now-playing-jellyfin). |
 | `QC_JELLYFIN_API_KEY` / `QC_JELLYFIN_API_KEY_FILE` | *(none)* | A Jellyfin API key, or a file holding one. |
 | `QC_HOOK_TOKEN` / `QC_HOOK_TOKEN_FILE` | *(none)* | A low-privilege token for the **re-index hooks** (Bazarr, Sonarr, Radarr tell quipclipper a file's subtitles changed): it may only queue re-indexes. Behind a password, set it on the **web** service too, which adds a `hook` login. See [HOOKS.md](HOOKS.md). |
@@ -180,7 +185,10 @@ Optional settings (all off/defaulted unless set):
 |---|---|
 | `passwordFile` | Gate the whole site behind HTTP basic auth — path to a ready-made nginx htpasswd file (kept out of the store). Unlike Docker's plaintext `QC_PASSWORD`, the module takes the htpasswd directly. |
 | `apiTokenFile` | API token(s) for agents/scripts — path to a systemd `EnvironmentFile` containing `QC_API_TOKEN=<token>` (kept out of the store). Add an `api` user with the token as password to `passwordFile` so one secret passes the basic-auth gate too. |
-| `publicUrl` | This server's base URL as other machines reach it (`QC_PUBLIC_URL`), for **Send to LeadStinger** links. LeadStinger downloads with the token from `apiTokenFile`. |
+| `publicUrl` | This server's base URL as other machines reach it (`QC_PUBLIC_URL`), for **Send to LeadStinger** links and deep links. Unset, Send to LeadStinger links name the address the browser is using (or the advertised one). |
+| `pairing.enable` | Pairing (default `true`): apps ask for access and a person allows them; behind `passwordFile`, nginx lets exactly `POST /api/pair` and `GET /api/pair/<id>` through, and requests with a current client token. `false` sets `QC_PAIRING=0`. See [below](#pairing-behind-the-password-gate). |
+| `serverName` | The name apps show for this server (`QC_SERVER_NAME`; default the host name), and the advertised name. |
+| `advertise.enable` / `advertise.port` | Announce the server on the LAN with Avahi (default off; the port defaults to the first `nginx.listen` port). **Leave it off on a tailnet-only install.** See [below](#advertising-on-the-local-network). |
 | `jellyfin.url` / `jellyfin.apiKeyFile` / `jellyfin.pathMap` | **Now playing** from Jellyfin: its URL, a file holding an API key (root-only is fine: it's passed as a systemd credential) and Jellyfin's paths → this host's (`{ "/movies" = "/srv/movies"; }`). |
 | `indexCheckInterval` | Seconds between the checks for subtitles changed since indexing (`QC_INDEX_CHECK_INTERVAL`, default 3600, `0` = off). |
 | `hookTokenFile` / `pathMap` | **Re-index hooks** (Bazarr, Sonarr, Radarr; see [HOOKS.md](HOOKS.md)): a file holding a hook token that may only queue re-indexes (root-only is fine: a systemd credential), and the hooks' paths → this host's (`{ "/tv" = "/srv/shows"; }`). With `passwordFile`, add a `hook` line with the token as its password. |
@@ -242,6 +250,64 @@ your user) can both read *and* delete/manage them. With `manageClipsDir = false`
 ensure the directory exists and is group-writable (setgid `2775`) before the
 service starts — the unit waits for its mount via `RequiresMountsFor`, but it
 won't create or fix permissions on it.
+
+## Pairing behind the password gate
+
+[Pairing](API.md#pairing) lets an app such as LeadStinger connect without anyone copying
+`QC_API_TOKEN`: it asks, a person allows it in the web UI, and it gets a client token of
+its own. With a password gate (`QC_PASSWORD` on the web service, or `passwordFile`), the
+bundled nginx (the Docker image and the NixOS module alike) makes exactly these exceptions:
+
+- `POST /api/pair` (an app asking) and `GET /api/pair/<id>` (the app polling its own
+  request, which needs that request's poll secret) pass without the password. Listing,
+  approving and denying requests (`GET /api/pair`, `POST /api/pair/<id>/approve|deny`) and
+  everything else still need it. A request carries no authority until someone signed in
+  approves it; at most 5 wait at once and 10 a minute come from one address.
+- A request with a client token (`qcc_…`) in `X-API-Key` or `Authorization: Bearer` passes
+  once the backend says the token is current (`satisfy any` with an `auth_request` to
+  `/api/clients/check`); a revoked or unknown one gets `401`. Requests without a client
+  token are answered by nginx alone, so browsers don't cost the backend anything extra.
+  The gate's `api` login still knows only `QC_API_TOKEN`.
+
+The API locations also pass the `Host` the browser sent, port included, as `X-Quip-Host`,
+so links without `QC_PUBLIC_URL` name the address the browser used. A proxy in front of
+nginx (TLS, a path prefix) should send `X-Forwarded-Proto`, `X-Forwarded-Host` and, for a
+prefix, `X-Forwarded-Prefix`; nginx passes them on and they win. With `nginx.enable = false`
+(your own front), add the same two exemptions and, if you want paired apps behind your
+gate, the same token check; without them, paired apps work on an open server only.
+
+`QC_PAIRING=0` (NixOS: `pairing.enable = false`) turns pairing off; the module then leaves
+the exemptions out.
+
+## Advertising on the local network
+
+Opt-in. The server announces itself over mDNS/Bonjour as `_quipclipper._tcp` (TXT `v=1`,
+`url`, `id`), so LeadStinger lists "QuipClipper on nas" without anyone typing an address,
+and Send to LeadStinger links name the advertised URL.
+
+**Tailnet-only installs: leave advertising off.** It tells every device on the LAN that
+quipclipper runs here, and where; for an install reached only over a tailnet or VPN that is
+information the LAN shouldn't get, and nothing on the LAN can use it anyway. Turn it on
+only when the site is meant to be used from the LAN (and for an install already open on the
+LAN it reveals nothing a port scan wouldn't).
+
+- **Docker:** uncomment the `advertise` service in
+  [`docker-compose.example.yml`](../docker-compose.example.yml). It runs the app image's
+  `quipclipper-web advertise` with `network_mode: host`, because multicast doesn't cross
+  Docker's bridge network; it shares the state volume (for the server's id and
+  `advertise.json`) and needs `QC_ADVERTISE: "1"` and `QC_ADVERTISE_PORT` (the web
+  service's published port, `8896` in the example). The URL it announces is `QC_PUBLIC_URL`
+  if you set it on that service, else `http://<host>.local:<port>`, which needs the host to
+  answer for `<host>.local` (most NAS systems run Avahi; the advertiser also answers for it).
+  It announces on LAN interfaces only: not loopback, Docker bridges, VPNs or the tailnet.
+- **NixOS:** `services.quipclipper-web.advertise.enable = true` turns on `services.avahi`
+  with publishing (service and address records) and a static service file. The URL is
+  `publicUrl`, else `http://<networking.hostName>.local:<advertise.port>`. The record leaves
+  out `id` (the server's id is made at run time; LeadStinger reads it from `/api/config`).
+  The module warns when every `nginx.listen` address looks unreachable from the LAN
+  (loopback, a Docker or private bridge, the tailnet).
+- **Anything else:** run `QC_ADVERTISE=1 QC_ADVERTISE_PORT=<port> quipclipper-web advertise`
+  beside the app, with the same `QC_STATE_DIR`.
 
 ## Architecture
 

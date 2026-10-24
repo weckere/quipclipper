@@ -53,6 +53,17 @@ rejected with `401`. Set several comma-separated tokens for rotation
 basic-auth user knows only the first, so behind the gate send a later one as
 `X-API-Key` with a normal user.
 
+**Client tokens (paired apps).** An app such as LeadStinger can [pair](#pairing) instead of
+being handed `QC_API_TOKEN`: a person approves it, and it gets a client token of its own,
+`qcc_` and 43 URL-safe characters. A client token is accepted wherever `QC_API_TOKEN` is
+(`X-API-Key`, `Bearer`, or the Basic password of the `api` user) and marks a machine client
+in the same way, **even when no `QC_API_TOKEN` is set**. An explicit (`X-API-Key` /
+`Bearer`) `qcc_…` value that isn't a current client token is rejected with `401`, so an app
+learns that it was revoked. A client token can't approve, deny or list pairing requests, or
+list or revoke clients (`403`). Behind the password gate, nginx lets a request with a client
+token in `X-API-Key` or `Bearer` through after asking the backend whether it is current
+(`GET /api/clients/check`); the gate's `api` login still knows only `QC_API_TOKEN`.
+
 **CSRF header (browser clients only).** State-changing requests
 (`POST`/`PUT`/`PATCH`/`DELETE`) that are **not** token-authenticated must carry
 `X-Quipclipper: 1`. This stops a malicious web page from riding your cached
@@ -343,10 +354,20 @@ Set…, a drop on its window, or `leadstinger-cli set.import`.
 | POST | `/api/leadstinger/quip` | Cut one line as FLAC with its padding into the clips library and make its `leadstinger://quip` link (job). |
 | GET | `/api/leadstinger/link?clip=&title=&start=&end=&set=` | The `leadstinger://quip` link for a clip already in the clips library. |
 
-Both need `QC_PUBLIC_URL` (this server's base URL as LeadStinger reaches it); without it
-they answer 503. The link names this server and a clip path, never a token: LeadStinger
-downloads `GET /api/clips/download/{clip}` itself with the token it was connected with
-(`leadstinger-cli quip.connect <url> --token -`). The format is LeadStinger's own
+The link's `server` is `QC_PUBLIC_URL` (this server's base URL as LeadStinger reaches it);
+without it, the URL the [LAN advertiser](#lan-advertising) announces (`state_dir/advertise.json`);
+without that, the base URL the request reached the app at: `X-Forwarded-Proto`,
+`X-Forwarded-Host` and `X-Forwarded-Prefix` from a proxy in front when present, else
+`X-Quip-Host` (the `Host` the browser sent, port included, as the bundled nginx passes it
+on), else the `Host` header, and the connection's scheme. The bundled nginx (Docker and
+NixOS) leaves the `X-Forwarded-*` headers to a proxy in front of it, so the web UI's links
+name the address the browser is using. When none of these
+gives a usable URL, both answer 503. `/api/config`'s `link_server` says which URL that is
+for the asking browser. The link names this server and a clip path, never a token:
+LeadStinger downloads `GET /api/clips/download/{clip}` itself with the token it got by
+[pairing](#pairing) or was connected with (`leadstinger-cli quip.connect <url> --token -`),
+and asks before it trusts a server it doesn't know yet. [Deep links](#deep-links) still need
+`QC_PUBLIC_URL`. The format is LeadStinger's own
 (decision D-076 there, its `docs/QUIPCLIPPER.md`):
 
 ```text
@@ -376,6 +397,90 @@ into `LeadStinger/` in the clips library. The finished job carries
 the clips library) and returns `{link, clip}`; without `start`/`end` the tile plays the
 whole clip. Open the link in a browser or with `open`/`xdg-open` on the machine with
 LeadStinger.
+
+### Pairing
+
+Protocol `quipclipper.pair/1`: an app gets a client token without anyone copying a secret.
+The app sends only who it is; a person approves it in the web UI (the banner "LeadStinger on
+laptop wants access, code 7F3K. Allow / Deny") or with the CLI (`pair.list`, `pair.approve`,
+`pair.deny`); the app's next poll collects its token, once. `QC_PAIRING=0` turns every
+`/api/pair…` route into `404` (clients already paired keep working).
+
+| Method | Path | Who | Purpose |
+|---|---|---|---|
+| POST | `/api/pair` | the app (CSRF header, no token) | Ask for access: `{name, host}` → `{id, code, poll_secret, expires_in}`. |
+| GET | `/api/pair/{id}` | the app (`X-Pair-Secret`) | Poll: `pending`, `approved` with `token` and `client_id` (once), `denied` or `expired`. |
+| GET | `/api/pair` | a person | The requests waiting: `{requests: [{id, name, host, code, address, created, expires_at}]}`. |
+| POST | `/api/pair/{id}/approve` | a person | Let it in: `{status: "approved", client_id}`. |
+| POST | `/api/pair/{id}/deny` | a person | Turn it down: `{status: "denied"}`. |
+| GET | `/api/clients` | a person | The paired apps: `{clients: [{id, name, host, created, last_used}]}`. |
+| DELETE | `/api/clients/{id}` | a person | Revoke one: `{removed: true\|false}`. |
+| DELETE | `/api/clients/self` | the app (its client token) | Revoke its own token: `{removed: true}`; `401` without a client token. |
+| GET | `/api/clients/check` | the password gate | `200 {client_id}` for a current client token, else `401`. |
+
+"A person" is a browser request (the CSRF header on POST and DELETE) or the server's own
+`QC_API_TOKEN`; a client token gets `403` there, so a paired app can't let others in or
+throw them out. Times are UTC ISO 8601 with `Z`.
+
+- **Asking:** `name` 1 to 60 characters, `host` 0 to 100; no control or invisible characters
+  (line breaks, bidi overrides, zero-width joiners), else `422`. `id` is 22 URL-safe
+  characters, `poll_secret` 43; `code` is 4 characters from `23456789ABCDEFGHJKMNPQRSTUVWXYZ`
+  (no 0/O, 1/I/L), shown by the app and in the banner so the person can compare them.
+  `expires_in` is 600 seconds. At most 5 requests wait at once and at most 10 new ones a
+  minute come from one address (`X-Real-IP` from the bundled nginx, else the connection's);
+  past either, `429 {"detail": …}`.
+- **Polling:** every 2 s, with `X-Pair-Secret: <poll_secret>`. An unknown id and a wrong or
+  missing secret both answer `404`, so a poll reveals nothing. `approved` hands out the
+  token once and the request is gone after that (a later poll is `404`); `denied` and
+  `expired` answer for a minute, then `404`. An approval nobody collects within a minute
+  (and before the request's expiry) is dropped with its client.
+- **Storage:** requests live in memory (a restart forgets them; the app asks again). Clients
+  live in `state_dir/clients.json` (0600, written atomically): `{clients: [{id, name, host,
+  token_sha256, created, last_used}]}`. The token itself is never stored. `last_used` is
+  written at most once a minute.
+- **Behind the password gate** (`QC_PASSWORD` / `passwordFile`), nginx lets exactly
+  `POST /api/pair` and `GET /api/pair/<id>` through without the password. Listing, approving
+  and denying stay behind it.
+
+```sh
+# The app's side
+curl -s -X POST -H 'X-Quipclipper: 1' -H 'Content-Type: application/json' \
+  -d '{"name": "LeadStinger", "host": "laptop"}' https://quip.example/api/pair
+# {"id": "Qk…", "code": "7F3K", "poll_secret": "x6…", "expires_in": 600}
+curl -s -H 'X-Pair-Secret: x6…' https://quip.example/api/pair/Qk…
+# {"status": "pending"} … then {"status": "approved", "token": "qcc_…", "client_id": "V-2…"}
+```
+
+`/api/config` says whether a server pairs and who it is:
+
+```json
+{"pairing": true, "server_id": "8c1f0b2e…", "server_name": "nas", "link_server": "http://nas.local:8896"}
+```
+
+`server_id` is 32 hex characters made once and kept in `state_dir/server-id`, so an app can
+tell that `nas.local:8896` and `192.168.1.20:8896` are one server. `server_name` is
+`QC_SERVER_NAME`, else the name the LAN advertiser saw (in Docker the app's own host name is
+the container's), else the host name without `.local`; at most 63 characters.
+
+### LAN advertising
+
+Opt-in (`QC_ADVERTISE=1`): `quipclipper-web advertise` announces the server over
+mDNS/Bonjour until stopped, so LeadStinger can list it without anyone typing an address.
+
+| Field | Value |
+|---|---|
+| Service | `_quipclipper._tcp.local.`, instance name `server_name` (dots become `-`) |
+| Port | the port browsers use: `--port`, `QC_ADVERTISE_PORT`, else `QC_PUBLIC_URL`'s |
+| TXT `v` | `1` |
+| TXT `url` | the canonical base URL: `QC_PUBLIC_URL`, else `http://<host>.local:<port>` |
+| TXT `id` | `server_id` |
+
+It announces on the LAN interfaces only (not loopback, container bridges, VPNs or the
+tailnet) and writes `state_dir/advertise.json` (`{url, name}`), which Send to LeadStinger
+links fall back to; the file is removed when it stops. Docker runs it as its own service on
+the host's network (multicast doesn't cross Docker's bridge); the NixOS module advertises
+with Avahi instead (`advertise.enable`), and its record leaves out `id` (LeadStinger reads it
+from `/api/config`). **Tailnet-only installs should not advertise.**
 
 ### Now playing (Jellyfin)
 | Method | Path | Purpose |
@@ -448,7 +553,7 @@ seconds after the last one, so a batch is one scan and new clips show up on the 
 | GET/POST | `/api/bookmarks` | List (optionally filtered by `?path=`) / create bookmarks. |
 | PATCH/DELETE | `/api/bookmarks/{id}` | Edit / delete one. `DELETE /api/bookmarks` clears all. |
 | GET | `/api/health` | Liveness + tool presence (no auth-secret required) and `jellyfin` (Now playing, titles and artwork configured). |
-| GET | `/api/config` | Non-secret config the UI needs, including `public_url` (`QC_PUBLIC_URL`, or `null` when Send to LeadStinger links are off) and `jellyfin` (true when Now playing is configured). |
+| GET | `/api/config` | Non-secret config the UI needs, including `public_url` (`QC_PUBLIC_URL`, or `null`), `link_server` (the server [Send to LeadStinger links](#send-to-leadstinger-links) name for this request, or `null`), `jellyfin` (true when Now playing is configured), and [pairing](#pairing)'s `pairing`, `server_id` and `server_name`. |
 
 ## Clips library contract
 

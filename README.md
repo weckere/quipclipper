@@ -173,9 +173,11 @@ Click the **Send to LeadStinger** button (⚡) beside Make clip, or tick the tog
 Clip / Export selected, and the line goes straight into LeadStinger as a new tile: quipclipper cuts it
 as a full-mix FLAC with its padding kept as handles, and the tile's trim sits exactly on
 the line, so it can still be nudged there. Several lines at once make a LeadStinger set
-file. It needs the server's public address (`QC_PUBLIC_URL`) and LeadStinger connected
-once with the API token; from the CLI it is `leadstinger.quip`, `leadstinger.link`,
-`leadstinger.set` and `leadstinger.send`. Setup and the link format:
+file. LeadStinger connects once by **pairing**: it asks, you click Allow on the banner in
+quipclipper (after checking the code), and it gets its own key, revocable under Settings ▸
+Connected apps; no token to copy. On a LAN, quipclipper can also announce itself so
+LeadStinger finds it (opt-in). From the CLI it is `leadstinger.quip`, `leadstinger.link`,
+`leadstinger.set`, `leadstinger.send` and `leadstinger.connect`. Setup and the link format:
 [docs/MANUAL.md](docs/MANUAL.md#sending-clips-to-leadstinger).
 
 ### Jellyfin Now playing
@@ -262,7 +264,9 @@ CLI command in `src/quipclipper/commands.py`: a parity test fails until it has o
 
 ## Licence and credits
 
-quipclipper is released under the [MIT licence](LICENSE).
+quipclipper is released under the [MIT licence](LICENSE). The web app's optional LAN
+advertiser uses [python-zeroconf](https://github.com/python-zeroconf/python-zeroconf)
+(LGPL-2.1) as an installed library; none of its code is copied into quipclipper.
 
 The screenshots use **"Large Locutus Leporid (2016)"**, a fixture cut from
 [*Big Buck Bunny*](https://peach.blender.org/) (© 2008 Blender Foundation,

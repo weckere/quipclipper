@@ -715,6 +715,39 @@ a control without hover text or an accessible name, and `test_frontend_contrast.
 checks every token pair against WCAG 2.2 AA (4.5:1 for text, 3:1 for UI), in both themes
 and the `prefers-contrast: more` palettes. axe-core runs were clean on every page.
 
+**Pairing instead of a shared token.** LeadStinger used to connect with the server's one
+`QC_API_TOKEN`, typed in by hand. Now an app asks for access (`POST /api/pair`, its name and
+host, no secret), shows a 4-character code, and polls with a per-request secret; a person
+compares the code with the banner in the web UI and clicks Allow; the poll collects a client
+token made for that app, once. The secret only ever travels *from* the server. Client tokens
+are stored as SHA-256 hashes and revoked one at a time; one can't approve, list or revoke
+others, so a paired app can't mint more access. A request carries no authority until a
+person approves it, so a stranger can at most add a pending row (5 at once, 10 a minute per
+address, 10 minutes each). Behind the password gate nginx exempts exactly the two requests
+an unapproved app needs, and lets client tokens through only after asking the backend
+(`auth_request`), so an old backend that doesn't know client tokens fails closed.
+
+*Alternatives considered:* a code typed into the other app (still typing a secret, and no
+easier than comparing a code), trusting an app on first contact (no human check at all),
+and putting the token in a link (links leak into histories and logs).
+
+**Links name the address the browser used.** Send to LeadStinger needed `QC_PUBLIC_URL`, which
+a fresh Docker install doesn't set, so the feature was off out of the box. Without it the
+link now names the advertised URL, else the base URL the request reached the app at (from a
+proxy's `X-Forwarded-*`, else the `Host` the bundled nginx passes on as `X-Quip-Host`). That
+value comes from the request, so a client could make it say anything, but it only ever goes
+back to that same client, in a link that LeadStinger asks about before trusting a server it
+doesn't know. Deep links (Copy link), which are pasted to other people, still need
+`QC_PUBLIC_URL`.
+
+**LAN advertising is opt-in and lives outside the app.** `quipclipper-web advertise` is its
+own process because in Docker it needs the host's network (multicast doesn't cross the
+bridge) while the app stays on the bridge. It uses python-zeroconf, LGPL-2.1, as an installed
+dependency (no code copied), which is compatible with quipclipper's MIT licence; an Avahi
+sidecar was the alternative, but it needs D-Bus and is heavier. The NixOS module uses the
+host's Avahi instead. Advertising tells the whole LAN where quipclipper is, so it is off by
+default and the docs say tailnet-only installs must leave it off.
+
 ---
 
 ## 19. Releases and the version
