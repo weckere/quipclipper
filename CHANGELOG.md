@@ -140,6 +140,8 @@ scripts/release.sh leaves this block in Unreleased; delete the two marker lines 
 
 <!-- /held back -->
 
+## [0.3.0] - 2026-10-24
+
 ### UI follow-ups (M20)
 
 - **Send to LeadStinger** in the workspace is a button again, not a toggle on Make clip: the ⚡
@@ -562,6 +564,7 @@ The first version, before releases were tagged. Highlights:
   guard, and an optional password gate.
 - **Deployment:** a Nix flake and NixOS module (with a VM test), and Docker images on GHCR.
 
-[Unreleased]: https://github.com/weckere/quipclipper/compare/v0.2.0...dev
+[Unreleased]: https://github.com/weckere/quipclipper/compare/v0.3.0...dev
+[0.3.0]: https://github.com/weckere/quipclipper/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/weckere/quipclipper/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/weckere/quipclipper/releases/tag/v0.1.1
