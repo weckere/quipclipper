@@ -49,6 +49,12 @@ are a few Borg lines for dialogue search to find.
      --output "docs/screenshots/$(basename "$f")" "$f"; done
    ```
 
-   The search shot is cropped to 1600 × 850 (above the footer) (`ffmpeg -vf crop=1600:850:0:0`).
+   The search shot is cropped to 1600 × 740 (above the footer) (`ffmpeg -vf crop=1600:850:0:0`).
+   The library shot bumps one episode's subtitle date for the shot (so it shows the
+   **changed** chip and banner) and puts it back after. The pairing shots (`pairing`,
+   `connected-apps`) ask for access as "LeadStinger on studio-macbook" through the API, with
+   "LeadStinger on booth-mini" already let in, and deny the request afterwards; the address
+   on the banner is the fixture server's own `127.0.0.1`. Transcription stays off (no
+   `QC_TRANSCRIBE`), so none of it shows.
    The workspace shots wait for the waveform's peaks; the phone shot scrolls the waveform
    strip up to just above the pinned selection. Look at every image before committing it.

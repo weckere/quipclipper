@@ -288,8 +288,7 @@ Opening a file opens its workspace.
   dialogue map's amber band, play, Loop selection and Make clip follow, and the view stays
   where it is. **Shift-click** another label to widen the selection to take it in (a range
   dragged on the waveform grows to cover the line). Only a click selects the line: a drag
-  that starts on a label still drags out a range, and Shift-drag still pans. Machine
-  transcript lines (marked auto) work the same way.
+  that starts on a label still drags out a range, and Shift-drag still pans.
   The selection's **in and out handles** are the Before / After padding: drag one (or
   focus it and use the arrow keys) and the fields follow; a negative value trims into the
   line. **Snap** pulls a dropped handle to the nearest **zero crossing** (on by default,

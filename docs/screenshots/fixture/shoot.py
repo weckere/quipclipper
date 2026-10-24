@@ -7,7 +7,7 @@ Jellyfin pointed at fake_jellyfin.py (see README.md here). Needs Playwright and
 Google Chrome (Playwright's own Chromium can't play H.264). Compress with
 pngquant afterwards.
 """
-import asyncio, sys
+import asyncio, json, sys, urllib.request
 from playwright.async_api import async_playwright
 
 import os
@@ -44,6 +44,15 @@ async def open_movie_from_now_playing(page):
     await settle(page, 1500)
 
 
+def api(method, path, body=None):
+    """Call the fixture server's API as the app (pairing) or a person would."""
+    req = urllib.request.Request(BASE + "api/" + path, method=method,
+                                 data=json.dumps(body).encode() if body is not None else None,
+                                 headers={"X-Quipclipper": "1", "Content-Type": "application/json"})
+    with urllib.request.urlopen(req) as r:
+        return json.load(r)
+
+
 async def bottom(page, selector, pad=16):
     """The page y just below the last element matching `selector`, plus `pad`."""
     box = await page.locator(selector).last.bounding_box()
@@ -67,16 +76,27 @@ async def main():
 
         # Index the season first, so the card says so and search is quick.
         page = await home(dark)
+        # Down to the home's Dialogue index card and its Index the whole library button.
+        await page.wait_for_selector("#lib-index-btn:not([hidden])")
         await shot(page, "now-playing", clip={"x": 0, "y": 0, "width": 1600,
-                                            "height": await bottom(page, "#nowplaying-card", 10)})
+                                            "height": await bottom(page, "#index-card", 10)})
         await page.evaluate("p => browse(p)", SHOWS + "/The Next Leporation/Season 01")
         await settle(page)
         if await page.locator("#index-btn").is_visible():
             await page.click("#index-btn")
             await page.wait_for_function("!document.getElementById('index-btn') || document.getElementById('index-btn').hidden || /indexed/i.test(document.getElementById('index-card-text').textContent)", timeout=60000)
             await settle(page, 1500)
+        # One episode's subtitles "changed" since indexing (a newer mtime), so the folder
+        # shows the changed chip and the Re-index them banner; the old mtime goes back after.
+        srt = SHOWS + "/The Next Leporation/Season 01/The Next Leporation - S01E03 - Q Who Hops.srt"
+        st = os.stat(srt)
+        os.utime(srt, (st.st_atime, st.st_mtime + 3600))
+        await page.evaluate("p => browse(p)", SHOWS + "/The Next Leporation/Season 01")
+        await page.wait_for_selector("#changed-banner:not([hidden])", timeout=30000)
+        await settle(page, 1000)
         await shot(page, "library", clip={"x": 0, "y": 0, "width": 1600,
                                         "height": await bottom(page, "#entries li")})
+        os.utime(srt, (st.st_atime, st.st_mtime))
 
         # Dialogue search over the whole library (from a folder, so the Now
         # playing card is out of the way), tick two hits, preview the first.
@@ -144,6 +164,34 @@ async def main():
         await settle(page, 800)
         await shot(page, "phone")
         await phone.close()
+
+        # Pairing: LeadStinger on another computer asks for access (the banner), and
+        # Settings > Connected apps lists one already let in (shot at 2x, cropped). Shot last: the request
+        # is denied afterwards, so it shows on no other page.
+        if not any(c["host"] == "booth-mini" for c in api("GET", "clients")["clients"]):
+            done = api("POST", "pair", {"name": "LeadStinger", "host": "booth-mini"})
+            api("POST", f"pair/{done['id']}/approve")
+        ask = api("POST", "pair", {"name": "LeadStinger", "host": "studio-macbook"})
+        try:
+            dark = await b.new_context(viewport={"width": 1600, "height": 1000}, device_scale_factor=2,
+                                       color_scheme="dark")
+            page = await home(dark)
+            await page.wait_for_selector("#pair-banner:not([hidden])", timeout=30000)
+            await settle(page, 700)
+            ban = await page.locator("#pair-banner").bounding_box()
+            await shot(page, "pairing", clip={"x": ban["x"] - 16, "y": ban["y"] - 16,
+                                            "width": ban["width"] + 32, "height": ban["height"] + 32})
+            # Connected apps, at the foot of the Settings popover, cropped to the popover.
+            await page.click("#settings-btn")
+            await page.wait_for_selector("#apps-list li")
+            await page.evaluate("document.getElementById('apps-setting').scrollIntoView({block: 'end'})")
+            await settle(page, 700)
+            pop = await page.locator("#settings-popover").bounding_box()
+            await shot(page, "connected-apps", clip={"x": pop["x"] - 16, "y": pop["y"] - 16,
+                                                   "width": pop["width"] + 32, "height": pop["height"] + 32})
+            await dark.close()
+        finally:
+            api("POST", f"pair/{ask['id']}/deny")
         await b.close()
 
 asyncio.run(main())

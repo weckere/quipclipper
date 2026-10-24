@@ -18,8 +18,14 @@ mkvmerge. quipclipper is a **self-hosted web app** over your own media folders, 
 ## Features
 
 - **Dialogue search** in a video, a folder or your whole library: fuzzy and typo-tolerant,
-  phrases that span several subtitles still match, results grouped by file with the words
-  highlighted and a preview of the lines around each hit.
+  phrases that span several subtitles still match, lines holding your exact words rank
+  first, and results come grouped by file with the words highlighted and a preview of the
+  lines around each hit.
+- **A dialogue index that stays current:** index a folder or the whole library once (in
+  the background, at low priority, picking up where it stopped), and search reads every
+  indexed file in seconds. Each file shows an **indexed** chip; when its subtitles change
+  (Bazarr upgraded them, say), a **changed** chip and a banner offer **Re-index them**, and
+  [Bazarr, Sonarr and Radarr hooks](#bazarr-sonarr-and-radarr) can do it for you.
 - **A workspace for each file:** the player, a dialogue map of where the talking is, and the
   scrolling script. Set the selection by whole lines (Start / End), add padding, and see it
   loop before you cut.
@@ -41,7 +47,8 @@ mkvmerge. quipclipper is a **self-hosted web app** over your own media folders, 
 - **Plays anything:** files the browser can't play are converted on the fly (audio, or the
   video too), and iOS gets an HLS stream.
 - **[Send to LeadStinger](#leadstinger):** hand a line straight to the LeadStinger
-  soundboard as a trimmed tile, or many lines as a set.
+  soundboard as a trimmed tile, or many lines as a set. LeadStinger connects by pairing:
+  you click Allow on a banner, and no token gets copied.
 - **[Jellyfin Now playing](#jellyfin-now-playing):** open whatever a Jellyfin client is
   playing at its playhead, with the line just heard selected.
 - **[Accessible](#accessibility):** hover text and screen-reader names on every control,
@@ -54,12 +61,15 @@ mkvmerge. quipclipper is a **self-hosted web app** over your own media folders, 
 ## Screenshots
 
 **The library:** the media roots on the left, a Dialogue index card that caches
-subtitles so dialogue search is instant, and Jellyfin's stills on the episodes.
+subtitles so dialogue search is instant, and Jellyfin's stills on the episodes. Each file
+says whether it is indexed; here one episode's subtitles changed since, so a banner offers
+to re-index it.
 
-![The library, with the Dialogue index card and episode stills from Jellyfin](docs/screenshots/library.png)
+![A season folder in the library: the Dialogue index card, episode stills from Jellyfin, indexed chips, and one file marked changed with a Re-index them banner](docs/screenshots/library.png)
 
 **Dialogue search** over the whole library: grouped by file, the words highlighted, a
-preview of the lines around a hit, and a batch bar for the ticked lines.
+preview of the lines around a hit, and a batch bar for the ticked lines. The status line
+counts the files not indexed yet, and **Index the whole library** brings them in.
 
 ![Search results across the library, grouped by file, with a preview](docs/screenshots/search-results.png)
 
@@ -69,9 +79,10 @@ mark the selected line's in and out points.
 
 ![The workspace in the light theme, with the waveform strip and its handles under the player](docs/screenshots/workspace-light.png)
 
-**Now playing** from Jellyfin: open what a client is playing, at its playhead.
+**Now playing** from Jellyfin on the library's home: open what a client is playing, at its
+playhead. Below it, the home's Dialogue index card indexes the whole library.
 
-![Now playing from Jellyfin, with each item's poster](docs/screenshots/now-playing.png)
+![The library home: Now playing from Jellyfin with each item's poster, and the Dialogue index card with Index the whole library](docs/screenshots/now-playing.png)
 
 **Send to LeadStinger:** the cart button beside Make clip cuts the selection with its
 Before/After padding and sends it to LeadStinger as a new tile, the padding becoming the
@@ -84,6 +95,14 @@ handles have grips big enough for a finger.
 
 <p align="center"><img src="docs/screenshots/phone.png" width="300" alt="The workspace on a phone: the player, the waveform strip with its handles, and the selection pinned to the bottom"></p>
 
+**Pairing LeadStinger:** when LeadStinger asks to connect, a banner on every page shows
+its name, computer and code; Allow it if LeadStinger shows the same code. Settings ▸
+Connected apps lists the apps let in, each with its own key and a Revoke button.
+
+<img src="docs/screenshots/pairing.png" width="880" alt="The pairing banner: LeadStinger on studio-macbook wants access, with its code and the Allow and Deny buttons">
+
+<p align="center"><img src="docs/screenshots/connected-apps.png" width="420" alt="Settings, with Connected apps listing LeadStinger on booth-mini, a Revoke button and Connect LeadStinger"></p>
+
 ## Install
 
 quipclipper needs `ffmpeg` and `ffprobe`; `mkvmerge` (MKVToolNix) is used when present.
@@ -94,7 +113,7 @@ The Docker images and the Nix packages include them. Releases are listed in
 
 Each release publishes two images, `ghcr.io/weckere/quipclipper-app` (the backend) and
 `ghcr.io/weckere/quipclipper-web` (nginx and the UI), tagged with the version (e.g.
-`0.2.0`), the series (`0.2`) and `latest`. Copy
+`0.3.1`), the series (`0.3`) and `latest`. Copy
 [`docker-compose.example.yml`](docker-compose.example.yml), set your media paths, and:
 
 ```bash
