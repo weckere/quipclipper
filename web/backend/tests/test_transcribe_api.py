@@ -410,6 +410,9 @@ def test_gaps_jobs_extract_subtitles_at_idle_priority(env, monkeypatch):
         return real_resolve(self, video, *a, **k)
 
     monkeypatch.setattr(SubtitleCache, "resolve", resolve)
+    import quipclipper_web.app as web
+
+    monkeypatch.setattr(web.media, "probe_duration", lambda p: 3.5)  # no ffprobe needed
     root = Path(env["QC_MEDIA_ROOTS"])
     (root / "ep.mkv").write_bytes(b"")
     (root / "ep.en.srt").write_text("1\n00:00:01,000 --> 00:00:03,000\nhello\n")
