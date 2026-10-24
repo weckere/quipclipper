@@ -24,6 +24,9 @@ python3Packages.buildPythonApplication {
     quipclipper
     python3Packages.fastapi
     python3Packages.uvicorn
+    # LAN advertising (`quipclipper-web advertise`, QC_ADVERTISE=1). LGPL-2.1, used as a
+    # library; the NixOS module advertises with Avahi instead.
+    python3Packages.zeroconf
   ];
 
   # web/backend/tests/ exercises the API via fastapi's TestClient (httpx). Run

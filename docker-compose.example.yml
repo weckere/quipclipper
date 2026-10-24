@@ -39,9 +39,16 @@ services:
       # QC_YOUTUBE_DIR: /media/youtube/one-offs
       # This server's base URL as other machines reach it. "Send to LeadStinger"
       # puts it in a leadstinger://quip link, and LeadStinger downloads the clip
-      # from there with QC_API_TOKEN (connected once with leadstinger-cli
-      # quip.connect). Unset = those links are off. See docs/MANUAL.md.
+      # from there with the key it got by pairing (or QC_API_TOKEN). Unset = the
+      # links name the advertised URL (the advertise service below), else the
+      # address the browser is using. See docs/MANUAL.md.
       # QC_PUBLIC_URL: https://quipclipper.example.net
+      # The name LeadStinger shows for this server (default: the advertise
+      # service's host name, else the container's).
+      # QC_SERVER_NAME: nas
+      # Pairing: LeadStinger asks for access and you Allow it in the web UI, with
+      # no token to copy. "0" turns it off. See docs/API.md (Pairing).
+      # QC_PAIRING: "0"
       # Now playing: what each Jellyfin client is playing, opened at its playhead.
       # An API key (Jellyfin -> Dashboard -> API Keys), and Jellyfin's paths mapped
       # to the in-container paths above when they differ. See docs/MANUAL.md.
@@ -108,6 +115,26 @@ services:
     #   QC_PROXY_SECRET: "paste-a-long-random-string-here"
     #   QC_API_TOKEN: "paste-a-long-random-string-here"   # match the app service
     #   QC_HOOK_TOKEN: "paste-a-long-random-string-here"  # match the app service
+
+  # --- Optional: announce quipclipper on your local network -----------------
+  # LeadStinger's "Find on network" then lists it ("QuipClipper on <host>")
+  # without anyone typing an address, and Send to LeadStinger links name this
+  # URL. mDNS doesn't cross Docker's bridge network, so this one small process
+  # runs on the host's network. Leave it off for a server reached only over a
+  # tailnet or VPN: it tells every device on the LAN that quipclipper runs here.
+  # advertise:
+  #   image: ghcr.io/weckere/quipclipper-app:latest
+  #   restart: unless-stopped
+  #   command: ["quipclipper-web", "advertise"]
+  #   network_mode: host
+  #   environment:
+  #     QC_ADVERTISE: "1"
+  #     QC_ADVERTISE_PORT: "8896"   # the web service's published port
+  #     QC_STATE_DIR: /state
+  #     # QC_SERVER_NAME: nas        # as on the app service (default: this host's name)
+  #     # QC_PUBLIC_URL: https://quipclipper.example.net   # as on the app service
+  #   volumes:
+  #     - quip-state:/state
 
 volumes:
   quip-state:

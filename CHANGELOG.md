@@ -275,6 +275,12 @@ scripts/release.sh leaves this block in Unreleased; delete the two marker lines 
   (`state_dir/advertise.json`), else the address the browser (or CLI) reached the server at,
   so Send to LeadStinger works on a fresh install. `QC_PUBLIC_URL` still wins, and deep links
   still need it.
+- **LAN advertising (opt-in, `QC_ADVERTISE=1`):** `quipclipper-web advertise` announces the
+  server over mDNS as `_quipclipper._tcp` (instance = server name, port `QC_ADVERTISE_PORT`,
+  TXT `v=1`, `url`, `id`) on the LAN interfaces only, and writes `state_dir/advertise.json`
+  for the link fallback and the server name. The compose example has an optional, commented
+  `advertise` service on the host's network. Uses python-zeroconf (LGPL-2.1, a new
+  dependency). Tailnet-only installs should leave it off.
 
 ### Fixed
 

@@ -14,6 +14,7 @@ dependencies = [
     "quipclipper",      # the clipping engine (this repo's root package)
     "fastapi>=0.110",   # HTTP API
     "uvicorn>=0.29",    # ASGI server
+    "zeroconf>=0.132",  # LAN advertising (quipclipper-web advertise); LGPL-2.1, used as a library
 ]
 
 [project.optional-dependencies]

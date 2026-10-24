@@ -78,6 +78,7 @@
               python.pkgs.httpx
               python.pkgs.fastapi
               python.pkgs.uvicorn
+              python.pkgs.zeroconf  # quipclipper-web advertise
               yt-dlp-fresh   # YouTube subtitle/metadata fetch + stream-URL resolution
             ];
 
