@@ -273,3 +273,51 @@ def test_the_transcript_bar_in_node(tmp_path):
     assert run.returncode == 0, run.stderr
     result = json.loads(run.stdout)
     assert result == {k: True for k in result} and len(result) == 6, result
+
+
+def _html() -> str:
+    return (FRONTEND / "index.html").read_text()
+
+
+def test_the_transcript_bar_is_one_slim_row_until_opened():
+    # wiz: the bar took three script lines' worth of space for something rarely needed.
+    html = _html()
+    bar = html[html.index('id="stt-bar"'):html.index("<!-- The dialogue cues. -->")]
+    head = bar[bar.index('class="stt-head"'):bar.index('id="stt-body"')]
+    # The slim row: a disclosure button, the state in a few words, and a job's progress or
+    # the last message with Cancel. Everything else is in the body, closed by default.
+    assert re.search(r'<button[^>]*id="stt-toggle"[^>]*aria-expanded="false"[^>]*aria-controls="stt-body"', head)
+    assert 'id="stt-summary"' in head and 'id="stt-job"' in head and 'id="stt-cancel"' in head
+    assert re.search(r'id="stt-body"[^>]*hidden', bar)
+    body = bar[bar.index('id="stt-body"'):]
+    for control in ("stt-gaps", "stt-file", "stt-model", "stt-copy", "stt-uncopy", "stt-export",
+                    "stt-clear", "stt-readonly", "stt-detail"):
+        assert f'id="{control}"' in body, control
+    # Hover or keyboard focus explains it (a tooltip, not a title), and the button's name
+    # starts with the visible "auto" (SC 2.5.3).
+    assert re.search(r'id="stt-tip" class="tip tip-below" role="tooltip">Lines whisper heard', head)
+    assert 'aria-describedby="stt-tip"' in head
+    assert re.search(r'id="stt-toggle"[^>]*><span class="auto-chip">auto</span> <span class="stt-title">Machine transcript', head)
+    css = (FRONTEND / "styles.css").read_text()
+    assert re.search(r"\.stt-head \{[^}]*flex-wrap: nowrap", css)
+    assert re.search(r"\.stt-summary, \.stt-job \{[^}]*text-overflow: ellipsis", css)
+
+
+def test_the_transcript_bar_opens_closes_and_is_remembered():
+    js = _js()
+    set_open = _function("sttSetOpen")
+    assert '$("stt-body").hidden = !open' in set_open
+    assert 'setAttribute("aria-expanded", String(open))' in set_open
+    assert "writePref(STT_OPEN_KEY" in set_open  # localStorage, inside writePref's try/catch
+    assert 'sttSetOpen(readPref(STT_OPEN_KEY) === "1", false)' in js
+    assert '$("stt-toggle").onclick = () => sttSetOpen($("stt-body").hidden)' in js
+    esc = js[js.index('$("stt-bar").addEventListener("keydown"'):]
+    esc = esc[:esc.index("});")]
+    assert '"Escape"' in esc and "sttSetOpen(false)" in esc and '$("stt-toggle").focus()' in esc
+    # A slim row still says what happened: the brief state and the status line are drawn
+    # whether or not the bar is open, and messages go to the live region too.
+    render = _function("renderSttBar")
+    assert '$("stt-summary").textContent = brief.join(" · ")' in render
+    assert '$("stt-detail").textContent = parts.join(" · ")' in render
+    assert "announce(msg)" in _function("sttAction")
+    assert "announce(`Couldn't start the transcription" in _function("startTranscribe")

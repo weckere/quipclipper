@@ -728,6 +728,7 @@ EXEMPT_UI_SETTINGS: dict[str, str] = {
     "qc_theme": "presentation: light or dark appearance in the browser",
     "qc_sub_size": "presentation: subtitle size on the video in the browser",
     "qc_sub_bg": "presentation: solid background behind the video's subtitles in the browser",
+    "qc_stt_open": "presentation: whether the machine transcript bar is open in the browser",
 }
 
 

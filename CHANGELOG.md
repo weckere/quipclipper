@@ -120,6 +120,12 @@ scripts/release.sh leaves this block in Unreleased; delete the two marker lines 
 - **Fill gaps** (one file or a folder) extracts the subtitles of a file not indexed yet at idle
   priority, as the folder index does, and Cancel stops that extraction too (it ran at normal
   priority).
+- The workspace's machine transcript bar is one slim row above the script, about a line tall,
+  instead of three or four: **auto Machine transcript**, the state in a few words ("14 lines",
+  "none yet"), and a running job's progress or the last message with Cancel. Hover or keyboard
+  focus explains what machine transcripts are; a click or Enter opens Fill gaps, the model,
+  Copy to library and the rest below it, and Esc or a click closes them. Each browser
+  remembers which, and messages are read out as before.
 
 <!-- /held back -->
 

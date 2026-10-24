@@ -2796,16 +2796,23 @@ function renderSttBar(t, path, hasSubs) {
   if (bar.hidden) return;
   bar.dataset.hasSubs = hasSubs ? "1" : "";
   const stored = t.stored, lib = t.library || [];
-  const parts = [];
+  const parts = [], brief = [];
   if (stored) {
     parts.push(`${formatTimeWhole(stored.covered)} transcribed with ${stored.models.join(", ")}, ${plural(stored.lines, "line")}`);
+    brief.push(plural(stored.lines, "line"));
   }
-  if (lib.length) parts.push(`in the library as ${lib.join(", ")}`);
+  if (lib.length) {
+    parts.push(`in the library as ${lib.join(", ")}`);
+    brief.push("in the library");
+  }
   if (!parts.length) {
     parts.push(hasSubs ? "None yet. Lines the subtitles leave out, like a song, can be transcribed."
       : "This file has no subtitles: transcribe it to search what's said.");
+    brief.push(hasSubs ? "none yet" : "no subtitles: transcribe to search");
   }
-  $("stt-summary").textContent = parts.join(" · ");
+  // The slim row says it in a few words; the open bar in full.
+  $("stt-summary").textContent = brief.join(" · ");
+  $("stt-detail").textContent = parts.join(" · ");
   const running = sttJobs.get(path);
   $("stt-gaps").hidden = !avail || !hasSubs;
   $("stt-file").hidden = !avail || hasSubs;
@@ -2835,6 +2842,25 @@ function renderSttBar(t, path, hasSubs) {
     $("stt-job-text").textContent = "";
   }
 }
+
+// The bar is one slim row unless opened (the toggle, or Enter on it); Esc or the toggle
+// closes it again. Each browser remembers which.
+const STT_OPEN_KEY = "qc_stt_open";
+function sttSetOpen(open, save = true) {
+  $("stt-body").hidden = !open;
+  $("stt-toggle").setAttribute("aria-expanded", String(open));
+  $("stt-bar").classList.toggle("open", open);
+  if (save) writePref(STT_OPEN_KEY, open ? "1" : null);
+}
+sttSetOpen(readPref(STT_OPEN_KEY) === "1", false);
+$("stt-toggle").onclick = () => sttSetOpen($("stt-body").hidden);
+$("stt-bar").addEventListener("keydown", (e) => {
+  if (e.key !== "Escape" || $("stt-body").hidden) return;
+  e.stopPropagation();  // only the bar closes, nothing behind it
+  sttSetOpen(false);
+  $("stt-toggle").focus();
+  $("stt-toggle").closest(".tip-wrap").classList.add("tip-off");
+});
 
 /** Fetch the open file's transcript info again and redraw the bar; with `script`, reload the
  *  script too (the machine lines changed), keeping a line selection where it was. */
@@ -2876,6 +2902,7 @@ async function startTranscribe(extra, what) {
   try {
     r = await postJSON("/api/items/transcribe", { path, model, audio: getSelectedAudio() ?? 0, ...extra });
   } catch (err) {
+    announce(`Couldn't start the transcription: ${err.message}`);
     if (sttHere(path)) sttStatus(`Couldn't start the transcription: ${err.message}`);
     return;
   }
@@ -5301,8 +5328,7 @@ $("ls-send").onclick = () => {
   announce(appConfig.public_url ? "Sending to LeadStinger" : "Making a LeadStinger set");
   return appConfig.public_url ? sendLeadStingerClip() : makeLeadStingerClip();
 };
-{
-  const wrap = $("ls-send").closest(".tip-wrap");
+for (const wrap of document.querySelectorAll(".tip-wrap")) {  // ls-send's, the transcript toggle's
   const reset = () => wrap.classList.remove("tip-off");
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && (wrap.matches(":hover") || wrap.contains(document.activeElement))) {

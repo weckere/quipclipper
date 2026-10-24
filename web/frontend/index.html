@@ -482,23 +482,31 @@
                 <label class="checkbox-label script-follow" title="Keep the script scrolled to the line that's playing"><input id="script-follow" class="switch" type="checkbox" checked /> Follow playback</label>
               </div>
               <!-- Machine transcription (M21): what whisper has heard in this file, and the
-                   actions on it. Only ever runs when one of these is pressed. -->
+                   actions on it. Only ever runs when one of these is pressed. One slim row by
+                   default (its state, a job's progress, the last message); the toggle opens the
+                   controls below it, and the browser remembers which. -->
               <div id="stt-bar" class="stt-bar" hidden>
                 <div class="stt-head">
-                  <span class="stt-title"><span class="auto-chip" aria-hidden="true">auto</span>Machine transcript</span>
+                  <span class="tip-wrap">
+                    <button type="button" id="stt-toggle" class="stt-toggle" aria-expanded="false" aria-controls="stt-body" aria-describedby="stt-tip" data-notitle="the visible tooltip #stt-tip is its hover text"><span class="auto-chip">auto</span> <span class="stt-title">Machine transcript</span><span class="stt-caret" aria-hidden="true"></span></button>
+                    <span id="stt-tip" class="tip tip-below" role="tooltip">Lines whisper heard in this file that the subtitles leave out (a song, say), marked auto in the script and in search. They can be wrong. Click to transcribe, copy to the library or delete them.</span>
+                  </span>
                   <span id="stt-summary" class="stt-summary muted"></span>
+                  <span id="stt-job" class="stt-job" hidden><span id="stt-job-text" role="status"></span> <button type="button" id="stt-cancel" data-action="job.cancel" class="reindex-link" title="Stop this transcription; what it has done so far is kept">Cancel</button></span>
                 </div>
-                <div class="stt-actions">
-                  <button type="button" id="stt-gaps" data-action="item.transcribe" class="reindex-link" title="Transcribe every stretch of 4 s or more between the subtitle lines (songs, lines the subtitles skip) with whisper. It runs in the background at low priority and can take a few minutes.">Fill gaps</button>
-                  <button type="button" id="stt-file" data-action="item.transcribe" class="reindex-link" title="Transcribe the whole file with whisper, so its dialogue can be searched. It runs in the background at low priority: an hour of audio can take half an hour or more.">Transcribe file</button>
-                  <label class="stt-model" id="stt-model-field" title="The whisper model for the next run: small.en is quicker, medium.en hears more">Model <select id="stt-model"></select></label>
-                  <button type="button" id="stt-copy" data-action="item.transcript-copy" class="reindex-link" title="Copy the machine lines next to the file as a subtitle file named …whisper.srt, so the player's captions and Jellyfin show them too">Copy to library</button>
-                  <button type="button" id="stt-uncopy" data-action="item.transcript-uncopy" class="reindex-link" title="Remove the …whisper.srt copy from the library; the transcript stays">Remove from library</button>
-                  <a id="stt-export" data-action="item.transcript" class="reindex-link" title="Save the machine lines as a SubRip (.srt) file" download>Export .srt</a>
-                  <button type="button" id="stt-clear" data-action="item.transcript-clear" class="reindex-link" title="Delete this file's machine transcript (a copy in the library stays)">Delete transcript</button>
+                <div id="stt-body" class="stt-body" hidden>
+                  <p id="stt-detail" class="stt-detail muted"></p>
+                  <div class="stt-actions">
+                    <button type="button" id="stt-gaps" data-action="item.transcribe" class="reindex-link" title="Transcribe every stretch of 4 s or more between the subtitle lines (songs, lines the subtitles skip) with whisper. It runs in the background at low priority and can take a few minutes.">Fill gaps</button>
+                    <button type="button" id="stt-file" data-action="item.transcribe" class="reindex-link" title="Transcribe the whole file with whisper, so its dialogue can be searched. It runs in the background at low priority: an hour of audio can take half an hour or more.">Transcribe file</button>
+                    <label class="stt-model" id="stt-model-field" title="The whisper model for the next run: small.en is quicker, medium.en hears more">Model <select id="stt-model"></select></label>
+                    <button type="button" id="stt-copy" data-action="item.transcript-copy" class="reindex-link" title="Copy the machine lines next to the file as a subtitle file named …whisper.srt, so the player's captions and Jellyfin show them too">Copy to library</button>
+                    <button type="button" id="stt-uncopy" data-action="item.transcript-uncopy" class="reindex-link" title="Remove the …whisper.srt copy from the library; the transcript stays">Remove from library</button>
+                    <a id="stt-export" data-action="item.transcript" class="reindex-link" title="Save the machine lines as a SubRip (.srt) file" download>Export .srt</a>
+                    <button type="button" id="stt-clear" data-action="item.transcript-clear" class="reindex-link" title="Delete this file's machine transcript (a copy in the library stays)">Delete transcript</button>
+                  </div>
+                  <p id="stt-readonly" class="stt-note muted" hidden>This folder is read-only here, so the transcript can't be copied next to the file. It stays searchable in quipclipper.</p>
                 </div>
-                <p id="stt-readonly" class="stt-job muted" hidden>This folder is read-only here, so the transcript can't be copied next to the file. It stays searchable in quipclipper.</p>
-                <p id="stt-job" class="stt-job" hidden><span id="stt-job-text" role="status"></span> <button type="button" id="stt-cancel" data-action="job.cancel" class="reindex-link" title="Stop this transcription; what it has done so far is kept">Cancel</button></p>
               </div>
               <!-- The dialogue cues. -->
               <div id="script-wrap" class="script-wrap" hidden>

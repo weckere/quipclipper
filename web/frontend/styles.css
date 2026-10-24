@@ -760,19 +760,39 @@ footer { padding: 2rem 1.25rem; font-size: 0.8rem; }
 .script-line.script-machine { border-left-style: dotted; }
 #player::cue(.machine) { color: #D9C6FF; font-style: italic; }
 
+/* The machine transcript bar: one slim row (about a script line tall) unless opened. */
 .stt-bar {
-  margin: 0.25rem 0 0.5rem; padding: 0.5rem 0.75rem;
+  margin: 0.2rem 0 0.4rem; padding: 0.15rem 0.5rem;
   border: 1px dashed var(--machine); border-radius: var(--radius);
   background: var(--machine-soft); font-size: var(--text-sm);
 }
-.stt-head { display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem; align-items: baseline; }
+.stt-bar.open { padding-bottom: 0.45rem; }
+.stt-head { display: flex; flex-wrap: nowrap; gap: 0 0.6rem; align-items: center; min-height: 1.6rem; min-width: 0; }
+.stt-toggle {
+  display: inline-flex; align-items: center; gap: 0.3rem; flex-shrink: 0;
+  padding: 0.1rem 0.25rem; margin-left: -0.25rem; border: 0; border-radius: var(--radius);
+  background: none; color: var(--machine); font: inherit; font-weight: 600; cursor: pointer;
+}
+.stt-toggle:hover { background: var(--machine-soft); text-decoration: underline; }
+.stt-toggle:focus-visible { outline: 2px solid var(--machine); outline-offset: 1px; }
+.stt-toggle .auto-chip { margin: 0; }
+.stt-caret { width: 0; height: 0; border: 0.28rem solid transparent; border-left-color: currentColor; border-right-width: 0; transition: transform 0.12s ease; }
+.stt-bar.open .stt-caret { transform: rotate(90deg); }
 .stt-title { color: var(--machine); font-weight: 600; }
+.stt-summary, .stt-job { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stt-summary { flex: 0 1 auto; }
+.stt-job { flex: 1 1 auto; color: var(--text); }
+.stt-job .reindex-link { margin-left: 0.3rem; }
+.tip.tip-below { top: calc(100% + 0.35rem); bottom: auto; left: 0; right: auto; }
+.stt-body { margin-top: 0.25rem; }
+.stt-detail { margin: 0; }
 .stt-actions { display: flex; flex-wrap: wrap; gap: 0.35rem 0.9rem; align-items: center; margin-top: 0.35rem; }
 .stt-bar .reindex-link { color: var(--text); }
 .stt-bar .reindex-link:hover { color: var(--accent-text); }
 .stt-model { display: inline-flex; gap: 0.35rem; align-items: center; color: var(--dim); font-size: 0.8rem; }
 .stt-model select { font-size: 0.8rem; padding: 0.1rem 0.3rem; }
-.stt-job { margin: 0.35rem 0 0; color: var(--text); }
+.stt-note { margin: 0.35rem 0 0; }
+@media (prefers-reduced-motion: reduce) { .stt-caret { transition: none; } }
 .hit-speaker { color: var(--playhead); font-weight: 600; margin-right: 0.35em; }
 .script-loading { padding: 0.6rem 0.7rem; font-size: 0.85rem; }
 /* Floating In/Out buttons on hover */
