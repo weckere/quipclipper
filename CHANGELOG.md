@@ -107,6 +107,9 @@ scripts/release.sh leaves this block in Unreleased; delete the two marker lines 
   light theme; a machine hit's highlighted words keep the violet; a script row's spoken name
   starts with the visible "auto".
 
+- Folder and library search also search a file's stored machine transcript when the file
+  isn't indexed.
+
 <!-- /held back -->
 
 ### UI follow-ups (M20)
@@ -161,8 +164,7 @@ scripts/release.sh leaves this block in Unreleased; delete the two marker lines 
   ffmpeg to extract a file's subtitles mid-search. Files not indexed yet, and read-along
   books found in a folder, are left out and counted: `/api/search/folder` gains
   `not_indexed` and `books_not_searched` (`capped` now means either is above 0), and the web
-  status line and the CLI say how many weren't searched. A file with a stored machine
-  transcript is searched on it even when not indexed. Listing the library is quicker too:
+  status line and the CLI say how many weren't searched. Listing the library is quicker too:
   one listing per folder serves every file's sidecar lookups, and the EPUB check is cached.
 - **Index the whole library:** a button on the library's home page (and `quipclipper
   index.library [FOLDER]`, `POST /api/search/library/index`) indexes every file not indexed
