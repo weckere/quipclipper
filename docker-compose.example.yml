@@ -115,6 +115,9 @@ services:
     #   QC_PROXY_SECRET: "paste-a-long-random-string-here"
     #   QC_API_TOKEN: "paste-a-long-random-string-here"   # match the app service
     #   QC_HOOK_TOKEN: "paste-a-long-random-string-here"  # match the app service
+    #   # Behind another reverse proxy (Caddy, Traefik, a Tailscale sidecar): its address,
+    #   # so the pairing banner shows the caller, not the proxy (docs/DEPLOY.md).
+    #   QC_TRUSTED_PROXIES: "172.18.0.5"
 
   # --- Optional: announce quipclipper on your local network -----------------
   # LeadStinger's "Find on network" then lists it ("QuipClipper on <host>")

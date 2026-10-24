@@ -183,6 +183,11 @@ scripts/release.sh leaves this block in Unreleased; delete the two marker lines 
   publishing, with a warning when every `nginx.listen` address looks unreachable from the
   LAN (loopback, a Docker or private bridge, the tailnet).
 
+- **Behind another proxy** (a Tailscale serve sidecar, Caddy, Traefik): `QC_TRUSTED_PROXIES`
+  (Docker) or `nginx.trustedProxies` (NixOS) names it, and nginx takes the caller's address
+  from its `X-Forwarded-For` (or `QC_REAL_IP_HEADER` / `nginx.realIpHeader`), so the pairing
+  banner's "From" and the pairing rate limit see the real caller, not the proxy.
+
 ## [0.3.0] - 2026-10-24
 
 ### UI follow-ups (M20)

@@ -31,6 +31,11 @@ let
   proxyAddr = if lib.hasInfix ":" cfg.listenAddress
     then "[${cfg.listenAddress}]" else cfg.listenAddress;
   proxyTarget = "http://${proxyAddr}:${toString cfg.listenPort}";
+  # A proxy in front (nginx.trustedProxies) names the caller in realIpHeader; nginx then
+  # uses that as $remote_addr, which X-Real-IP passes to the backend.
+  realIpConfig = lib.optionalString (cfg.nginx.trustedProxies != [ ]) (
+    lib.concatMapStrings (p: "set_real_ip_from ${p};\n") cfg.nginx.trustedProxies
+    + "real_ip_header ${cfg.nginx.realIpHeader};\n");
   # nginx vhost listen entries: explicit `nginx.listen`, else derived from
   # `nginx.port`. The vhost is a catch-all default_server only when asked and no
   # server_name is set (a named vhost shouldn't grab every unmatched request).
@@ -412,6 +417,30 @@ in
         '';
       };
 
+      trustedProxies = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [ ];
+        example = [ "172.30.88.2" "10.0.0.0/8" ];
+        description = ''
+          Addresses (or CIDR ranges) of reverse proxies in front of the bundled nginx, such
+          as a Tailscale serve sidecar, Caddy or Traefik. For requests from them, nginx takes
+          the client's address from `nginx.realIpHeader` (`set_real_ip_from`), so the
+          pairing banner's "From", its per-address rate limit and nginx's own `allow`/`deny`
+          see the real caller instead of the proxy. List only proxies you control: a client
+          that can reach nginx from a listed address can claim any address.
+        '';
+      };
+
+      realIpHeader = lib.mkOption {
+        type = lib.types.str;
+        default = "X-Forwarded-For";
+        example = "X-Real-IP";
+        description = ''
+          The header a `nginx.trustedProxies` proxy names the client in. With
+          `X-Forwarded-For` nginx reads its last entry, the one the nearest proxy added.
+        '';
+      };
+
       defaultServer = lib.mkOption {
         type = lib.types.bool;
         default = true;
@@ -570,6 +599,15 @@ in
 
   config = lib.mkIf cfg.enable {
     assertions = [
+      {
+        # Each goes into nginx's config as written: only addresses and ranges.
+        assertion = builtins.all (p: builtins.match "[0-9A-Fa-f.:]+(/[0-9]+)?" p != null) cfg.nginx.trustedProxies;
+        message = "services.quipclipper-web.nginx.trustedProxies takes IP addresses or CIDR ranges (e.g. 172.30.88.2, 10.0.0.0/8), not host names.";
+      }
+      {
+        assertion = builtins.match "[A-Za-z0-9-]+" cfg.nginx.realIpHeader != null;
+        message = "services.quipclipper-web.nginx.realIpHeader must be a header name such as X-Forwarded-For.";
+      }
       {
         assertion = cfg.mediaRoots != [ ] || cfg.writableMediaRoots != [ ];
         message = ''
@@ -844,7 +882,7 @@ in
         extraConfig = ''
           add_header X-Content-Type-Options "nosniff" always;
           add_header X-Frame-Options "SAMEORIGIN" always;
-        '';
+        '' + realIpConfig;
         # App shell + assets have no content hash, so always revalidate (nginx
         # still 304s when unchanged) — a deploy is picked up without a hard
         # refresh instead of being served stale from the browser cache.

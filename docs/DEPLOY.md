@@ -279,6 +279,22 @@ gate, the same token check; without them, paired apps work on an open server onl
 `QC_PAIRING=0` (NixOS: `pairing.enable = false`) turns pairing off; the module then leaves
 the exemptions out.
 
+### Behind another proxy: the caller's real address
+
+nginx tells the backend who is calling (`X-Real-IP`), which the pairing banner shows as
+"From" and the pairing rate limit counts by. Behind another reverse proxy (a Tailscale
+serve sidecar, Caddy, Traefik) every request seems to come from that proxy. Name it, and
+nginx takes the caller from the proxy's header instead:
+
+- Docker: `QC_TRUSTED_PROXIES` on the web service: addresses or CIDR ranges, comma- or
+  space-separated (`QC_TRUSTED_PROXIES: "172.18.0.5"`); `QC_REAL_IP_HEADER` if the proxy
+  uses something other than `X-Forwarded-For`.
+- NixOS: `nginx.trustedProxies = [ "172.30.88.2" ];` (and `nginx.realIpHeader`).
+
+With `X-Forwarded-For`, nginx reads the last entry, the one the nearest proxy added, so a
+caller can't forge it. List only proxies you run: anything that can reach nginx from a
+listed address can claim to be anyone, including to nginx's own `allow`/`deny` rules.
+
 ## Advertising on the local network
 
 Opt-in. The server announces itself over mDNS/Bonjour as `_quipclipper._tcp` (TXT `v=1`,

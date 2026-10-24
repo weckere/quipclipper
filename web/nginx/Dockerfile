@@ -15,8 +15,9 @@ RUN apt-get update \
 
 COPY web/nginx/nginx.conf /etc/nginx/conf.d/default.conf
 COPY web/nginx/40-quip-auth.sh /docker-entrypoint.d/40-quip-auth.sh
+COPY web/nginx/45-quip-realip.sh /docker-entrypoint.d/45-quip-realip.sh
 COPY web/nginx/50-quip-proxy.sh /docker-entrypoint.d/50-quip-proxy.sh
-RUN chmod +x /docker-entrypoint.d/40-quip-auth.sh /docker-entrypoint.d/50-quip-proxy.sh
+RUN chmod +x /docker-entrypoint.d/40-quip-auth.sh /docker-entrypoint.d/45-quip-realip.sh /docker-entrypoint.d/50-quip-proxy.sh
 COPY web/frontend /usr/share/nginx/html
 
 # hls.js (desktop Chrome/Firefox playback) isn't in git: web/frontend/vendor/ is
