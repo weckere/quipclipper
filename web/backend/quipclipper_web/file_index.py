@@ -66,7 +66,7 @@ def media_for(path: Path) -> Path | None:
     for name in names:
         stem, e = os.path.splitext(name)
         if e.lower() in MEDIA_EXTS and low.startswith(stem.lower() + "."):
-            if best is None or len(stem) > len(best.stem):
+            if (best is None or len(stem) > len(best.stem)) and (path.parent / name).is_file():
                 best = path.parent / name
     return best
 
@@ -84,7 +84,8 @@ def webhook_paths(body: Any) -> tuple[list[str], str | None]:
         if isinstance(f, dict) and isinstance(f.get("path"), str):
             out.append(f["path"])
     for key in ("episodeFiles", "renamedEpisodeFiles", "renamedMovieFiles"):
-        for f in body.get(key) or []:
+        files = body.get(key)
+        for f in files if isinstance(files, list) else []:
             if isinstance(f, dict) and isinstance(f.get("path"), str):
                 out.append(f["path"])
     event = body.get("eventType")
@@ -99,14 +100,22 @@ class FileQueue:
     ``take`` that finds the queue empty also retires it, under the same lock as
     :meth:`add`, so a file added as the job finishes always gets a new job. A library run
     takes files with :meth:`take_nowait`, which never retires the drainer.
+
+    ``alive(job_id)`` says whether the drainer will still take files: a job cancelled
+    while queued never runs, and one that failed or is being cancelled stops, so
+    :meth:`add` submits a new one rather than leaving files waiting on a dead job.
+    ``take`` and ``retire`` name their job, so an old one stopping never retires the
+    drainer that replaced it.
     """
 
-    def __init__(self, now: Callable[[], float] = time.time) -> None:
+    def __init__(self, now: Callable[[], float] = time.time,
+                 alive: Callable[[str], bool] = lambda _id: True) -> None:
         self._lock = threading.Lock()
         self._pending: dict[str, tuple[Path, bool]] = {}  # path -> (path, force)
         self._job_id: str | None = None
         self._recent: deque[dict[str, Any]] = deque(maxlen=RECENT)
         self._now = now
+        self._alive = alive
 
     def add(self, files: list[tuple[Path, bool]],
             submit: Callable[[], str]) -> tuple[str | None, list[bool]]:
@@ -120,6 +129,8 @@ class FileQueue:
                 prev = self._pending.get(key)
                 added.append(prev is None)
                 self._pending[key] = (f, force or bool(prev and prev[1]))
+            if self._job_id is not None and not self._alive(self._job_id):
+                self._job_id = None
             if self._pending and self._job_id is None:
                 try:
                     self._job_id = submit()
@@ -130,11 +141,13 @@ class FileQueue:
                     raise
             return self._job_id, added
 
-    def take(self) -> tuple[Path, bool] | None:
-        """The next file for the drainer job; None (and the job is retired) when empty."""
+    def take(self, job_id: str | None = None) -> tuple[Path, bool] | None:
+        """The next file for the drainer job ``job_id``; None (and the job is retired)
+        when empty."""
         with self._lock:
             if not self._pending:
-                self._job_id = None
+                if job_id is None or self._job_id == job_id:
+                    self._job_id = None
                 return None
             return self._pending.pop(next(iter(self._pending)))
 
@@ -145,10 +158,30 @@ class FileQueue:
                 return None
             return self._pending.pop(next(iter(self._pending)))
 
-    def retire(self) -> list[Path]:
-        """The drainer stopped (cancelled, or the server is shutting down): drop what
-        is waiting and return it, so the next request starts a fresh job."""
+    def release(self) -> str | None:
+        """A library run emptied the queue between its own files: the drainer job still
+        waiting behind it has nothing left to do. Returns its id (to cancel) and forgets
+        it, so the queue reads idle; a file added later gets a new job."""
         with self._lock:
+            if self._pending or self._job_id is None:
+                return None
+            job_id, self._job_id = self._job_id, None
+            return job_id
+
+    def put_back(self, f: Path, force: bool) -> None:
+        """Return a file a library run took but didn't finish (it was cancelled, not
+        the hook), first in line."""
+        with self._lock:
+            key = str(f)
+            prev = self._pending.pop(key, None)
+            self._pending = {key: (f, force or bool(prev and prev[1])), **self._pending}
+
+    def retire(self, job_id: str | None = None) -> list[Path]:
+        """The drainer ``job_id`` was cancelled: drop what is waiting and return it, so
+        the next request starts a fresh job. Nothing when another job has taken over."""
+        with self._lock:
+            if job_id is not None and self._job_id not in (None, job_id):
+                return []
             dropped = [f for f, _ in self._pending.values()]
             self._pending.clear()
             self._job_id = None
@@ -172,11 +205,13 @@ class FileQueue:
 def drain(queue: FileQueue, index: Callable[[Path, bool], str], *,
           take: Callable[[], tuple[Path, bool] | None] | None = None,
           cancelled: Callable[[], bool] = lambda: False,
-          progress: Callable[[str], None] = lambda _s: None) -> dict[str, int]:
+          progress: Callable[[str], None] = lambda _s: None,
+          put_back: bool = False) -> dict[str, int]:
     """Re-index queued files until ``take`` (default :meth:`FileQueue.take`) runs dry
     or ``cancelled()``. ``index(file, force)`` returns "indexed", "current" or
     "no_subs", or raises for a file it couldn't tell about. Every outcome is recorded.
-    Returns counts by outcome (and "failed")."""
+    Returns counts by outcome (and "failed"). ``put_back``: a cancel stops someone
+    else's job (a library run's), so the file it interrupts waits for the hook job."""
     take = take or queue.take
     counts: dict[str, int] = {}
     while not cancelled():
@@ -188,11 +223,14 @@ def drain(queue: FileQueue, index: Callable[[Path, bool], str], *,
         try:
             outcome = index(f, force)
         except Cancelled:
-            queue.record(f, "cancelled")
+            if put_back:
+                queue.put_back(f, force)
+            else:
+                queue.record(f, "cancelled")
             raise
-        except (OSError, RuntimeError, ValueError) as exc:
+        except Exception as exc:  # noqa: BLE001 -- one bad file never stops the queue
             outcome = "failed"
-            queue.record(f, outcome, str(exc))
+            queue.record(f, outcome, str(exc) or type(exc).__name__)
         else:
             queue.record(f, outcome)
         counts[outcome] = counts.get(outcome, 0) + 1

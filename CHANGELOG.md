@@ -195,9 +195,10 @@ scripts/release.sh leaves this block in Unreleased; delete the two marker lines 
   subtitle file (whose video is found beside it), or a Sonarr/Radarr webhook body as it
   comes. `QC_PATH_MAP` maps their container paths onto yours, and `QC_HOOK_TOKEN` is a
   token that can only do this (the Docker nginx adds a `hook` login for it; NixOS:
-  `hookTokenFile`, `pathMap`). A library run takes the hooks' files between its own. The
-  hook script `contrib/hooks/quipclipper-reindex` needs only `sh` and `curl`; setup for each
-  app: docs/HOOKS.md.
+  `hookTokenFile`, `pathMap`). The `hook` login is refused everywhere else, even when the
+  server doesn't know its token. A library run takes the hooks' files between its own. The
+  hook script `contrib/hooks/quipclipper-reindex` needs only `sh` and `curl`, and its Test
+  fails when the server has no token set; setup for each app: docs/HOOKS.md.
 - **Subtitles that changed since indexing are noticed, and re-indexed only when you ask:** a
   file indexed before its subtitles changed (Bazarr upgraded them, the file was replaced) now
   shows a **changed** chip instead of reading as never indexed (`index_state: "changed"`).

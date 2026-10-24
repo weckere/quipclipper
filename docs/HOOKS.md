@@ -35,7 +35,7 @@ openssl rand -hex 32
 
 | Setting | Example | What it does |
 |---|---|---|
-| `QC_HOOK_TOKEN` (or `QC_HOOK_TOKEN_FILE`) | `9f2c…` | Token(s) that may only queue re-indexes. Comma-separate several to rotate. |
+| `QC_HOOK_TOKEN` (or `QC_HOOK_TOKEN_FILE`) | `9f2c…` | Token(s) that may only queue re-indexes. Comma-separate several to rotate (the backend accepts all of them; behind a password gate the `hook` login knows only the first, so callers move to the new token when it goes first). |
 | `QC_PATH_MAP` | `/tv=/media/shows:/movies=/media/movies` | The other apps' paths → quipclipper's. `<theirs>=<ours>` pairs, separated by `:` or `;`; the longest matching prefix wins; a path nothing matches is used as it is. |
 
 **Docker Compose** (`docker-compose.example.yml`): set both on the `app` service. If
@@ -66,8 +66,12 @@ With a `passwordFile`, add a `hook` line to it with the token as the password
 curl -sS -u hook:<token> https://quip.example/api/index/file
 ```
 
-`{"job_id":null,"pending":[],"recent":[],"job":null}` means the URL, the network and
-the token are right.
+`{"job_id":null,"pending":[],"recent":[],"job":null,"token":true}` means the URL, the
+network and the token are right. `"token":false` means the server has no hook token set
+(or none matching): the re-index requests themselves would be refused.
+
+The login name `hook` is reserved for this: anywhere but `/api/index/file` it gets 403,
+whatever the password.
 
 ## 2. Bazarr
 
@@ -196,7 +200,8 @@ restarts are dropped; the next library run (or hook) picks them up.
 
 | Symptom | Cause |
 |---|---|
-| `HTTP 401` | The token is wrong, or not set on the server. |
+| `HTTP 401` | The token is wrong (a server with only an API token set doesn't know the hook token). |
+| `HTTP 403 Missing x-quipclipper header` (or the Test says "no hook token set") | The server has no token set at all, so it ignores the one sent: set `QC_HOOK_TOKEN` on the server. |
 | `HTTP 401` with an HTML body | A password gate (nginx) refused it: add the `hook` login (Docker: `QC_HOOK_TOKEN` on the `web` service; NixOS: a `hook` line in `passwordFile`). |
 | `HTTP 403 … may only queue re-indexes` | A hook token used for another endpoint: working as intended. |
 | `HTTP 422`, `outside_roots: /tv/…` | The path isn't under a media root once mapped: add its prefix to `QC_PATH_MAP` (`/tv=/your/shows`). |

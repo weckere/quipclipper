@@ -33,8 +33,10 @@ basic auth. A programmatic client gets through it in one of two ways:
 If `QC_PASSWORD` is unset the site is open and no basic auth is needed.
 
 A **hook token** (`QC_HOOK_TOKEN`) is a low-privilege token for the
-[re-index hooks](#re-index-hooks) (Bazarr, Sonarr, Radarr): it is accepted the same ways
-(the gate's `hook` user, `X-API-Key`, `Bearer`), but only on `/api/index/file`.
+[re-index hooks](#re-index-hooks) (Bazarr, Sonarr, Radarr): the backend accepts it as
+`X-API-Key`, `Bearer` or a Basic password, but only on `/api/index/file`. Behind the password
+gate send it as `-u hook:<token>`; the gate's `hook` login knows only the first of several
+tokens.
 
 **2. Token identification (backend).** Present `QC_API_TOKEN` as **any** of:
 
@@ -172,7 +174,7 @@ resolved stream URLs, so `split_channels` and `backend=mkvmerge` return 400 for
 | GET | `/api/index/changes` | Files whose subtitles changed since indexing, as the hourly check and the views found them. See [below](#changed-subtitles). |
 | POST | `/api/index/changes/reindex` | Queue all of them for the re-index job. |
 | POST | `/api/index/file?path=&force=` | Re-index files whose subtitles changed (the [re-index hooks](#re-index-hooks)): repeat `path=`, or send a JSON body. Queued; 202. |
-| GET | `/api/index/file` | The re-index hooks' queue: `{job_id, job, pending, recent}`. |
+| GET | `/api/index/file` | The re-index hooks' queue: `{job_id, job, pending, recent, token}`. |
 
 `/api/search` returns `{query, count, matches: [{index, score, text, speaker,
 start, end, start_ts, end_ts, cue_count, link}]}`. The `index` is what you pass back as
@@ -235,8 +237,14 @@ a running library run takes the queued files between its own instead. Each file 
 idle priority, like the library index, and only if its index entry is out of date
 (`force=true` re-reads it anyway). `GET /api/index/file` lists the files `pending` and the
 last 50 `recent` results, each `{path, status, at, error?}` with `status` `indexed`,
-`current`, `no_subs`, `missing`, `failed` or `cancelled`. Cancelling the job
-(`DELETE /api/jobs/{id}`) drops the files still waiting.
+`current`, `no_subs`, `missing`, `failed` or `cancelled`, and `token`: whether this request's
+token was accepted (false when the server has no token set, so a hook's POST would meet the
+CSRF guard). Cancelling the job (`DELETE /api/jobs/{id}`) drops the files still waiting; one
+cancelled before it started leaves them for the next request's job. While a library run is going,
+it takes the queued files between its own, and once it has emptied the queue it cancels the
+re-index job waiting behind it; if the run is cancelled while it re-indexes a hook's file,
+that file goes back to the front of the queue. A path already under a media root is used as
+it is; only other paths go through `QC_PATH_MAP`.
 
 <a id="changed-subtitles"></a>**Changed subtitles.** A file's index entry belongs to one version
 of its subtitle source (its sidecar's date, or the file's own for embedded subtitles), so
@@ -258,7 +266,10 @@ The hooks call `/api/index/file` with an API token, or with a **hook token**
 same ways (`X-API-Key`, `Bearer`, or `-u hook:<token>`). A hook token opens `GET` and
 `POST /api/index/file` and nothing else: anywhere else it gets 403. Behind a password gate,
 the Docker image's nginx accepts the `hook` login when `QC_HOOK_TOKEN` is set on the `web`
-service. Without a token (the web app's **Re-index them**), a POST needs the CSRF header like
+service. A Basic login named `hook` is refused (403) on every other route whatever its
+password, so a token the server doesn't know (unset, or rotated on one side only) never passes
+as a person. With only hook tokens set (no `QC_API_TOKEN`), an unknown `Bearer`/`X-API-Key`
+gets 401 on `/api/index/file` only, and is ignored elsewhere. Without a token (the web app's **Re-index them**), a POST needs the CSRF header like
 any other.
 
 `score` (0 to 100, one decimal) is 100 only when the line holds the query's words verbatim:

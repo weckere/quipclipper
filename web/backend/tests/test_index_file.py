@@ -301,3 +301,219 @@ def test_queue_retires_its_job_under_the_add_lock():
     # A force request upgrades the waiting one; retire() drops what waits.
     q.add([(Path("/c"), False)], lambda: "jx")
     assert q.retire() == [Path("/c")] and q.status()["job_id"] is None
+
+
+# --- release review 2 (t-m20-review-2) -----------------------------------------------
+
+def _wait_job(c: TestClient, job_id: str, timeout: float = 10) -> str:
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        status = c.get(f"/api/jobs/{job_id}", headers={"X-API-Key": API}).json()["status"]
+        if status not in ("queued", "running"):
+            return status
+        time.sleep(0.05)
+    raise AssertionError(f"job {job_id} still {status}")
+
+
+def test_a_cancelled_queued_job_does_not_wedge_the_queue(tmp_path, monkeypatch):
+    # HK-1: a re-index job cancelled while it waited behind a library run never ran, and
+    # every later hook was answered "queued" for that dead job, for good.
+    media = _media(tmp_path)
+    c = _client(tmp_path, media, monkeypatch)
+    ep = media / "Show (2001) [x]" / "Season 01"
+    gate, started = threading.Event(), threading.Event()
+    real = SubtitleCache.resolve
+
+    def slow(self, video, track=None):
+        started.set()
+        gate.wait(5)
+        return real(self, video, track)
+
+    monkeypatch.setattr(SubtitleCache, "resolve", slow)
+    lib = c.post("/api/search/library/index", headers={"X-API-Key": API}).json()["job_id"]
+    assert started.wait(5)
+    dead = _hook(c, str(ep / "Show - S01E02.mkv")).json()["job_id"]
+    assert c.delete(f"/api/jobs/{dead}", headers={"X-API-Key": API}).status_code == 200
+    gate.set()
+    _wait_job(c, lib)
+    monkeypatch.setattr(SubtitleCache, "resolve", real)
+    c.post("/api/items/subtitles/reindex", params={"path": str(ep / "Show - S01E01.mkv")},
+           headers={"X-API-Key": API})
+    r = _hook(c, str(ep / "Show - S01E01.en.srt"), force="true")
+    assert r.status_code == 202 and r.json()["job_id"] != dead
+    st = _settle(c)
+    assert st["recent"][-1]["status"] == "indexed"
+
+
+def test_an_unexpected_error_fails_one_file_not_the_queue(tmp_path, monkeypatch):
+    # HK-1: anything but OSError/RuntimeError/ValueError failed the whole job and left
+    # its id behind, so the next hook never got a job.
+    media = _media(tmp_path)
+    c = _client(tmp_path, media, monkeypatch)
+    ep = media / "Show (2001) [x]" / "Season 01"
+    real = SubtitleCache.resolve
+
+    def resolve(self, video, track=None):
+        if video.name == "Show - S01E01.mkv":
+            raise KeyError("boom")
+        return real(self, video, track)
+
+    monkeypatch.setattr(SubtitleCache, "resolve", resolve)
+    _hook(c, str(ep / "Show - S01E01.mkv"))
+    _settle(c)
+    _hook(c, str(ep / "Show - S01E02.mkv"))
+    recent = _settle(c)["recent"]
+    assert [(Path(e["path"]).name, e["status"]) for e in recent] == [
+        ("Show - S01E01.mkv", "failed"), ("Show - S01E02.mkv", "indexed")]
+    assert "boom" in recent[0]["error"]
+
+
+def test_queue_hands_over_from_a_dead_or_stopping_job():
+    # HK-1/HK-6: a job that won't take files any more is replaced on the next add, and
+    # the old one stopping later neither retires the new one nor drops its files.
+    live = {"j1": True}
+    q = file_index.FileQueue(alive=lambda jid: live.get(jid, False))
+    ids = iter(["j1", "j2"])
+    assert q.add([(Path("/m/a.mkv"), False)], lambda: next(ids))[0] == "j1"
+    live["j1"] = False  # cancel requested (or cancelled while queued)
+    assert q.add([(Path("/m/b.mkv"), False)], lambda: next(ids))[0] == "j2"
+    live["j2"] = True
+    assert q.retire("j1") == []  # the old job stops: j2 owns the files
+    assert q.take("j1") == (Path("/m/a.mkv"), False)
+    assert q.take("j1") == (Path("/m/b.mkv"), False)
+    assert q.take("j1") is None and q.status()["job_id"] == "j2"
+    assert q.take("j2") is None and q.status()["job_id"] is None
+
+
+def test_a_cancelled_library_run_puts_the_hook_file_back():
+    # HK-5: cancelling a library run lost the hook file it was re-indexing between its own.
+    q = file_index.FileQueue()
+    q.add([(Path("/m/a.mkv"), True), (Path("/m/b.mkv"), False)], lambda: "j")
+
+    def index(f, force):
+        raise subtitles.Cancelled()
+
+    with pytest.raises(subtitles.Cancelled):
+        file_index.drain(q, index, take=q.take_nowait, put_back=True)
+    assert q.status()["pending"] == ["/m/a.mkv", "/m/b.mkv"]
+    assert q.take() == (Path("/m/a.mkv"), True)  # first in line, still forced
+    assert q.status()["recent"] == []
+
+
+@pytest.mark.parametrize("body", [{"episodeFiles": 5}, {"renamedMovieFiles": True},
+                                  {"episodeFiles": 1.5, "eventType": "Download"}])
+def test_a_malformed_webhook_is_not_a_500(tmp_path, monkeypatch, body):
+    # HK-4: a non-list episodeFiles raised TypeError.
+    c = _client(tmp_path, _media(tmp_path), monkeypatch)
+    r = c.post("/api/index/file", json=body, headers={"Authorization": f"Bearer {HOOK}"})
+    assert r.status_code in (200, 400), r.text
+
+
+def test_a_linked_media_file_beside_a_subtitle_must_be_inside_the_roots(tmp_path, monkeypatch):
+    # HK-3: the subtitle was checked against the roots, the media file found beside it
+    # (a symlink out of them) wasn't.
+    media = _media(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.mkv").write_bytes(b"")
+    ep = media / "Show (2001) [x]" / "Season 01"
+    os.symlink(outside / "secret.mkv", ep / "Evil.mkv")
+    (ep / "Evil.en.srt").write_text(SRT)
+    c = _client(tmp_path, media, monkeypatch)
+    for given in ("Evil.mkv", "Evil.en.srt"):
+        r = _hook(c, str(ep / given))
+        assert r.status_code == 422 and r.json()["files"][0]["status"] == "outside_roots"
+
+
+def test_media_for_skips_folders_named_like_media(tmp_path):
+    # HK-10: a folder "X.en.mkv" beat the real X.mkv.
+    (tmp_path / "X.mkv").write_bytes(b"")
+    (tmp_path / "X.en.mkv").mkdir()
+    sub = tmp_path / "X.en.srt"
+    sub.write_text(SRT)
+    assert file_index.media_for(sub) == tmp_path / "X.mkv"
+
+
+def test_the_hook_login_never_passes_as_a_person(tmp_path, monkeypatch):
+    # HK-2: with the gate's "hook" login and a token the server doesn't know (unset here,
+    # or rotated), the request fell through as a browser user: the whole API.
+    media = _media(tmp_path)
+    for env in ({"QC_HOOK_TOKEN": "rotated-new"}, {"QC_HOOK_TOKEN": None},
+                {"QC_HOOK_TOKEN": None, "QC_API_TOKEN": None}):
+        env = {k: v for k, v in {"QC_API_TOKEN": API, **env}.items() if v is not None}
+        c = TestClient(create_app(Settings.from_env({
+            "QC_MEDIA_ROOTS": str(media), "QC_STATE_DIR": str(tmp_path / "state"), **env})))
+        auth = ("hook", "old-token-nginx-knows")
+        assert c.get("/api/library/roots", auth=auth).status_code == 403
+        assert c.post("/api/search/library/index", auth=auth,
+                      headers={"X-Quipclipper": "1"}).status_code == 403
+        assert c.get("/api/index/file", auth=auth).json()["token"] is False
+    # A person keeps their own login.
+    assert c.get("/api/library/roots", auth=("quip", "pw")).status_code == 200
+
+
+def test_hook_only_tokens_leave_other_bearers_alone(tmp_path, monkeypatch):
+    # HK-8: with only QC_HOOK_TOKEN set, a front proxy's own Bearer was "Invalid API
+    # token." on every page; now only the hook route judges it.
+    media = _media(tmp_path)
+    c = TestClient(create_app(Settings.from_env({
+        "QC_MEDIA_ROOTS": str(media), "QC_STATE_DIR": str(tmp_path / "state"),
+        "QC_HOOK_TOKEN": HOOK})))
+    sso = {"Authorization": "Bearer some-sso-jwt"}
+    assert c.get("/api/library/roots", headers=sso).status_code == 200
+    assert c.get("/api/index/file", headers=sso).status_code == 401
+    assert c.get("/api/index/file", headers={"X-API-Key": HOOK}).json()["token"] is True
+
+
+def test_a_json_content_type_in_any_case_is_read(tmp_path, monkeypatch):
+    # HK-9
+    media = _media(tmp_path)
+    c = _client(tmp_path, media, monkeypatch)
+    ep = media / "Show (2001) [x]" / "Season 01" / "Show - S01E01.mkv"
+    import json
+    r = c.post("/api/index/file", content=json.dumps({"paths": [str(ep)]}),
+               headers={"Authorization": f"Bearer {HOOK}",
+                        "Content-Type": "Application/JSON; charset=utf-8"})
+    assert r.status_code == 202, r.text
+
+
+def test_a_library_run_that_empties_the_queue_retires_the_waiting_job(tmp_path, monkeypatch):
+    # FE-1: the re-index job queued behind a library run stayed "queued" (and the views
+    # "re-indexing") until the run ended, days later, though the run had done its files.
+    media = _media(tmp_path)
+    c = _client(tmp_path, media, monkeypatch)
+    ep = media / "Show (2001) [x]" / "Season 01"
+    gate, started = threading.Event(), threading.Event()
+    real = SubtitleCache.resolve
+    seen: list[str] = []
+
+    def slow(self, video, track=None):
+        seen.append(video.name)
+        if len(seen) == 1:
+            started.set()
+            gate.wait(5)
+        return real(self, video, track)
+
+    monkeypatch.setattr(SubtitleCache, "resolve", slow)
+    lib = c.post("/api/search/library/index", headers={"X-API-Key": API}).json()["job_id"]
+    assert started.wait(5)
+    drainer = _hook(c, str(ep / "Show - S01E02.en.srt")).json()["job_id"]
+    gate.set()
+    _wait_job(c, lib)
+    st = c.get("/api/index/file", headers={"X-API-Key": HOOK}).json()
+    assert st["job_id"] is None and st["pending"] == []
+    assert c.get(f"/api/jobs/{drainer}", headers={"X-API-Key": API}).status_code == 404
+
+
+def test_the_servers_own_paths_are_not_mapped_again(tmp_path, monkeypatch):
+    # FE-8: the web app's Re-index posts this server's paths; a map whose prefix starts
+    # them too ("/srv=/srv/shows" here) mapped them a second time, to nowhere.
+    media = _media(tmp_path)
+    srv = str(media.parent)
+    c = _client(tmp_path, media, monkeypatch, QC_PATH_MAP=f"{srv}={media}")
+    ep = media / "Show (2001) [x]" / "Season 01" / "Show - S01E01.mkv"
+    r = _hook(c, str(ep))
+    assert r.status_code == 202 and r.json()["files"][0]["media"] == str(ep)
+    # Their path (outside the roots as given) is still mapped.
+    r = _hook(c, f"{srv}/Show (2001) [x]/Season 01/Show - S01E02.mkv")
+    assert r.status_code == 202, r.text

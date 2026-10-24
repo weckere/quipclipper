@@ -49,7 +49,7 @@ done
 [ -n "$url" ] || die "no server: pass --url or set QUIPCLIPPER_URL"
 command -v curl >/dev/null 2>&1 || die "curl is not installed"
 
-token=${QUIPCLIPPER_TOKEN:-}
+token=$(printf '%s' "${QUIPCLIPPER_TOKEN:-}" | tr -d '\r\n')
 if [ -n "$token_file" ]; then
     [ -r "$token_file" ] || die "cannot read the token file $token_file"
     token=$(tr -d '\r\n' < "$token_file")
@@ -89,8 +89,14 @@ call() {
 
 base=${url%/}/api/index/file
 if [ "$event" = Test ]; then
-    out=$(call -o /dev/null -w '%{http_code}' "$base") || exit 1
-    [ "$out" = 200 ] || { echo "quipclipper-reindex: $url answered HTTP $out (check the URL and token)" >&2; exit 1; }
+    out=$(call -w '\n%{http_code}' "$base") || exit 1
+    code=$(printf '%s\n' "$out" | tail -n 1)
+    [ "$code" = 200 ] || { echo "quipclipper-reindex: $url answered HTTP $code (check the URL and token)" >&2; exit 1; }
+    # A server with no token set ignores ours, then refuses every POST (CSRF guard).
+    case $out in
+        *'"token":true'*|*'"token": true'*) ;;
+        *) echo "quipclipper-reindex: $url is reachable but has no hook token set (QC_HOOK_TOKEN): re-index requests would be refused" >&2; exit 1 ;;
+    esac
     echo "quipclipper-reindex: $url is reachable and accepts the token"
     exit 0
 fi

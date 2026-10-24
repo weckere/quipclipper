@@ -382,6 +382,20 @@ _API_KEY_HEADER = "x-api-key"
 # The only routes a hook token (Settings.hook_tokens) opens: queue re-indexes and read
 # how they went. Anything else it is presented to answers 403.
 _HOOK_ROUTES = frozenset({"/api/index/file"})
+# The login the password gate gives a hook token (web/nginx/40-quip-auth.sh, HOOKS.md).
+_HOOK_USER = "hook"
+_HOOK_ONLY = {"detail": "This token may only queue re-indexes (/api/index/file)."}
+
+
+def _basic_user(request: Request) -> str | None:
+    """The user name in an HTTP Basic ``Authorization`` header, if there is one."""
+    scheme, _, value = request.headers.get("authorization", "").partition(" ")
+    if scheme.lower() != "basic" or not value:
+        return None
+    try:
+        return base64.b64decode(value).decode("utf-8", "replace").partition(":")[0]
+    except (binascii.Error, ValueError):
+        return None
 
 
 def _token_ok(candidate: str, tokens: frozenset[str]) -> bool:
@@ -480,7 +494,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     lib_active: list[str | None] = [None]
     lib_submit = threading.Lock()
     # Re-index hooks (M20): files another app says changed, drained in the same pool.
-    file_queue = file_index.FileQueue()
+    def _drainer_alive(job_id: str) -> bool:
+        job = lib_jobs.get(job_id)
+        return (job is not None and job.status.value in ("queued", "running")
+                and not job.cancel_requested)
+
+    file_queue = file_index.FileQueue(alive=_drainer_alive)
     # Files whose subtitles changed since indexing (M20): noted by views and an hourly
     # timestamp-only pass; only ever re-indexed on request (index_changes).
     index_changes = index_changes_mod.ChangeLog(settings.state_dir)
@@ -555,18 +574,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # a browser, so it's exempt from the CSRF-header requirement below. An
         # explicit but wrong token (X-API-Key / Bearer) is rejected outright.
         api_client = False
+        hook_route = request.url.path in _HOOK_ROUTES
         if settings.api_tokens or settings.hook_tokens:
             status = _api_token_status(request, settings.api_tokens | settings.hook_tokens)
-            if status == "bad":
+            # With only hook tokens set, a token the hook route doesn't know is someone
+            # else's (a front proxy's own Bearer): only that route refuses it.
+            if status == "bad" and (settings.api_tokens or hook_route):
                 return JSONResponse({"detail": "Invalid API token."}, status_code=401)
             api_client = status == "ok"
+            request.state.token = api_client
             # A hook token (low privilege) only queues re-indexes: no other route.
-            if (api_client and settings.hook_tokens
-                    and request.url.path not in _HOOK_ROUTES
+            if (api_client and settings.hook_tokens and not hook_route
                     and _api_token_status(request, settings.api_tokens) != "ok"):
-                return JSONResponse(
-                    {"detail": "This token may only queue re-indexes (/api/index/file)."},
-                    status_code=403)
+                return JSONResponse(_HOOK_ONLY, status_code=403)
+        # The password gate's "hook" login (docs/HOOKS.md) is for the hook route only,
+        # even when this server doesn't know its token (not set here, or rotated):
+        # it must never pass as a person.
+        if not hook_route and _basic_user(request) == _HOOK_USER:
+            return JSONResponse(_HOOK_ONLY, status_code=403)
         # S2 — CSRF: state-changing browser requests must carry the custom header.
         if (
             not api_client
@@ -1685,7 +1710,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # Files the re-index hooks queued meanwhile go first (same thread, same
                 # priority), so a hook never waits for the whole run.
                 file_index.drain(file_queue, _reindex_one, take=file_queue.take_nowait,
-                                 cancelled=lambda: job.cancel_requested)
+                                 cancelled=lambda: job.cancel_requested, put_back=True)
+                # The re-index job queued behind this run would only find the queue
+                # empty, days later; meanwhile it reads as pending in Jobs and the views.
+                idle = file_queue.release()
+                if idle is not None and lib_jobs.cancel(idle):
+                    lib_jobs.cancel(idle)  # and out of Jobs: it never had work
 
             lib_index.run(job, paths=paths, scan=scan, index=index, log=lib_log,
                           whole_library=not path, between=hooks)
@@ -1748,14 +1778,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             job.progress = f"{done[0]} {name}"
 
         cancelled = lambda: job.cancel_requested  # noqa: E731
+        counts: dict[str, int] = {}
         try:
             with at_idle_priority(cancelled):
                 counts = file_index.drain(file_queue, _reindex_one, cancelled=cancelled,
-                                          progress=progress)
+                                          progress=progress,
+                                          take=lambda: file_queue.take(job.id))
         except Cancelled:
-            counts = {}
-        if job.cancel_requested:
-            file_queue.retire()
+            pass
+        finally:
+            if job.cancel_requested:
+                file_queue.retire(job.id)
         job.result = counts
         job.progress = "Done: " + (", ".join(f"{n} {k}" for k, n in counts.items())
                                    or "nothing to do")
@@ -1765,8 +1798,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return lib_jobs.submit(_file_job, label="Re-index changed subtitles (low priority)",
                                cancellable=True).id
 
+    def _inside_roots(p: str) -> bool:
+        try:
+            library.resolve_within_roots(p, settings.media_roots)
+            return True
+        except library.PathNotAllowed:
+            return False
+
     def _queue_files(raw: list[str], force: bool, limit: bool = True) -> dict:
-        """Map, check and queue ``raw`` paths; one result row per path."""
+        """Map, check and queue ``raw`` paths; one result row per path. A path already
+        under a media root is this server's own (the web app's Re-index, the change
+        list) and isn't mapped again: ``/data=/data/media`` would map it twice."""
         if limit and len(raw) > file_index.MAX_PATHS:
             raise HTTPException(status_code=400,
                                 detail=f"At most {file_index.MAX_PATHS} paths at a time.")
@@ -1775,7 +1817,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         for given in raw:
             row: dict = {"path": given}
             rows.append(row)
-            mapped = file_index.map_in(given.strip(), settings.path_map)
+            given_s = given.strip()
+            mapped = (given_s if not settings.path_map or "\0" in given_s
+                      or _inside_roots(given_s)
+                      else file_index.map_in(given_s, settings.path_map))
             if not mapped or "\0" in mapped:
                 row["status"] = "invalid"
                 continue
@@ -1785,6 +1830,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 row.update(status="outside_roots", mapped=mapped)
                 continue
             media = file_index.media_for(p)
+            if media is not None and media != p:
+                try:  # found beside the subtitle: a link there mustn't lead outside
+                    media = library.resolve_within_roots(media, settings.media_roots)
+                except library.PathNotAllowed:
+                    row.update(status="outside_roots", mapped=mapped)
+                    continue
             if media is None:
                 row["status"] = ("no_media" if p.suffix.lower() in SUBTITLE_EXTS
                                  else "not_media")
@@ -1812,7 +1863,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         no file (Test), 422 when no path could be queued."""
         raw = list(path)
         event = None
-        if (request.headers.get("content-type") or "").startswith("application/json"):
+        if (request.headers.get("content-type") or "").lower().startswith("application/json"):
             try:
                 body = await request.json()
             except ValueError:
@@ -1837,13 +1888,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse(result, status_code=202)
 
     @app.get("/api/index/file")
-    def index_files_status() -> dict:
+    def index_files_status(request: Request) -> dict:
         """The re-index hooks' queue: the job draining it (or null), the files waiting,
         and the last results (status per file: indexed, current, no_subs, missing,
-        failed or cancelled)."""
+        failed or cancelled). ``token``: whether this request's token was accepted (a
+        hook's check: with none set here, its POSTs would be refused)."""
         st = file_queue.status()
         job = lib_jobs.get(st["job_id"] or "")
-        return {**st, "job": _job_dict(job) if job is not None else None}
+        return {**st, "job": _job_dict(job) if job is not None else None,
+                "token": getattr(request.state, "token", False)}
 
     # --- subtitles changed since indexing (M20) --------------------------------------
     # A check, never a re-index: these report what changed, and the one POST queues those
