@@ -1988,6 +1988,16 @@ function seekTo(seconds) {
     player.dispatchEvent(new CustomEvent("transcode-seek", { detail: seconds }));
   } else {
     player.currentTime = seconds;
+    // Before the element has metadata (an HLS stream still attaching, a cold transcode) the
+    // seek can be lost, or overwritten as it loads: seek and play again once it has it.
+    if (player.readyState < 1) {
+      const item = currentItem;
+      player.addEventListener("loadedmetadata", () => {
+        if (currentItem !== item) return;
+        player.currentTime = seconds;
+        player.play().catch(() => {});
+      }, { once: true });
+    }
   }
   player.play().catch(() => {});
 }
@@ -3168,8 +3178,7 @@ async function doSearch(query, { focus = true } = {}) {
     // A click selects the match's line(s), as a library hit opens with them selected, and
     // plays from there: the selection holds playback, so ▶ and Loop play just those lines.
     li.onclick = () => {
-      selectCueRange(m.start, m.end);
-      announceSelection();
+      selectCueRange(m.start, m.end, { say: true });
       seekTo(hasClipRange() ? clipStart() : m.start);
     };
     results.appendChild(li);
@@ -3575,14 +3584,14 @@ async function loadScript(path, track) {
   // Auto-select the matching cue range when this item was opened from a
   // dialogue search (consumed once — track switches afterward don't re-select).
   if (pendingCueSelect) {
-    const { start, end, at } = pendingCueSelect;
+    const { start, end, at, say } = pendingCueSelect;
     pendingCueSelect = null;
     if (at != null) {
       // Now playing: the line at or before the playhead (it lags while playing).
       const cue = cueAtOrBefore(at);
       if (cue) selectCueRange(cue.start, cue.end);
     } else {
-      selectCueRange(start, end);
+      selectCueRange(start, end, { say });
     }
   }
 }
@@ -3642,9 +3651,14 @@ function nearestCueIndex(t, edge) {
   return best;
 }
 
-/** Select the cue range covering [start, end] in Marks and scroll it in view. */
-function selectCueRange(start, end) {
-  if (!scriptCues.length) return;
+/** Select the cue range covering [start, end] in Marks and scroll it in view; `say`
+ *  announces it. Before the script has loaded (a match clicked while a big file's subtitles
+ *  are still coming), it waits: the script selects it when it arrives. */
+function selectCueRange(start, end, { say = false } = {}) {
+  if (!scriptCues.length) {
+    if (currentItem) pendingCueSelect = { start, end, say };
+    return;
+  }
   // The lines that start and end where the range does (a search hit's own cues), else the
   // nearest ones.
   const at = (edge, t) => scriptCues.findIndex((c) => !c.synthetic && Math.abs(c[edge] - t) < 0.002);
@@ -3662,6 +3676,7 @@ function selectCueRange(start, end) {
   updateClipUI();  // sets the range, clears any match, highlights cues yellow
   scriptTabStop(first, false);  // Tab into the script lands on the selection
   scriptCenter(first);
+  if (say) announceSelection();
 }
 
 /** Scroll line `idx` to the middle of the script panel. */

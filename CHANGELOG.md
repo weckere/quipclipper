@@ -152,7 +152,9 @@ scripts/release.sh leaves this block in Unreleased; delete the two marker lines 
 - **A click on a match selects it for playback:** in the workspace's Matches tab, a click (or
   Enter) on a match selects its line, or all of a multi-line match's lines, picking the
   match's own cues even where lines overlap, then plays from it and says the selection. ▶ and
-  Loop selection then play just that line with Before/After, as with any line selection.
+  Loop selection then play just that line with Before/After, as with any line selection. A
+  click while a big file is still loading (its script not there yet, an HLS stream still
+  attaching) is no longer lost: the selection waits for the script and the seek for the player.
 - **Script help is a "?":** the four lines of help under the Script tab are now a small
   **?** button (named "Script help") beside Follow playback. Hover or focus shows the text,
   a click or Enter keeps it open, and Esc closes it and returns focus to the button. It now
