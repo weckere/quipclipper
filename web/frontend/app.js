@@ -1130,6 +1130,10 @@ function showIndexScope(n) {
   $("lib-index-btn").hidden = true;
   $("reindex-folder-btn").hidden = false;
   $("fetch-folder-subs-btn").hidden = false;
+  // The library home's own lines (the out-of-date badge, the last run) aren't these
+  // folders': refreshLibIndex hides its status here unless a run is going.
+  $("changes-badge").hidden = $("changes-reindex-btn").hidden = true;
+  refreshLibIndex();
 }
 
 // A folder with more files than one request may index (index-status' `cap`) is indexed
@@ -1349,21 +1353,26 @@ $("changed-banner-btn").addEventListener("click", async () => {
   try {
     await postJSON("/api/index/file", { paths });
   } catch (err) {
+    if (gen !== changedGen) return;  // another folder's banner is up now
     text.textContent = `Couldn't re-index them: ${err.message}`;
+    announce(text.textContent);
     btn.disabled = false;
     return;
   }
+  if (gen !== changedGen) return;
   btn.hidden = true;
   text.textContent = `Re-indexing ${plural(paths.length, "file")} in the background at low priority…`;
   followReindex((msg) => { if (gen === changedGen) text.textContent = msg; }, () => {
     if (gen !== changedGen) return;
     text.textContent = `Re-indexed ${plural(paths.length, "file")}. Search reads their new subtitles now.`;
+    announce(text.textContent);  // the refresh below takes the banner down
     changedPaths = [];
     refreshAfterReindex();
   }, () => gen === changedGen);
 });
 
 let changesCheckId = 0;
+let changesFollowing = false;  // one follow of the badge's re-index at a time
 
 /** The library home's "Index out of date: N files" badge (GET /api/index/changes). */
 async function refreshChanges() {
@@ -1383,11 +1392,12 @@ async function refreshChanges() {
   badge.title = "Files whose subtitles changed since they were indexed, found by the hourly check "
     + "(file dates only) and by the folders you opened. Search leaves them out until they are "
     + "re-indexed; nothing re-indexes on its own.";
-  btn.disabled = false;
+  btn.disabled = changesFollowing;
 }
 
 $("changes-reindex-btn").addEventListener("click", async () => {
   const btn = $("changes-reindex-btn"), note = $("changes-badge-note");
+  if (changesFollowing) return;
   btn.disabled = true;
   let r;
   try {
@@ -1399,7 +1409,15 @@ $("changes-reindex-btn").addEventListener("click", async () => {
   }
   note.textContent = `Re-indexing ${plural(r.queued || 0, "file")} in the background at low priority…`;
   const home = () => !currentBrowsePath && !dialogueSearchScope;
-  followReindex((msg) => { if (home()) note.textContent = msg; }, () => refreshChanges(), home);
+  changesFollowing = true;
+  try {
+    await followReindex((msg) => { if (home()) note.textContent = msg; }, () => {
+      announce(`Re-indexed ${plural(r.queued || 0, "file")}`);
+      refreshChanges();
+    }, home);
+  } finally {
+    changesFollowing = false;
+  }
 });
 
 // --- library index (M20) -------------------------------------------------------------
@@ -1473,7 +1491,11 @@ $("stt-orphans-btn").onclick = async () => {
   }
 };
 
-const libClock = (s) => (s < 60 ? "under a minute" : s < 3600 ? `~${Math.round(s / 60)} min` : `~${Math.floor(s / 3600)} h ${Math.round((s % 3600) / 60)} min`);
+function libClock(s) {
+  if (s < 60) return "under a minute";
+  const m = Math.round(s / 60);  // whole minutes first, so 1 h 59.6 min is "2 h 0 min"
+  return m < 60 ? `~${m} min` : `~${Math.floor(m / 60)} h ${m % 60} min`;
+}
 
 /** "" for a run over the whole library, else " of <folder>". */
 const libRunWhere = (r) => (r.whole_library === false && r.paths?.length ? ` of ${r.paths[0].split("/").pop()}` : "");
@@ -1511,6 +1533,7 @@ async function refreshLibIndex() {
   cancel.hidden = true;
   $("index-btn").disabled = indexBusy;
   if (!home) { status.hidden = true; return; }
+  setIndexBar(null);  // the run's bar, left at its last fraction
   btn.hidden = false;
   if (!last) { status.hidden = true; return; }
   const ended = last.finished || last.updated;
@@ -1547,9 +1570,22 @@ $("lib-index-cancel").onclick = async () => {
   if (!libIndexJob) return;
   const cancel = $("lib-index-cancel");
   cancel.disabled = true;
-  $("lib-index-status").textContent = "Stopping…";
-  try { await apiFetch(`/api/jobs/${encodeURIComponent(libIndexJob)}`, { method: "DELETE" }); } catch {}
+  const status = $("lib-index-status");
+  status.textContent = "Stopping…";
+  let failed = "";
+  try {
+    const r = await apiFetch(`/api/jobs/${encodeURIComponent(libIndexJob)}`, { method: "DELETE" });
+    if (!r.ok) failed = `HTTP ${r.status}`;
+  } catch (err) {
+    failed = err.message;
+  }
   cancel.disabled = false;
+  if (failed) {
+    status.textContent = `Couldn't stop it: ${failed}`;
+    announce(status.textContent);
+    setTimeout(refreshLibIndex, 4000);  // leave the reason up a moment
+    return;
+  }
   refreshLibIndex();
 };
 

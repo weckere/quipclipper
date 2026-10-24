@@ -201,7 +201,8 @@ scripts/release.sh leaves this block in Unreleased; delete the two marker lines 
   again skips the files indexed or known to have no subtitles, so it resumes after a cancel
   or a restart (`index.library-status`, `GET /api/search/library/index`, show the last run).
   A folder of over 500 files offers **Index N files in the background**, and its index-status
-  now counts it instead of answering `skipped`.
+  now counts it instead of answering `skipped`. `index.library --wait` on a run that is
+  already going only watches it: Ctrl-C leaves it running.
 - **Re-index hooks for Bazarr, Sonarr and Radarr:** when Bazarr saves a subtitle, or Sonarr
   or Radarr imports, upgrades or renames a file, it can tell quipclipper, which re-indexes
   just that file in the background, one at a time at idle priority, each file once, and only

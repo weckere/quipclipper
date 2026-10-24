@@ -49,7 +49,8 @@ exit with code 3.
   JSON, the same shape the HTTP API returns. Errors in JSON mode are
   `{"error": {"code": ..., "message": ...}}`.
 - Jobs (clips, YouTube adds and downloads, subtitle backfills) are followed until
-  they finish; `--no-wait` returns the job id at once, and `--out-dir DIR`
+  they finish (`index.library` returns at once unless `--wait`: a library run takes
+  hours); `--no-wait` returns the job id at once, and `--out-dir DIR`
   downloads the finished files. Ctrl-C cancels a job you're waiting on (a clip cut
   that has started can't stop: it finishes on the server), and stops a batch.
 - `--safe` refuses every command marked ⚠ (it changes or deletes data). Use it for

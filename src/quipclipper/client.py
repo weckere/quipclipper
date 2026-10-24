@@ -276,8 +276,11 @@ def _error_from(resp: Response, path: str = "") -> CliError:
         return CliError(f"The server redirected to {where} (HTTP {resp.status}); use that "
                         "address as --server / QC_URL.", code="redirect",
                         exit_code=EXIT_NO_SERVER)
+    files = None
     try:
-        detail = resp.json().get("detail")
+        reply = resp.json()
+        detail = reply.get("detail")
+        files = reply.get("files")  # POST /api/index/file: why each path wasn't queued
     except Exception:  # noqa: BLE001 — a non-JSON error page
         detail = None
     if isinstance(detail, list):  # FastAPI validation errors
@@ -285,6 +288,8 @@ def _error_from(resp: Response, path: str = "") -> CliError:
             f"{'.'.join(str(x) for x in d.get('loc', [])[1:])}: {d.get('msg')}" for d in detail
         )
     message = detail or resp.body.decode("utf-8", "replace")[:300] or f"HTTP {resp.status}"
+    if isinstance(files, list) and files and all(isinstance(f, dict) for f in files):
+        message += " (" + "; ".join(f"{f.get('status')}: {f.get('path')}" for f in files[:20]) + ")"
     # The auth/CSRF gate answers a bare "Forbidden"; a route's own 403 (a path outside
     # the media roots) carries a real message and is not about the token.
     if resp.status == 401 or (resp.status == 403 and message.strip().strip('"') == "Forbidden"):
@@ -346,7 +351,9 @@ def execute(ctx: Context, cmd: Command, values: dict[str, Any]) -> Any:
     if cmd.response == "job" and isinstance(data, dict) and data.get("job_id") \
             and values.get("wait", True):
         out_dir = values.get("out_dir") or ctx.settings.get("out_dir")
-        return wait_job(ctx, data["job_id"], out_dir=out_dir)
+        # A job already running (index.library) is someone else's: Ctrl-C stops watching.
+        return wait_job(ctx, data["job_id"], out_dir=out_dir,
+                        cancel_on_interrupt=not data.get("existing"))
     return data
 
 
@@ -372,11 +379,12 @@ TERMINAL = ("done", "failed", "cancelled")
 
 
 def wait_job(ctx: Context, job_id: str, *, out_dir: Optional[str] = None,
-             poll: float = 1.0) -> dict:
+             poll: float = 1.0, cancel_on_interrupt: bool = True) -> dict:
     """Poll a job until it finishes; optionally download its files.
 
     Ctrl-C cancels the job on the server (a job you started and stopped
-    watching would otherwise keep running unseen)."""
+    watching would otherwise keep running unseen), unless ``cancel_on_interrupt`` is
+    off: a job this command found already running, which only stops being watched."""
     path = f"/api/jobs/{urllib.parse.quote(str(job_id))}"
     shown = None
     try:
@@ -392,6 +400,9 @@ def wait_job(ctx: Context, job_id: str, *, out_dir: Optional[str] = None,
                 break
             time.sleep(poll)
     except KeyboardInterrupt:
+        if not cancel_on_interrupt:
+            raise CliError(f"Stopped watching; job {job_id} keeps running on the server.",
+                           code="interrupted") from None
         ctx.err(f"Cancelling job {job_id}…")
         try:
             call(ctx, "DELETE", path)

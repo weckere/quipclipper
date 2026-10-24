@@ -426,6 +426,9 @@ def _fmt_lib_index(data: dict) -> None:
 
 
 def _fmt_index_file(data: dict) -> None:
+    if not data.get("files"):
+        typer.echo("Nothing to re-index.")
+        return
     for f in data.get("files") or []:
         typer.echo(f"{f.get('status', '?'):<14} {f.get('media') or f.get('path')}")
     if data.get("job_id"):

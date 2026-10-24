@@ -86,3 +86,50 @@ def test_nothing_reindexes_without_a_click():
     assert js.count('"/api/index/changes/reindex"') == 1
     for fn in ("refreshChanges", "showChangedBanner", "renderIndexStatus", "followReindex"):
         assert "postJSON" not in _function(fn), fn
+
+
+# --- release review 2 (t-m20-review-2) -----------------------------------------------
+
+def _handler(anchor: str) -> str:
+    js = _js()
+    h = js[js.index(anchor):]
+    return h[:h.index("\n});") + 4]
+
+
+def test_a_banner_post_answers_only_its_own_banner_and_says_when_done():
+    # FE-3: a reply landing after another folder's banner went up hid that banner's
+    # button; FE-2: "Re-indexed N files" was taken down at once, unannounced.
+    h = _handler('$("changed-banner-btn").addEventListener')
+    after = h[h.index('await postJSON("/api/index/file"'):]
+    assert after.count("if (gen !== changedGen) return;") >= 2
+    assert after.index("if (gen !== changedGen) return;") < after.index("btn.hidden = true")
+    assert "announce(text.textContent)" in h[h.index("Re-indexed"):]
+
+
+def test_the_badge_follows_one_reindex_at_a_time_and_announces_it():
+    # FE-6: coming back home re-enabled the button, and a second click a second poller.
+    h = _handler('$("changes-reindex-btn").addEventListener')
+    assert "if (changesFollowing) return;" in h and "finally" in h
+    assert "announce(`Re-indexed" in h
+    assert "btn.disabled = changesFollowing" in _function("refreshChanges")
+
+
+def test_a_name_search_card_hides_the_homes_own_lines():
+    # FE-4: the badge and "Last run …" showed inside the "N matching folders" card.
+    scope = _function("showIndexScope")
+    assert '$("changes-badge").hidden' in scope and "refreshLibIndex()" in scope
+
+
+def test_the_library_run_card_clears_its_bar_and_reports_a_failed_cancel():
+    # FE-5: the bar stayed at the run's last fraction; FE-7: a refused DELETE looked
+    # like "Stopping…" then running again.
+    refresh = _function("refreshLibIndex")
+    assert "setIndexBar(null)" in refresh[refresh.index("cancel.hidden = true"):]
+    h = _handler('$("lib-index-cancel").onclick')
+    assert "if (!r.ok)" in h and "Couldn't stop it" in h
+
+
+def test_the_time_left_never_reads_sixty_minutes():
+    # FE-7: Math.round((s % 3600) / 60) gave "~1 h 60 min" at 7,190 s.
+    clock = _function("libClock")
+    assert "Math.round(s / 60)" in clock and "m % 60" in clock

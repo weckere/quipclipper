@@ -224,3 +224,32 @@ def test_ctrl_c_stops_a_whole_batch(monkeypatch):
     t = FakeTransport([(200, {"job_id": f"j{i}", "status": "queued"}) for i in range(3)])
     assert cli.main(["clip.batch"], transport=t) == 1
     assert waited == ["j0"]
+
+
+# --- release review 2 (t-m20-review-2) --------------------------------------------------
+
+def test_a_refused_reindex_says_why_for_each_path():
+    # PA-3: `index.file /etc/passwd` said only "Nothing to re-index.".
+    with pytest.raises(CliError) as exc:
+        execute(ctx([(422, {"detail": "Nothing to re-index.", "job_id": None, "queued": 0,
+                            "files": [{"path": "/etc/passwd", "status": "outside_roots"}]})]),
+                reg.BY_ID["index.file"], {"path": ["/etc/passwd"]})
+    assert "outside_roots: /etc/passwd" in str(exc.value) and exc.value.exit_code == 2
+
+
+def test_ctrl_c_on_a_library_run_found_running_does_not_cancel_it(monkeypatch):
+    # PA-4: `index.library --wait` waited on a run started elsewhere (the web UI), and
+    # Ctrl-C then cancelled that run.
+    calls = []
+
+    def call(_ctx, method, path, *a, **k):
+        calls.append((method, path))
+        if method == "POST":
+            return Response(200, {"content-type": "application/json"},
+                            json.dumps({"job_id": "j1", "existing": True}).encode())
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("quipclipper.client.call", call)
+    with pytest.raises(CliError, match="keeps running"):
+        execute(ctx([]), reg.BY_ID["index.library"], {"wait": True})
+    assert ("DELETE", "/api/jobs/j1") not in calls
