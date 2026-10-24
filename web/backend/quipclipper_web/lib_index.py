@@ -80,7 +80,8 @@ def _clock(seconds: float) -> str:
 def run(job, *, paths: list[str], scan: Callable[[], Iterable[tuple[Path, str]]],
         index: Callable[[Path], str], log: RunLog, whole_library: bool = True,
         now: Callable[[], float] = time.time,
-        between: Callable[[], None] | None = None) -> dict[str, Any]:
+        between: Callable[[], None] | None = None,
+        stopping: Callable[[], bool] = lambda: False) -> dict[str, Any]:
     """Index every file ``scan()`` yields as not indexed; the job's ``progress`` and
     ``result`` follow it, and so does ``log``. Returns the result. ``whole_library``
     says whether ``paths`` are the library roots (else one folder of it).
@@ -92,7 +93,8 @@ def run(job, *, paths: list[str], scan: Callable[[], Iterable[tuple[Path, str]]]
     :func:`at_idle_priority`) and returns "indexed", "no_subs", or raises for a file
     it couldn't tell about. ``between()`` runs before each file, at the same priority:
     the re-index hooks' queue (:mod:`.file_index`) is drained there, so a hook's file
-    never waits for a whole library run."""
+    never waits for a whole library run. ``stopping()``: the server is shutting down, so
+    a stop is recorded as "interrupted" (a restart cut it short), not "cancelled"."""
     started = now()
     result: dict[str, Any] = {
         "paths": paths, "whole_library": whole_library, "status": "scanning", "started": started, "files": 0,
@@ -105,7 +107,7 @@ def run(job, *, paths: list[str], scan: Callable[[], Iterable[tuple[Path, str]]]
         log.write({**result, "updated": now()})
 
     try:
-        return _run(job, result, scan, index, save, now, between)
+        return _run(job, result, scan, index, save, now, between, stopping)
     except Exception as exc:
         result.update(status="failed", current=None, eta_s=None, finished=now(),
                       summary=f"Failed: {exc}")
@@ -113,7 +115,8 @@ def run(job, *, paths: list[str], scan: Callable[[], Iterable[tuple[Path, str]]]
         raise
 
 
-def _run(job, result: dict[str, Any], scan, index, save, now, between=None) -> dict[str, Any]:
+def _run(job, result: dict[str, Any], scan, index, save, now, between=None,
+         stopping=lambda: False) -> dict[str, Any]:
     job.progress = "Scanning for files not indexed yet…"
     save()
     todo: list[Path] = []
@@ -147,7 +150,7 @@ def _run(job, result: dict[str, Any], scan, index, save, now, between=None) -> d
                 outcome = index(f)
             except Cancelled:
                 break
-            except (OSError, RuntimeError, ValueError) as exc:
+            except Exception as exc:  # noqa: BLE001 -- one bad file never stops a run
                 result["failed"] += 1
                 if len(result["errors"]) < MAX_ERRORS:
                     result["errors"].append({"path": str(f), "error": str(exc)[:300]})
@@ -163,8 +166,8 @@ def _run(job, result: dict[str, Any], scan, index, save, now, between=None) -> d
                 saved = now()
                 save()
     stopped = job.cancel_requested
-    result.update(status="cancelled" if stopped else "done", current=None,
-                  eta_s=None, finished=now())
+    status = ("interrupted" if stopping() else "cancelled") if stopped else "done"
+    result.update(status=status, current=None, eta_s=None, finished=now())
     if not todo and not stopped:
         summary = (f"Nothing to index: all {result['files']} files are indexed or have no "
                    "subtitles.")
@@ -172,6 +175,8 @@ def _run(job, result: dict[str, Any], scan, index, save, now, between=None) -> d
         summary = (f"{result['indexed']} indexed, {result['no_subs']} without subtitles, "
                    f"{result['failed']} failed, of {len(todo)} to do "
                    f"({result['already']} already done).")
+    if status == "interrupted":
+        summary += " A restart cut it short: run it again to carry on."
     result["summary"] = summary
     job.progress = ("Stopped: " if stopped else "Done: ") + summary
     save()

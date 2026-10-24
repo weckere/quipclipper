@@ -39,9 +39,16 @@ from quipclipper.subtitles import (
 )
 
 _ENTRY_GLOBS = ("*.json", "*.nosubs")
-# How much of an entry to read for the video path it belongs to (written first).
-_HEAD = 32768
+# How much of an entry to read for the video path it belongs to (written first): a
+# path's JSON fits in 4 KiB (the whole entry is read when it doesn't).
+_HEAD = 4096
 _VIDEO_PREFIX = '{"video": '
+
+
+def _digest(raw: str) -> str:
+    """An entry's key. ``surrogateescape``: a file name that isn't UTF-8 (a latin-1 byte
+    in a Linux name) hashes like its bytes instead of raising mid-scan."""
+    return hashlib.sha256(raw.encode("utf-8", "surrogateescape")).hexdigest()
 
 
 class SubtitleCache:
@@ -61,6 +68,9 @@ class SubtitleCache:
         # (see _owners).
         self._owner_map: dict[str, set[str]] | None = None
         self._owners_lock = threading.Lock()
+        # While the map is built: the entries written and removed meanwhile.
+        self._owner_log: list[tuple[bool, str, str]] | None = None
+        self._owners_built = threading.Condition(self._owners_lock)
 
     def _source_mtime(self, video: Path, siblings: list[Path] | None = None) -> float:
         """Mtime of the subtitle source — sidecar if present, else the video.
@@ -80,7 +90,7 @@ class SubtitleCache:
         # same container have different cues.  None = backend auto-select.
         tkey = "auto" if track is None else str(track)
         raw = f"{video}:{self._source_mtime(video, siblings)}:{tkey}"
-        return hashlib.sha256(raw.encode()).hexdigest()
+        return _digest(raw)
 
     def _cache_path(self, video: Path, track: int | None = None,
                     siblings: list[Path] | None = None) -> Path:
@@ -142,13 +152,13 @@ class SubtitleCache:
                     return "no_subs"
             if self._changed(video, mtime):
                 return "changed"
-        except OSError:
+        except (OSError, ValueError):  # ValueError: a name the file system can't take
             pass
         return "not_indexed"
 
     @staticmethod
     def _key_at(video: Path | str, mtime: float, tkey: str = "auto") -> str:
-        return hashlib.sha256(f"{video}:{mtime}:{tkey}".encode()).hexdigest()
+        return _digest(f"{video}:{mtime}:{tkey}")
 
     def _changed(self, video: Path, mtime: float) -> bool:
         """True when ``video`` has cache entries (from the owner map, kept in memory)
@@ -156,8 +166,9 @@ class SubtitleCache:
         and its sidecar or the file itself changed since. A file only ever opened with
         an explicit track, at the current mtime, is not "changed", just not indexed."""
         target = str(video)
+        owners = self._owners()
         with self._owners_lock:
-            names = list(self._owners().get(target, ()))
+            names = list(owners.get(target, ()))
         if not names:
             return False
         current = {self._key_at(target, mtime, t) for t in ("auto", *map(str, range(16)))}
@@ -207,20 +218,47 @@ class SubtitleCache:
     # once, from its head, and the map is kept current as entries come and go.
 
     def _owners(self) -> dict[str, set[str]]:
-        """``video path -> its entry file names``. Call with ``_owners_lock`` held."""
-        if self._owner_map is None:
-            owners: dict[str, set[str]] = {}
+        """``video path -> its entry file names``, read from the entries' heads on first
+        need. Call it WITHOUT ``_owners_lock`` held, and use the map under it: it is
+        built outside the lock, since reading a library-sized cache's heads takes a
+        while and every cache write waits on that lock; the writes made meanwhile are
+        logged and applied after. Once built it stays, kept current by _own/_disown."""
+        with self._owners_lock:
+            while self._owner_map is None and self._owner_log is not None:
+                self._owners_built.wait()  # another thread is building it
+            if self._owner_map is not None:
+                return self._owner_map
+            self._owner_log = []
+        owners: dict[str, set[str]] | None = None
+        try:
+            built: dict[str, set[str]] = {}
             for f in self._entries():
                 video = self._stored_video(f)
                 if video is not None:
-                    owners.setdefault(video, set()).add(f.name)
-            self._owner_map = owners
-        return self._owner_map
+                    built.setdefault(video, set()).add(f.name)
+            owners = built
+        finally:
+            with self._owners_lock:
+                log, self._owner_log = self._owner_log or [], None
+                if owners is not None:
+                    for add, video, name in log:
+                        if add:
+                            owners.setdefault(video, set()).add(name)
+                        elif video in owners:
+                            owners[video].discard(name)
+                            if not owners[video]:
+                                del owners[video]
+                    self._owner_map = owners
+                self._owners_built.notify_all()
+        return owners
 
     def _own(self, video: Path | str, name: str) -> None:
         with self._owners_lock:
-            if self._owner_map is not None:  # else the first _owners() reads it from disk
+            if self._owner_map is not None:
                 self._owner_map.setdefault(str(video), set()).add(name)
+            elif self._owner_log is not None:  # being built: applied when it is
+                self._owner_log.append((True, str(video), name))
+            # else the first _owners() reads it from disk
 
     def _disown(self, video: str, name: str) -> None:
         with self._owners_lock:
@@ -228,13 +266,16 @@ class SubtitleCache:
                 self._owner_map[video].discard(name)
                 if not self._owner_map[video]:
                     del self._owner_map[video]
+            elif self._owner_log is not None:
+                self._owner_log.append((False, video, name))
 
     def _entries_of(self, videos) -> list[tuple[str, Path]]:
         """``(video, entry)`` for every entry of the given video paths (a predicate on
         the path, or one path)."""
         match = videos if callable(videos) else (lambda v, t=str(videos): v == t)
+        owners = self._owners()
         with self._owners_lock:
-            return [(v, self._dir / n) for v, names in self._owners().items() if match(v)
+            return [(v, self._dir / n) for v, names in owners.items() if match(v)
                     for n in sorted(names)]
 
     def _unlink(self, video: str, entry: Path) -> bool:
@@ -302,11 +343,14 @@ class SubtitleCache:
         except OSError:
             return None
 
-    def resolve(self, video: Path, track: int | None = None) -> list[Cue]:
+    def resolve(self, video: Path, track: int | None = None, fresh: bool = False) -> list[Cue]:
+        """``video``'s cues, extracted and cached when they aren't cached yet.
+        ``fresh``: read them again even so; the old entries stay until the new ones are
+        written, so a re-read cut short (cancelled) leaves the index as it was."""
         cp = self._cache_path(video, track)
 
         # Fast path: serve from cache without taking any lock.
-        cues = self._read(cp)
+        cues = None if fresh else self._read(cp)
         if cues is not None:
             return cues
 
@@ -315,7 +359,7 @@ class SubtitleCache:
         key = self._cache_key(video, track)
         try:
             with self._inflight_lock(key):
-                cues = self._read(cp)
+                cues = None if fresh else self._read(cp)
                 if cues is not None:
                     return cues
 
@@ -331,7 +375,7 @@ class SubtitleCache:
                 # view, which requests subtitles by that explicit index.
                 if track is None and resolved.track is not None:
                     concrete = self._cache_path(video, resolved.track)
-                    if concrete != cp and self._read(concrete) is None:
+                    if concrete != cp and (fresh or self._read(concrete) is None):
                         self._write(concrete, video, cues)
 
                 # Sweep stale entries for this video written under a superseded
@@ -350,13 +394,14 @@ class SubtitleCache:
         """Return the video path recorded in a cache file, if any. Reads only the head
         of an entry this class wrote (the path comes first), so not every cue."""
         try:
-            with open(cache_file, encoding="utf-8") as fh:
-                head = fh.read(_HEAD)
+            with open(cache_file, "rb", buffering=0) as fh:  # unbuffered: just the head
+                raw = fh.read(_HEAD)
+                head = raw.decode("utf-8", "ignore")  # a character cut at the end
                 if head.startswith(_VIDEO_PREFIX):
                     with contextlib.suppress(json.JSONDecodeError):
                         video, _ = json.JSONDecoder().raw_decode(head, len(_VIDEO_PREFIX))
                         return video if isinstance(video, str) else None
-                data = json.loads(head + fh.read())
+                data = json.loads((raw + fh.read()).decode("utf-8"))
         except (json.JSONDecodeError, OSError, UnicodeDecodeError):
             return None
         return data.get("video") if isinstance(data, dict) else None
@@ -377,7 +422,7 @@ class SubtitleCache:
             # mtime; a stale file's name won't match any current-mtime key.
             key_stem = f.stem
             raw_auto = f"{target}:{current_mtime}:auto"
-            if hashlib.sha256(raw_auto.encode()).hexdigest() == key_stem:
+            if _digest(raw_auto) == key_stem:
                 continue  # current auto entry
             # A concrete-track key: brute-forcing every track is wasteful, so
             # instead reconstruct only the concrete track we might have dual-keyed
@@ -402,7 +447,7 @@ class SubtitleCache:
         key_stem = cache_file.stem
         for tkey in ("auto", *(str(t) for t in range(16))):
             raw = f"{stored}:{mtime}:{tkey}"
-            if hashlib.sha256(raw.encode()).hexdigest() == key_stem:
+            if _digest(raw) == key_stem:
                 return True
         return False
 

@@ -251,9 +251,13 @@ of its subtitle source (its sidecar's date, or the file's own for embedded subti
 `index_state` (library rows) is `changed` for a file that was indexed but whose subtitles
 changed since, as opposed to `not_indexed` for one never indexed. Index-status and folder
 search count and list such files, and remember them; so does a background pass over the
-library roots every `QC_INDEX_CHECK_INTERVAL` seconds (3600; `0` = off), which lists folders
-and reads file dates only, at idle priority, never extracting or reading a subtitle file,
-and is skipped while the previous one still runs. `GET /api/index/changes` returns
+library roots every `QC_INDEX_CHECK_INTERVAL` seconds (3600, the first two minutes after a
+start; `0` = off), which lists folders and reads file dates only, at the idle I/O class (its
+CPU priority stays normal: the thread holds the interpreter lock, and parked at idle CPU it
+would stall every request), never extracting or reading a subtitle file. It is skipped while
+the previous one still runs and while a library run or a re-index job is going, and a media
+root that is missing or empty (an unmounted pool) keeps the last result and reports the
+error. `GET /api/index/changes` returns
 `{changed, files, last_check: {at, files, changed, duration_s, error?}, interval_s,
 checking}` (up to 1000 `files`), and `POST /api/index/changes/reindex` queues every one of
 them for the re-index job (as `POST /api/index/file` answers; 200 with `queued: 0` when

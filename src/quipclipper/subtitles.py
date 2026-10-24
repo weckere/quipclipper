@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import contextlib
@@ -58,14 +59,26 @@ def at_idle_priority(cancelled: Callable[[], bool] | None = None) -> Iterator[No
     priority (:mod:`quipclipper.idle`), and kill the one in flight when ``cancelled()``
     turns true (it raises :class:`Cancelled`). For background work such as the library
     index (M20), which must never slow a player down. Give it absolute paths: the
-    children run in the temp folder (``python -m`` puts the working directory first on
-    the import path)."""
+    children run in a private empty folder (``python -m`` puts the working directory
+    first on the import path)."""
     prev = getattr(_idle, "cancelled", None), getattr(_idle, "on", False)
     _idle.on, _idle.cancelled = True, cancelled
     try:
         yield
     finally:
         _idle.cancelled, _idle.on = prev
+
+
+_IDLE_CWD: list[str] = []
+
+
+def _idle_cwd() -> str:
+    """An empty folder only this process can write, for the idle children to run in:
+    ``python -m`` puts the working directory first on their import path, so the shared
+    temp folder would let any local user plant a ``quipclipper`` there."""
+    if not _IDLE_CWD or not os.path.isdir(_IDLE_CWD[0]):
+        _IDLE_CWD[:] = [tempfile.mkdtemp(prefix="qc-idle-")]
+    return _IDLE_CWD[0]
 
 
 def _run(cmd: list[str], timeout: float) -> subprocess.CompletedProcess:
@@ -75,7 +88,7 @@ def _run(cmd: list[str], timeout: float) -> subprocess.CompletedProcess:
         return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     cancelled = _idle.cancelled
     proc = subprocess.Popen(idle.wrap(cmd), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            text=True, env=idle.child_env(), cwd=tempfile.gettempdir(),
+                            text=True, env=idle.child_env(), cwd=_idle_cwd(),
                             start_new_session=True)
     deadline = time.monotonic() + timeout
     try:
@@ -523,6 +536,10 @@ def extract_embedded(video_path: str | Path, stream_index: int) -> list[Cue]:
                 f"Could not extract subtitle track s:{stream_index} as text — image "
                 f"subtitles (e.g. PGS) aren't supported; supply an .srt with --subs."
             )
+        if tmp_path.stat().st_size == 0:
+            # An empty text track (a "Forced" track with no lines): nothing to say,
+            # not a failure, or every library run would read the whole file again.
+            return []
         return load_subtitles(tmp_path)
     finally:
         tmp_path.unlink(missing_ok=True)

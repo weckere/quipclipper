@@ -206,7 +206,9 @@ changed, a banner says so: "3 files have new or changed subtitles since indexing
 them**". The button re-indexes exactly those files, in the background one after another at
 idle priority, and the chips and the folder's card update when it is done. Once an hour the
 server also checks the whole library the same way (listing folders and reading file dates
-only, at idle priority), and the library's home card shows what it found: **Index out of date:
+only, at the idle disk priority; the first check a couple of minutes after the server starts,
+and none while a library run or a re-index is going), and the library's home card shows what
+it found: **Index out of date:
 N files**, with the same **Re-index them** button. Nothing is re-indexed on its own: only these
 buttons, the CLI (`quipclipper index.changes`, `index.reindex-changed`, `index.file PATH…`) and
 the [Bazarr, Sonarr and Radarr hooks](HOOKS.md) do it. The check's interval is

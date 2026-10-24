@@ -504,19 +504,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # timestamp-only pass; only ever re-indexed on request (index_changes).
     index_changes = index_changes_mod.ChangeLog(settings.state_dir)
 
+    def _root_mounted(r: Path) -> bool:
+        """A media root that is there: a folder, and not an empty one (an unmounted
+        pool leaves its mount point empty, and would read as "all clear")."""
+        try:
+            with os.scandir(r) as it:
+                return next(it, None) is not None
+        except OSError:
+            return False
+
+    def _lib_roots() -> list[Path]:
+        """The media roots that are there, by real path: views, search and the hooks key
+        files by real path, so a symlinked root walked as given would index a second
+        copy that nothing reads."""
+        return [Path(os.path.realpath(r)) for r in settings.media_roots if r.is_dir()]
+
     def _changes_scan():
         roots = list(settings.media_roots)
-        folders = [r for r in roots if r.is_dir()]
-        if len(folders) < len(roots):  # an unmounted pool would read as "all clear"
-            raise OSError("a media root is missing: "
-                          + ", ".join(str(r) for r in roots if r not in folders))
+        missing = [r for r in roots if not _root_mounted(r)]
+        if missing:  # an unmounted pool would read as "all clear"
+            raise OSError("a media root is missing or empty: "
+                          + ", ".join(str(r) for r in missing))
+        folders = _lib_roots()
         found, _, _ = _media_under(folders, set())
         cached = sub_cache.entry_names()
         for c, own in found:
             yield c, sub_cache.index_state(c, siblings=own, names=cached)
 
+    def _lib_busy() -> bool:
+        """A library run or a re-index job is reading the media."""
+        return any(j.status.value == "running" for j in lib_jobs.list_recent())
+
     index_check = index_changes_mod.HourlyCheck(index_changes, _changes_scan,
-                                                settings.index_check_interval)
+                                                settings.index_check_interval,
+                                                busy=_lib_busy)
+    stopping = [False]  # the server is shutting down (a library run reads "interrupted")
     stt_submit = threading.Lock()  # one check-then-submit at a time (no twin jobs)
 
     def _stt_existing(key: str):
@@ -548,6 +570,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         index_check.start()  # a check only: it never re-indexes
         yield
         index_check.stop()
+        stopping[0] = True
         if jf_refresher is not None:
             jf_refresher.cancel()
         jobs.shutdown()
@@ -555,6 +578,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         yt_jobs.shutdown()
         stt_jobs.shutdown(cancel=True)  # stop whisper now, not after every queued run
         lib_jobs.shutdown(cancel=True)  # a rerun resumes from the cache
+        index_changes.flush()
         peak_store.shutdown()
 
     app = FastAPI(title="quipclipper-web", version=__version__, lifespan=lifespan)
@@ -1683,7 +1707,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if not folders[0].is_dir():
                 raise HTTPException(status_code=400, detail=f"Not a directory: {path}")
         else:
-            folders = [r for r in settings.media_roots if r.is_dir()]
+            folders = _lib_roots()
         paths = [str(f) for f in folders]
 
         def scan():
@@ -1702,6 +1726,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # Nothing to index (no sidecar, no text track)? Remember it, so no run
                 # tries it again; a file it can't tell about stays for the next run.
                 if sub_cache.mark_no_subs(f):
+                    index_changes.forget(f)
                     return "no_subs"
                 raise
 
@@ -1717,8 +1742,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 if idle is not None and lib_jobs.cancel(idle):
                     lib_jobs.cancel(idle)  # and out of Jobs: it never had work
 
-            lib_index.run(job, paths=paths, scan=scan, index=index, log=lib_log,
-                          whole_library=not path, between=hooks)
+            try:
+                lib_index.run(job, paths=paths, scan=scan, index=index, log=lib_log,
+                              whole_library=not path, between=hooks,
+                              stopping=lambda: stopping[0])
+            finally:
+                index_changes.flush()
             return []
 
         with lib_submit:
@@ -1755,15 +1784,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def _reindex_state(f: Path, force: bool) -> str:
         if not f.is_file():
             return "missing"
-        if force:
-            sub_cache.clear(f)
-        state = sub_cache.index_state(f)
-        if state == "indexed":
-            return "current"
-        if state == "no_subs":
-            return "no_subs"
+        if not force:  # forced: read again, the old entry kept until the new one lands
+            state = sub_cache.index_state(f)
+            if state == "indexed":
+                return "current"
+            if state == "no_subs":
+                return "no_subs"
         try:
-            sub_cache.resolve(f)
+            if force:
+                sub_cache.resolve(f, fresh=True)
+            else:
+                sub_cache.resolve(f)
             return "indexed"
         except (ValueError, FileNotFoundError, RuntimeError):
             if sub_cache.mark_no_subs(f):
@@ -1789,6 +1820,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         finally:
             if job.cancel_requested:
                 file_queue.retire(job.id)
+            index_changes.flush()
         job.result = counts
         job.progress = "Done: " + (", ".join(f"{n} {k}" for k, n in counts.items())
                                    or "nothing to do")

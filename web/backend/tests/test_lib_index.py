@@ -234,3 +234,123 @@ def test_sweeping_a_file_reads_only_its_own_entries(tmp_path, monkeypatch):
     assert SubtitleCache(tmp_path).clear(media / "3.mkv") == 1
     assert cache.clear_under(media) == 20
     assert list((tmp_path / "sub_cache").glob("*.json")) == []
+
+
+# --- release review 2 (t-m20-review-2) -----------------------------------------------
+
+def test_a_symlinked_root_is_indexed_under_the_paths_views_read(tmp_path, monkeypatch):
+    # JB-4: the run walked the root as configured; views, search and the hooks use real
+    # paths, so it indexed copies nothing read and a rerun said "Nothing to index".
+    real = _library(tmp_path)
+    link = tmp_path / "linked"
+    link.symlink_to(real)
+    c = _client(tmp_path, link, monkeypatch)
+    r = c.post("/api/search/library/index").json()
+    assert r["paths"] == [str(real)]
+    assert _wait(c, r["job_id"])["result"]["indexed"] == 2
+    st = c.get("/api/search/folder/index-status", params={"path": str(link)}).json()
+    assert (st["indexed"], st["no_subs"]) == (2, 1)
+
+
+def test_a_server_stop_records_the_run_as_interrupted(tmp_path, monkeypatch):
+    # JB-9: a restart (systemd stop) cancelled the run, which then read "cancelled".
+    media = _library(tmp_path, subtitled=3, silent=0)
+    gate, started = threading.Event(), threading.Event()
+    real = SubtitleCache.resolve
+
+    def slow(self, video, track=None, fresh=False):
+        started.set()
+        gate.wait(5)
+        return real(self, video, track)
+
+    monkeypatch.setattr(SubtitleCache, "resolve", slow)
+    with _client(tmp_path, media, monkeypatch) as c:
+        c.post("/api/search/library/index")
+        assert started.wait(5)
+    gate.set()
+    log = tmp_path / "state" / "library_index.json"
+    end = time.monotonic() + 5
+    while (json.loads(log.read_text())["status"] in ("scanning", "indexing")
+           and time.monotonic() < end):
+        time.sleep(0.05)
+    rec = json.loads(log.read_text())
+    assert rec["status"] == "interrupted" and "restart" in rec["summary"]
+
+
+def test_an_empty_text_track_is_indexed_as_empty_not_retried(monkeypatch, tmp_path):
+    # JB-5: ffmpeg writes a 0-byte .srt for an empty track; parsing it failed, the file
+    # couldn't be marked no_subs (it has a text track), so every run read it again.
+    video = tmp_path / "v.mkv"
+    video.write_bytes(b"")
+    monkeypatch.setattr(subtitles.shutil, "which", lambda name: "/bin/" + name)
+    monkeypatch.setattr(subtitles, "list_embedded_tracks", lambda v: [object()])
+    monkeypatch.setattr(subtitles, "_run",
+                        lambda cmd, timeout: subtitles.subprocess.CompletedProcess(cmd, 0))
+    assert subtitles.extract_embedded(video, 0) == []
+
+
+def test_a_cancelled_forced_reindex_keeps_the_index(tmp_path, monkeypatch):
+    # JB-7: a forced re-index cleared the entry first, so a cancel left the file with
+    # none (not indexed, and not "changed" either).
+    media = _library(tmp_path, subtitled=1, silent=0)
+    video = media / "show" / "ep00.mkv"
+    cache = SubtitleCache(tmp_path / "state")
+    cache.resolve(video)
+
+    def cancelled(**kw):
+        raise subtitles.Cancelled()
+
+    monkeypatch.setattr(sub_cache_mod, "resolve_subtitles", cancelled)
+    try:
+        cache.resolve(video, fresh=True)
+    except subtitles.Cancelled:
+        pass
+    assert cache.index_state(video) == "indexed"
+    assert [c.text for c in cache.resolve(video)] == ["Make it so."]
+
+
+def test_a_name_that_isnt_utf8_does_not_stop_a_scan(tmp_path):
+    # JB-3: a latin-1 byte in a Linux file name (decoded as a surrogate) made the key's
+    # .encode() raise, failing a whole library run and killing the hourly check.
+    cache = SubtitleCache(tmp_path / "state")
+    odd = tmp_path / "caf\udce9.mkv"
+    assert cache.index_state(odd) == "not_indexed"
+    assert cache.index_state(odd, siblings=[], names=set()) == "not_indexed"
+
+
+def test_the_owner_map_is_built_without_holding_up_cache_writes(tmp_path):
+    # JB-2: building the map (each entry's head, once per process) held the lock every
+    # cache write waits on, and read 32 KiB an entry; a write made meanwhile is kept.
+    media = _library(tmp_path, subtitled=3, silent=0)
+    cache = SubtitleCache(tmp_path / "state")
+    for i in range(3):
+        cache.resolve(media / "show" / f"ep{i:02d}.mkv")
+    cache = SubtitleCache(tmp_path / "state")  # a fresh process: no map yet
+    real_entries = cache._entries
+    wrote = threading.Event()
+
+    def entries():
+        yield from real_entries()
+        t = threading.Thread(target=lambda: (cache._own("/m/new.mkv", "x.json"), wrote.set()))
+        t.start()
+        assert wrote.wait(2), "a cache write waited for the map to be built"
+
+    cache._entries = entries
+    reads = []
+    real_open = open
+
+    def counting_open(f, mode="r", *a, **k):
+        fh = real_open(f, mode, *a, **k)
+        if "b" in mode:
+            real_read = fh.read
+            fh.read = lambda n=-1: (reads.append(n), real_read(n))[1]
+        return fh
+
+    import builtins
+    builtins.open, saved = counting_open, builtins.open
+    try:
+        owners = cache._owners()
+    finally:
+        builtins.open = saved
+    assert owners["/m/new.mkv"] == {"x.json"}
+    assert len(owners) == 4 and reads and max(reads) <= 4096

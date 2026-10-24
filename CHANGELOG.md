@@ -207,13 +207,16 @@ scripts/release.sh leaves this block in Unreleased; delete the two marker lines 
   in the background at idle priority. Folder search counts them apart (`changed`,
   `changed_files`), as does index-status. Once an hour (`QC_INDEX_CHECK_INTERVAL`, `0` = off;
   NixOS `indexCheckInterval`) the server checks the whole library the same way, listing
-  folders and reading file dates only, at idle priority, and the library's home card shows
+  folders and reading file dates only, at the idle disk priority and never while the library
+  is being indexed, and the library's home card shows
   **Index out of date: N files** with the same button (`quipclipper index.changes`,
   `index.reindex-changed`, `GET /api/index/changes`). A library run now indexes changed files
   too. The checks never re-index anything themselves.
 
 ### Fixed
 
+- An embedded subtitle track with no lines (an empty "Forced" track) reads as no lines
+  instead of an error, so indexing stops reading the whole file again on every run.
 - Indexing no longer slows down as the subtitle cache grows: after each extraction the cache
   read every entry it held to find the file's stale ones (on a library-sized cache, gigabytes
   per file). It now knows each entry's file, read once.

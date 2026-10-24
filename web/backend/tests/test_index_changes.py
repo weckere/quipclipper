@@ -3,8 +3,11 @@ views and an hourly timestamp-only pass, and re-indexed only when someone asks."
 
 from __future__ import annotations
 
+import json
 import os
+import platform
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -197,11 +200,18 @@ def test_hourly_timer_skips_overlap_keeps_last_on_a_missing_root_and_can_be_off(
     assert Settings.from_env({}).index_check_interval == 3600
 
 
-def test_the_timer_thread_runs_at_idle_priority(tmp_path):
+def test_the_timer_thread_lowers_its_io_class_not_its_cpu_priority(tmp_path):
+    # JB-1 (review 2): at SCHED_IDLE / nice 19 the thread was parked holding the
+    # interpreter lock whenever the CPU was busy, stalling every request behind it.
     log = ic.ChangeLog(tmp_path)
     ran = threading.Event()
+    seen: dict = {}
 
     def scan():
+        tid = threading.get_native_id() if sys.platform.startswith("linux") else 0
+        seen["nice"] = os.getpriority(os.PRIO_PROCESS, tid)
+        if hasattr(os, "sched_getscheduler"):
+            seen["policy"] = os.sched_getscheduler(0)
         ran.set()
         return iter(())
 
@@ -212,8 +222,65 @@ def test_the_timer_thread_runs_at_idle_priority(tmp_path):
         assert ran.wait(5)
     finally:
         check.stop()
-    assert check.priority  # something took effect (nice/SCHED_IDLE/io, or darwin bg)
+    assert set(check.priority) <= {"io_idle"}
+    if sys.platform.startswith("linux") and platform.machine().lower() in (
+            "x86_64", "amd64", "aarch64", "arm64"):
+        assert check.priority == ["io_idle"]
+    assert seen["nice"] == main_nice
+    if "policy" in seen:
+        assert seen["policy"] == os.SCHED_OTHER
     assert os.getpriority(os.PRIO_PROCESS, 0) == main_nice  # not the whole process
+
+
+def test_the_check_waits_while_the_library_is_being_indexed(tmp_path):
+    # JB-11: a second reader on the disks during a library run or re-index job.
+    log = ic.ChangeLog(tmp_path)
+    busy = [True]
+    check = ic.HourlyCheck(log, lambda: iter([(Path("/m/a.mkv"), "changed")]), 3600,
+                           busy=lambda: busy[0])
+    assert check.run_once() is None and log.files() == []
+    busy[0] = False
+    assert check.run_once()["changed"] == 1
+
+
+def test_one_bad_pass_does_not_end_the_hourly_check(tmp_path):
+    # JB-3: anything but OSError killed the thread for good, with last_check null.
+    log = ic.ChangeLog(tmp_path)
+    calls = []
+
+    def scan():
+        calls.append(1)
+        if len(calls) == 1:
+            raise UnicodeEncodeError("utf-8", "\udce9", 0, 1, "surrogates not allowed")
+        return iter(())
+
+    check = ic.HourlyCheck(log, scan, interval=0.05, first_delay=0.01)
+    check.start()
+    try:
+        end = time.monotonic() + 5
+        while len(calls) < 2 and time.monotonic() < end:
+            time.sleep(0.01)
+    finally:
+        check.stop()
+    assert len(calls) >= 2
+    assert ic.HourlyCheck(log, scan, interval=1e12).interval == ic.MAX_INTERVAL
+
+
+def test_forgets_are_written_in_batches(tmp_path):
+    # JB-6: each forget rewrote the whole list (quadratic over a big re-index).
+    clock = [1000.0]
+    log = ic.ChangeLog(tmp_path, now=lambda: clock[0])
+    log.note([(f"/m/{i}.mkv", "changed") for i in range(100)])
+    writes = []
+    real = log._save
+    log._save = lambda: (writes.append(1), real())[1]
+    for i in range(100):
+        log.forget(f"/m/{i}.mkv")
+    assert len(writes) <= 1
+    log.flush()
+    assert json.loads((tmp_path / "index_changes.json").read_text())["files"] == []
+    # Forgets outside a pass aren't kept for one (they grew to the library's size).
+    assert log._forgot == set()
 
 
 def test_a_reindex_during_a_pass_is_not_undone_by_it(tmp_path):
@@ -222,3 +289,22 @@ def test_a_reindex_during_a_pass_is_not_undone_by_it(tmp_path):
     log.forget("/m/a.mkv")
     log.replace(["/m/a.mkv", "/m/b.mkv"], {"at": 1})
     assert log.files() == ["/m/b.mkv"]
+
+
+def test_an_empty_root_is_a_missing_root(tmp_path, lib, monkeypatch):
+    # JB-10: an unmounted pool leaves an empty mount point, which read as "all clear"
+    # and emptied the list.
+    seen = {}
+    real_init = ic.HourlyCheck.__init__
+
+    def capture(self, *a, **k):
+        real_init(self, *a, **k)
+        seen["check"] = self
+
+    monkeypatch.setattr(ic.HourlyCheck, "__init__", capture)
+    pool = tmp_path / "pool"
+    pool.mkdir()
+    c = _client(tmp_path, lib, QC_MEDIA_ROOTS=f"{lib}:{pool}")
+    last = seen["check"].run_once()
+    assert "missing or empty" in last["error"] and str(pool) in last["error"]
+    assert c.get("/api/index/changes").json()["last_check"]["error"]

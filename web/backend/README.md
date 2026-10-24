@@ -54,7 +54,7 @@ Environment variables (mirrored by the NixOS module options):
 | `QC_JELLYFIN_API_KEY` / `QC_JELLYFIN_API_KEY_FILE` | (unset) | a Jellyfin API key, or a file holding it (an unreadable file = off, not a failed start) |
 | `QC_JELLYFIN_PATH_MAP` | (unset) | Jellyfin's paths → the media roots: `<jellyfin>=<local>` pairs separated by `:`; longest prefix wins |
 | `QC_HOOK_TOKEN` / `QC_HOOK_TOKEN_FILE` | (unset) | low-privilege token(s) for the re-index hooks (Bazarr, Sonarr, Radarr): accepted only on `/api/index/file`, 403 anywhere else. See [`../../docs/HOOKS.md`](../../docs/HOOKS.md) |
-| `QC_INDEX_CHECK_INTERVAL` | `3600` | seconds between the timestamp-only checks for subtitles changed since indexing (idle priority; never re-indexes); `0` = off |
+| `QC_INDEX_CHECK_INTERVAL` | `3600` | seconds between the timestamp-only checks for subtitles changed since indexing (idle I/O priority; never re-indexes); `0` = off |
 | `QC_PATH_MAP` | (unset) | the hooks' paths → the media roots: `<theirs>=<local>` pairs separated by `:` or `;`; longest prefix wins |
 | `QC_PROXY_SECRET` | (unset) | defence-in-depth: when set on **both** services, nginx injects it and the backend rejects any request that reaches port 8000 without it (except `/api/health`), blocking direct hits that bypass nginx |
 | `QC_API_TOKEN` | (unset) | token(s) for programmatic clients (comma-separated for rotation); a client sends it as `X-API-Key`/`Bearer`/`-u api:<token>` and is then exempt from the CSRF header. Set on **both** services so `-u api:<token>` also passes the basic-auth gate. See [`../../docs/API.md`](../../docs/API.md) |

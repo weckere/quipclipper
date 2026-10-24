@@ -11,8 +11,10 @@ badge and its Re-index button:
   every file they cover anyway; they :meth:`ChangeLog.note` what they saw.
 - **Once an hour** (``QC_INDEX_CHECK_INTERVAL`` seconds; 0 = never), a background pass
   over the library roots: directory listings and ``stat`` calls only, never a subtitle
-  file's content, never an extraction, at idle priority on its own thread. A pass still
-  running when the next is due is skipped.
+  file's content, never an extraction, on its own thread at the idle I/O class (not
+  idle CPU: the thread holds the interpreter lock, so a starved one would stall every
+  request). A pass still running when the next is due is skipped, and so is a pass
+  while a library run or a re-index job reads the disks.
 - **Re-indexing a file** (the hooks' job, a library run) :meth:`ChangeLog.forget`\\ s it.
 
 Nothing here re-indexes: that happens only when someone asks (the badge's or a
@@ -35,30 +37,23 @@ from typing import Any
 LIST_MAX = 1000
 # The first pass after a start, so a restart shows the badge without waiting an hour.
 FIRST_DELAY = 120.0
+# The longest interval honoured (a week): Event.wait overflows on huge ones.
+MAX_INTERVAL = 7 * 86400.0
+# A forget's write to disk waits this long for others (a re-index job forgets each file).
+SAVE_EVERY = 5.0
 
 
 def lower_thread_priority() -> list[str]:
-    """Drop the calling thread (only) to idle priority: on Linux, ``SCHED_IDLE``, nice
-    19 and the idle I/O class all apply per thread with pid 0 / the thread's id; on
-    macOS the Darwin background policy for this thread. Call it on a thread of its own:
-    a pool thread would keep it for its next task. Returns what took effect."""
+    """Put the calling thread (only) in the idle I/O class (Linux, ``ioprio_set`` with
+    who 0). Not its CPU priority: this thread runs Python and holds the interpreter lock
+    while it does, so at ``SCHED_IDLE`` or nice 19 the kernel would park it holding the
+    lock whenever the CPU is busy, stalling every request thread behind it (the review's
+    JB-1: up to a second per request). Its listings and stats are I/O, and blocking I/O
+    lets go of the lock. Call it on a thread of its own: a pool thread would keep it.
+    Returns what took effect."""
     from quipclipper.idle import _ioprio_idle  # Linux-only syscall wrapper
 
-    done = []
-    if hasattr(os, "SCHED_IDLE"):
-        with contextlib.suppress(OSError):
-            os.setpriority(os.PRIO_PROCESS, threading.get_native_id(), 19)
-            done.append("nice19")
-        with contextlib.suppress(OSError):
-            os.sched_setscheduler(0, os.SCHED_IDLE, os.sched_param(0))
-            done.append("sched_idle")
-        if _ioprio_idle():
-            done.append("io_idle")
-    elif hasattr(os, "PRIO_DARWIN_THREAD"):
-        with contextlib.suppress(OSError):
-            os.setpriority(os.PRIO_DARWIN_THREAD, 0, os.PRIO_DARWIN_BG)
-            done.append("darwin_bg")
-    return done
+    return ["io_idle"] if _ioprio_idle() else []
 
 
 class ChangeLog:
@@ -73,6 +68,9 @@ class ChangeLog:
         self._last: dict[str, Any] = data.get("last") or {}
         # Files re-indexed while a pass runs: its (older) view mustn't bring them back.
         self._forgot: set[str] = set()
+        self._passing = False
+        self._dirty = False
+        self._saved_at = 0.0
 
     def _load(self) -> dict[str, Any]:
         try:
@@ -83,6 +81,7 @@ class ChangeLog:
 
     def _save(self) -> None:
         """Write the set out. Call with ``_lock`` held."""
+        self._dirty, self._saved_at = False, self._now()
         with contextlib.suppress(OSError):
             fd, tmp = tempfile.mkstemp(dir=self._path.parent, suffix=".tmp")
             try:
@@ -107,16 +106,28 @@ class ChangeLog:
                 self._save()
 
     def forget(self, f: Path | str) -> None:
-        """``f`` was re-indexed (or found current): it is no longer out of date."""
+        """``f`` was re-indexed (or found current): it is no longer out of date. Written
+        out at most every ``SAVE_EVERY`` s (a job forgetting each of thousands of files
+        rewrote the whole list each time); :meth:`flush` writes the rest."""
         with self._lock:
-            self._forgot.add(str(f))
+            if self._passing:
+                self._forgot.add(str(f))
             if str(f) in self._files:
                 self._files.discard(str(f))
+                self._dirty = True
+                if self._now() - self._saved_at >= SAVE_EVERY:
+                    self._save()
+
+    def flush(self) -> None:
+        """Write out forgets still held back (a job ended, the server stops)."""
+        with self._lock:
+            if self._dirty:
                 self._save()
 
     def begin_pass(self) -> None:
         with self._lock:
             self._forgot = set()
+            self._passing = True
 
     def replace(self, files: Iterable[str], last: dict[str, Any]) -> None:
         """A whole-library pass: its result replaces the set (less what was re-indexed
@@ -124,11 +135,13 @@ class ChangeLog:
         with self._lock:
             self._files = set(files) - self._forgot
             self._last = last
+            self._forgot, self._passing = set(), False
             self._save()
 
     def set_last(self, last: dict[str, Any]) -> None:
         with self._lock:
             self._last = last
+            self._forgot, self._passing = set(), False
             self._save()
 
     def files(self) -> list[str]:
@@ -148,10 +161,13 @@ class HourlyCheck:
 
     def __init__(self, log: ChangeLog, scan: Callable[[], Iterable[tuple[Path, str]]],
                  interval: float, first_delay: float = FIRST_DELAY,
-                 now: Callable[[], float] = time.time) -> None:
+                 now: Callable[[], float] = time.time,
+                 busy: Callable[[], bool] = lambda: False) -> None:
         self.log = log
         self._scan = scan
-        self.interval = max(0.0, interval)
+        # ``busy()``: a library run or a re-index job is reading the disks; this waits.
+        self._other_busy = busy
+        self.interval = min(MAX_INTERVAL, max(0.0, interval))
         self._first = min(first_delay, self.interval) if self.interval else 0.0
         self._now = now
         self._stop = threading.Event()
@@ -178,11 +194,19 @@ class HourlyCheck:
         self.priority = lower_thread_priority()
         wait = self._first
         while not self._stop.wait(wait):
-            self.run_once()
+            try:
+                self.run_once()
+            except Exception as exc:  # noqa: BLE001 -- the hourly check must outlive one bad pass
+                with contextlib.suppress(Exception):
+                    self.log.set_last({"at": self._now(), "files": 0, "changed": 0,
+                                       "duration_s": 0.0, "error": str(exc)[:300]})
             wait = self.interval
 
     def run_once(self) -> dict[str, Any] | None:
-        """One pass; None (skipped) when one is still running."""
+        """One pass; None (skipped) when one is still running, or while a library run
+        or a re-index job is indexing (one reader on the disks at a time)."""
+        if self._other_busy():
+            return None
         if not self._busy.acquire(blocking=False):
             return None
         try:

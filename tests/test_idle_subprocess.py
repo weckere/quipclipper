@@ -115,3 +115,28 @@ def test_a_cancel_kills_the_probe_in_flight(fake_probe, tmp_path, monkeypatch):
 def test_cancelled_is_not_a_runtime_error():
     """Callers treat RuntimeError as "no subtitles here"; a cancel must not look like it."""
     assert not issubclass(Cancelled, RuntimeError)
+
+
+def test_idle_children_run_in_a_private_folder(monkeypatch):
+    # JB-12 (review 2): they ran in the shared temp folder, first on their import path
+    # (python -m), where any local user could plant a quipclipper package.
+    seen = {}
+
+    class Proc:
+        returncode = 0
+
+        def __init__(self, argv, **kw):
+            seen.update(kw)
+
+        def communicate(self, timeout=None):
+            return "", ""
+
+        def poll(self):
+            return 0
+
+    monkeypatch.setattr(subtitles.subprocess, "Popen", Proc)
+    with at_idle_priority():
+        subtitles._run(["true"], 5)
+    cwd = Path(seen["cwd"])
+    assert cwd.resolve() != Path(subtitles.tempfile.gettempdir()).resolve()
+    assert stat.S_IMODE(cwd.stat().st_mode) == 0o700 and not any(cwd.iterdir())
