@@ -344,7 +344,7 @@ Opening a file opens its workspace.
   **Remove from library** and **Delete transcript** undo the two. See
   [Machine transcription](#machine-transcription-whispercpp).
 - **The Selection panel** shows the selected range and acts on it: **★ Bookmark** (with
-  a label you can edit; a range dragged on the waveform can be bookmarked too), **✂ Make clip**, and **Send to LeadStinger** (an icon button with a shopping cart:
+  a label you can edit; a range dragged on the waveform can be bookmarked too), **✂ Make clip**, and **Send to LeadStinger** (an icon button showing a broadcast tape cart:
   hover or focus it for what it does; one click cuts and sends). Under
   it: **Before** / **After** padding in seconds (it changes the preview, the bookmark and
   the clip), **Video | Audio only**, **Exact (re-encode)** for a frame-exact video clip
@@ -908,7 +908,7 @@ quipclipper clip   "you will become one with the borg" --video "Book (readaloud)
 ### Sending clips to LeadStinger
 
 [LeadStinger](https://github.com/weckere/leadstinger) is a soundboard for live shows.
-quipclipper can hand it a line in one click. In the web app, click the cart-icon **Send to
+quipclipper can hand it a line in one click. In the web app, click the broadcast-cart **Send to
 LeadStinger** button beside Make clip (it uses the Before/After padding), tick the small
 Send to LeadStinger toggle beside Clip / Export selected with one line or clip ticked, or
 use a clip's Send to LeadStinger button in the Clips library; on

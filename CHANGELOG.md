@@ -11,6 +11,13 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 
 ## [Unreleased]
 
+### LeadStinger broadcast-cart icon (M20)
+
+- **Send to LeadStinger draws a broadcast cart** (the NAB tape cartridge stations play
+  stingers from: label on top, one reel hub, the tape opening in the front edge) instead of
+  0.3.1's shopping cart, on every LeadStinger control. Tooltips, names and behaviour are
+  unchanged.
+
 ## [0.4.0] - 2026-10-25
 
 ### Machine transcription (M21)
