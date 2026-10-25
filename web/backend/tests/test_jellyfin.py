@@ -725,7 +725,14 @@ def _settle(fake, n=1):
     time.sleep(0.3)  # and nothing more follows
 
 
-def test_clips_landing_scan_their_library_once(fake, tmp_path, media, quick_scan):
+def test_clips_landing_scan_their_library_once(fake, tmp_path, media, monkeypatch):
+    import time
+
+    from quipclipper_web import jellyfin_index
+
+    # Long enough that the second cut lands inside the delay even on a loaded build host
+    # (a 0.2 s delay failed on wizrock at load 40: two scans).
+    monkeypatch.setattr(jellyfin_index, "REFRESH_DELAY", 3.0)
     root, ep = media
     fake.folders = [
         {"Name": "Shows", "ItemId": "5" * 32, "Locations": ["/shows"]},
@@ -734,7 +741,11 @@ def test_clips_landing_scan_their_library_once(fake, tmp_path, media, quick_scan
     c = _client(_clips_env(fake, tmp_path, root))
     _clip(c, ep, "{timestamp}")
     _clip(c, ep, "{timestamp}")  # a second clip inside the delay: still one scan
-    _settle(fake)
+    for _ in range(300):
+        if fake.refreshed:
+            break
+        time.sleep(0.05)
+    time.sleep(0.5)  # and nothing more follows
     assert fake.refreshed == ["6" * 32]
     (_, query, _) = [r for r in fake.requests if r[0].endswith("/Refresh")][0]
     assert query["Recursive"] == "true"
