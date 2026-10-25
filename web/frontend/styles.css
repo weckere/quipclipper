@@ -776,19 +776,27 @@ footer { padding: 2rem 1.25rem; font-size: 0.8rem; }
   padding: 0.1rem 0.25rem; margin-left: -0.25rem; border: 0; border-radius: var(--radius);
   background: none; color: var(--machine); font: inherit; font-weight: 600; cursor: pointer;
 }
-.stt-toggle:hover { background: var(--machine-soft); text-decoration: underline; }
+.stt-head > .tip-wrap { flex-shrink: 0; }  /* the flex item is the wrapper: it keeps the toggle whole */
+/* Hover lifts the toggle onto the panel's own opaque ground: a second --machine-soft over the
+   bar's took --machine under 4.5:1 in dark (test_frontend_contrast.py checks what this paints). */
+.stt-toggle:hover { background: var(--surface); text-decoration: underline; }
 .stt-toggle:focus-visible { outline: 2px solid var(--machine); outline-offset: 1px; }
 .stt-toggle .auto-chip { margin: 0; }
 .stt-caret { width: 0; height: 0; border: 0.28rem solid transparent; border-left-color: currentColor; border-right-width: 0; transition: transform 0.12s ease; }
 .stt-bar.open .stt-caret { transform: rotate(90deg); }
 .stt-title { color: var(--machine); font-weight: 600; }
-.stt-summary, .stt-job { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.stt-summary { flex: 0 1 auto; }
-.stt-job { flex: 1 1 auto; color: var(--text); }
-.stt-job .reindex-link { margin-left: 0.3rem; }
+/* The texts give way, not the toggle or Cancel: each ellipsizes (the summary first), and the
+   open body says both in full. #stt-job is a row of its own so Cancel is never cut off, and
+   nothing around Cancel clips, so its focus ring shows whole. */
+.stt-summary, .stt-job-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stt-summary { flex: 0 3 auto; }
+.stt-job { display: flex; align-items: center; gap: 0.5rem; flex: 1 1 auto; min-width: 0; color: var(--text); }
+.stt-job-text { flex: 0 1 auto; }
+.stt-job .reindex-link { flex-shrink: 0; }
 .tip.tip-below { top: calc(100% + 0.35rem); bottom: auto; left: 0; right: auto; }
 .stt-body { margin-top: 0.25rem; }
 .stt-detail { margin: 0; }
+.stt-msg { margin: 0.25rem 0 0; color: var(--text); overflow-wrap: anywhere; }
 .stt-actions { display: flex; flex-wrap: wrap; gap: 0.35rem 0.9rem; align-items: center; margin-top: 0.35rem; }
 .stt-bar .reindex-link { color: var(--text); }
 .stt-bar .reindex-link:hover { color: var(--accent-text); }

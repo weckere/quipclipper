@@ -167,11 +167,13 @@
               <p id="stt-folder-status" class="muted reindex-status" role="status" hidden></p>
               <p id="lib-index-status" class="muted reindex-status" data-action="index.library-status" role="status" hidden></p>
               <p id="changes-badge" class="reindex-status" data-action="index.changes" role="status" hidden><span id="changes-badge-chip" class="badge idx-changed"></span> <span id="changes-badge-note" class="muted"></span></p>
-              <p id="stt-orphans" class="muted reindex-status" data-action="index.transcript-orphans" role="status" hidden></p>
+              <!-- Not a live region: the count isn't read out on every visit; a delete's result is
+                   announced once, by the button. -->
+              <p id="stt-orphans" class="muted reindex-status" data-action="index.transcript-orphans" hidden></p>
             </div>
             <div class="index-actions">
-              <button type="button" id="stt-folder-nosubs" data-action="index.transcribe" class="btn ghost" title="Transcribe every file here that has no subtitles (audio without a transcript too) with whisper, one after another in the background at low priority, so its dialogue can be searched. It can take hours; Cancel keeps what's done." hidden><span class="auto-chip" aria-hidden="true">auto</span>Transcribe files without subtitles</button>
-              <button type="button" id="stt-folder-gaps" data-action="index.transcribe" class="btn ghost" title="Transcribe the gaps between the subtitle lines of every file here (songs, lines the subtitles skip) with whisper, one file after another in the background at low priority. It can take hours; Cancel keeps what's done." hidden><span class="auto-chip" aria-hidden="true">auto</span>Fill gaps in every file</button>
+              <button type="button" id="stt-folder-nosubs" data-action="index.transcribe" class="btn ghost" title="Transcribe every file here that has no subtitles (audio without a transcript too) with whisper, one after another in the background at low priority, so its dialogue can be searched. It can take hours; Cancel keeps what's done." hidden><span class="auto-chip">auto</span> Transcribe files without subtitles</button>
+              <button type="button" id="stt-folder-gaps" data-action="index.transcribe" class="btn ghost" title="Transcribe the gaps between the subtitle lines of every file here (songs, lines the subtitles skip) with whisper, one file after another in the background at low priority. It can take hours; Cancel keeps what's done." hidden><span class="auto-chip">auto</span> Fill gaps in every file</button>
               <button type="button" id="stt-folder-cancel" data-action="job.cancel" class="btn ghost" title="Stop transcribing this folder; the files done so far keep their transcripts" hidden><span aria-hidden="true">✕</span> Cancel</button>
               <button type="button" id="fetch-folder-subs-btn" data-action="index.fetch-subs" class="btn ghost" title="Fetch YouTube transcripts for every video in this folder that came from YouTube but has no subtitles, so they become dialogue-searchable. Runs in the background."><svg class="icon"><use href="#i-download"/></svg>Fetch missing YouTube subtitles</button>
               <button type="button" id="fetch-folder-cancel" data-action="job.cancel" class="btn ghost" title="Stop fetching YouTube subtitles for this folder" hidden><span aria-hidden="true">✕</span> Cancel</button>
@@ -179,7 +181,7 @@
               <button type="button" id="index-btn" data-action="index.build" class="btn primary" title="Extract and cache the subtitles of the files here that aren't indexed yet, so dialogue search is fast" hidden>Index now</button>
               <button type="button" id="lib-index-btn" data-action="index.library" class="btn primary" title="Index every file in the library that isn't indexed yet, one after another in the background at low priority, so whole-library dialogue search covers all of it. It never starts on its own and can take days; Cancel keeps what's done, and starting it again picks up where it stopped." hidden>Index the whole library</button>
               <button type="button" id="changes-reindex-btn" data-action="index.reindex-changed" class="btn" title="Re-index every file whose subtitles changed since it was indexed, one after another in the background at low priority. Nothing re-indexes on its own." hidden>Re-index them</button>
-              <button type="button" id="stt-orphans-btn" data-action="index.transcript-clean" class="btn ghost" title="Delete the stored machine transcripts of media files that are gone from the library. Nothing is deleted on its own; transcripts copied into the library stay, and a disk that isn't mounted counts as nothing gone." hidden><span class="auto-chip" aria-hidden="true">auto</span>Remove orphaned transcripts</button>
+              <button type="button" id="stt-orphans-btn" data-action="index.transcript-clean" class="btn ghost" title="Delete the stored machine transcripts that aren't needed any more: their media file is gone from the library, or the transcript can't be read or was never finished. Nothing is deleted on its own; transcripts copied into the library stay, and a disk that isn't mounted counts as nothing gone." hidden><span class="auto-chip">auto</span> Remove orphaned transcripts</button>
               <button type="button" id="lib-index-cancel" data-action="job.cancel" class="btn ghost" title="Stop the library index; the files done so far stay indexed, and starting it again picks up where it stopped" hidden><span aria-hidden="true">✕</span> Cancel</button>
             </div>
           </section>
@@ -508,13 +510,16 @@
                 <div class="stt-head">
                   <span class="tip-wrap">
                     <button type="button" id="stt-toggle" class="stt-toggle" aria-expanded="false" aria-controls="stt-body" aria-describedby="stt-tip" data-notitle="the visible tooltip #stt-tip is its hover text"><span class="auto-chip">auto</span> <span class="stt-title">Machine transcript</span><span class="stt-caret" aria-hidden="true"></span></button>
-                    <span id="stt-tip" class="tip tip-below" role="tooltip">Lines whisper heard in this file that the subtitles leave out (a song, say), marked auto in the script and in search. They can be wrong. Click to transcribe, copy to the library or delete them.</span>
+                    <span id="stt-tip" class="tip tip-below" role="tooltip">Lines whisper heard in this file that the subtitles leave out (a song, say), marked auto in the script and in search. They can be wrong. <span id="stt-tip-do">Click to open: transcribe, copy to the library, export or delete them.</span></span>
                   </span>
                   <span id="stt-summary" class="stt-summary muted"></span>
-                  <span id="stt-job" class="stt-job" hidden><span id="stt-job-text" role="status"></span> <button type="button" id="stt-cancel" data-action="job.cancel" class="reindex-link" title="Stop this transcription; what it has done so far is kept">Cancel</button></span>
+                  <!-- The message ellipsizes (its hover text and the open body have it whole); Cancel
+                       is its own item beside it, never cut off. -->
+                  <span id="stt-job" class="stt-job" hidden><span id="stt-job-text" class="stt-job-text" role="status"></span><button type="button" id="stt-cancel" data-action="job.cancel" class="reindex-link" title="Stop this transcription; what it has done so far is kept">Cancel</button></span>
                 </div>
                 <div id="stt-body" class="stt-body" hidden>
                   <p id="stt-detail" class="stt-detail muted"></p>
+                  <p id="stt-msg" class="stt-msg" hidden></p>
                   <div class="stt-actions">
                     <button type="button" id="stt-gaps" data-action="item.transcribe" class="reindex-link" title="Transcribe every stretch of 4 s or more between the subtitle lines (songs, lines the subtitles skip) with whisper. It runs in the background at low priority and can take a few minutes.">Fill gaps</button>
                     <button type="button" id="stt-file" data-action="item.transcribe" class="reindex-link" title="Transcribe the whole file with whisper, so its dialogue can be searched. It runs in the background at low priority: an hour of audio can take half an hour or more.">Transcribe file</button>

@@ -1461,7 +1461,8 @@ function libIndexHome() {
 // swept on its own).
 let sttOrphansCheckId = 0;
 
-async function refreshSttOrphans() {
+/** Count them and show the line and button; `note` (a delete's result) leads the line. */
+async function refreshSttOrphans(note = "") {
   const myId = ++sttOrphansCheckId;
   const line = $("stt-orphans"), btn = $("stt-orphans-btn");
   if (!appConfig.transcribe) { line.hidden = btn.hidden = true; return; }  // off here (D-053)
@@ -1469,25 +1470,39 @@ async function refreshSttOrphans() {
   try { data = await getJSON("/api/transcripts/orphans"); } catch { return; }
   if (myId !== sttOrphansCheckId) return;
   const n = data.count || 0;
-  line.textContent = n ? `${plural(n, "machine transcript")} belong${n === 1 ? "s" : ""} to files no longer in the library.` : "";
-  line.hidden = btn.hidden = !n;
+  // The count is every reason the store gives (gone, unreadable, a save's leftover), so it
+  // says all of them, not only "gone".
+  const count = n ? `${plural(n, "stored machine transcript")} ${n === 1 ? "isn't" : "aren't"} needed any more (media file gone, unreadable or unfinished).` : "";
+  line.textContent = [note, count].filter(Boolean).join(" ");
+  line.hidden = !line.textContent;
+  btn.hidden = !n;
 }
 
 $("stt-orphans-btn").onclick = async () => {
   const btn = $("stt-orphans-btn"), line = $("stt-orphans");
-  if (!confirm("Delete the stored machine transcripts of files that are gone from the library? " +
-      "Transcripts copied into the library stay.")) return;
+  if (!confirm("Delete the stored machine transcripts that aren't needed any more (media file gone, " +
+      "unreadable or unfinished)? Transcripts copied into the library stay.")) return;
+  // Leaving the library's home (or drawing it again) bumps this: the answer is then not ours to show.
+  const myId = sttOrphansCheckId;
   btn.disabled = true;
+  let note;
   try {
     const r = await postJSON("/api/transcripts/clean", {});
-    line.textContent = `Deleted ${plural(r.count || 0, "orphaned transcript")}.`;
-    announce(line.textContent);
-    btn.hidden = true;
+    note = `Deleted ${plural(r.count || 0, "orphaned transcript")}.`;
   } catch (err) {
-    line.textContent = `Couldn't delete them: ${err.message}`;
-    announce(line.textContent);
+    note = `Couldn't delete them: ${err.message}`;
   } finally {
     btn.disabled = false;
+    if (myId === sttOrphansCheckId) {
+      // Said once (the line isn't a live region), then the count again: what's left after a
+      // delete, or after one that failed half-way.
+      line.textContent = note;
+      line.hidden = false;
+      announce(note);
+      refreshSttOrphans(note);
+    } else if (!line.hidden) {
+      refreshSttOrphans();  // the home drawn again meanwhile: its count may predate the delete
+    }
   }
 };
 
@@ -2800,11 +2815,21 @@ function sttUnfollow() {
   sttFollowing = null;
 }
 
+/** Write the bar's status line: the slim row ellipsizes it (its hover text has it whole) and
+ *  the open body says it in full, so a long error can always be read. "" clears both. */
+function sttSay(msg) {
+  const text = $("stt-job-text"), full = $("stt-msg");
+  text.textContent = msg;
+  text.title = msg;
+  full.textContent = msg;
+  full.hidden = !msg;
+}
+
 /** Say `msg` in the bar's status line. Cancel stays only while the open file's job runs. */
 function sttStatus(msg) {
   $("stt-job").hidden = false;
   $("stt-cancel").hidden = !(sttFollowing && currentItem && sttFollowing.path === currentItem.path);
-  $("stt-job-text").textContent = msg;
+  sttSay(msg);
 }
 
 const sttConfig = () => appConfig.transcribe || {};
@@ -2842,6 +2867,9 @@ function renderSttBar(t, path, hasSubs) {
   bar.hidden = !t || !(avail || sttHasLines(t));
   if (bar.hidden) return;
   bar.dataset.hasSubs = hasSubs ? "1" : "";
+  // A click opens the bar; a server without whisper has nothing to transcribe in it.
+  $("stt-tip-do").textContent = avail ? "Click to open: transcribe, copy to the library, export or delete them."
+    : "Click to open: copy to the library, export or delete them.";
   const stored = t.stored, lib = t.library || [];
   const parts = [], brief = [];
   if (stored) {
@@ -2886,7 +2914,7 @@ function renderSttBar(t, path, hasSubs) {
   if (running && (fresh || !sttFollowing || sttFollowing.jobId !== running)) followSttJob(running, path);
   else if (!running && fresh) {
     $("stt-job").hidden = true;  // another file's status doesn't carry over
-    $("stt-job-text").textContent = "";
+    sttSay("");
   }
 }
 
@@ -2968,7 +2996,7 @@ function followSttJob(jobId, path) {
   // poll, even a tick still waiting on its answer, so one job never has two polls.
   const follow = sttFollowing = { jobId, path };
   const mine = () => sttFollowing === follow;
-  const box = $("stt-job"), text = $("stt-job-text"), cancel = $("stt-cancel");
+  const box = $("stt-job"), cancel = $("stt-cancel");
   const here = () => sttHere(path);
   const enable = () => { for (const id of ["stt-gaps", "stt-file", "wf-transcribe"]) $(id).disabled = false; };
   if (here()) {  // the bar shows the open file: another's job only polls
@@ -2976,10 +3004,10 @@ function followSttJob(jobId, path) {
     cancel.hidden = false;
     cancel.disabled = false;
     for (const id of ["stt-gaps", "stt-file", "wf-transcribe"]) $(id).disabled = true;
-    text.textContent = "Transcribing in the background, at low priority…";
+    sttSay("Transcribing in the background, at low priority…");
     cancel.onclick = async () => {
       cancel.disabled = true;
-      text.textContent = "Stopping…";
+      sttSay("Stopping…");
       try { await apiFetch(`/api/jobs/${encodeURIComponent(jobId)}`, { method: "DELETE" }); } catch {}
     };
   }
@@ -2994,14 +3022,14 @@ function followSttJob(jobId, path) {
       if (err.status === 404) {  // the server restarted, or the job was cleared
         sttJobs.delete(path);
         sttFollowing = null;
-        if (here()) { box.hidden = true; enable(); }
+        if (here()) { box.hidden = true; sttSay(""); enable(); }
         return;
       }
       // Unreachable for a while: stop asking. sttJobs keeps the job, so opening the file
       // again follows it afresh.
       if (++failures >= STT_POLL_TRIES) {
         sttFollowing = null;
-        if (here()) text.textContent = "Lost touch with the transcription; open the file again to check on it.";
+        if (here()) sttSay("Lost touch with the transcription; open the file again to check on it.");
         return;
       }
       sttTimer = setTimeout(tick, 5000);
@@ -3011,8 +3039,8 @@ function followSttJob(jobId, path) {
     failures = 0;
     if (jobActive(job)) {
       if (here()) {
-        text.textContent = job.status === "queued" ? "Waiting for another transcription to finish…"
-          : `Transcribing in the background, at low priority: ${job.progress || "starting"}…`;
+        sttSay(job.status === "queued" ? "Waiting for another transcription to finish…"
+          : `Transcribing in the background, at low priority: ${job.progress || "starting"}…`);
       }
       sttTimer = setTimeout(tick, here() && !document.hidden ? 1500 : 5000);
       return;
@@ -3026,7 +3054,7 @@ function followSttJob(jobId, path) {
       : `Transcription failed: ${job.error || "unknown error"}`;
     announce(msg);
     if (!here()) return;
-    text.textContent = msg;
+    sttSay(msg);
     cancel.hidden = true;
     enable();
     refreshStt(path, { script: true });

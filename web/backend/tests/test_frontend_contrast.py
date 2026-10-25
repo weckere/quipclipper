@@ -10,6 +10,9 @@ pairs the stylesheet actually puts together:
   ``--machine-soft`` laid over a ground), machine lines included, and ``--accent-ink`` on ``--accent`` (the primary buttons): 4.5:1;
 * the stacks the UI paints: a machine cue label on its tint over the cue lane's opaque ``--raised``
   (whatever selection shade is under it), and a machine search hit's match on ``--accent-soft``: 4.5:1;
+* the machine transcript bar (``--machine-soft`` over the panel's ``--surface``): its texts
+  (``--text``, ``--dim``, ``--machine``, ``--accent-text`` on a hovered link), and ``--machine`` on
+  whatever ``.stt-toggle:hover`` paints over the bar, read from ``styles.css``: 4.5:1;
 * UI colours on every ground: input and button borders (``--line-strong``), the switch and the
   selection edges (``--accent``), the focus ring (``--accent-text``), the playhead, the job marks
   and the dialogue map's bars (``--faint``): 3:1 (SC 1.4.11).
@@ -25,6 +28,7 @@ from pathlib import Path
 import pytest
 
 TOKENS = Path(__file__).resolve().parents[2] / "frontend" / "tokens.css"
+STYLES = TOKENS.with_name("styles.css")
 # The Nix build packages web/backend alone, so the frontend isn't next to the tests there.
 needs_frontend = pytest.mark.skipif(not TOKENS.exists(), reason="web/frontend is not part of this source tree")
 
@@ -97,6 +101,15 @@ def ratio(a, b) -> float:
     return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
 
 
+def bar_grounds(c: dict) -> tuple[tuple, tuple]:
+    """The transcript bar's ground (--machine-soft over the panel's --surface) and its toggle's
+    hover ground: whatever .stt-toggle:hover paints, laid over the bar (a tint stacks)."""
+    bar = over(c["machine-soft"], c["surface"])
+    m = re.search(r"\.stt-toggle:hover \{[^}]*background: var\(--([\w-]+)\)", STYLES.read_text())
+    assert m, "no .stt-toggle:hover background in styles.css"
+    return bar, over(c[m.group(1)], bar)
+
+
 def failures(t: dict[str, str]) -> list[str]:
     c = {k: rgba(v) for k, v in t.items() if v.strip().startswith(("#", "rgba"))}
     bad = []
@@ -119,6 +132,13 @@ def failures(t: dict[str, str]) -> list[str]:
     need("machine", c["machine"], "machine-soft over raised (cue lane)", over(c["machine-soft"], c["raised"]), 4.5)
     for g in GROUNDS:
         need("machine", c["machine"], f"accent-soft over {g} (search mark)", over(c["accent-soft"], c[g]), 4.5)
+    # The transcript bar: the summary (--dim), the status line and links (--text, --accent-text
+    # hovered), the toggle and chip (--machine), and the toggle hovered (it once stacked a
+    # second --machine-soft: 4.499:1 in dark).
+    bar, hover = bar_grounds(c)
+    for f in ("text", "dim", "machine", "accent-text"):
+        need(f, c[f], "machine-soft over surface (transcript bar)", bar, 4.5)
+    need("machine", c["machine"], "the transcript bar's hovered toggle", hover, 4.5)
     need("accent-ink", c["accent-ink"], "accent", c["accent"], 4.5)
     for f in UI:
         for g in GROUNDS:
