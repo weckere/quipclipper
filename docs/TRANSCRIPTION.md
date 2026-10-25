@@ -116,6 +116,8 @@ read-only root it says it can't.
 
 ## In the web app
 
+<p align="center"><img src="screenshots/transcript-open.png" width="440" alt="The script with violet auto lines between the subtitle lines, under the Machine transcript row opened: 0:20 transcribed with small.en, 4 lines, and Fill gaps, Copy to library, Export .srt and Delete transcript"></p>
+
 - **The workspace** has a slim **Machine transcript** row above the script, about a line
   tall: the state in a few words ("14 lines", "none yet") and a running job's progress with
   **Cancel**. A click or Enter opens the rest below it, Esc closes it, and each browser

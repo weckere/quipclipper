@@ -84,6 +84,13 @@ mark the selected line's in and out points.
 
 ![The workspace in the light theme, with the waveform strip and its handles under the player](docs/screenshots/workspace-light.png)
 
+**Machine transcription**, where whisper.cpp is installed: lines whisper heard in the
+stretches the subtitles skip show in violet with an **auto** chip, between the real lines.
+The slim **Machine transcript** row above the script opens to Fill gaps, Copy to library,
+Export .srt and Delete transcript.
+
+<p align="center"><img src="docs/screenshots/transcript.png" width="440" alt="The script with violet auto lines between the subtitle lines, under the slim Machine transcript row, closed"> <img src="docs/screenshots/transcript-open.png" width="440" alt="The same script with the Machine transcript row opened: 0:20 transcribed with small.en, 4 lines, and Fill gaps, Copy to library, Export .srt and Delete transcript"></p>
+
 **Now playing** from Jellyfin on the library's home: open what a client is playing, at its
 playhead. Below it, the home's Dialogue index card indexes the whole library.
 

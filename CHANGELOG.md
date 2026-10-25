@@ -157,7 +157,8 @@ subtitles everywhere. See [docs/TRANSCRIPTION.md](docs/TRANSCRIPTION.md).
   cut off, yet still took the keyboard focus), a long message can be read whole in its
   hover text and in the opened bar, the toggle no longer overlaps the summary at phone
   width, and its hover keeps AA contrast in the dark theme. "auto" chips on buttons are
-  part of their spoken names, and the toggle's hover text says a click opens the bar.
+  part of their spoken names, the toggle's hover text says a click opens the bar, and
+  **Export .srt** lines up with the buttons beside it.
 
 ### Fixed
 

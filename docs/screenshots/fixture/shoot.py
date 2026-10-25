@@ -143,6 +143,24 @@ async def main():
         await shot(page, "send-to-leadstinger", clip={"x": box["x"] - 16, "y": top, "width": box["width"] + 32, "height": box["y"] + box["height"] + 16 - top})
         await hi.close()
 
+        # Machine transcription (on where whisper is installed, D-053; the fixture has a stand-in
+        # and seed_transcript.py's lines): the side panel with the slim transcript bar closed,
+        # then open, at 2x, cropped to the bar and the script lines below it.
+        hi = await b.new_context(viewport={"width": 1600, "height": 1000}, device_scale_factor=2, color_scheme="dark")
+        page = await home(hi)
+        await open_movie_from_now_playing(page)
+        await page.wait_for_selector("#stt-bar:not([hidden])")
+        await page.wait_for_selector("#script-list .script-machine")
+        await page.evaluate("document.activeElement.blur()")
+        side = await page.locator(".ws-side").bounding_box()
+        crop = {"x": side["x"], "y": side["y"], "width": side["width"], "height": min(side["height"], 600)}
+        await shot(page, "transcript", clip=crop)
+        await page.click("#stt-toggle")
+        await page.mouse.move(0, 0)  # no hover tooltip over the opened bar
+        await settle(page, 700)
+        await shot(page, "transcript-open", clip=crop)
+        await hi.close()
+
         light = await b.new_context(viewport={"width": 1600, "height": 1000}, color_scheme="light")
         page = await home(light)
         await open_movie_from_now_playing(page)

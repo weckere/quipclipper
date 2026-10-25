@@ -30,7 +30,16 @@ are a few Borg lines for dialogue search to find.
    FIXTURE=~/qc-fixture python3 docs/screenshots/fixture/fake_jellyfin.py
    ```
 
-3. Start the web app on port 8017 against the fixture:
+3. Seed the machine transcript: Big Buck Bunny has nothing for whisper to hear, so
+   [`seed_transcript.py`](seed_transcript.py) writes four machine lines into the movie's
+   gaps in the server's transcript store, plus a stand-in `whisper-cli` that does nothing
+   and an empty model file, so the server turns transcription on (D-053) and shows it:
+
+   ```bash
+   FIXTURE=~/qc-fixture python3 docs/screenshots/fixture/seed_transcript.py
+   ```
+
+4. Start the web app on port 8017 against the fixture:
 
    ```bash
    QC_MEDIA_ROOTS=~/qc-fixture/Movies:~/qc-fixture/Shows QC_PORT=8017 \
@@ -38,10 +47,12 @@ are a few Borg lines for dialogue search to find.
    QC_PUBLIC_URL=https://quipclipper.example.net \
    QC_JELLYFIN_URL=http://127.0.0.1:8097 QC_JELLYFIN_API_KEY=fixture \
    QC_JELLYFIN_PATH_MAP=/data/movies=$HOME/qc-fixture/Movies:/data/shows=$HOME/qc-fixture/Shows \
+   QC_WHISPER_BIN=$HOME/qc-fixture/whisper/whisper-cli \
+   QC_WHISPER_MODEL=$HOME/qc-fixture/whisper/ggml-small.en.bin \
    python -m quipclipper_web
    ```
 
-4. Shoot (needs `pip install playwright` and Google Chrome), then compress:
+5. Shoot (needs `pip install playwright` and Google Chrome), then compress:
 
    ```bash
    FIXTURE=~/qc-fixture OUT=/tmp/shots python docs/screenshots/fixture/shoot.py
@@ -54,7 +65,9 @@ are a few Borg lines for dialogue search to find.
    **changed** chip and banner) and puts it back after. The pairing shots (`pairing`,
    `connected-apps`) ask for access as "LeadStinger on studio-macbook" through the API, with
    "LeadStinger on booth-mini" already let in, and deny the request afterwards; the address
-   on the banner is the fixture server's own `127.0.0.1`. Transcription stays off (no
-   `QC_TRANSCRIBE`), so none of it shows.
+   on the banner is the fixture server's own `127.0.0.1`. Transcription is on (the stand-in
+   whisper and its model), so the workspace shows the slim transcript bar and the movie's
+   violet machine lines; the `transcript` and `transcript-open` shots crop the side panel at
+   2x with the bar closed, then open.
    The workspace shots wait for the waveform's peaks; the phone shot scrolls the waveform
    strip up to just above the pinned selection. Look at every image before committing it.

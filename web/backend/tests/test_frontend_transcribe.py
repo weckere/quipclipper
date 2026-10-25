@@ -475,3 +475,11 @@ def test_the_orphan_line_is_true_for_every_reason_and_said_once():
     line = re.search(r'<p id="stt-orphans"[^>]*>', html).group(0)
     assert "role=" not in line and "aria-live" not in line
     assert click.count("announce(") == 1
+
+
+def test_the_export_link_lines_up_with_the_buttons_beside_it():
+    # Export .srt is an <a>: as a 24 px block its text sat at the top while the buttons
+    # centre theirs (2.4 px higher, measured).
+    css = (FRONTEND / "styles.css").read_text()
+    assert re.search(r"\.stt-actions \.reindex-link \{[^}]*display: inline-flex;[^}]*"
+                     r"align-items: center;", css)

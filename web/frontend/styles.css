@@ -799,6 +799,8 @@ footer { padding: 2rem 1.25rem; font-size: 0.8rem; }
 .stt-msg { margin: 0.25rem 0 0; color: var(--text); overflow-wrap: anywhere; }
 .stt-actions { display: flex; flex-wrap: wrap; gap: 0.35rem 0.9rem; align-items: center; margin-top: 0.35rem; }
 .stt-bar .reindex-link { color: var(--text); }
+/* Export .srt is a link: centre its text in the 24 px target as the buttons beside it do. */
+.stt-actions .reindex-link { display: inline-flex; align-items: center; }
 .stt-bar .reindex-link:hover { color: var(--accent-text); }
 .stt-model { display: inline-flex; gap: 0.35rem; align-items: center; color: var(--dim); font-size: 0.8rem; }
 .stt-model select { font-size: 0.8rem; padding: 0.1rem 0.3rem; }
