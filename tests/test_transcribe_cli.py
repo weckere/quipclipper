@@ -17,10 +17,10 @@ needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="needs 
 
 
 @pytest.fixture(autouse=True)
-def switched_on(monkeypatch):
-    # Transcription is off unless QC_TRANSCRIBE turns it on (D-040); test_transcribe_off.py
-    # covers it off.
-    monkeypatch.setenv("QC_TRANSCRIBE", "1")
+def no_switch(monkeypatch):
+    # Transcription turns on by itself where whisper-cli and a model are installed (D-053);
+    # test_transcribe_off.py covers it off.
+    monkeypatch.delenv("QC_TRANSCRIBE", raising=False)
 
 
 @pytest.fixture
@@ -109,7 +109,8 @@ def test_server_job_results_print(capsys):
     assert "No machine transcript" not in out and "3 lines" in out
 
 
-def test_machine_only_with_a_subtitle_file_is_a_usage_error(tmp_path):
+def test_machine_only_with_a_subtitle_file_is_a_usage_error(tmp_path, monkeypatch):
+    monkeypatch.setenv("QC_TRANSCRIBE", "1")  # no whisper needed: forced on (D-053)
     subs = tmp_path / "a.srt"
     subs.write_text("1\n00:00:01,000 --> 00:00:02,000\nhello\n")
     out = runner.invoke(cli.app, ["search", "hello", "--subs", str(subs), "--machine", "only"])
@@ -117,6 +118,7 @@ def test_machine_only_with_a_subtitle_file_is_a_usage_error(tmp_path):
 
 
 def test_local_copy_writes_what_the_server_would(tmp_path, monkeypatch):
+    monkeypatch.setenv("QC_TRANSCRIBE", "1")  # no whisper needed: forced on (D-053)
     # Only machine lines the subtitles don't already have, and the sidecar's name (EN-3).
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
     media = tmp_path / "ep.mkv"
@@ -133,6 +135,7 @@ def test_local_copy_writes_what_the_server_would(tmp_path, monkeypatch):
 
 
 def test_local_orphans_listed_then_cleaned(tmp_path, monkeypatch):
+    monkeypatch.setenv("QC_TRANSCRIBE", "1")  # no whisper needed: forced on (D-053)
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
     keep, gone = tmp_path / "keep.mkv", tmp_path / "gone.mkv"
     store = tr.TranscriptStore(tr.default_store_dir())

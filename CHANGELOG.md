@@ -11,18 +11,21 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 
 ## [Unreleased]
 
-<!-- held back (D-040): machine transcription ships switched off and undocumented in 0.3.0.
-scripts/release.sh leaves this block in Unreleased; delete the two marker lines to release it. -->
-
 ### Machine transcription (M21)
 
-- **Experimental, and off unless switched on (D-040):** nothing of it runs or shows unless
-  `QC_TRANSCRIBE=1` (the NixOS module's `transcribe.enable` sets it); whisper.cpp and a model
-  alone no longer turn it on, and the Docker images leave it off. Off, its endpoints answer 404
-  with the reason, `/api/health` and `/api/config` leave it out, stored transcripts and
-  `….whisper.srt` copies stay out of search, the script and the library, the web UI shows none
-  of it, and the CLI keeps its commands and `--machine` out of its help and refuses them
-  locally. It is documented apart, in docs/TRANSCRIPTION.md.
+Sung lines and stretches the subtitles skip, and files with no subtitles at all, become
+searchable: whisper.cpp transcribes what you ask it to, and its lines show apart from the real
+subtitles everywhere. See [docs/TRANSCRIPTION.md](docs/TRANSCRIPTION.md).
+
+- **On where whisper.cpp is installed (D-053):** transcription turns itself on where
+  `whisper-cli` and a whisper model file are installed (`QC_WHISPER_MODEL`; the NixOS
+  module's `transcribe.enable` installs both), and stays off elsewhere. `QC_TRANSCRIBE=0`
+  turns it off and `QC_TRANSCRIBE=1` forces it on. The Docker images carry no whisper, so it
+  is off there for now. Off, its endpoints answer 404 with the reason, `/api/health` and
+  `/api/config` leave it out, stored transcripts and `….whisper.srt` copies stay out of
+  search, the script and the library, the web UI shows none of it, and the CLI keeps its
+  commands and `--machine` out of its help and refuses them locally. Nothing ever
+  transcribes on its own, on or off.
 - **Find what the subtitles left out:** `item.transcribe` runs whisper.cpp over a range, the
   gaps between subtitle lines, or a whole file, and keeps what it hears as machine lines,
   which search mixes in (a subtitle line wins a tie) and prints marked `[auto]`. It only ever
@@ -137,8 +140,6 @@ scripts/release.sh leaves this block in Unreleased; delete the two marker lines 
   focus explains what machine transcripts are; a click or Enter opens Fill gaps, the model,
   Copy to library and the rest below it, and Esc or a click closes them. Each browser
   remembers which, and messages are read out as before.
-
-<!-- /held back -->
 
 ### Fixed
 

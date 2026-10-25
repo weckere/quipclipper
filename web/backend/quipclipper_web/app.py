@@ -577,8 +577,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # one at a time in their own pool, so a transcription never takes a clip slot; and
     # only when someone asks (D-037): nothing here starts one on its own.
     transcripts = stt.TranscriptStore(settings.state_dir / "transcripts")
-    # Experimental and off unless QC_TRANSCRIBE switches it on (D-040): off, no endpoint
-    # here answers, and stored transcripts and library copies stay out of everything.
+    # On where whisper-cli and a model are installed, unless QC_TRANSCRIBE says otherwise
+    # (D-053): off, no endpoint here answers, and stored transcripts and library copies stay
+    # out of everything.
     stt_on = settings.whisper.enabled
     stt_jobs = JobRegistry(max_workers=1)
     active_stt: dict[str, str] = {}
@@ -757,7 +758,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             },
             "jellyfin": settings.jellyfin_enabled,  # Now playing (M15) configured
             # Machine transcription (M21): whisper.cpp, its models and thread cap; only
-            # when switched on (D-040).
+            # while it's on (D-053).
             **({"transcribe": settings.whisper.describe()} if stt_on else {}),
         }
 
@@ -800,7 +801,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # Jellyfin URL + API key set: the Now playing card and scope show (M15).
             "jellyfin": settings.jellyfin_enabled,
             # Machine transcription (M21): whether it's set up, and the models to offer;
-            # only when switched on (D-040).
+            # only while it's on (D-053).
             **({"transcribe": {k: v for k, v in settings.whisper.describe().items()
                                if k in ("available", "models", "default_model", "threads",
                                         "language")}} if stt_on else {}),
@@ -963,12 +964,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                        siblings: list[Path] | None = None) -> list:
         """A file's machine transcript lines: the stored transcript and any copy in the
         library next to it. The player's captions show only a library copy (D-037). None
-        while transcription is switched off (D-040)."""
+        while transcription is off (D-053)."""
         return (stt.machine_cues(p, transcripts, stored=not captions, siblings=siblings)
                 if stt_on else [])
 
     def _machine_mode(machine: str) -> str:
-        """A request's ``machine`` choice: switched off, machine lines are left out, and
+        """A request's ``machine`` choice: transcription off, machine lines are left out, and
         asking for them alone is an error that says why."""
         if stt_on:
             return machine

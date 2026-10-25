@@ -144,19 +144,24 @@ by default land where they always did.
 | Command | What it does | Arguments | API | Web UI |
 |---|---|---|---|---|
 | `item.info` (`tracks`) | Show a file's streams, duration and subtitle tracks. | `PATH` `--langs` | `GET /api/items` · local | Opening an item; stream selector |
-| `item.script` | Print a file's subtitle script (every cue with its times). | `PATH` `--track` `--offset` `--fmt` | `GET /api/items/subtitles` | Script view; subtitle track picker |
+| `item.script` | Print a file's subtitle script (every cue with its times). | `PATH` `--track` `--offset` `--fmt` `--machine²` | `GET /api/items/subtitles` | Script view; subtitle track picker |
 | `item.reindex` | Re-read a file's subtitles (or re-fetch a YouTube transcript), clearing its cache. | `PATH` | `POST /api/items/subtitles/reindex` | ↻ Reindex subtitles (item) |
 | `item.fetch-subs` | Fetch subtitles from YouTube for one library video. | `PATH` `--wait` `--out-dir` | `POST /api/media/fetch-subs` | ⬇ Fetch subtitles from YouTube (item) |
 | `item.link` | A link that opens a file in the web app at a moment, with a range selected (needs QC_PUBLIC_URL on the server). | `PATH` `--at` `--sel` `--track` | `GET /api/items/link` | Copy link (workspace selection; search hit) |
 | `item.peaks` | Waveform peaks of a span: min/max pairs as base64 int16 (raw samples when zoomed past one per bin). Long spans come from a cached overview built in the background (202 while it builds). | `PATH` `--start` `--end` `--bins` `--audio` `--keyframes` | `GET /api/items/peaks` | Waveform strip (workspace): drawing, zoom and pan |
 | `item.snap` | The nearest zero crossing or quiet point to a time: where to put a cut so it starts without a click. | `PATH` `--t` `--mode` `--radius` `--db` `--audio` | `GET /api/items/snap` | Waveform strip: Snap to zero crossing / silence while dragging a handle |
+| `item.transcribe` ² | Transcribe a file's audio with whisper.cpp, for lines the subtitles leave out: a range (--start/--end), every gap between subtitle lines, or the whole file. Runs as a background job at idle priority; lines it hears are searchable and marked as machine-made. | `PATH` `--mode` `--start` `--end` `--model` `--audio` `--redo` `--wait` `--out-dir` | `POST /api/items/transcribe` · local | Transcribe selection (waveform); Fill gaps / Transcribe file (Transcript card) |
+| `item.transcript` ² | Show a file's machine transcript: the lines whisper heard, with what was transcribed. | `PATH` `--fmt` | `GET /api/items/transcript` · local | Transcript card (workspace) |
+| `item.transcript-clear` ² ⚠ | Delete a file's machine transcript (not a copy in the library). | `PATH` | `DELETE /api/items/transcript` · local | Transcript card: Delete transcript |
+| `item.transcript-copy` ² ⚠ | Copy a file's machine transcript into the library as a subtitle sidecar, <name>.<lang>.whisper.srt, next to the file (writable folders only). From then on it also shows in the player's captions and in Jellyfin. | `PATH` | `POST /api/items/transcript/library` · local | Transcript card: Copy to library |
+| `item.transcript-uncopy` ² ⚠ | Remove the machine transcript sidecar (…whisper.srt) from the library; the transcript itself stays. | `PATH` | `DELETE /api/items/transcript/library` · local | Transcript card: Remove from library |
 
 ## search
 
 | Command | What it does | Arguments | API | Web UI |
 |---|---|---|---|---|
-| `search.item` (`search`) | Search one file's dialogue. | `QUERY` `--path` `--track` `--limit` `--min-score` `--max-span` `--subs¹` `--langs¹` | `GET /api/search` · local | Top-bar search, scope This video |
-| `search.folder` | Search dialogue across every file in one or more folders. | `QUERY` `--path` `--limit` `--min-score` `--max-span` | `GET /api/search/folder` | Top-bar search, scope This folder / Whole library |
+| `search.item` (`search`) | Search one file's dialogue. | `QUERY` `--path` `--track` `--limit` `--min-score` `--max-span` `--machine²` `--subs¹` `--langs¹` | `GET /api/search` · local | Top-bar search, scope This video |
+| `search.folder` | Search dialogue across every file in one or more folders. | `QUERY` `--path` `--limit` `--min-score` `--max-span` `--machine²` | `GET /api/search/folder` | Top-bar search, scope This folder / Whole library |
 
 ## index
 
@@ -171,6 +176,9 @@ by default land where they always did.
 | `index.changes` | Show the files whose subtitles changed since they were indexed, as the hourly timestamp-only check (and the folders viewed since) found them. It only checks: nothing is re-indexed until you ask. |  | `GET /api/index/changes` | Index out of date: N files (library home) |
 | `index.reindex-changed` | Re-index every file `index.changes` lists, in the background at idle priority, one at a time. |  | `POST /api/index/changes/reindex` | Re-index them (the Index out of date badge) |
 | `index.fetch-subs` | Fetch missing YouTube subtitles for every video in a folder. | `PATH` `--wait` `--out-dir` | `POST /api/search/folder/fetch-subs` | ⬇ Fetch missing YouTube subtitles; ✕ Cancel |
+| `index.transcribe` ² | Transcribe a folder's files with whisper.cpp, one after another at idle priority: whole files that have no subtitles (audio without a transcript included), or the gaps between every file's subtitle lines. Only ever on request; cancel it like any job. | `PATH` `--mode` `--model` `--wait` `--out-dir` | `POST /api/search/folder/transcribe` | Transcribe files without subtitles; Fill gaps in every file (Dialogue index card); ✕ Cancel |
+| `index.transcript-orphans` ² | List the stored machine transcripts no file needs any more: their media file was deleted (with --stale, also replaced since), or they can't be read. Deletes nothing. | `--stale` | `GET /api/transcripts/orphans` · local | Library home: the orphaned transcripts count |
+| `index.transcript-clean` ² ⚠ | Delete the stored machine transcripts `index.transcript-orphans` lists. Never runs on its own; copies in the library stay. A disk that isn't mounted counts as nothing deleted. | `--stale` | `POST /api/transcripts/clean` · local | Library home: Remove orphaned transcripts |
 
 ## clip
 
@@ -250,4 +258,4 @@ by default land where they always did.
 | `settings.get` | Show one CLI setting. | `KEY` | (client) | — |
 | `settings.set` ⚠ | Change a CLI setting (empty value clears it). | `KEY` `VALUE` | (client) | Name field (clip bar); Subtitle languages (Settings) |
 
-⚠ destructive: refused with `--safe`. ¹ local mode only.
+⚠ destructive: refused with `--safe`. ¹ local mode only. ² machine transcription: only where whisper-cli and a model are installed, see [TRANSCRIPTION.md](TRANSCRIPTION.md).

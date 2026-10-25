@@ -1464,7 +1464,7 @@ let sttOrphansCheckId = 0;
 async function refreshSttOrphans() {
   const myId = ++sttOrphansCheckId;
   const line = $("stt-orphans"), btn = $("stt-orphans-btn");
-  if (!appConfig.transcribe) { line.hidden = btn.hidden = true; return; }  // off here (D-040)
+  if (!appConfig.transcribe) { line.hidden = btn.hidden = true; return; }  // off here (D-053)
   let data;
   try { data = await getJSON("/api/transcripts/orphans"); } catch { return; }
   if (myId !== sttOrphansCheckId) return;

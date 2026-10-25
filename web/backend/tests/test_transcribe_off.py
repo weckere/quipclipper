@@ -1,6 +1,6 @@
-"""Machine transcription switched off (D-040): experimental, off unless QC_TRANSCRIBE turns
-it on. Off, nothing transcribes and stored transcripts stay out of every answer, even on a
-server with whisper.cpp and a model."""
+"""Machine transcription off (D-053): on by itself where whisper-cli and a model are
+installed, off elsewhere, and QC_TRANSCRIBE=0 / =1 forces it. Off, nothing transcribes and
+stored transcripts stay out of every answer, even on a server with whisper.cpp and a model."""
 
 from __future__ import annotations
 
@@ -12,17 +12,37 @@ from quipclipper import transcribe as stt
 
 
 def _off(env: dict) -> dict:
-    return {k: v for k, v in env.items() if k != "QC_TRANSCRIBE"}
+    return {**env, "QC_TRANSCRIBE": "0"}
 
 
-def test_the_switch():
+def test_the_switch(env):  # noqa: F811
+    installed = {k: env[k] for k in ("QC_WHISPER_BIN", "QC_WHISPER_MODEL")}
+    assert stt.switch({}) is None and stt.switch({"QC_TRANSCRIBE": "maybe"}) is None
+    assert stt.switch({"QC_TRANSCRIBE": " Off "}) is False
+    assert stt.switch({"QC_TRANSCRIBE": " On "}) is True
+    # Unset: on exactly where whisper-cli and a model file are.
+    assert stt.enabled(installed) and stt.WhisperConfig.from_env(installed).available
     assert not stt.enabled({})
-    assert not stt.enabled({"QC_TRANSCRIBE": "0"})
-    assert not stt.enabled({"QC_TRANSCRIBE": "false"})
-    assert stt.enabled({"QC_TRANSCRIBE": "1"}) and stt.enabled({"QC_TRANSCRIBE": " On "})
+    assert not stt.enabled({**installed, "QC_WHISPER_MODEL": "/nowhere/ggml-small.en.bin"})
+    assert not stt.enabled({**installed, "QC_WHISPER_BIN": "/nowhere/whisper-cli"})
+    # 0 turns it off where it's installed; 1 forces it on where it isn't (not available).
+    for off in ("0", "false", "no", "off"):
+        assert not stt.enabled({**installed, "QC_TRANSCRIBE": off})
+    forced = stt.WhisperConfig.from_env({"QC_TRANSCRIBE": "yes",
+                                         "QC_WHISPER_BIN": "/nowhere/whisper-cli"})
+    assert forced.enabled and not forced.available
 
 
-def test_whisper_and_a_model_are_not_enough(env):  # noqa: F811
+def test_on_by_itself_where_whisper_is_installed(env):  # noqa: F811
+    c = _client(env)
+    assert c.get("/api/health").json()["transcribe"]["available"] is True
+    assert c.get("/api/config").json()["transcribe"]["available"] is True
+    nothing = {k: v for k, v in env.items() if not k.startswith("QC_WHISPER")}
+    c = _client({**nothing, "QC_WHISPER_BIN": "/nowhere/whisper-cli"})
+    assert "transcribe" not in c.get("/api/config").json()
+
+
+def test_switched_off_where_whisper_is_installed(env):  # noqa: F811
     c = _client(_off(env))
     health = c.get("/api/health").json()
     assert "transcribe" not in health and "whisper-cli" not in health["tools"]

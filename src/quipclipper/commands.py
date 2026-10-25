@@ -39,9 +39,9 @@ class Param:
     local_only: bool = False
     # bool params only: the "--x/--no-x" pair, when the off form isn't "--no-<name>".
     negative: str | None = None
-    # Part of an experimental feature (machine transcription, D-040): left out of the CLI's
-    # help and docs/CLI.md unless QC_TRANSCRIBE switches it on.
-    experimental: bool = False
+    # Part of machine transcription (M21): left out of the CLI's help while transcription is
+    # off there (no whisper-cli and model, or QC_TRANSCRIBE=0; D-053), marked in docs/CLI.md.
+    transcription: bool = False
 
 
 @dataclass(frozen=True)
@@ -59,9 +59,10 @@ class Command:
       lines   stream text lines as they arrive
       file    save the reply body to a file
 
-    ``experimental`` commands (machine transcription, D-040) are hidden from the CLI's
-    help, ``commands`` and docs/CLI.md, and refused locally, unless QC_TRANSCRIBE is on;
-    a server with it off answers them 404.
+    ``transcription`` commands (machine transcription, M21) are hidden from the CLI's
+    help and ``commands``, and refused locally, while transcription is off there (no
+    whisper-cli and model, or QC_TRANSCRIBE=0; D-053); a server with it off answers them
+    404. docs/CLI.md lists them with a marker.
     """
 
     id: str
@@ -74,7 +75,7 @@ class Command:
     destructive: bool = False
     shortcut: str | None = None
     ui: str = ""
-    experimental: bool = False
+    transcription: bool = False
     area: str = field(default="", compare=False)
 
     def __post_init__(self) -> None:
@@ -135,7 +136,7 @@ _STALE = Param("stale", "bool", "Also transcripts of media files replaced since 
 # Machine transcript lines (M21) in a script or search: mixed in (marked), left out, or alone.
 _MACHINE = Param("machine", "str", "Machine transcript lines (whisper): include them "
                  "(marked as machine-made), exclude them, or search only them.",
-                 default="include", choices=("include", "exclude", "only"), experimental=True)
+                 default="include", choices=("include", "exclude", "only"), transcription=True)
 
 _JOB_FOLLOW = (
     Param("wait", "bool", "Wait for the job to finish and show its result.",
@@ -275,29 +276,29 @@ COMMANDS: tuple[Command, ...] = (
                     Param("redo", "bool", "Transcribe again parts done before (e.g. with a "
                           "bigger model).", where=BODY, default=False)) + _JOB_FOLLOW,
             mode="both", response="job",
-            ui="Transcribe selection (waveform); Fill gaps / Transcribe file (Transcript card)", experimental=True),
+            ui="Transcribe selection (waveform); Fill gaps / Transcribe file (Transcript card)", transcription=True),
     Command("item.transcript", "Show a file's machine transcript: the lines whisper heard, "
             "with what was transcribed.", "GET", "/api/items/transcript",
             params=(Param("path", "str", "Media file.", main=True, required=True),
                     Param("fmt", "str", "json, or srt / vtt to export the lines.",
                           default="json", choices=("json", "srt", "vtt"))),
-            mode="both", ui="Transcript card (workspace)", experimental=True),
+            mode="both", ui="Transcript card (workspace)", transcription=True),
     Command("item.transcript-clear", "Delete a file's machine transcript (not a copy in the "
             "library).", "DELETE", "/api/items/transcript",
             params=(Param("path", "str", "Media file.", main=True, required=True),),
-            mode="both", destructive=True, ui="Transcript card: Delete transcript", experimental=True),
+            mode="both", destructive=True, ui="Transcript card: Delete transcript", transcription=True),
     Command("item.transcript-copy", "Copy a file's machine transcript into the library as a "
             "subtitle sidecar, <name>.<lang>.whisper.srt, next to the file (writable folders "
             "only). From then on it also shows in the player's captions and in Jellyfin.",
             "POST", "/api/items/transcript/library",
             params=(Param("path", "str", "Media file.", where=QUERY, main=True,
                           required=True),),
-            mode="both", destructive=True, ui="Transcript card: Copy to library", experimental=True),
+            mode="both", destructive=True, ui="Transcript card: Copy to library", transcription=True),
     Command("item.transcript-uncopy", "Remove the machine transcript sidecar (…whisper.srt) "
             "from the library; the transcript itself stays.", "DELETE",
             "/api/items/transcript/library",
             params=(Param("path", "str", "Media file.", main=True, required=True),),
-            mode="both", destructive=True, ui="Transcript card: Remove from library", experimental=True),
+            mode="both", destructive=True, ui="Transcript card: Remove from library", transcription=True),
 
     # --- search ------------------------------------------------------------------------
     Command("search.item", "Search one file's dialogue.", "GET", "/api/search",
@@ -394,17 +395,17 @@ COMMANDS: tuple[Command, ...] = (
                           choices=("small.en", "medium.en"))) + _JOB_FOLLOW,
             response="job",
             ui="Transcribe files without subtitles; Fill gaps in every file (Dialogue index "
-               "card); ✕ Cancel", experimental=True),
+               "card); ✕ Cancel", transcription=True),
     Command("index.transcript-orphans", "List the stored machine transcripts no file needs "
             "any more: their media file was deleted (with --stale, also replaced since), or "
             "they can't be read. Deletes nothing.", "GET", "/api/transcripts/orphans",
             params=(_STALE,), mode="both",
-            ui="Library home: the orphaned transcripts count", experimental=True),
+            ui="Library home: the orphaned transcripts count", transcription=True),
     Command("index.transcript-clean", "Delete the stored machine transcripts "
             "`index.transcript-orphans` lists. Never runs on its own; copies in the library "
             "stay. A disk that isn't mounted counts as nothing deleted.", "POST",
             "/api/transcripts/clean", params=(_STALE,), mode="both", destructive=True,
-            ui="Library home: Remove orphaned transcripts", experimental=True),
+            ui="Library home: Remove orphaned transcripts", transcription=True),
     # --- clip -----------------------------------------------------------------------------
     Command("clip.create", "Cut a clip: around a line of dialogue (QUERY) or between "
             "--start and --end.", "POST", "/api/clip",
@@ -736,8 +737,8 @@ SETTINGS: dict[str, str] = {
     "stt_model": "Default --model for transcription (small.en or medium.en; the web UI's "
                  "Transcription model setting, localStorage qc_stt_model).",
 }
-# Settings of an experimental feature (D-040): left out of settings.list while it's off.
-EXPERIMENTAL_SETTINGS = ("stt_model",)
+# Settings of machine transcription (D-053): left out of settings.list while it's off.
+TRANSCRIPTION_SETTINGS = ("stt_model",)
 UI_SETTINGS: dict[str, str] = {
     "qc_clip_template": "clip_template",
     "qc_sub_langs": "sub_langs",
@@ -781,34 +782,36 @@ def route_key(method: str, path: str) -> tuple[str, str]:
 
 
 def render_markdown() -> str:
-    """The generated half of docs/CLI.md: one table per area. Experimental commands and
-    parameters (D-040) are left out; docs/TRANSCRIPTION.md describes them."""
+    """The generated half of docs/CLI.md: one table per area. Machine transcription's
+    commands and parameters are marked ², since they exist only where it is on (D-053)."""
     out: list[str] = []
     area = None
     for c in COMMANDS:
-        if c.experimental:
-            continue
         if c.area != area:
             area = c.area
             out += ["", f"## {area}", "",
                     "| Command | What it does | Arguments | API | Web UI |",
                     "|---|---|---|---|---|"]
         name = f"`{c.id}`" + (f" (`{c.shortcut}`)" if c.shortcut else "")
+        if c.transcription:
+            name += " ²"
         if c.destructive:
             name += " ⚠"
         args = []
         for p in c.params:
-            if p.experimental:
-                continue
             label = p.name.upper() if p.main else "--" + p.name.replace("_", "-")
             if p.local_only:
                 label += "¹"
+            if p.transcription:
+                label += "²"
             args.append(f"`{label}`")
         api = f"`{c.method} {c.path}`" if c.method else f"({c.mode})"
         if c.mode == "both":
             api += " · local"
         out.append(f"| {name} | {c.summary} | {' '.join(args)} | {api} | {c.ui} |")
-    out += ["", "⚠ destructive: refused with `--safe`. ¹ local mode only.", ""]
+    out += ["", "⚠ destructive: refused with `--safe`. ¹ local mode only. ² machine "
+            "transcription: only where whisper-cli and a model are installed, see "
+            "[TRANSCRIPTION.md](TRANSCRIPTION.md).", ""]
     return "\n".join(out)
 
 

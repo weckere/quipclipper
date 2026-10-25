@@ -25,10 +25,11 @@ explicit action copies one into the library as a subtitle sidecar named
 ``<stem>.<lang>.whisper.srt`` (:func:`machine_sidecar_path`), which quipclipper
 recognises as machine-made and never picks as a file's subtitles.
 
-The feature is experimental and off unless a deployment turns it on (D-040):
-``QC_TRANSCRIBE=1`` (the NixOS module's ``transcribe.enable`` sets it). Off, nothing
-transcribes, and stored transcripts and machine sidecars stay out of search and the
-script (:func:`enabled`).
+The feature turns itself on where whisper.cpp is installed (D-053): ``whisper-cli``
+and at least one model file. ``QC_TRANSCRIBE=0`` switches it off and ``=1`` forces it
+on (the NixOS module's ``transcribe.enable`` sets it). Off, nothing transcribes, and
+stored transcripts and machine sidecars stay out of search and the script
+(:func:`enabled`).
 """
 
 from __future__ import annotations
@@ -45,7 +46,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Callable, Iterable, Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from rapidfuzz import fuzz
@@ -79,17 +80,29 @@ STORE_VERSION = 1
 
 # --- configuration ------------------------------------------------------------------
 
-# The explicit switch (D-040): off unless set to one of these. A server with whisper and a
-# model but no switch still reports transcription off.
+# The switch (D-053, superseding D-040's off-by-default): unset, transcription is on
+# exactly where whisper-cli and a model are installed; these values force it either way.
 SWITCH = "QC_TRANSCRIBE"
-OFF_REASON = ("Machine transcription is experimental and off here: a deployment turns it "
-              f"on with {SWITCH}=1 (the NixOS module's transcribe.enable).")
+_ON = ("1", "true", "yes", "on")
+_OFF = ("0", "false", "no", "off")
+OFF_REASON = ("Machine transcription is off here. It turns on where whisper.cpp is "
+              "installed: whisper-cli (on PATH, or QC_WHISPER_BIN) and a ggml model file "
+              "(QC_WHISPER_MODEL, e.g. ggml-small.en.bin); the NixOS module's "
+              f"transcribe.enable does both. {SWITCH}=0 switches it off.")
+
+
+def switch(env=None) -> bool | None:
+    """``QC_TRANSCRIBE``: True forces transcription on, False off, None (unset, or any
+    other value) leaves it to whether whisper.cpp is installed."""
+    e = os.environ if env is None else env
+    v = (e.get(SWITCH) or "").strip().lower()
+    return True if v in _ON else False if v in _OFF else None
 
 
 def enabled(env=None) -> bool:
-    """Whether machine transcription is switched on (``QC_TRANSCRIBE``)."""
-    e = os.environ if env is None else env
-    return (e.get(SWITCH) or "").strip().lower() in ("1", "true", "yes", "on")
+    """Whether machine transcription is on: the switch, else whether whisper-cli and a
+    model are installed (:attr:`WhisperConfig.installed`)."""
+    return WhisperConfig.from_env(env).enabled
 
 
 def _clamp_threads(n: int | str | None) -> int:
@@ -127,8 +140,9 @@ class WhisperConfig:
     sets these): ``QC_WHISPER_BIN`` (default ``whisper-cli`` on PATH),
     ``QC_WHISPER_MODELS`` (name=path pairs), ``QC_WHISPER_MODEL`` (the default
     model's name, or a path), ``QC_WHISPER_VAD_MODEL`` (Silero, optional),
-    ``QC_WHISPER_THREADS`` (2, at most 3) and ``QC_WHISPER_LANGUAGE`` (en). Nothing
-    runs unless ``QC_TRANSCRIBE`` switches the feature on (``enabled``)."""
+    ``QC_WHISPER_THREADS`` (2, at most 3) and ``QC_WHISPER_LANGUAGE`` (en). It is
+    ``enabled`` where whisper-cli and a model are installed, unless ``QC_TRANSCRIBE``
+    says otherwise (:func:`switch`)."""
 
     binary: str = "whisper-cli"
     models: dict[str, str] = field(default_factory=dict)
@@ -147,15 +161,16 @@ class WhisperConfig:
             default = model_name_from_path(default)
         if not default or default not in models:
             default = DEFAULT_MODEL if DEFAULT_MODEL in models or not models else next(iter(models))
-        return cls(
+        cfg = cls(
             binary=(e.get("QC_WHISPER_BIN") or "whisper-cli").strip(),
             models=models,
             default_model=default,
             vad_model=(e.get("QC_WHISPER_VAD_MODEL") or "").strip() or None,
             threads=_clamp_threads(e.get("QC_WHISPER_THREADS")),
             language=(e.get("QC_WHISPER_LANGUAGE") or "en").strip() or "en",
-            enabled=enabled(e),
         )
+        on = switch(e)
+        return replace(cfg, enabled=cfg.installed if on is None else on)
 
     def binary_path(self) -> str | None:
         return shutil.which(self.binary)
@@ -171,9 +186,13 @@ class WhisperConfig:
         return path
 
     @property
+    def installed(self) -> bool:
+        """whisper-cli is there and so is at least one model file."""
+        return bool(self.binary_path()) and any(Path(p).is_file() for p in self.models.values())
+
+    @property
     def available(self) -> bool:
-        return (self.enabled and bool(self.binary_path())
-                and any(Path(p).is_file() for p in self.models.values()))
+        return self.enabled and self.installed
 
     def describe(self) -> dict:
         """For /api/health and /api/config: what's installed, never secrets."""

@@ -6,7 +6,7 @@
 release.sh runs this. Everything under ``## [Unreleased]`` becomes ``## [X.Y.Z] - date``,
 except held-back blocks: lines from ``<!-- held back …`` to ``<!-- /held back -->`` (each
 marker on a line of its own) stay in Unreleased, markers and all, for a later release
-(D-040: machine transcription waits for one). Removing a block's two marker lines releases
+(D-040 held machine transcription back from 0.3.x this way). Removing a block's two marker lines releases
 it with the next version. The compare links at the bottom are updated too. It fails, and
 writes nothing, when nothing outside the held blocks is left to release.
 """

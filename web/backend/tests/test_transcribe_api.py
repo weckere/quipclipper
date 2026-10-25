@@ -50,7 +50,6 @@ def env(tmp_path, monkeypatch):
         "QC_MEDIA_ROOTS": str(root), "QC_STATE_DIR": str(tmp_path / "state"),
         "QC_CLIPS_DIR": str(tmp_path / "clips"),
         "QC_WHISPER_BIN": str(exe), "QC_WHISPER_MODEL": str(model),
-        "QC_TRANSCRIBE": "1",  # experimental, off unless switched on (D-040)
     }
 
 
@@ -212,7 +211,9 @@ def test_requests_that_cannot_run(env, tmp_path):
     assert no_model.status_code == 422 and "medium.en" in no_model.json()["detail"]
     assert c.post("/api/items/transcribe", json={"path": "yt:dQw4w9WgXcQ"}).status_code == 422
     assert c.post("/api/items/transcribe", json={"path": "/etc/passwd"}).status_code == 403
-    off = _client({k: v for k, v in env.items() if not k.startswith("QC_WHISPER")})
+    # Forced on (QC_TRANSCRIBE=1, D-053) with no whisper: it says what's missing.
+    off = _client({**{k: v for k, v in env.items() if not k.startswith("QC_WHISPER")},
+                   "QC_TRANSCRIBE": "1", "QC_WHISPER_BIN": "/nowhere/whisper-cli"})
     r = off.post("/api/items/transcribe", json={"path": str(root / "a.mkv")})
     assert r.status_code == 503 and "whisper.cpp" in r.json()["detail"]
     assert off.get("/api/health").json()["transcribe"]["available"] is False
