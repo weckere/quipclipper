@@ -11,6 +11,8 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-25
+
 ### Machine transcription (M21)
 
 Sung lines and stretches the subtitles skip, and files with no subtitles at all, become
@@ -667,7 +669,8 @@ The first version, before releases were tagged. Highlights:
   guard, and an optional password gate.
 - **Deployment:** a Nix flake and NixOS module (with a VM test), and Docker images on GHCR.
 
-[Unreleased]: https://github.com/weckere/quipclipper/compare/v0.3.1...dev
+[Unreleased]: https://github.com/weckere/quipclipper/compare/v0.4.0...dev
+[0.4.0]: https://github.com/weckere/quipclipper/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/weckere/quipclipper/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/weckere/quipclipper/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/weckere/quipclipper/compare/v0.1.1...v0.2.0
