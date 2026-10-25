@@ -10,7 +10,7 @@ No web framework is imported, so the CLI package stays free of FastAPI.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 # Where a parameter goes on the wire.
@@ -357,11 +357,12 @@ COMMANDS: tuple[Command, ...] = (
             "paths (the server's QC_PATH_MAP maps them). Queued, each once, and re-indexed "
             "by one job at idle priority; a file already current is left alone.", "POST",
             "/api/index/file",
+            # In the body: hundreds of paths in a query string meet HTTP 414 (PA-5).
             params=(Param("path", "list[str]", "Media or subtitle file(s); a subtitle "
-                          "file's media file is found next to it.", main=True,
-                          required=True),
+                          "file's media file is found next to it.", where=BODY,
+                          main=True, required=True),
                     Param("force", "bool", "Re-read files even when their index is "
-                          "current.", default=False)),
+                          "current.", where=BODY, default=False)),
             ui="Re-index them (the changed-subtitles banner in a folder and in search "
                "results)"),
     Command("index.file-status", "Show the re-index hooks' queue: the job draining it, "
@@ -417,6 +418,8 @@ COMMANDS: tuple[Command, ...] = (
                           where=BODY),
                     Param("match_index", "int", "Which ranked match to cut (0 = best).",
                           where=BODY, default=0, flags=("--index", "-i")),
+                    # The search --index counts in, tuned as search.item's.
+                    *(replace(p, where=BODY) for p in _SEARCH_TUNING),
                     Param("track", "int", "Subtitle track (s:N) to search.", where=BODY),
                     Param("cue_text", "str", "Dialogue for the {cue} name token when "
                           "clipping by --start/--end.", where=BODY),
@@ -434,8 +437,6 @@ COMMANDS: tuple[Command, ...] = (
                           where=CLIENT, default=False, flags=("-p",), local_only=True),
                     Param("limit", "int", "How many matches to offer with --pick.",
                           where=CLIENT, default=10, flags=("-n",), local_only=True),
-                    *(Param(p.name, p.type, p.help, where=CLIENT, default=p.default,
-                            local_only=True) for p in _SEARCH_TUNING),
                     Param("out", "str", "Output path (one clip only).", where=CLIENT,
                           flags=("-o",), local_only=True),
                     Param("yes", "bool", "Skip confirmation prompts.", where=CLIENT,

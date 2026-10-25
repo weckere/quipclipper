@@ -43,6 +43,9 @@ _ENTRY_GLOBS = ("*.json", "*.nosubs")
 # path's JSON fits in 4 KiB (the whole entry is read when it doesn't).
 _HEAD = 4096
 _VIDEO_PREFIX = '{"video": '
+_TRACK_PREFIX = ', "track": '
+# The explicit tracks tried for an entry that doesn't record its track (older ones).
+_GUESS_TRACKS = tuple(str(t) for t in range(16))
 
 
 def _digest(raw: str) -> str:
@@ -171,8 +174,15 @@ class SubtitleCache:
             names = list(owners.get(target, ()))
         if not names:
             return False
-        current = {self._key_at(target, mtime, t) for t in ("auto", *map(str, range(16)))}
-        return not any(n.rsplit(".", 1)[0] in current for n in names)
+        current = {self._key_at(target, mtime, t) for t in ("auto", *_GUESS_TRACKS)}
+        if any(n.rsplit(".", 1)[0] in current for n in names):
+            return False
+        # An entry for a higher track number records it (its head says): try that one.
+        for n in names:
+            tkey = self._stored_track(self._dir / n)
+            if tkey is not None and n.rsplit(".", 1)[0] == self._key_at(target, mtime, tkey):
+                return False
+        return True
 
     # --- files with no usable subtitles -------------------------------------
 
@@ -203,6 +213,8 @@ class SubtitleCache:
             marker = self._nosubs_path(video)
             marker.write_text(json.dumps({"video": str(video)}))
             self._own(video, marker.name)
+            # Entries from before the subtitles went away can't be read again.
+            self._sweep_stale(video)
             return True
         return False
 
@@ -310,11 +322,14 @@ class SubtitleCache:
             cp.unlink(missing_ok=True)
             return None
 
-    def _write(self, cp: Path, video: Path, cues: list[Cue]) -> None:
-        """Atomically write cues to a cache path (temp file + rename)."""
+    def _write(self, cp: Path, video: Path, cues: list[Cue],
+               track: int | None = None) -> None:
+        """Atomically write cues to a cache path (temp file + rename). The head records
+        the video and the track key, so :meth:`_changed` can rebuild any track's key."""
         payload = json.dumps(
             {
                 "video": str(video),
+                "track": "auto" if track is None else str(track),
                 "cues": [
                     {"index": c.index, "start": c.start, "end": c.end, "text": c.text,
                      "speaker": c.speaker}
@@ -367,7 +382,7 @@ class SubtitleCache:
                     subs=None, video=video, track=track, langs=self._default_langs,
                 )
                 cues = resolved.cues
-                self._write(cp, video, cues)
+                self._write(cp, video, cues, track)
 
                 # Dual-key: when auto-selecting (track is None), also store under
                 # the concrete track index that auto-selection landed on.  That way
@@ -376,7 +391,7 @@ class SubtitleCache:
                 if track is None and resolved.track is not None:
                     concrete = self._cache_path(video, resolved.track)
                     if concrete != cp and (fresh or self._read(concrete) is None):
-                        self._write(concrete, video, cues)
+                        self._write(concrete, video, cues, resolved.track)
 
                 # Sweep stale entries for this video written under a superseded
                 # source mtime — otherwise every subtitle edit leaves the old
@@ -405,6 +420,23 @@ class SubtitleCache:
         except (json.JSONDecodeError, OSError, UnicodeDecodeError):
             return None
         return data.get("video") if isinstance(data, dict) else None
+
+    def _stored_track(self, cache_file: Path) -> str | None:
+        """The track key an entry's head records (``"auto"`` or a stream index), or None
+        for an entry written before it was recorded."""
+        try:
+            with open(cache_file, "rb", buffering=0) as fh:
+                head = fh.read(_HEAD).decode("utf-8", "ignore")
+            if not head.startswith(_VIDEO_PREFIX):
+                return None
+            dec = json.JSONDecoder()
+            _, end = dec.raw_decode(head, len(_VIDEO_PREFIX))
+            if not head.startswith(_TRACK_PREFIX, end):
+                return None
+            tkey, _ = dec.raw_decode(head, end + len(_TRACK_PREFIX))
+        except (OSError, json.JSONDecodeError):
+            return None
+        return tkey if isinstance(tkey, str) else None
 
     def _sweep_stale(self, video: Path) -> int:
         """Remove cache entries for *video* keyed on a *different* source mtime.
@@ -445,7 +477,8 @@ class SubtitleCache:
         if stored is None:
             return False
         key_stem = cache_file.stem
-        for tkey in ("auto", *(str(t) for t in range(16))):
+        recorded = self._stored_track(cache_file)
+        for tkey in ("auto", *_GUESS_TRACKS, *([recorded] if recorded else [])):
             raw = f"{stored}:{mtime}:{tkey}"
             if _digest(raw) == key_stem:
                 return True

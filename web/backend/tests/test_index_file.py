@@ -517,3 +517,20 @@ def test_the_servers_own_paths_are_not_mapped_again(tmp_path, monkeypatch):
     # Their path (outside the roots as given) is still mapped.
     r = _hook(c, f"{srv}/Show (2001) [x]/Season 01/Show - S01E02.mkv")
     assert r.status_code == 202, r.text
+
+
+@pytest.mark.parametrize(("env", "want"), [
+    # The plain form still works, ':' and ';' between pairs, junk ignored.
+    ("/tv=/srv/shows;/movies=/srv/m:bad", (("/tv", "/srv/shows"), ("/movies", "/srv/m"))),
+    # A backslash makes the next character literal (HK-12).
+    (r"/tv\:x=/srv/a\;b:/m\=1=/srv/c\\d", (("/tv:x", "/srv/a;b"), ("/m=1", r"/srv/c\d"))),
+    # JSON: an object or a list of pairs, any characters in a path.
+    ('{"/tv:x": "/srv/a;b=c", "/m/": "/srv/m/"}', (("/tv:x", "/srv/a;b=c"), ("/m", "/srv/m"))),
+    ('[["/a:b", "/srv/x"]]', (("/a:b", "/srv/x"),)),
+    # Broken JSON maps nothing rather than being split on ':'.
+    ('{"/tv": "/srv:', ()),
+    ("", ()),
+])
+def test_path_map_syntax(env, want):
+    assert Settings.from_env({"QC_PATH_MAP": env}).path_map == want
+    assert Settings.from_env({"QC_JELLYFIN_PATH_MAP": env}).jellyfin_path_map == want

@@ -520,7 +520,7 @@ def extract_embedded(video_path: str | Path, stream_index: int) -> list[Cue]:
         tmp_path = Path(tmp.name)
     try:
         cmd = [
-            "ffmpeg", "-y", "-v", "error",
+            "ffmpeg", "-nostdin", "-y", "-v", "error",
             "-i", _argv_path(video_path),
             "-map", f"0:s:{stream_index}",  # subtitle-relative index (s:N)
             "-f", "srt", _argv_path(tmp_path),

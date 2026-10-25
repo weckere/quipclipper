@@ -25,6 +25,7 @@ pytestmark = pytest.mark.skipif(
     reason="needs contrib/hooks (not in the Nix build's source), curl and sh")
 HOOK = "hook-secret-123"
 SRT = "1\n00:00:01,000 --> 00:00:03,000\nMake it so.\n"
+SEEN: list[tuple[int, str]] = []
 
 
 @pytest.fixture
@@ -41,6 +42,13 @@ def server(tmp_path, monkeypatch):
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         port = s.getsockname()[1]
+    SEEN.clear()
+
+    @app.middleware("http")
+    async def record(request, call_next):  # what reached the server: query length, type
+        SEEN.append((len(request.url.query), request.headers.get("content-type", "")))
+        return await call_next(request)
+
     srv = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error"))
     t = threading.Thread(target=srv.run, daemon=True)
     t.start()
@@ -99,3 +107,30 @@ def test_failures_say_why_on_stderr(server):
     assert "HTTP 422" in r.stderr and "outside_roots: /movies/Film.mkv" in r.stderr
     assert _run("/tv/x.mkv").returncode == 2  # no URL
     assert _run("--url", url, "/tv/x.mkv").returncode == 2  # no token
+
+
+def test_paths_go_in_a_json_body_so_long_lists_and_odd_names_work(server):
+    # PA-5: the paths used to go in the query string, which a proxy cuts off at ~8 KB
+    # (HTTP 414). Names holding quotes, backslashes, ';', ':'
+    # and tabs must survive the JSON.
+    url, token, media = server
+    odd = 'Odd "name" \\ back; colon: tab\there.mkv'
+    (media / "Show" / odd).write_bytes(b"")
+    (media / "Show" / odd.replace(".mkv", ".en.srt")).write_text(SRT)
+    long = [f"/tv/Show/{'x' * 150}-{i}.mkv" for i in range(150)]  # ~24 KB, all refused
+    r = _run("--url", url, "--token-file", str(token), f"/tv/Show/{odd}",
+             "/tv/Show/Show S01E01.mkv", *long)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == "quipclipper-reindex: queued 2 file(s) for re-indexing"
+    assert SEEN[-1] == (0, "application/json")
+
+
+def test_a_name_with_a_newline_falls_back_to_the_query_string(server):
+    url, token, media = server
+    nl = "New\nline.mkv"
+    (media / "Show" / nl).write_bytes(b"")
+    (media / "Show" / "New\nline.en.srt").write_text(SRT)
+    r = _run("--url", url, "--token-file", str(token), "--force", f"/tv/Show/{nl}")
+    assert r.returncode == 0, r.stderr
+    assert "queued 1 file(s)" in r.stdout
+    assert SEEN[-1][0] > 0

@@ -252,7 +252,8 @@ in
           not the host's. The longest matching prefix wins; a mapped path must still
           be inside `mediaRoots`/`writableMediaRoots` to open, except the clips
           library's folder (map it to `clipsDir` so new clips are scanned). Leave
-          empty when Jellyfin runs on this host and sees the same paths.
+          empty when Jellyfin runs on this host and sees the same paths. The module
+          writes it as JSON, so a path may hold `:`, `;` or `=`.
         '';
       };
     };
@@ -297,7 +298,8 @@ in
         The re-index hooks' paths → the same folders here (`QC_PATH_MAP`). Bazarr,
         Sonarr and Radarr report the paths they see, which inside their containers are
         their mount points. The longest matching prefix wins; a path nothing matches is
-        used as it is, and must be inside `mediaRoots`/`writableMediaRoots`.
+        used as it is, and must be inside `mediaRoots`/`writableMediaRoots`. The
+        module writes it as JSON, so a path may hold `:`, `;` or `=`.
       '';
     };
 
@@ -753,11 +755,10 @@ in
         QC_PUBLIC_URL = cfg.publicUrl;
       } // lib.optionalAttrs (cfg.jellyfin.url != null) {
         QC_JELLYFIN_URL = cfg.jellyfin.url;
-        QC_JELLYFIN_PATH_MAP = lib.concatStringsSep ":"
-          (lib.mapAttrsToList (from: to: "${from}=${to}") cfg.jellyfin.pathMap);
+        # JSON, so a path holding ':', ';' or '=' survives (the plain form splits on them).
+        QC_JELLYFIN_PATH_MAP = builtins.toJSON cfg.jellyfin.pathMap;
       } // lib.optionalAttrs (cfg.pathMap != { }) {
-        QC_PATH_MAP = lib.concatStringsSep ":"
-          (lib.mapAttrsToList (from: to: "${from}=${to}") cfg.pathMap);
+        QC_PATH_MAP = builtins.toJSON cfg.pathMap;
       } // lib.optionalAttrs (cfg.hookTokenFile != null) {
         QC_HOOK_TOKEN_FILE = "/run/credentials/quipclipper-web.service/hook-token";
       } // lib.optionalAttrs (cfg.jellyfin.apiKeyFile != null) {

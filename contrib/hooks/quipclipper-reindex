@@ -101,16 +101,47 @@ if [ "$event" = Test ]; then
     exit 0
 fi
 
-# The paths become the curl arguments: one --data-urlencode each (empty ones dropped).
+# The paths go as a JSON body, {"paths": [...], "force": true} (the key every server
+# since 0.3.0 reads): a query string meets HTTP 414 behind a proxy past ~8 KB. Empty paths are dropped; a path holding a
+# control character other than a tab can't be put in JSON here, so then the request
+# falls back to the query string (one --data-urlencode each).
+json_str() {
+    printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/	/\\t/g'
+}
+tab=$(printf '\t')
+nl=$(printf '\nx'); nl=${nl%x}
+plain=1
 for p do
-    shift
-    [ -n "$p" ] && set -- "$@" --data-urlencode "path=$p"
+    case $p in *"$nl"*) plain= ;; esac
+    case $(printf '%s' "$p" | tr -d "$tab") in *[[:cntrl:]]*) plain= ;; esac
 done
-[ $# -gt 0 ] || { echo "quipclipper-reindex: no file to re-index"; exit 0; }
-[ -n "$force" ] && set -- "$@" --data-urlencode "force=true"
-
-# -G puts the data in the query string; -X POST keeps it a POST.
-resp=$(call -X POST -G -w '\n%{http_code}' "$@" "$base") || exit 1
+if [ -n "$plain" ]; then
+    body_file=$(mktemp) || die "cannot make a temporary file"
+    trap 'rm -f "$body_file"' EXIT
+    n=0
+    {
+        printf '{"paths": ['
+        for p do
+            [ -n "$p" ] || continue
+            [ $n -gt 0 ] && printf ', '
+            printf '"%s"' "$(json_str "$p")"
+            n=$((n + 1))
+        done
+        printf ']%s}' "${force:+, \"force\": true}"
+    } > "$body_file"
+    [ $n -gt 0 ] || { echo "quipclipper-reindex: no file to re-index"; exit 0; }
+    resp=$(call -X POST -H 'Content-Type: application/json' --data-binary "@$body_file" \
+        -w '\n%{http_code}' "$base") || exit 1
+else
+    for p do
+        shift
+        [ -n "$p" ] && set -- "$@" --data-urlencode "path=$p"
+    done
+    [ $# -gt 0 ] || { echo "quipclipper-reindex: no file to re-index"; exit 0; }
+    [ -n "$force" ] && set -- "$@" --data-urlencode "force=true"
+    # -G puts the data in the query string; -X POST keeps it a POST.
+    resp=$(call -X POST -G -w '\n%{http_code}' "$@" "$base") || exit 1
+fi
 code=$(printf '%s\n' "$resp" | tail -n 1)
 body=$(printf '%s\n' "$resp" | sed '$d')
 case $code in

@@ -22,6 +22,14 @@ def ctx(replies, **kw):
     return Context(server="x", transport=FakeTransport(replies), err=lambda s: None, **kw)
 
 
+def test_index_file_sends_its_paths_in_the_body():
+    # PA-5: hundreds of paths in a query string meet HTTP 414 behind a proxy.
+    m, path, q, body = build_request(reg.BY_ID["index.file"],
+                                     {"path": ["/tv/a.mkv", "/tv/b;c.srt"], "force": True})
+    assert (m, path, q) == ("POST", "/api/index/file", [])
+    assert body == {"path": ["/tv/a.mkv", "/tv/b;c.srt"], "force": True}
+
+
 def test_build_request_query_path_and_body():
     m, path, q, body = build_request(reg.BY_ID["search.folder"],
                                      {"query": "hi", "path": ["/a,b", "/c"], "limit": 3})
@@ -189,12 +197,16 @@ def test_server_clip_of_an_audio_file_copies_it_like_local_mode():
     assert body["kind"] == "audio" and body["lossless"] is True
 
 
-def test_server_clip_refuses_local_only_search_tuning():
+def test_server_clip_sends_its_search_tuning():
+    # The match --index counts is found with the same tuning as the search that showed
+    # it, so the server gets --min-score and --max-span (they were local-only).
     from quipclipper.cli import main
 
-    t = FakeTransport([])
-    assert main(["clip", "x", "-v", "/m.mkv", "--min-score", "30"], transport=t) == 2
-    assert t.calls == []
+    t = FakeTransport([(200, {"job_id": "j1", "status": "queued"})])
+    assert main(["clip", "x", "-v", "/m.mkv", "--min-score", "30", "--max-span", "5",
+                 "--index", "2", "--no-wait"], transport=t) == 0
+    body = t.calls[-1][3]
+    assert (body["min_score"], body["max_span"], body["match_index"]) == (30.0, 5, 2)
 
 
 def test_clip_nowplaying_reencodes_video_by_default():

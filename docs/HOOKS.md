@@ -36,7 +36,7 @@ openssl rand -hex 32
 | Setting | Example | What it does |
 |---|---|---|
 | `QC_HOOK_TOKEN` (or `QC_HOOK_TOKEN_FILE`) | `9f2c…` | Token(s) that may only queue re-indexes. Comma-separate several to rotate (the backend accepts all of them; behind a password gate the `hook` login knows only the first, so callers move to the new token when it goes first). |
-| `QC_PATH_MAP` | `/tv=/media/shows:/movies=/media/movies` | The other apps' paths → quipclipper's. `<theirs>=<ours>` pairs, separated by `:` or `;`; the longest matching prefix wins; a path nothing matches is used as it is. |
+| `QC_PATH_MAP` | `/tv=/media/shows:/movies=/media/movies` | The other apps' paths → quipclipper's. `<theirs>=<ours>` pairs, separated by `:` or `;`; the longest matching prefix wins; a path nothing matches is used as it is. A path holding `:`, `;` or `=`: put a backslash before it (`/tv\:x=/media/shows`), or give the map as JSON, `{"/tv": "/media/shows", "/movies": "/media/movies"}` (the NixOS module's `pathMap` does). |
 
 **Docker Compose** (`docker-compose.example.yml`): set both on the `app` service. If
 the site has a password (`QC_PASSWORD`), also set `QC_HOOK_TOKEN` on the `web`

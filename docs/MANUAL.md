@@ -192,8 +192,9 @@ background, one file after another at idle priority, so it never slows playback.
 a subtitle file beside it takes a moment; one with embedded subtitles is read in full, at
 about the disk's speed (some 15 TB of video a day from one hard disk), so a large library takes
 a day or more. The card, every folder's Dialogue index card and **Jobs** show its progress (files
-done, the file in hand, a rough time left); **Cancel** stops it, and the files done so far
-stay indexed. Starting it again picks up where it stopped, after a cancel or a server
+done, the file in hand, a rough time left; first, while it looks for files, the folders and
+files found so far); **Cancel** stops it at any point, and the files done so far stay
+indexed. Starting it again picks up where it stopped, after a cancel or a server
 restart alike: files already indexed, or known to have no subtitles, are skipped. The home
 card also says how the last run ended. In the CLI, `quipclipper index.library-status`
 shows the same.
@@ -1029,7 +1030,8 @@ started, which is the one you just heard.
    (NixOS; the file can stay root-only, systemd hands the service a copy).
 3. **Path mapping**, when Jellyfin sees the media under other paths (it runs in a
    container, or on another machine): `QC_JELLYFIN_PATH_MAP=/movies=/media/movies:/shows=/media/shows`
-   (Jellyfin's path `=` quipclipper's, pairs separated by `:`), or
+   (Jellyfin's path `=` quipclipper's, pairs separated by `:`; for a path holding `:`, `;`
+   or `=`, JSON: `{"/movies": "/media/movies"}`), or
    `jellyfin.pathMap = { "/movies" = "/srv/movies"; }` (NixOS). A file that maps
    nowhere, or outside the media roots, shows on the card as not in the library.
 

@@ -184,7 +184,7 @@ resolved stream URLs, so `split_channels` and `backend=mkvmerge` return 400 for
 | GET | `/api/search/library/index` | `{job, last}`: the running library index job (as `GET /api/jobs/{id}`, or null), and `last`: the last run's `result` (the current one's while it runs) plus `updated`, kept in the state dir across restarts; `status` is `scanning` or `indexing` while it runs, then `done`, `cancelled`, `failed`, or `interrupted` when a restart (or a server stop) cut it short; null before the first run. |
 | GET | `/api/index/changes` | Files whose subtitles changed since indexing, as the hourly check and the views found them. See [below](#changed-subtitles). |
 | POST | `/api/index/changes/reindex` | Queue all of them for the re-index job. |
-| POST | `/api/index/file?path=&force=` | Re-index files whose subtitles changed (the [re-index hooks](#re-index-hooks)): repeat `path=`, or send a JSON body. Queued; 202 (422 when no path could be queued, 400 for more than 1000 paths or a body that isn't JSON). |
+| POST | `/api/index/file` | Re-index files whose subtitles changed (the [re-index hooks](#re-index-hooks)): a JSON body `{"path": [...], "force": false}`, or `?path=&force=` (repeat `path=`). Queued; 202 (422 when no path could be queued, 400 for more than 1000 paths or a body that isn't JSON). |
 | GET | `/api/index/file` | The re-index hooks' queue: `{job_id, job, pending, recent, token}`. |
 
 `/api/search` returns `{query, count, matches: [{index, score, text, speaker,
@@ -229,15 +229,22 @@ How Bazarr, Sonarr and Radarr (or anything) tell quipclipper that a file's subti
 changed, so it re-indexes that file instead of leaving it out of search. Setup, the hook
 script and the troubleshooting table: [HOOKS.md](HOOKS.md).
 
-`POST /api/index/file` takes the files as `path=` query parameters (repeat it; at most 1000),
-or a JSON body: `{"paths": [...], "force": false}`, or a Sonarr or Radarr webhook body as it
+`POST /api/index/file` takes the files (at most 1000) in a JSON body,
+`{"path": [...], "force": false}` (`paths` works too; the CLI and the hook script send this),
+as `path=` query parameters (repeat it; a proxy refuses a query over ~8 KB with HTTP 414, so
+long lists belong in the body), or a Sonarr or Radarr webhook body as it
 comes (the paths in `episodeFile`, `episodeFiles`, `movieFile`, `renamedEpisodeFiles` and
 `renamedMovieFiles`; a `Test` event answers 200 with `queued: 0`). Each path is a media file
 or a subtitle file (its media file is the one in the same folder whose name, up to its
 extension, starts the subtitle's name; the longest such name wins), in the caller's own
-paths: `QC_PATH_MAP` (`/tv=/media/shows:/movies=/media/movies`, `:` or `;` between pairs,
-longest prefix first) maps them onto this server's before they are checked against the media
-roots. It returns at once with `{job_id, queued, files: [{path, media, status}], event}` (`queued` counts media files, so an
+paths: `QC_PATH_MAP` maps them onto this server's (longest prefix first) before they are
+checked against the media roots. It is JSON, an object or a list of pairs
+(`{"/tv": "/media/shows", "/movies": "/media/movies"}`; any path, which is what the NixOS
+module writes), or plain `<theirs>=<ours>` pairs with `:` or `;` between them
+(`/tv=/media/shows:/movies=/media/movies`), where a backslash makes the next character
+literal (`/tv\:x=/media/shows` for a path holding `:`; also `\;`, `\=`, `\\`). A value
+starting with `{` or `[` that isn't valid JSON maps nothing (and is logged).
+`QC_JELLYFIN_PATH_MAP` reads the same way. It returns at once with `{job_id, queued, files: [{path, media, status}], event}` (`queued` counts media files, so an
 episode and its subtitle count once), a
 `status` per path: `queued`, `already_queued` (waiting already: Bazarr calls once per
 subtitle), `outside_roots` (with the `mapped` path), `not_found`, `no_media` (a subtitle with
@@ -273,10 +280,14 @@ root that is missing or empty (an unmounted pool) keeps the last result and repo
 error. `GET /api/index/changes` returns
 `{changed, files, last_check: {at, files, changed, duration_s, error?}, interval_s,
 checking}` (up to 1000 `files`), and `POST /api/index/changes/reindex` queues every one of
-them for the re-index job (as `POST /api/index/file` answers; 200 with `queued: 0` when
-there are none). Nothing is ever re-indexed by the checks themselves. A file leaves the list
-when it is re-indexed (by that job, a library run or `POST /api/items/subtitles/reindex`)
-or when a check sees it current.
+them for the re-index job and returns at once (as `POST /api/index/file` answers; 200 with
+`queued: 0` when there are none). These are the server's own paths, so it checks only that
+each is under a media root by name (`outside_roots` otherwise, and dropped from the list);
+a file gone since the check is the job's to find, as `missing`. Nothing is ever re-indexed
+by the checks themselves. A file leaves the list when its subtitles are read again (that
+job, a library run, a folder's `POST /api/search/folder/index`,
+`POST /api/items/subtitles/reindex`, or opening or searching the file on its own) or when a
+check sees it current.
 
 The hooks call `/api/index/file` with an API token, or with a **hook token**
 (`QC_HOOK_TOKEN`, comma-separated to rotate, or a file named by `QC_HOOK_TOKEN_FILE`) sent the
@@ -702,7 +713,8 @@ CLI).
 |---|---|---|
 | `path` | — | **Required.** Media path, `<epub>#seg=N` for an audiobook chapter, or `yt:<video-id>` for a YouTube source. |
 | `start`, `end` | — | Explicit time range (seconds). `start` with no `end` = to EOF. |
-| `query`, `match_index` | —, `0` | Search-based range: cut the Nth match of `query`. |
+| `query`, `match_index` | —, `0` | Search-based range: cut the Nth match of `query`, counted as `GET /api/search` counts with the same `track`, `min_score` and `max_span`. |
+| `min_score`, `max_span` | `60`, `3` | The search `match_index` counts in (0–100, 1–10), as on `GET /api/search`: pass the values that search used. |
 | `cue_text` | — | Matched dialogue for the `{cue}` naming token when clipping by `start`/`end` (search-based clips derive it). |
 | `kind` | `"video"` | `audio` \| `video` \| `gif`. |
 | `lossless` | `true` | `false` re-encodes (frame-exact video / MP3 audio). |

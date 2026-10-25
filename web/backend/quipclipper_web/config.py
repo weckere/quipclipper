@@ -9,11 +9,15 @@ small for Phase 0.
 
 from __future__ import annotations
 
+import json
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from quipclipper.transcribe import WhisperConfig
+
+log = logging.getLogger(__name__)
 
 
 def _roots(raw: str | None) -> list[Path]:
@@ -23,15 +27,54 @@ def _roots(raw: str | None) -> list[Path]:
 
 
 def _path_map(raw: str | None) -> tuple[tuple[str, str], ...]:
-    """``QC_JELLYFIN_PATH_MAP`` / ``QC_PATH_MAP``: ``<their path>=<local path>`` pairs,
+    """``QC_JELLYFIN_PATH_MAP`` / ``QC_PATH_MAP``: ``<their path>=<local path>`` pairs.
+
+    Two forms. JSON, when the value starts with ``{`` or ``[``: an object
+    (``{"/movies": "/srv/movies"}``) or a list of pairs (``[["/movies", "/srv/movies"]]``);
+    any path works, which is what the NixOS module writes. Otherwise the plain form, pairs
     separated like ``QC_MEDIA_ROOTS`` (``:``) or by ``;``, e.g.
-    ``/movies=/srv/movies:/shows=/srv/shows``."""
+    ``/movies=/srv/movies:/shows=/srv/shows``; a backslash makes the next character literal
+    (``/a\\:b=/srv/a\\;b``), so a path may hold ``:``, ``;``, ``=`` or ``\\``. A JSON value
+    that doesn't parse maps nothing (and is logged) rather than being split."""
+    text = (raw or "").strip()
+    if text[:1] in ("{", "["):
+        try:
+            data = json.loads(text)
+            items = data.items() if isinstance(data, dict) else data
+            found = [(str(a), str(b)) for a, b in items]
+        except (ValueError, TypeError):
+            log.warning("path map is not valid JSON; ignoring it: %.80s", text)
+            return ()
+    else:
+        found = [(src, dst) for src, sep, dst in _split_escaped(text) if sep]
     pairs = []
-    for part in (raw or "").replace(";", os.pathsep).split(os.pathsep):
-        src, sep, dst = part.partition("=")
-        if sep and src.strip() and dst.strip():
+    for src, dst in found:
+        if src.strip() and dst.strip():
             pairs.append((src.strip().rstrip("/") or "/", dst.strip().rstrip("/") or "/"))
     return tuple(pairs)
+
+
+def _split_escaped(raw: str) -> list[tuple[str, bool, str]]:
+    """The plain path map form → ``(theirs, has '=', ours)`` per pair: ``:`` or ``;``
+    ends a pair, the first ``=`` splits it, and ``\\x`` is a literal ``x``."""
+    out: list[tuple[str, bool, str]] = []
+    src: list[str] = []
+    dst: list[str] = []
+    cur, sep = src, False
+    chars = iter(raw)
+    for ch in chars:
+        if ch == "\\":
+            cur.append(next(chars, "\\"))
+        elif ch in (os.pathsep, ";"):
+            out.append(("".join(src), sep, "".join(dst)))
+            src, dst, sep = [], [], False
+            cur = src
+        elif ch == "=" and not sep:
+            sep, cur = True, dst
+        else:
+            cur.append(ch)
+    out.append(("".join(src), sep, "".join(dst)))
+    return out
 
 
 def _switch(raw: str | None, default: bool) -> bool:

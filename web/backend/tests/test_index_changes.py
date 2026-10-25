@@ -160,7 +160,8 @@ def test_the_badge_button_reindexes_what_the_check_found(tmp_path, lib):
     c = _client(tmp_path, lib)
     assert c.get("/api/index/changes").json()["changed"] == 3  # kept across a restart
     r = c.post("/api/index/changes/reindex")
-    assert r.status_code == 202 and r.json()["queued"] == 2
+    # Queued without a stat each (JB-14): the job finds gone.mkv missing and drops it.
+    assert r.status_code == 202 and r.json()["queued"] == 3
     _settle(c)
     assert c.get("/api/index/changes").json() == {
         **c.get("/api/index/changes").json(), "changed": 0, "files": []}

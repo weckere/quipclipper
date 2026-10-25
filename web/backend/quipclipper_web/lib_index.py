@@ -91,7 +91,8 @@ def run(job, *, paths: list[str], scan: Callable[[], Iterable[tuple[Path, str]]]
     "changed" ones (indexed before their subtitles changed) are indexed.
     ``index(file)`` extracts and caches one file's subtitles (it runs inside
     :func:`at_idle_priority`) and returns "indexed", "no_subs", or raises for a file
-    it couldn't tell about. ``between()`` runs before each file, at the same priority:
+    it couldn't tell about. ``scan`` may raise :class:`Cancelled` (a cancel during its
+    folder walk): the run stops there as cancelled. ``between()`` runs before each file, at the same priority:
     the re-index hooks' queue (:mod:`.file_index`) is drained there, so a hook's file
     never waits for a whole library run. ``stopping()``: the server is shutting down, so
     a stop is recorded as "interrupted" (a restart cut it short), not "cancelled"."""
@@ -120,16 +121,20 @@ def _run(job, result: dict[str, Any], scan, index, save, now, between=None,
     job.progress = "Scanning for files not indexed yet…"
     save()
     todo: list[Path] = []
-    for f, state in scan():
-        if job.cancel_requested:
-            break
-        result["files"] += 1
-        if state in ("not_indexed", "changed"):
-            todo.append(f)
-        else:
-            result["already"] += 1
-        if result["files"] % 500 == 0:
-            job.progress = f"Scanning: {result['files']} files so far…"
+    try:  # the walk raises Cancelled for a cancel made while it lists folders
+        for f, state in scan():
+            if job.cancel_requested:
+                break
+            result["files"] += 1
+            if state in ("not_indexed", "changed"):
+                todo.append(f)
+            else:
+                result["already"] += 1
+            if result["files"] % 500 == 0:
+                job.progress = f"Scanning: {result['files']} files so far…"
+    except Cancelled:
+        pass
+    scanned = not job.cancel_requested
     result.update(todo=len(todo), status="indexing")
     saved = work_started = now()
     cancelled = lambda: job.cancel_requested  # noqa: E731
@@ -168,7 +173,9 @@ def _run(job, result: dict[str, Any], scan, index, save, now, between=None,
     stopped = job.cancel_requested
     status = ("interrupted" if stopping() else "cancelled") if stopped else "done"
     result.update(status=status, current=None, eta_s=None, finished=now())
-    if not todo and not stopped:
+    if not scanned:
+        summary = f"Stopped while looking for files ({result['files']} found so far)."
+    elif not todo and not stopped:
         summary = (f"Nothing to index: all {result['files']} files are indexed or have no "
                    "subtitles.")
     else:

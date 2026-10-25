@@ -72,7 +72,7 @@ def vaapi_h264_available(device: str = DEFAULT_VAAPI_DEVICE) -> bool:
         return False
     try:
         proc = subprocess.run(
-            ["ffmpeg", "-loglevel", "error", "-vaapi_device", device,
+            ["ffmpeg", "-nostdin", "-loglevel", "error", "-vaapi_device", device,
              "-f", "lavfi", "-i", "testsrc=size=64x64:rate=1:duration=1",
              "-vf", "format=nv12,hwupload", "-c:v", "h264_vaapi", "-f", "null", "-"],
             capture_output=True, timeout=20,
@@ -371,7 +371,7 @@ def _ffmpeg_args(
     order) makes a re-encoded cut sample-exact: the audio is decoded from the anchor
     before the start and trimmed by counting samples (:func:`waveform.anchor`), as the
     waveform's snaps decode, while the video keeps its own frame-exact seek."""
-    head = ["ffmpeg", "-y", "-v", "error"]
+    head = ["ffmpeg", "-nostdin", "-y", "-v", "error"]
     url_flags = _URL_INPUT_FLAGS if _is_url(source) else []
     inputs = url_flags + ["-ss", f"{rng.start:.6f}", "-i", _argv_path(source)]
     # A separate audio stream fetched alongside a video-only source (a DASH pair,
@@ -720,7 +720,7 @@ def split_audio_channels(
             else f"pan=mono|c0={chans[0]}"
         )
         args = [
-            "ffmpeg", "-y", "-v", "error",
+            "ffmpeg", "-nostdin", "-y", "-v", "error",
             "-ss", f"{rng.start - preroll:.6f}", "-i", _argv_path(source),
             "-ss", f"{preroll:.6f}", "-t", f"{rng.duration:.6f}",
             "-map", f"0:a:{audio_index}",

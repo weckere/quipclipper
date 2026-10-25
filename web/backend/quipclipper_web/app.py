@@ -26,7 +26,7 @@ import subprocess
 import tempfile
 import threading
 import time
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Annotated
@@ -304,6 +304,10 @@ class ClipRequest(BaseModel):
     # A negative index would bypass the >= len(matches) bounds check and index
     # from the end of the list (or IndexError -> 500), so pin it non-negative.
     match_index: int = Field(0, ge=0)
+    # The search a match_index counts in: the same tuning as GET /api/search, so the
+    # index a search returned points at the same line here.
+    min_score: float = Field(60.0, ge=0, le=100)
+    max_span: int = Field(3, ge=1, le=10)
     track: int | None = Field(None, ge=0)
     # Matched dialogue for the {cue} naming token when clipping by start/end
     # (the frontend sends the selected cue's text; search-based clips derive it).
@@ -988,6 +992,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if not heard:
                 raise
             real = []
+        else:
+            index_changes.forget(p)  # read at its current subtitles: no longer out of date
         return stt.merge_cues(real, heard) if heard else real
 
     def _transcript_info(p: Path) -> dict:
@@ -1474,7 +1480,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # --- folder dialogue search ------------------------------------------------
 
     def _media_under(folders: list[Path], stored: dict[str, stt.Stamp], seen: set[Path] | None = None,
-                     seen_books: set[Path] | None = None
+                     seen_books: set[Path] | None = None,
+                     tick: Callable[[int, int], None] | None = None,
                      ) -> tuple[list[tuple[Path, list[Path]]], int, int]:
         """Every media file under ``folders``: ``(files, books, bare_audio)``.
 
@@ -1483,13 +1490,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         each by real path (``seen`` carries that across calls). ``books`` counts the
         read-along EPUBs (``seen_books`` likewise); ``bare_audio`` the audio files with
         no transcript of any kind. One listing per folder serves each file's sidecar
-        lookups (a library is ~70k files on a FUSE mount)."""
+        lookups (a library is ~70k files on a FUSE mount). ``tick(folders, files)`` runs
+        after each folder listed (a library walk takes minutes on a cold pool): the
+        library job's progress, and its cancel (``tick`` raises :class:`Cancelled`)."""
         seen = set() if seen is None else seen
         seen_books = set() if seen_books is None else seen_books
         found: list[tuple[Path, list[Path]]] = []
-        books = bare = 0
+        books = bare = walked = 0
         for folder in folders:
             for d, files in _walk_dirs(folder):
+                if tick is not None:
+                    tick(walked, len(found))
+                walked += 1
                 real_dir = os.path.realpath(d)
                 named = [(e.name.lower(), os.path.splitext(e.name)[1].lower(), e.name, e)
                          for e in files if not e.name.startswith(".")]  # no ._* (see _is_media_file)
@@ -1811,16 +1823,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         def generate():
             total = len(videos)
             done = 0
-            for v in videos:
-                if not sub_cache.is_cached(v) and not sub_cache.has_no_subs(v):
-                    try:
-                        sub_cache.resolve(v)
-                    except (ValueError, FileNotFoundError, RuntimeError):
-                        # Nothing to index (no sidecar, no text track)? Remember it,
-                        # so the folder stops offering to index this file.
-                        sub_cache.mark_no_subs(v)
-                done += 1
-                yield f"{done}/{total} {v.name}\n"
+            try:
+                for v in videos:
+                    if not sub_cache.is_cached(v) and not sub_cache.has_no_subs(v):
+                        try:
+                            sub_cache.resolve(v)
+                            index_changes.forget(v)
+                        except (ValueError, FileNotFoundError, RuntimeError):
+                            # Nothing to index (no sidecar, no text track)? Remember it,
+                            # so the folder stops offering to index this file.
+                            if sub_cache.mark_no_subs(v):
+                                index_changes.forget(v)
+                    done += 1
+                    yield f"{done}/{total} {v.name}\n"
+            finally:
+                index_changes.flush()
 
         return StreamingResponse(generate(), media_type="text/plain")
 
@@ -1849,9 +1866,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             folders = _lib_roots()
         paths = [str(f) for f in folders]
 
-        def scan():
+        def scan(job):
+            def tick(walked: int, files: int) -> None:
+                if job.cancel_requested:
+                    raise Cancelled
+                job.progress = f"Scanning: {walked} folders, {files} files so far…"
+
             stored = transcripts.names() if stt_on else {}
-            found, _, _ = _media_under(folders, stored)
+            found, _, _ = _media_under(folders, stored, tick=tick)
             cached = sub_cache.entry_names()
             for c, own in found:
                 yield c, sub_cache.index_state(c, siblings=own, names=cached)
@@ -1882,7 +1904,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     lib_jobs.cancel(idle)  # and out of Jobs: it never had work
 
             try:
-                lib_index.run(job, paths=paths, scan=scan, index=index, log=lib_log,
+                lib_index.run(job, paths=paths, scan=lambda: scan(job), index=index, log=lib_log,
                               whole_library=not path, between=hooks,
                               stopping=lambda: stopping[0])
             finally:
@@ -1961,13 +1983,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 file_queue.retire(job.id)
             index_changes.flush()
         job.result = counts
-        job.progress = "Done: " + (", ".join(f"{n} {k}" for k, n in counts.items())
-                                   or "nothing to do")
+        tally = ", ".join(f"{n} {k}" for k, n in counts.items())
+        if job.cancel_requested:
+            job.progress = "Stopped: " + (tally or "nothing re-indexed yet")
+        else:
+            job.progress = "Done: " + (tally or "nothing to do")
         return []
 
     def _submit_file_job() -> str:
         return lib_jobs.submit(_file_job, label="Re-index changed subtitles (low priority)",
                                cancellable=True).id
+
+    def _enqueue(files: list[Path], force: bool) -> tuple[str | None, list[bool]]:
+        """Queue checked media files for the re-index job: its id, and per file whether
+        it was newly queued."""
+        if not files:
+            return file_queue.status()["job_id"], []
+        return file_queue.add([(m, force) for m in files], _submit_file_job)
 
     def _inside_roots(p: str) -> bool:
         try:
@@ -2015,32 +2047,35 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             else:
                 row["media"] = str(media)
                 ok.append((len(rows) - 1, media))
-        job_id, added = (file_queue.add([(m, force) for _, m in ok], _submit_file_job)
-                         if ok else (file_queue.status()["job_id"], []))
+        job_id, added = _enqueue([m for _, m in ok], force)
         for (i, _), new in zip(ok, added):
             rows[i]["status"] = "queued" if new else "already_queued"
         # Files, not paths: Bazarr names an episode and its subtitle, one file between them.
         return {"job_id": job_id, "queued": len({m for _, m in ok}), "files": rows}
 
-    # A query-string POST (or a JSON body): the same CSRF guard as every other POST.
+    # A JSON body (or a query-string POST): the same CSRF guard as every other POST.
+    # The query is read by hand, so the CLI's registry sends the body (PA-5).
     @app.post("/api/index/file")
-    async def index_files(request: Request, path: list[str] = Query([]),
-                          force: bool = Query(False)) -> JSONResponse:
-        """Re-index the files whose subtitles changed: each ``path`` a media file or a
+    async def index_files(request: Request) -> JSONResponse:
+        """Re-index the files whose subtitles changed: each path a media file or a
         subtitle file (its media file is found next to it), in the caller's own paths
-        (QC_PATH_MAP). Also takes a JSON body, ``{"paths": [...], "force": bool}`` or a
-        Sonarr/Radarr webhook. Queued and deduplicated; one job re-indexes them at idle
-        priority. 202 when at least one file was queued, 200 for a webhook event with
-        no file (Test), 422 when no path could be queued."""
-        raw = list(path)
+        (QC_PATH_MAP). A JSON body, ``{"path": [...], "force": bool}`` (``paths`` works
+        too), or a Sonarr/Radarr webhook; or the same as ``?path=…&force=true``, which
+        a proxy limits to ~8 KB (HTTP 414). Queued and deduplicated; one job
+        re-indexes them at idle priority. 202 when at least one file was queued, 200
+        for a webhook event with no file (Test), 422 when no path could be queued."""
+        raw = list(request.query_params.getlist("path"))
+        force = (request.query_params.get("force") or "").lower() in ("1", "true", "yes", "on")
         event = None
         if (request.headers.get("content-type") or "").lower().startswith("application/json"):
             try:
                 body = await request.json()
             except ValueError:
                 raise HTTPException(status_code=400, detail="Body is not JSON.")
-            if isinstance(body, dict) and isinstance(body.get("paths"), list):
-                raw += [x for x in body["paths"] if isinstance(x, str)]
+            listed = next((body[k] for k in ("path", "paths") if isinstance(body, dict)
+                           and isinstance(body.get(k), list)), None)
+            if listed is not None:
+                raw += [x for x in listed if isinstance(x, str)]
                 force = force or body.get("force") is True
             else:
                 found, event = file_index.webhook_paths(body)
@@ -2084,15 +2119,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/index/changes/reindex")
     def index_changes_reindex() -> JSONResponse:
         """Queue every file the checks found changed for the re-index job (idle
-        priority, one at a time). Returns the job like POST /api/index/file."""
+        priority, one at a time) and return at once, like POST /api/index/file. These
+        are this server's own media paths (its checks walked the roots for them), so
+        the request only checks each is under a root by name: no stat per file on the
+        media disks. A file gone or moved since is the job's to find ("missing")."""
         files = index_changes.files()
         if not files:
             return JSONResponse({"job_id": None, "queued": 0, "files": []})
-        result = _queue_files(files, False, limit=False)
-        for row in result["files"]:  # gone or moved since the check: drop it
-            if row["status"] not in ("queued", "already_queued"):
-                index_changes.forget(row["path"])
-        return JSONResponse(result, status_code=202 if result["queued"] else 200)
+        roots = [os.path.normpath(str(r)) for r in settings.media_roots]
+        rows: list[dict] = []
+        ok: list[Path] = []
+        for f in files:
+            norm = os.path.normpath(f)
+            if norm == f and any(norm == r or norm.startswith(r.rstrip(os.sep) + os.sep)
+                                 for r in roots):
+                rows.append({"path": f, "media": f})
+                ok.append(Path(f))
+            else:
+                rows.append({"path": f, "status": "outside_roots"})
+                index_changes.forget(f)
+        job_id, added = _enqueue(ok, False)
+        new = iter(added)
+        for row in rows:
+            if "media" in row:
+                row["status"] = "queued" if next(new) else "already_queued"
+        result = {"job_id": job_id, "queued": len(ok), "files": rows}
+        return JSONResponse(result, status_code=202 if ok else 200)
 
     # Query-string-only POST like /api/search/folder/index — same CSRF surface,
     # covered by the same X-Quipclipper requirement in _security_gate.
@@ -3062,11 +3114,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     # YouTube: search the stored transcript; else use the cache —
                     # extraction is slow and the same cues were very likely
                     # already extracted when the user searched in the UI.
+                    # The same lines GET /api/search reads by default.
                     cues = (yt_store.cues(yt_vid) if yt_vid is not None
-                            else sub_cache.resolve(video, track=req.track))
+                            else _file_cues(video, req.track, _machine_mode("include")))
                 except (KeyError, ValueError, FileNotFoundError, RuntimeError) as exc:
                     raise HTTPException(status_code=400, detail=str(exc))
-                matches = engine_search(req.query, cues, limit=req.match_index + 1)
+                matches = engine_search(req.query, cues, limit=req.match_index + 1,
+                                        min_score=req.min_score, max_span=req.max_span)
                 if req.match_index >= len(matches):
                     raise HTTPException(status_code=404, detail="Match index out of range.")
                 m = matches[req.match_index]

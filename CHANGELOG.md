@@ -140,6 +140,33 @@ scripts/release.sh leaves this block in Unreleased; delete the two marker lines 
 
 <!-- /held back -->
 
+### Fixed
+
+- `QC_PATH_MAP` and `QC_JELLYFIN_PATH_MAP` take a path holding `:`, `;` or `=`: give the map
+  as JSON (`{"/tv": "/srv/shows"}`, or a list of pairs), or put a backslash before the
+  character in the plain form (`/a\:b=/srv/x`). The plain form works as before, and the
+  NixOS module now writes JSON.
+- Cancel and progress work while a library index run is still looking for files: the
+  folder walk shows "Scanning: N folders, M files so far…" and stops on Cancel (it used to
+  list the whole library first, minutes on a cold pool).
+- A file only ever opened with a subtitle track numbered above 15 no longer reads as
+  "changed" (out of date). Cache entries now record their track.
+- A folder's **Index** and opening a file clear its "changed" mark once its subtitles are
+  read again; before, it stayed on the Index out of date list until the next check.
+- A cancelled re-index job says "Stopped" instead of "Done: nothing to do".
+- A file found to have no subtitles any more drops its old cache entries.
+- **Re-index them** on the Index out of date badge (`index.reindex-changed`,
+  `POST /api/index/changes/reindex`) answers at once, however many files are listed: the
+  job, not the request, finds the ones gone since the check.
+- `index.file` and the hook script send their paths in a JSON body, so a long list no longer
+  hits HTTP 414 behind a proxy. `POST /api/index/file` also takes `{"path": [...]}`; the
+  query form still works.
+- A clip by match number (`clip.create --index`, `POST /api/clip` with `match_index`) counts
+  in a search tuned like the one that showed it: `--min-score` and `--max-span` now reach the
+  server (`min_score`, `max_span`). They were ignored, so the number could point at another
+  line.
+- ffmpeg never reads from standard input (`-nostdin` on every run).
+
 ## [0.3.1] - 2026-10-24
 
 ### Connecting LeadStinger without a token (pairing)
