@@ -95,13 +95,13 @@ FastAPI publishes the live schema, served behind the same gate:
 | GET | `/api/items/link?path=&at=&sel=&track=` | A [deep link](#deep-links) that opens the file in the web app at `at` seconds with `sel` (`START-END`) selected: `{path, at, sel, track, link}`. 503 without `QC_PUBLIC_URL`; the path is checked like `/api/items` (403 outside the roots, 404 missing). |
 | GET | `/api/items/peaks?path=&start=&end=&bins=&audio=&keyframes=` | [Waveform](#waveform-peaks-and-snap) peaks of `start..end` on audio stream `a:audio`, mixed to mono. 202 while the overview of a long span is still being built. |
 | GET | `/api/items/snap?path=&t=&mode=&radius=&db=&audio=` | The nearest zero crossing (`mode=zero`) or quiet point (`mode=silence`) to `t`: where a cut starts cleanly. |
-| GET | `/api/items/subtitles?path=&track=&offset=&fmt=` | Subtitles as WebVTT (`fmt=vtt`, default — the player's captions) or JSON cues `{start, end, text, speaker}` (`fmt=json` — what the script view uses). |
+| GET | `/api/items/subtitles?path=&track=&offset=&fmt=&machine=` | Subtitles as WebVTT (`fmt=vtt`, default — the player's captions) or JSON cues `{start, end, text, speaker, source}` (`fmt=json` — what the script view uses). `source` is `"machine"` for a [machine transcript](#machine-transcription) line, else null. `machine=include` (default) mixes them in, `exclude` leaves them out, `only` gives them alone. The captions carry only machine lines copied into the library, as `<c.machine>≈ …</c>`. |
 | POST | `/api/items/subtitles/reindex?path=` | Rebuild the subtitle cache for one file. |
 | POST | `/api/media/fetch-subs?path=` | Backfill one YouTube-sourced library video's subtitles (async job — poll `job_id`). The video's id is read from its `[<id>]` filename or a sibling `.info.json`; a `.vtt` sidecar is written next to it. 400 = no id found or the folder is read-only (needs `writableMediaRoots`). Job `progress` ends `ok`/`skipped`/`none`. |
 | POST | `/api/search/folder/fetch-subs?path=` | Backfill every id'd, subtitle-less YouTube video in a folder (async job with `progress`; cancellable via `DELETE /api/jobs/{id}`). Skips videos that already have subtitles. `{job_id: null, candidates: 0}` = nothing to do. 400 = read-only folder. |
 
 `/api/library/browse` entries are `{name, path, is_dir, is_video, is_audio, is_book,
-has_sidecar, index_state}` (plus `jellyfin` when Jellyfin knows the file).
+has_sidecar, has_transcript, index_state}` (plus `jellyfin` when Jellyfin knows the file).
 `index_state` is the file's place in the dialogue index (the subtitle cache that
 `/api/search/folder/index` fills): `"indexed"` (its subtitles are cached and current, so a
 search reads them without extracting anything), `"no_subs"` (indexing found no text
@@ -176,8 +176,8 @@ resolved stream URLs, so `split_channels` and `backend=mkvmerge` return 400 for
 ### Dialogue search
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/search?path=&query=&track=&limit=&min_score=&max_span=` | Rank dialogue matches in one file. |
-| GET | `/api/search/folder?path=&query=&limit=` | Search dialogue across a folder (repeat `path=` for several; `yt:` and EPUB books count). |
+| GET | `/api/search?path=&query=&track=&limit=&min_score=&max_span=&machine=` | Rank dialogue matches in one file. |
+| GET | `/api/search/folder?path=&query=&limit=&machine=` | Search dialogue across a folder (repeat `path=` for several; `yt:` and EPUB books count). |
 | GET | `/api/search/folder/index-status?path=` | How much of a folder's subtitles are cached, for a folder of any size (a listing per folder and the cache's names: no extraction, no probe): `{total, indexed, no_subs, changed, changed_files, skipped, cap}`. `changed` counts files indexed before their subtitles changed (listed, up to 1000, in `changed_files`; see [below](#changed-subtitles)). `no_subs` counts files indexing found to have no subtitles at all (no sidecar, no text track); they are never offered for indexing. `cap` (500) is the most files `POST …/index` takes in one request; a bigger folder is indexed with `POST /api/search/library/index?path=`. `skipped` is always `false` now (kept for older clients). |
 | POST | `/api/search/folder/index?path=&force=` | Pre-extract subtitles for a folder of at most `cap` files (streams progress; 400 over it). |
 | POST | `/api/search/library/index?path=` | Start the **library index**: every media file under the library roots (or under `path`, a folder of any size) that isn't indexed yet, as a background job. Returns `{job_id, existing, paths}`; while one runs, this returns it with `existing: true` (one at a time). 400 when `path` isn't a folder. See below. |
@@ -188,10 +188,10 @@ resolved stream URLs, so `split_channels` and `backend=mkvmerge` return 400 for
 | GET | `/api/index/file` | The re-index hooks' queue: `{job_id, job, pending, recent, token}`. |
 
 `/api/search` returns `{query, count, matches: [{index, score, text, speaker,
-start, end, start_ts, end_ts, cue_count, link}]}`. The `index` is what you pass back as
+start, end, start_ts, end_ts, cue_count, machine, link}]}`. The `index` is what you pass back as
 `match_index` when clipping. `/api/search/folder` returns `{query, folders,
 files_scanned, not_indexed, changed, changed_files, books_not_searched, capped, count, truncated, matches: [{file, path, score,
-text, speaker, start, end, start_ts, end_ts, cue_count, link}]}`: `limit` is the most matches
+text, speaker, start, end, start_ts, end_ts, cue_count, machine, link}]}`: `limit` is the most matches
 per file (default 5, at most 20); `count` is every match found, `matches` the best 500 of
 them (`truncated` when there were more). `query` is at most 300 characters (422 beyond:
 scoring grows with the square of the query's words, over every indexed line). Hidden folders
@@ -206,22 +206,54 @@ never indexed. `capped: true` means any of these is above 0, so a line not found
 file it didn't search. Its hits have no `index`: clip one with its
 `path`, `start`, `end` and `text` as `cue_text`. `link` (here, on `/api/search/folder` hits, bookmarks and
 clips-library entries) is a [deep link](#deep-links) to that line, present only when
-`QC_PUBLIC_URL` is set.
+`QC_PUBLIC_URL` is set. `machine: true` marks a hit on a [machine transcript](#machine-transcription)
+line; at an equal score a subtitle line ranks first. `machine=exclude` searches the subtitles
+alone, `machine=only` the machine lines alone.
 
-The **library index** (M20) is how a whole library becomes searchable. It runs only when
-someone starts it (`POST /api/search/library/index`, `quipclipper index.library`, or the
-library page's **Index the whole library**): no timer, no startup or scan hook, no setting
-starts it. It indexes one file at a time, and every ffprobe and ffmpeg it runs is at idle
-priority (`SCHED_IDLE`, nice 19, the idle I/O class, through `quipclipper.idle`), so a
-player's HLS encodes always come first. A file whose subtitles are cached and current, or
-that is known to have none (`no_subs`), is skipped, so a rerun after a cancel, a failure or
-a restart picks up where the last one stopped. `DELETE /api/jobs/{id}` cancels it, killing
-the extraction in flight; what is done stays. The job's `result` is `{paths, whole_library, status
-(scanning | indexing | done | cancelled | failed), files, already, todo, done, indexed,
-no_subs, failed, current, eta_s, files_per_hour, errors, summary}`: `files` media files were
-found, `already` of them needed nothing, and `done` of the `todo` rest are finished, with
-`eta_s` a rough estimate of the seconds left. A file it couldn't read is counted in
-`failed` (up to 20 listed in `errors`) and tried again next run.
+### Machine transcription
+
+whisper.cpp hears what the subtitles leave out (M21). It only runs when asked: nothing
+transcribes on its own. Each run is a job in its own one-at-a-time pool, at idle CPU and
+I/O priority with at most 3 threads, and stores its lines in the state dir, never next to
+the media. On where `whisper-cli` and a model are installed (`QC_WHISPER_MODEL`, the
+NixOS module's `transcribe.*`), unless `QC_TRANSCRIBE=0`. Off, every endpoint here answers
+**404** with the reason; forced on (`QC_TRANSCRIBE=1`) without whisper or a model, the ones
+that run whisper answer 503 and `/api/health`'s `transcribe.available` is false.
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/items/transcribe` | Start transcribing (job): `{path, mode, start, end, model, audio, redo}`. `mode` is `range` (`start`..`end`, seconds), `gaps` (every stretch of 4 s or more between subtitle lines) or `file`; omitted, it is `range` when `start` is given, else `gaps`. `model` names one the server has (`/api/health`'s `transcribe.models`: `small.en`, the default, and `medium.en` when installed); never a path. Parts done before are skipped unless `redo`. Returns `{job_id}` (`existing: true` when the same request is already queued or running). The job's `progress` reads `"1:10 of 4:00 transcribed"`; `DELETE /api/jobs/{id}` stops it, keeping finished chunks. Its `result`: `{path, mode, model, transcribed: [[start, end]…], new_lines, transcript, note?}`. 422: a bad range (end before start, or past a week), a model the server lacks, or a YouTube/EPUB ref; 404: not a file; 503: transcription isn't set up. |
+| GET | `/api/items/transcript?path=&fmt=` | A file's machine transcript (json): `{path, stored, library, writable, sidecar_name, lines: [{start, end, text, source}]}`. `stored` is `{ranges, covered, lines, models, language, updated, engine}` or null; `library` names the copies next to the file. `fmt=srt` or `vtt` downloads the lines. |
+| DELETE | `/api/items/transcript?path=` | Delete the stored transcript → `{deleted}` (a library copy stays). |
+| POST | `/api/items/transcript/library?path=` | Copy the machine lines (those no subtitle line has) next to the file as `<name>.<lang>.whisper.srt` → `{sidecar, lines}`. quipclipper reads that file as machine lines, never as the file's subtitles; the captions then show them, and Jellyfin offers it as a subtitle track. 403 = a read-only folder (needs `writableMediaRoots`), 404 = no transcript, 409 = no line left that the subtitles don't already have. |
+| DELETE | `/api/items/transcript/library?path=` | Remove this file's copies next to it (`<name>.<lang>.whisper.srt`/`.vtt`; never another file's, such as `<name>.Part2.en.whisper.srt`) → `{removed}`. 403 = a read-only folder. |
+| POST | `/api/search/folder/transcribe` | Transcribe a folder's files one after another (job): `{path, mode, model}`. `mode=nosubs` (default) does whole files that have no subtitles, audio files with no transcript included; `gaps` does the gaps in every subtitled file. Files already done are skipped, and so is a file whose subtitles can't be checked (an `error` in its `files` entry: a whole-file run of a subtitled film would cost hours). In `gaps` mode, a file not indexed yet has its subtitles extracted first, at idle priority as the folder index does (Cancel stops that too). Returns `{job_id, candidates}`, or `{job_id: null, candidates: 0}` when there is nothing to do. Progress reads `"3/41 files, <name>: 1:10 of 4:00 transcribed"`; the `result` is `{path, mode, model, files: [{name, path, new_lines, error?}], new_lines, note}`. 400 = over 500 files (audio counted too) or not a folder; 422 = a model the server lacks. A server shutdown stops a running transcription (its finished chunks are kept) and drops queued ones. |
+| GET | `/api/transcripts/orphans?stale=` | The stored transcripts a clean would delete, deleting nothing → `{count, orphans: [{file, path, reason}]}` (at most 200 listed). `reason` is `gone` (the media file was deleted), `stale` (only with `stale=true`: the media file was replaced since), `unreadable` (an older store format or a broken file) or `partial` (an interrupted save's temp file, over an hour old). A media file counts as gone only under a library root that is there and not empty, so a disk that isn't mounted loses nothing; a transcript of a file outside every root is left alone. |
+| POST | `/api/transcripts/clean?stale=` | Delete what the GET lists → `{count, removed}`. Only ever on request: nothing sweeps the store on a timer or a scan. Copies in the library are never touched. |
+
+`/api/items` adds `transcript: {stored, library, writable, sidecar_name}` for a library
+file. `/api/library/browse` lists an audio file with a machine transcript (stored or in the
+library) like one with a transcript beside it, and marks entries `has_transcript` (not for a
+transcript of the file a replaced one used to be).
+`/api/search/folder/index-status` adds `transcribed` (files with a machine transcript) and
+`audio_untranscribed` (audio files with no transcript of any kind, outside `total`).
+
+While it's on, the rest of the API changes too:
+
+- `/api/health` gains `tools["whisper-cli"]` and `transcribe`: `{enabled, available, engine,
+  binary, models: [{name, size, present}], default_model, threads, max_threads, vad,
+  language}`; `/api/config` gains `transcribe` (`{available, models, default_model, threads,
+  language}`). Off, neither appears.
+- `/api/items/subtitles` (`fmt=json`) cues carry `source`: `"machine"` for a machine line,
+  else null. `machine=include` (the default) mixes them in, `exclude` leaves them out, `only`
+  gives them alone. The captions carry only machine lines copied into the library, as
+  `<c.machine>≈ …</c>`.
+- `/api/search` and `/api/search/folder` take the same `machine=` and mark a hit on a machine
+  line `machine: true`; at an equal score a subtitle line ranks first. A folder search also
+  searches a file that isn't indexed on its stored machine transcript.
+- Off, machine lines are left out everywhere and `machine=only` answers 404.
+
+The guide, with the settings and the web app: [TRANSCRIPTION.md](TRANSCRIPTION.md).
 
 ### Re-index hooks
 
@@ -563,8 +595,8 @@ seconds after the last one, so a batch is one scan and new clips show up on the 
 |---|---|---|
 | GET/POST | `/api/bookmarks` | List (optionally filtered by `?path=`) / create bookmarks. |
 | PATCH/DELETE | `/api/bookmarks/{id}` | Edit / delete one. `DELETE /api/bookmarks` clears all. |
-| GET | `/api/health` | Liveness + tool presence (no auth-secret required) and `jellyfin` (Now playing, titles and artwork configured). |
-| GET | `/api/config` | Non-secret config the UI needs, including `public_url` (`QC_PUBLIC_URL`, or `null`), `link_server` (the server [Send to LeadStinger links](#send-to-leadstinger-links) name for this request, or `null`), `jellyfin` (true when Now playing is configured), and [pairing](#pairing)'s `pairing`, `server_id` and `server_name`. |
+| GET | `/api/health` | Liveness + tool presence (no auth-secret required; `tools` includes `whisper-cli` while transcription is on), `jellyfin` (Now playing, titles and artwork configured) and, while [machine transcription](#machine-transcription) is on, `transcribe`: `{enabled, available, engine, binary, models: [{name, size, present}], default_model, threads, max_threads, vad, language}`. |
+| GET | `/api/config` | Non-secret config the UI needs, including `public_url` (`QC_PUBLIC_URL`, or `null`), `link_server` (the server [Send to LeadStinger links](#send-to-leadstinger-links) name for this request, or `null`), `jellyfin` (true when Now playing is configured), [pairing](#pairing)'s `pairing`, `server_id` and `server_name`, and, while [machine transcription](#machine-transcription) is on, `transcribe` (`{available, models, default_model, threads, language}`). |
 
 ## Clips library contract
 

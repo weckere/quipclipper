@@ -34,6 +34,11 @@ mkvmerge. quipclipper is a **self-hosted web app** over your own media folders, 
   spot or a line's edge, and audition the first and last second before you cut. Where
   there's no line to pick (a song, a sound), drag a range out on the waveform, or press
   I and O (Set in / Set out) at the playhead.
+- **[Find what the subtitles left out](#machine-transcription):** where whisper.cpp is
+  installed, transcribe a song the subtitles skip, a file's gaps or a file with no subtitles
+  at all, on request and at idle priority. The machine lines show in violet with an
+  **auto** chip, search mixes them in, and they stay out of the captions until you copy them
+  to the library.
 - **Clips that keep the source:** a lossless stream copy (every audio track, 5.1/7.1
   intact) or a frame-exact H.264 re-encode (Intel Quick Sync when present); full-mix
   WAV/FLAC; surround split into channel groups (just the centre channel, say); GIFs from
@@ -140,7 +145,7 @@ services.quipclipper-web = {
 
 It runs the backend as a hardened systemd service behind the host's nginx, and a NixOS VM
 test in CI covers it. The options (password, API token, a shared clips folder, Quick
-Sync, your own front proxy, Jellyfin, LeadStinger) are in
+Sync, your own front proxy, Jellyfin, LeadStinger, machine transcription) are in
 [docs/DEPLOY.md](docs/DEPLOY.md#nixos-module).
 
 ### The CLI on its own
@@ -221,6 +226,26 @@ upgrade and rename with a plain webhook. A hook token can only queue re-indexes,
 ([contrib/hooks/quipclipper-reindex](contrib/hooks/quipclipper-reindex), `sh` and `curl`)
 and copy-paste setup: [docs/HOOKS.md](docs/HOOKS.md).
 
+## Machine transcription
+
+Subtitles skip things: most often a song's lyrics, sometimes a whole file has none. Where
+[whisper.cpp](https://github.com/ggml-org/whisper.cpp) is installed (`whisper-cli` and a
+model; on NixOS, `services.quipclipper-web.transcribe.enable = true`), quipclipper can
+transcribe what you point it at: a waveform selection, the gaps between a file's subtitle
+lines, a whole file, or a folder. It only runs when you ask, never on its own, at idle
+priority with at most 3 threads and one run at a time, so playback never notices it.
+
+What whisper hears is kept apart from the real subtitles: in the script, search and the
+waveform its lines are violet italics with an **auto** chip, a subtitle line wins wherever
+both cover a stretch, and the player's captions leave them out until **Copy to library**
+writes them next to the file as `<name>.en.whisper.srt` (writable folders only). Models are
+`small.en` (default) and `medium.en`, English only. From the CLI: `item.transcribe`,
+`item.transcript`, `index.transcribe` and `search --machine only`. Where whisper isn't
+installed, none of this shows; `QC_TRANSCRIBE=0` turns it off and `=1` forces it on. The
+Docker images don't include whisper.cpp yet.
+
+Everything else, the settings and the API: [docs/TRANSCRIPTION.md](docs/TRANSCRIPTION.md).
+
 ## Accessibility
 
 The web app aims at WCAG 2.2 AA, and tests keep it there:
@@ -262,6 +287,7 @@ See [docs/MANUAL.md](docs/MANUAL.md#youtube-sources-experimental) and
 | [docs/CLI.md](docs/CLI.md) | Every CLI command (generated from the command registry). |
 | [docs/API.md](docs/API.md) | The HTTP API. |
 | [docs/HOOKS.md](docs/HOOKS.md) | Re-index hooks for Bazarr, Sonarr and Radarr. |
+| [docs/TRANSCRIPTION.md](docs/TRANSCRIPTION.md) | Machine transcription with whisper.cpp: turning it on, the web app, the CLI and the API. |
 | [docs/DESIGN_NOTES.md](docs/DESIGN_NOTES.md) | Why it is built the way it is. |
 | [CHANGELOG.md](CHANGELOG.md) | What changed in each release. |
 
