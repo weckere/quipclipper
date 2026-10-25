@@ -2222,12 +2222,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """Transcribe what ``mode`` asks of one file; the job's progress follows it. Returns
         the job's result (also used by the folder job). A file not indexed yet has its
         subtitles extracted first, at idle priority as the folder index does (BE-4);
-        Cancel stops that with :class:`Cancelled`."""
-        try:
-            with at_idle_priority(lambda: job.cancel_requested):
+        Cancel stops that with :class:`Cancelled`. The gaps of a file whose subtitles
+        couldn't be read are unknown, so that run fails rather than becoming the whole file
+        (hours of whisper because a probe timed out on a busy host)."""
+        with at_idle_priority(lambda: job.cancel_requested):
+            try:
                 real = sub_cache.resolve(p)
-        except (ValueError, FileNotFoundError, RuntimeError):
-            real = []
+            except (ValueError, FileNotFoundError, RuntimeError) as exc:
+                if mode == "gaps" and not sub_cache.mark_no_subs(p):
+                    raise RuntimeError(
+                        f"Couldn't read the subtitles of {p.name} ({exc}), so its gaps are "
+                        "unknown: nothing was transcribed. Try again later, or transcribe a "
+                        "selection.") from None
+                real = []
         duration = media.probe_duration(p)
         have = transcripts.load(p)
         ranges = stt.plan_ranges(mode, real=real, duration=duration,

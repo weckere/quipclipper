@@ -172,9 +172,12 @@ def test_names_reads_each_store_file_once_per_change(tmp_path, monkeypatch):
     store = tr.TranscriptStore(tmp_path / "t")
     store.add(media, (0, 10), machine((1, 2, "one")), model="small.en")
     reads = []
-    real_read = tr._read_stamp
-    monkeypatch.setattr(tr, "_read_stamp", lambda f: reads.append(f.name) or real_read(f))
+    real_read = tr._read_head
+    monkeypatch.setattr(tr, "_read_head", lambda f: reads.append(f.name) or real_read(f))
     store.names(), store.names(), store.exists(media)
+    assert len(reads) == 1
+    # The orphan check shares that read (BE-7: it parsed every store file per page view).
+    store.orphans(), store.orphans([tmp_path])
     assert len(reads) == 1
     store.clear(media)
     assert store.names() == {} and not store.exists(media)
@@ -233,9 +236,48 @@ def test_orphans_never_counts_media_on_an_absent_disk_as_gone(tmp_path):
     assert {o.path for o in store.orphans([root, elsewhere])} == {str(gone)}
     # Under no root at all (the configuration changed): not ours to judge.
     assert {o.path for o in store.orphans([elsewhere])} == set()
-    # Without roots (the CLI's own store): gone only where its folder is still there.
+    # Without roots (the CLI's own store): gone only where its folder is still there and
+    # not empty (an empty folder may be an unmounted disk's mount point: CL-1).
     shutil.rmtree(root / "show")
+    assert store.orphans() == [] and store.clean() == []
+    (elsewhere / "other.mkv").write_bytes(b"x")
     assert {o.path for o in store.orphans()} == {str(ghost)}
+
+
+def test_orphans_never_counts_a_disk_mounted_inside_a_root_as_gone(tmp_path):
+    # BE-2: the root is there and full, but a second disk mounted inside it isn't.
+    root, store, keep, gone, changed = _orphan_store(tmp_path)
+    disk2 = root / "disk2"
+    (disk2 / "Show").mkdir(parents=True)
+    ep = disk2 / "Show" / "ep1.mkv"
+    ep.write_bytes(b"x")
+    store.add(ep, (0, 5), machine((1, 2, "hi")), model="small.en")
+    shutil.rmtree(disk2 / "Show")  # unmounted: an empty mount point is all that's left
+    assert {o.path for o in store.orphans([root])} == {str(gone)}
+    # A deleted season folder in a folder that still has others is gone.
+    (disk2 / "Other").mkdir()
+    assert {o.path for o in store.orphans([root])} == {str(gone), str(ep)}
+
+
+def test_orphans_skip_folders_and_media_they_cannot_look_at(tmp_path):
+    # BE-8: a folder named like a store file isn't one, and a clean doesn't stop at it.
+    root, store, keep, gone, changed = _orphan_store(tmp_path)
+    (store.dir / ("2" * 64 + ".json")).mkdir()
+    (store.dir / "old.tmp").mkdir()
+    os.utime(store.dir / "old.tmp", (1, 1))
+    assert {o.path for o in store.orphans([root])} == {str(gone)}
+    assert [o.path for o in store.clean([root])] == [str(gone)]
+    if os.geteuid() != 0:  # root reads anything
+        locked = root / "locked"
+        locked.mkdir()
+        film = locked / "film.mkv"
+        film.write_bytes(b"x")
+        store.add(film, (0, 5), machine((1, 2, "hi")), model="small.en")
+        locked.chmod(0)
+        try:
+            assert store.orphans([root]) == []  # can't tell: not an orphan, and no error
+        finally:
+            locked.chmod(0o755)
 
 
 def test_clean_keeps_a_transcript_saved_after_the_listing(tmp_path, monkeypatch):
@@ -726,6 +768,14 @@ def test_a_line_heard_by_both_chunks_at_a_seam_is_kept_once():
     assert len(old) == 1 and len(new) == 1
 
 
+def test_a_seam_line_at_the_far_edge_of_a_short_range_is_kept_once():
+    # BE-6: in a range shorter than 2 x CONTEXT a line is near both edges; the far one counts.
+    old, new = tr.seam_repeats(machine((102.5, 105.5, "did you do a little digging")),
+                               machine((101.0, 104.0, "did you did you do a little digging")),
+                               (100.0, 103.0))
+    assert old == [] and [c.text for c in new] == ["did you did you do a little digging"]
+
+
 def test_the_store_keeps_a_seam_line_once_across_runs(tmp_path):
     # Two requests that meet: the second range starts where the first ended.
     media = tmp_path / "pod.mp3"
@@ -736,3 +786,41 @@ def test_the_store_keeps_a_seam_line_once_across_runs(tmp_path):
     t = store.add(media, (180, 360), machine((178.0, 182.5, "bit so those of you that aren't "
                                               "aware converting the")), model="small.en")
     assert [c.text for c in t.cues] == ["bit so those of you that aren't aware converting the"]
+
+
+@needs_ffmpeg
+def test_a_second_look_that_fails_keeps_the_first_pass(tmp_path, seq_whisper, monkeypatch):
+    # BE-3: a look whisper couldn't finish (a timeout at idle priority) loses nothing.
+    cfg, calls = seq_whisper
+    media = _tone(tmp_path / "song.flac", 20.0)
+    calls([[2.5, 4.0, " Driving way too fast"]])
+
+    def fails(*a, **k):
+        raise RuntimeError("whisper-cli took over 600 s")
+
+    monkeypatch.setattr(tr, "_second_look", fails)
+    got = tr.transcribe_range(media, 0.0, 20.0, cfg=cfg, second_look=True, media_duration=20)
+    assert [c.text for c in got] == ["Driving way too fast"]
+
+
+def test_a_runs_second_looks_share_one_budget(tmp_path, monkeypatch):
+    # BE-4: a gaps run of many short gaps hears about half of what it transcribes again, at
+    # most, not up to a window per gap.
+    budgets = []
+
+    def fake_range(media, s, e, **k):
+        budgets.append(k["look_budget"])
+        return []
+
+    monkeypatch.setattr(tr, "transcribe_range", fake_range)
+    monkeypatch.setattr(tr.waveform, "native_rate", lambda *a: 48000)
+    media = tmp_path / "ep.mkv"
+    media.write_bytes(b"x")
+    cfg = tr.WhisperConfig(models={"small.en": str(media)})
+    gaps = [(i * 10.0, i * 10.0 + 4.5) for i in range(20)]  # 20 gaps of 4.5 s: 90 s
+    tr.run(tr.TranscriptStore(tmp_path / "t"), media, gaps, cfg=cfg, second_look=True)
+    assert len(budgets) == 20 and all(b is budgets[0] for b in budgets)
+    assert budgets[0].left == 45.0
+    windows = tr.look_windows([(100.0, 104.5)], (98.0, 106.5), budgets[0].left)
+    assert windows  # a look still fits; the shared budget shrinks as looks are heard
+    assert tr.LookBudget.of(4.5).left == tr.LOOK_SPAN  # one window at least

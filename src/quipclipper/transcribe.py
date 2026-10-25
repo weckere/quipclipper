@@ -525,15 +525,19 @@ def transcribe_range(source: str | Path, start: float, end: float, *, cfg: Whisp
                      prompt: str | None = None, vad: bool = False,
                      cancelled: Callable[[], bool] | None = None,
                      media_duration: float | None = None, workdir: str | Path | None = None,
-                     second_look: bool = False, skip: Iterable[Range] = ()
-                     ) -> list[Cue]:
+                     second_look: bool = False, skip: Iterable[Range] = (),
+                     look_budget: LookBudget | None = None) -> list[Cue]:
     """Transcribe one stretch (at most a chunk or so) of ``source``'s audio. Returns its
     machine cues in file time. Decodes ``CONTEXT`` seconds either side and keeps only
     the lines that belong inside ``start..end``.
 
     With ``second_look`` (range and gaps runs, :func:`use_second_look`), every stretch
     of ``HOLE`` seconds or more where whisper heard nothing, outside ``skip`` (the
-    subtitle lines) and not quiet, is heard again on its own (:func:`_second_look`)."""
+    subtitle lines) and not quiet, is heard again on its own (:func:`_second_look`), out
+    of ``look_budget`` (the run's, so a gaps run of many short gaps hears at most about
+    half of it again). A second look that fails keeps the first pass's lines."""
+    import wave
+
     model_path = cfg.model_path(model)
     source = os.path.abspath(source)
     lo = max(0.0, start - CONTEXT)
@@ -555,8 +559,12 @@ def transcribe_range(source: str | Path, start: float, end: float, *, cfg: Whisp
                         cancelled=cancelled, seconds=hi - lo, cwd=tmp)
         cues = parse_whisper_json(data, offset=t0, keep=(start, end), model=model)
         if second_look and not vad:
-            cues = _second_look(cfg, model_path, wav, t0, (start, end), cues, skip=skip,
-                                model=model, cancelled=cancelled, cwd=tmp)
+            try:
+                cues = _second_look(cfg, model_path, wav, t0, (start, end), cues, skip=skip,
+                                    model=model, cancelled=cancelled, cwd=tmp,
+                                    budget=look_budget)
+            except (RuntimeError, OSError, EOFError, wave.Error):
+                pass  # a look whisper couldn't finish: the first pass still stands
     return cues
 
 
@@ -706,20 +714,37 @@ def _is_repeat(c: Cue, cues: list[Cue]) -> bool:
     return False
 
 
+@dataclass
+class LookBudget:
+    """Seconds of audio a run's second looks may still hear (D-047: about half of what it
+    transcribes, at least one window), shared by its chunks."""
+
+    left: float
+
+    @classmethod
+    def of(cls, seconds: float) -> LookBudget:
+        return cls(max(LOOK_SPAN, seconds * LOOK_SHARE))
+
+
 def _second_look(cfg: WhisperConfig, model_path: str, wav: Path, t0: float, span: Range,
                  cues: list[Cue], *, skip: Iterable[Range], model: str,
-                 cancelled: Callable[[], bool] | None, cwd: str) -> list[Cue]:
+                 cancelled: Callable[[], bool] | None, cwd: str,
+                 budget: LookBudget | None = None) -> list[Cue]:
     """``cues`` plus what whisper hears in each of its holes when it hears them on their
-    own (see the comment above :data:`HOLE`)."""
+    own (see the comment above :data:`HOLE`), within ``budget`` (this span's own share
+    when there is none)."""
     found = [h for h in holes(cues, span, skip)
              if _loud_seconds(wav, h[0] - t0, h[1] - t0) >= MIN_LOUD]
     if not found:
         return cues
     added: list[Cue] = []
-    budget = max(LOOK_SPAN, (span[1] - span[0]) * LOOK_SHARE)
+    if budget is None:
+        budget = LookBudget.of(span[1] - span[0])
     # A window may reach into the context decoded around the range (a hole at its edge).
     around = (max(t0, span[0] - CONTEXT), span[1] + CONTEXT)
-    for n, ((ws, we), hs) in enumerate(look_windows(found, around, budget)):
+    windows = look_windows(found, around, budget.left)
+    budget.left -= sum(we - ws for (ws, we), _ in windows)
+    for n, ((ws, we), hs) in enumerate(windows):
         first = hs[0]
         seek_end = min(first[1], first[0] + QUIET_SEEK)
         ws = max(around[0], t0 + quiet_start(wav, ws - t0, seek_end - t0))
@@ -803,9 +828,11 @@ def seam_repeats(old: list[Cue], new: list[Cue], span: Range) -> tuple[list[Cue]
     dropped_old: set[int] = set()
     kept_new: list[Cue] = []
     for n in new:
-        edge = s if near(n, s) else e if near(n, e) else None
         twin = None
-        if edge is not None:
+        # A range shorter than 2 x CONTEXT has a line near both edges: try each.
+        for edge in (x for x in (s, e) if near(n, x)):
+            if twin is not None:
+                break
             for i, o in enumerate(old):
                 if i in dropped_old or not near(o, edge):
                     continue
@@ -874,12 +901,37 @@ def _read_header(f: Path) -> dict | None:
     return d
 
 
-def _read_stamp(f: Path) -> Stamp:
+@dataclass(frozen=True)
+class _Head:
+    """What a store file says about itself, without its lines: ``kind`` is ``ok`` (a
+    transcript this version reads), ``newer`` (a later quipclipper's), ``unreadable`` or
+    ``missing``; ``path`` the media file it names; ``stamp`` the media stamp it was made of."""
+
+    kind: str
+    path: str | None = None
+    stamp: Stamp = None
+
+
+def _read_head(f: Path) -> _Head:
     d = _read_header(f)
+    if d is not None:
+        try:
+            stamp = (float(d["media_mtime"]), int(d.get("media_size") or 0))
+        except (KeyError, TypeError, ValueError):
+            stamp = None
+        return _Head("ok", d["path"], stamp)
     try:
-        return (float(d["media_mtime"]), int(d.get("media_size") or 0)) if d else None
-    except (KeyError, TypeError, ValueError):
-        return None
+        raw = json.loads(f.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return _Head("missing")
+    except (OSError, json.JSONDecodeError):
+        return _Head("unreadable")
+    path = raw.get("path") if isinstance(raw, dict) else None
+    path = path if isinstance(path, str) else None
+    if isinstance(raw, dict) and isinstance(raw.get("version"), int) \
+            and raw["version"] > STORE_VERSION:
+        return _Head("newer", path)
+    return _Head("unreadable", path)
 
 
 def _root_present(root: Path, mounted: dict[Path, bool]) -> bool:
@@ -894,34 +946,57 @@ def _root_present(root: Path, mounted: dict[Path, bool]) -> bool:
     return mounted[root]
 
 
-def _orphan_reason(f: Path, roots: list[Path] | None, mounted: dict[Path, bool],
-                   stale: bool) -> tuple[str | None, str | None]:
-    """Why store file ``f`` is an orphan (GONE, STALE, UNREADABLE), or None; and the
-    media path it names."""
-    d = _read_header(f)
-    if d is None:
-        try:
-            raw = json.loads(f.read_text(encoding="utf-8"))
-        except FileNotFoundError:
-            return None, None
-        except (OSError, json.JSONDecodeError):
-            return UNREADABLE, None
-        if isinstance(raw, dict) and isinstance(raw.get("version"), int) \
-                and raw["version"] > STORE_VERSION:
-            return None, raw.get("path")  # a newer quipclipper's: not ours to judge
-        return UNREADABLE, raw.get("path") if isinstance(raw, dict) else None
-    media = Path(d["path"])
-    if media.exists():
-        if stale:
-            stamp = _read_stamp(f)
-            if stamp is None or not _current(media, *stamp):
-                return STALE, str(media)
-        return None, str(media)
+def _exists(p: Path) -> bool | None:
+    """Whether ``p`` is there; None when that can't be told (no permission to look)."""
+    try:
+        p.stat()
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    except OSError:
+        return None
+    return True
+
+
+def _folder_present(media: Path, roots: list[Path] | None, mounted: dict[Path, bool]) -> bool:
+    """Whether ``media``'s absence can be trusted: under a library root that is there and
+    not empty, the nearest folder of its path that still exists has something in it (an
+    unmounted disk mounted inside a root, or on its own, leaves an empty folder). Without
+    roots, the file's own folder must be there and not empty."""
     if roots is None:
-        known = media.parent.is_dir()
-    else:
-        known = any(media.is_relative_to(r) and _root_present(r, mounted) for r in roots)
-    return (GONE if known else None), str(media)
+        return _root_present(media.parent, mounted)
+    root = next((r for r in roots if media.is_relative_to(r)), None)
+    if root is None or not _root_present(root, mounted):
+        return False
+    d = media.parent
+    while d != root and d.is_relative_to(root):
+        there = _exists(d)
+        if there is None:
+            return False
+        if there:
+            break
+        d = d.parent
+    return _root_present(d, mounted)
+
+
+def _orphan_reason(head: _Head, roots: list[Path] | None, mounted: dict[Path, bool],
+                   stale: bool) -> tuple[str | None, str | None]:
+    """Why the store file ``head`` describes is an orphan (GONE, STALE, UNREADABLE), or
+    None; and the media path it names."""
+    if head.kind == "missing":
+        return None, None
+    if head.kind == "newer":
+        return None, head.path  # a newer quipclipper's: not ours to judge
+    if head.kind != "ok":
+        return UNREADABLE, head.path
+    media = Path(head.path)
+    there = _exists(media)
+    if there is None:
+        return None, str(media)
+    if there:
+        if stale and (head.stamp is None or not _current(media, *head.stamp)):
+            return STALE, str(media)
+        return None, str(media)
+    return (GONE if _folder_present(media, roots, mounted) else None), str(media)
 
 
 class TranscriptStore:
@@ -937,7 +1012,7 @@ class TranscriptStore:
         self._lock = threading.Lock()
         # file name -> ((its mtime_ns, size), its media stamp): each store file is read
         # once per change, so a listing can tell a stale transcript without reading it.
-        self._stamps: dict[str, tuple[tuple[int, int], Stamp]] = {}
+        self._stamps: dict[str, tuple[tuple[int, int], _Head]] = {}
         self._stamps_lock = threading.Lock()
 
     def _file(self, media: str | Path) -> Path:
@@ -1000,9 +1075,25 @@ class TranscriptStore:
         key = (st.st_mtime_ns, st.st_size)
         hit = self._stamps.get(f.name)
         if hit is None or hit[0] != key:
-            hit = (key, _read_stamp(f))
+            hit = (key, _read_head(f))
             self._stamps[f.name] = hit
-        return hit[1]
+        return hit[1].stamp
+
+    def _head(self, f: Path) -> _Head:
+        """``f``'s :class:`_Head`, cached like its stamp (read again only when it changed)."""
+        try:
+            st = f.stat()
+        except FileNotFoundError:
+            return _Head("missing")
+        except OSError:
+            return _read_head(f)
+        key = (st.st_mtime_ns, st.st_size)
+        with self._stamps_lock:
+            hit = self._stamps.get(f.name)
+            if hit is None or hit[0] != key:
+                hit = (key, _read_head(f))
+                self._stamps[f.name] = hit
+            return hit[1]
 
     def orphans(self, roots: Iterable[str | Path] | None = None, *,
                 stale: bool = False) -> list[Orphan]:
@@ -1011,10 +1102,11 @@ class TranscriptStore:
         temp files, and with ``stale`` those of media files replaced since.
 
         A media file counts as gone only where that can be told: with ``roots`` (the
-        library), it is under a root that is there and not empty (a disk that isn't
-        mounted doesn't delete its transcripts) and the file isn't; a transcript of a
-        file under no root is left alone. Without ``roots``, its folder is still there
-        and the file isn't. Nothing is deleted here (:meth:`clean` does that)."""
+        library), it is under a root that is there and not empty, the nearest folder of
+        its path that is still there isn't empty (a disk that isn't mounted, at the root
+        or inside it, doesn't delete its transcripts), and the file isn't; a transcript of
+        a file under no root is left alone. Without ``roots``, its own folder is there and
+        not empty and the file isn't. Nothing is deleted here (:meth:`clean` does that)."""
         live = None if roots is None else [Path(r) for r in roots]
         mounted: dict[Path, bool] = {}
         out: list[Orphan] = []
@@ -1026,13 +1118,15 @@ class TranscriptStore:
         for e in entries:
             f = Path(e.path)
             if e.name.endswith(".tmp"):
+                if not e.is_file(follow_symlinks=False):
+                    continue
                 with contextlib.suppress(OSError):
                     if now - e.stat().st_mtime > PARTIAL_AGE:
                         out.append(Orphan(f, None, PARTIAL))
                 continue
-            if not e.name.endswith(".json"):
+            if not e.name.endswith(".json") or not e.is_file(follow_symlinks=False):
                 continue
-            reason, path = _orphan_reason(f, live, mounted, stale)
+            reason, path = _orphan_reason(self._head(f), live, mounted, stale)
             if reason:
                 out.append(Orphan(f, path, reason))
         return out
@@ -1047,13 +1141,13 @@ class TranscriptStore:
         for o in self.orphans(roots, stale=stale):
             with self._lock:
                 if o.reason != PARTIAL:
-                    again, _ = _orphan_reason(o.file, roots, {}, stale)
+                    again, _ = _orphan_reason(_read_head(o.file), roots, {}, stale)
                     if again != o.reason:
                         continue
                 try:
                     o.file.unlink()
-                except FileNotFoundError:
-                    continue
+                except OSError:
+                    continue  # gone meanwhile, or not ours to delete: the rest still go
             removed.append(o)
         return removed
 
@@ -1189,6 +1283,7 @@ def run(store: TranscriptStore, media: str | Path, ranges: list[Range], *, cfg: 
     total = sum(e - s for s, e in pieces)
     src_rate = waveform.native_rate(media, audio)
     subtitled = [(c.start, c.end) for c in real or [] if not c.machine]
+    looks = LookBudget.of(total)
     done = 0.0
     t = None
     if progress:
@@ -1200,7 +1295,7 @@ def run(store: TranscriptStore, media: str | Path, ranges: list[Range], *, cfg: 
             cues = transcribe_range(media, s, e, cfg=cfg, model=model, audio=audio,
                                     src_rate=src_rate, vad=vad, cancelled=cancelled,
                                     media_duration=duration, second_look=second_look,
-                                    skip=subtitled)
+                                    skip=subtitled, look_budget=looks)
             t = store.add(media, (s, e), cues, model=model, language=cfg.language)
             done += e - s
             if progress:

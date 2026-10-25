@@ -86,6 +86,7 @@ from quipclipper.search import search
 from quipclipper.subtitles import (
     AUDIO_EXTS,
     ResolvedSubtitles,
+    at_idle_priority,
     list_embedded_tracks,
     list_streams,
     resolve_subtitles,
@@ -1736,6 +1737,17 @@ def _store():
     return tr.TranscriptStore(tr.default_store_dir())
 
 
+def _may_have_subtitles(media: Path, langs: str | None) -> bool:
+    """Whether ``media`` has a subtitle sidecar or text track, or that can't be told."""
+    from quipclipper.subtitles import find_sidecar, is_text_subtitle
+
+    try:
+        return bool(find_sidecar(media, langs)) or any(
+            is_text_subtitle(t) for t in list_embedded_tracks(media))
+    except (OSError, RuntimeError, ValueError):
+        return True
+
+
 def _local_transcribe(c: Context, v: dict) -> Any:
     from quipclipper import transcribe as tr
 
@@ -1752,14 +1764,21 @@ def _local_transcribe(c: Context, v: dict) -> Any:
         cfg.model_path(model)
     except ValueError as exc:
         raise CliError(str(exc), code="usage", exit_code=EXIT_USAGE) from None
-    try:
-        real = resolve_subtitles(subs=None, video=media,
-                                 langs=c.settings.get("sub_langs")).cues
-    except (ValueError, FileNotFoundError, RuntimeError):
-        real = []
+    mode = v.get("mode") or ("range" if v.get("start") is not None else "gaps")
+    langs = c.settings.get("sub_langs")
+    # Reading the subtitles is part of the background work: idle priority too, as the
+    # server does it. Gaps whose subtitles couldn't be read are unknown, not the whole file.
+    with at_idle_priority():
+        try:
+            real = resolve_subtitles(subs=None, video=media, langs=langs).cues
+        except (ValueError, FileNotFoundError, RuntimeError) as exc:
+            if mode == "gaps" and _may_have_subtitles(media, langs):
+                raise CliError(f"Couldn't read the subtitles of {media.name} ({exc}), so its "
+                               "gaps are unknown: nothing was transcribed. Try again, or "
+                               "give --start and --end.", code="failed") from None
+            real = []
     store = _store()
     have = store.load(media)
-    mode = v.get("mode") or ("range" if v.get("start") is not None else "gaps")
     try:
         ranges = tr.plan_ranges(mode, real=real, duration=_probe_duration(media),
                                 done=have.ranges if have else [], start=v.get("start"),

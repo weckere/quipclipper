@@ -152,3 +152,26 @@ def test_local_orphans_listed_then_cleaned(tmp_path, monkeypatch):
     done = _json(runner.invoke(cli.app, ["--json", "index.transcript-clean"]))
     assert done["count"] == 1 and store.load(keep) is not None and store.load(gone) is None
     assert "No orphaned" in runner.invoke(cli.app, ["index.transcript-orphans"]).stdout
+
+
+def test_local_gaps_read_subtitles_at_idle_priority_and_never_guess(local_whisper, tmp_path,
+                                                                     monkeypatch):
+    # BE-9: the subtitles are read at idle priority, as the server does; BE-1's twin: if
+    # they can't be read, the gaps are unknown, so nothing is transcribed (not the whole file).
+    from quipclipper import subtitles
+
+    seen = []
+
+    def broken(**k):
+        seen.append(getattr(subtitles._idle, "on", False))
+        raise RuntimeError("ffprobe timed out")
+
+    monkeypatch.setattr(cli, "resolve_subtitles", broken)
+    runs = []
+    monkeypatch.setattr(tr, "run", lambda *a, **k: runs.append(a))
+    media = tmp_path / "film.mkv"
+    media.write_bytes(b"")
+    (tmp_path / "film.en.srt").write_text("1\n00:00:01,000 --> 00:00:02,000\nhello\n")
+    out = runner.invoke(cli.app, ["item.transcribe", str(media)])
+    assert out.exit_code != 0 and "gaps are unknown" in out.output, out.output
+    assert seen == [True] and runs == []

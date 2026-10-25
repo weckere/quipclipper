@@ -140,6 +140,24 @@ subtitles everywhere. See [docs/TRANSCRIPTION.md](docs/TRANSCRIPTION.md).
   focus explains what machine transcripts are; a click or Enter opens Fill gaps, the model,
   Copy to library and the rest below it, and Esc or a click closes them. Each browser
   remembers which, and messages are read out as before.
+- **Fill gaps** on a file whose subtitles couldn't be read (a probe that timed out on a busy
+  machine) fails with the reason instead of transcribing the whole file, hours of whisper;
+  the CLI does the same, and reads a file's subtitles at idle priority too. A second look
+  that fails keeps what the first pass heard, and a gaps run's second looks share one
+  budget of about half what it transcribes (each short gap could hear more than itself
+  again). A line repeated across the far edge of a very short range is kept once.
+- Orphaned transcripts: a disk mounted inside a library root that isn't mounted, or the
+  CLI's empty mount point, no longer counts as files gone; a folder in the store, or a media
+  folder it can't look into, no longer breaks the listing or stops a clean half-way; and the
+  library home's check reuses what the store already read instead of parsing every
+  transcript on each visit. Its line says what it counts ("aren't needed any more: media
+  file gone, unreadable or unfinished"), is no longer read out on every visit, and shows
+  the new count after a clean, also after one that failed half-way.
+- The slim transcript bar: Cancel is always visible beside a running job's message (it was
+  cut off, yet still took the keyboard focus), a long message can be read whole in its
+  hover text and in the opened bar, the toggle no longer overlaps the summary at phone
+  width, and its hover keeps AA contrast in the dark theme. "auto" chips on buttons are
+  part of their spoken names, and the toggle's hover text says a click opens the bar.
 
 ### Fixed
 

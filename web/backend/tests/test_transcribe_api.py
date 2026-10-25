@@ -426,3 +426,34 @@ def test_gaps_jobs_extract_subtitles_at_idle_priority(env, monkeypatch):
     assert item["status"] == "done", item
     assert seen and all(on for _, on in seen), seen
     assert not getattr(subtitles._idle, "on", False)  # this thread was never lowered
+
+
+def test_gaps_of_a_file_whose_subtitles_cannot_be_read_transcribe_nothing(env, monkeypatch):
+    # An extraction that failed (an idle-priority ffprobe timing out on a busy host) isn't
+    # "no subtitles": the gaps would be the whole file, hours of whisper.
+    from quipclipper import transcribe as tr
+    from quipclipper_web.sub_cache import SubtitleCache
+
+    import quipclipper_web.app as web
+
+    def broken(self, video, *a, **k):
+        raise RuntimeError("ffprobe timed out")
+
+    runs = []
+    monkeypatch.setattr(SubtitleCache, "resolve", broken)
+    monkeypatch.setattr(web.media, "probe_duration", lambda p: 5400.0)
+    monkeypatch.setattr(tr, "run", lambda *a, **k: runs.append(a) or None)
+    root = Path(env["QC_MEDIA_ROOTS"])
+    (root / "film.mkv").write_bytes(b"")
+    (root / "film.en.srt").write_text("1\n00:00:01,000 --> 00:00:03,000\nhello\n")
+    c = _client(env)
+    job = _wait(c, c.post("/api/items/transcribe", json={"path": str(root / "film.mkv")}).json()["job_id"])
+    assert job["status"] == "failed" and "gaps are unknown" in job["error"], job
+    assert runs == []
+    # A file that really has none is transcribed whole, as Transcribe file would.
+    (root / "film.en.srt").unlink()
+    import quipclipper_web.sub_cache as sc
+
+    monkeypatch.setattr(sc, "list_embedded_tracks", lambda v: [])  # no text track either
+    job = _wait(c, c.post("/api/items/transcribe", json={"path": str(root / "film.mkv")}).json()["job_id"])
+    assert job["status"] == "done" and job["result"]["transcribed"] == [[0.0, 5400.0]], job

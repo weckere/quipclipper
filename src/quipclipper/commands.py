@@ -276,29 +276,29 @@ COMMANDS: tuple[Command, ...] = (
                     Param("redo", "bool", "Transcribe again parts done before (e.g. with a "
                           "bigger model).", where=BODY, default=False)) + _JOB_FOLLOW,
             mode="both", response="job",
-            ui="Transcribe selection (waveform); Fill gaps / Transcribe file (Transcript card)", transcription=True),
+            ui="Transcribe selection (waveform); Fill gaps / Transcribe file (Machine transcript bar)", transcription=True),
     Command("item.transcript", "Show a file's machine transcript: the lines whisper heard, "
             "with what was transcribed.", "GET", "/api/items/transcript",
             params=(Param("path", "str", "Media file.", main=True, required=True),
                     Param("fmt", "str", "json, or srt / vtt to export the lines.",
                           default="json", choices=("json", "srt", "vtt"))),
-            mode="both", ui="Transcript card (workspace)", transcription=True),
+            mode="both", ui="Machine transcript bar (workspace)", transcription=True),
     Command("item.transcript-clear", "Delete a file's machine transcript (not a copy in the "
             "library).", "DELETE", "/api/items/transcript",
             params=(Param("path", "str", "Media file.", main=True, required=True),),
-            mode="both", destructive=True, ui="Transcript card: Delete transcript", transcription=True),
+            mode="both", destructive=True, ui="Machine transcript bar: Delete transcript", transcription=True),
     Command("item.transcript-copy", "Copy a file's machine transcript into the library as a "
             "subtitle sidecar, <name>.<lang>.whisper.srt, next to the file (writable folders "
             "only). From then on it also shows in the player's captions and in Jellyfin.",
             "POST", "/api/items/transcript/library",
             params=(Param("path", "str", "Media file.", where=QUERY, main=True,
                           required=True),),
-            mode="both", destructive=True, ui="Transcript card: Copy to library", transcription=True),
+            mode="both", destructive=True, ui="Machine transcript bar: Copy to library", transcription=True),
     Command("item.transcript-uncopy", "Remove the machine transcript sidecar (…whisper.srt) "
             "from the library; the transcript itself stays.", "DELETE",
             "/api/items/transcript/library",
             params=(Param("path", "str", "Media file.", main=True, required=True),),
-            mode="both", destructive=True, ui="Transcript card: Remove from library", transcription=True),
+            mode="both", destructive=True, ui="Machine transcript bar: Remove from library", transcription=True),
 
     # --- search ------------------------------------------------------------------------
     Command("search.item", "Search one file's dialogue.", "GET", "/api/search",
