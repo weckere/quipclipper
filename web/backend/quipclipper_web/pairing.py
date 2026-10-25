@@ -184,6 +184,15 @@ def advertised_url(state_dir: Path) -> str | None:
 # --- client tokens ----------------------------------------------------------------------
 
 
+
+def _new_id(nbytes: int) -> str:
+    """A URL-safe random id that never starts with "-", so the CLI never reads it as an
+    option (`quipclipper pair.deny -x3F...` was a usage error, about 1 id in 64)."""
+    while True:
+        rid = secrets.token_urlsafe(nbytes)
+        if not rid.startswith("-"):
+            return rid
+
 class ClientStore:
     """Paired apps, in ``state_dir/clients.json``: ``{"clients": [{id, name, host,
     token_sha256, created, last_used}]}``. The token itself is never stored; it is handed
@@ -239,7 +248,7 @@ class ClientStore:
     def add(self, name: str, host: str) -> tuple[dict, str]:
         """A new client and its token (the only copy of it)."""
         token = TOKEN_PREFIX + secrets.token_urlsafe(32)
-        row = {"id": secrets.token_urlsafe(9), "name": name, "host": host,
+        row = {"id": _new_id(9), "name": name, "host": host,
                "token_sha256": token_sha256(token), "created": iso(self.clock()),
                "last_used": None}
         with self._lock:
@@ -372,7 +381,7 @@ class Pairing:
                                      "approve or deny them in QuipClipper, or wait for them "
                                      "to expire.")
             times.append(now)
-            r = _Request(id=secrets.token_urlsafe(16), name=name, host=host, code=self._code(),
+            r = _Request(id=_new_id(16), name=name, host=host, code=self._code(),
                          address=address, poll_secret=secrets.token_urlsafe(32),
                          created=now, expires_at=now + EXPIRES_IN)
             self._requests[r.id] = r

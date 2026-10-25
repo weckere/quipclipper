@@ -599,3 +599,12 @@ def test_atomic_writes_set_the_mode_from_the_start(tmp_path):
     os.chmod(p, 0o644)
     pairing.write_atomic(p, "{ }", mode=0o600)
     assert stat.S_IMODE(p.stat().st_mode) == 0o600
+
+
+def test_ids_never_start_with_a_dash(tmp_path, monkeypatch):
+    """A leading "-" made the CLI read a request or client id as an option."""
+    from quipclipper_web import pairing
+
+    seq = iter(["-dashfirst", "-again", "okid"])
+    monkeypatch.setattr(pairing.secrets, "token_urlsafe", lambda n=None: next(seq))
+    assert pairing._new_id(9) == "okid"

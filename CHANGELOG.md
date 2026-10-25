@@ -11,6 +11,11 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 
 ## [Unreleased]
 
+### Fixed
+
+- Pairing request and client ids never start with "-": about 1 in 64 did, and the CLI then read
+  the id as an option (`pair.approve`, `pair.deny`, `clients.revoke` failed with a usage error).
+
 ## [0.4.1] - 2026-10-25
 
 ### LeadStinger broadcast-cart icon (M20)
