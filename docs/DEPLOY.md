@@ -326,8 +326,9 @@ setup, what each feature writes where, and troubleshooting.
 - **Jellyfin must reach quipclipper.** Behind the password gate that works as it is: pairing and
   client tokens pass the gate (above). If Jellyfin runs where quipclipper is deliberately out of
   reach (another container network, a tailnet that closes containers off), open just the plugin's
-  routes to just Jellyfin's address: `/api/pair` and `/api/pair/<id>`, `POST /api/index/file`
-  and `GET /api/items/transcript`.
+  routes to just Jellyfin's address: `/api/pair` and `/api/pair/<id>`, `POST /api/index/file`,
+  `GET /api/items/transcript` and `DELETE /api/clients/self` (Disconnect). The plugin's README
+  has an nginx example.
 - **Machine transcripts in Jellyfin's subtitle search.** For a movie or episode quipclipper
   has transcribed, Jellyfin's **Search subtitles** dialog lists "quipclipper (machine
   transcript)" results: **Machine lines only** (the lines no subtitle has) and **Full machine
@@ -342,7 +343,7 @@ setup, what each feature writes where, and troubleshooting.
   them into this server's. The derived map needs `QC_JELLYFIN_URL` and an API key (Now playing's
   setup) and finds a few files of each library folder under the media roots; a folder it can't
   place is listed as `unmatched` in `GET /api/jellyfin/lookup`'s `index.path_map`, and its files
-  are refused (422) until `QC_JELLYFIN_PATH_MAP` names it.
+  come back `outside_roots` until `QC_JELLYFIN_PATH_MAP` names it.
 - **A newer Jellyfin.** Each of the plugin's features stops on its own, logged once, if a
   Jellyfin update removes something it uses; its settings page then says which is off. Update
   the plugin.
