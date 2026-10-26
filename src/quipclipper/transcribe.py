@@ -1317,7 +1317,8 @@ def machine_sidecar_path(media: str | Path, language: str = "en") -> Path:
 
 def find_machine_sidecars(media: str | Path, siblings: list[Path] | None = None) -> list[Path]:
     """The machine sidecars of ``media``: ``<stem>.<lang>.whisper.srt``/``.vtt`` (or
-    ``<stem>.whisper.srt``) next to it, nothing else. ``Show.Part2.en.whisper.srt`` is
+    ``<stem>.whisper.srt``, or Jellyfin's ``<stem>.<lang>.whisper.0.srt`` when the name was
+    taken) next to it, nothing else. ``Show.Part2.en.whisper.srt`` is
     Show.Part2.mkv's, not Show.mkv's: reading or removing it as Show's would be wrong.
     ``siblings`` is the folder's listing (its subtitle files are enough) when the caller
     already has it."""
@@ -1332,7 +1333,7 @@ def find_machine_sidecars(media: str | Path, siblings: list[Path] | None = None)
     if not siblings:
         return []  # the common case, without compiling a pattern per file
     own = re.compile(re.escape(media.stem.lower()) + r"(\.[a-z]{1,3})?\."
-                     + SIDECAR_TOKEN + r"\.(srt|vtt)")
+                     + SIDECAR_TOKEN + r"(\.\d+)?\.(srt|vtt)")
     return sorted(p for p in siblings if own.fullmatch(p.name.lower()) and p.is_file())
 
 

@@ -518,6 +518,20 @@ def test_vad_only_for_whole_files():
     assert tr.use_second_look("gaps") and tr.use_second_look("range") and not tr.use_second_look("file")
 
 
+def test_jellyfins_numbered_copy_is_machine_too(tmp_path):
+    # Jellyfin names a second save <stem>.en.whisper.0.srt (M22 Phase 3 review): picked as
+    # the file's subtitles, its machine lines would have passed for dialogue.
+    media = tmp_path / "ep.mkv"
+    media.write_bytes(b"")
+    second = tmp_path / "ep.en.whisper.0.srt"
+    second.write_text("1\n00:00:01,000 --> 00:00:02,000\nheard\n")
+    assert is_machine_sidecar(second.name, "ep") and is_machine_sidecar(second.name)
+    assert not is_machine_sidecar("ep.0.srt", "ep") and not is_machine_sidecar("Whisper.2.srt")
+    assert find_sidecar(media) is None
+    assert tr.find_machine_sidecars(media) == [second]
+    assert [c.text for c in tr.machine_cues(media, None)] == ["heard"]
+
+
 # --- release review (t-m21-review) ------------------------------------------------------
 
 def test_machine_sidecars_are_only_the_files_own(tmp_path):

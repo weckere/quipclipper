@@ -1179,6 +1179,10 @@ def test_the_plugins_reindex_waits_for_the_first_derived_map(fake, tmp_path, kno
     body = {"paths": ["/shows/Star Trek TNG/Season 3/S03E26.mkv"], "source": "jellyfin"}
     r = c.post("/api/index/file", json=body)
     assert r.status_code == 503 and "derived yet" in r.json()["detail"]
+    # The transcript provider's read waits the same way (M22 Phase 3).
+    r = c.get("/api/items/transcript", params={"path": body["paths"][0], "source": "jellyfin",
+                                               "lines": "machine"})
+    assert r.status_code == 503 and "derived yet" in r.json()["detail"]
     c.post("/api/jellyfin/index")
     r = c.post("/api/index/file", json=body)
     assert r.status_code == 202, r.text

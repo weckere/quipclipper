@@ -47,6 +47,8 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   --lines --source`. The Jellyfin plugin's new subtitle provider uses it, so Jellyfin's
   **Search subtitles** dialog offers a transcribed movie's or episode's machine lines and
   saves them as `<name>.en.whisper.srt`, which quipclipper reads as machine lines.
+- A machine sidecar Jellyfin numbered because the name was taken
+  (`<name>.en.whisper.0.srt`) is read as machine lines too, never as the file's subtitles.
 
 ### Waveform Playhead button (M20)
 

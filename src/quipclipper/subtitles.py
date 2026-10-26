@@ -552,7 +552,8 @@ SIDECAR_TOKEN = "whisper"
 
 def is_machine_sidecar(path: str | Path, stem: str | None = None) -> bool:
     """True for a machine sidecar: the dotted token right before the extension is
-    ``whisper`` (``movie.en.whisper.srt``). With the media's ``stem``, only tokens after
+    ``whisper`` (``movie.en.whisper.srt``), or before a number Jellyfin adds when the name
+    is taken (``movie.en.whisper.0.srt``). With the media's ``stem``, only tokens after
     it count, so ``The.Whisper.srt`` (the plain sidecar of ``The.Whisper.mkv``) isn't."""
     name = Path(path).name
     if stem is not None:
@@ -560,6 +561,8 @@ def is_machine_sidecar(path: str | Path, stem: str | None = None) -> bool:
             return False
         name = name[len(stem):]
     tokens = [t.lower() for t in name.split(".")[1:-1] if t]
+    if len(tokens) > 1 and tokens[-1].isdigit():
+        tokens.pop()
     return bool(tokens) and tokens[-1] == SIDECAR_TOKEN
 
 

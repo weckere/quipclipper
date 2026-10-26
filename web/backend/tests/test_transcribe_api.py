@@ -525,6 +525,9 @@ def test_source_jellyfin_maps_the_path(env, episode):
     assert c.get("/api/items/transcript", params={**q, "path": str(episode)}).status_code == 200
     # Without the source, Jellyfin's /shows is nowhere here.
     assert c.get("/api/items/transcript", params={"path": jf}).status_code in (403, 404)
+    # A mapped path still has to stay under a media root.
+    out = c.get("/api/items/transcript", params={**q, "path": "/shows/../../../etc/hosts"})
+    assert out.status_code == 403
     bad = c.get("/api/items/transcript", params={**q, "source": "plex"})
     assert bad.status_code == 400 and "jellyfin" in bad.json()["detail"]
 
