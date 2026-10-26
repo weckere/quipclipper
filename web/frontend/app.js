@@ -177,8 +177,16 @@ function seekableEnd(player) {
   return s.length ? s.end(s.length - 1) : 0;
 }
 
+/** How far the transcode has segmented. Under hls.js the element's duration is the
+ *  probed one from the start (startHls), so its seekable range spans the whole file and
+ *  only the playlist knows; Safari's own player seeks as far as the playlist goes. */
+function transcodeEdge(player) {
+  if (hls) return hls.latestLevelDetails ? hls.latestLevelDetails.edge : 0;
+  return seekableEnd(player);
+}
+
 /** True when `t` lies past what a still-growing transcode has segmented so far (`edge`,
- *  the element's seekable end). A finished playlist holds nothing back. */
+ *  transcodeEdge). A finished playlist holds nothing back. */
 function beyondTranscodeEdge(t, edge, growing) {
   return growing && t > edge + 0.5;
 }
@@ -202,7 +210,7 @@ const HLS_SEGMENT_SLACK = 15;  // a long segment (EXT-X-TARGETDURATION; -hls_tim
 function seekPlayer(t, play) {
   const player = $("player");
   cancelHeldSeek();
-  if (isHlsSource(player) && beyondTranscodeEdge(t, seekableEnd(player), transcodeGrowing(player))) {
+  if (isHlsSource(player) && beyondTranscodeEdge(t, transcodeEdge(player), transcodeGrowing(player))) {
     holdSeek(t, play);
     return;
   }
@@ -217,10 +225,10 @@ function holdSeek(t, play) {
   const tick = () => {
     if (heldSeek !== held) return;
     if (currentItem !== held.item) { cancelHeldSeek(); return; }
-    const edge = seekableEnd(player);
+    const edge = transcodeEdge(player);
     if (!beyondTranscodeEdge(t, edge, transcodeGrowing(player))) {
       cancelHeldSeek();
-      seekPlayer(t, play);
+      seekPlayer(t, held.play);
       return;
     }
     $("preview-note").textContent =
@@ -240,7 +248,47 @@ function cancelHeldSeek() {
 }
 // Play pressed while a seek waits plays from where the player is. (Not its seeks: hls.js
 // moves the element itself, to its start position, and that mustn't drop the hold.)
-$("player").addEventListener("play", () => heldSeek && cancelHeldSeek());
+// Chrome's seek bar pauses while it is dragged and plays again on release: a play that
+// soon after a pick on the bar is the pick's, so the seek plays once it lands.
+$("player").addEventListener("play", () => {
+  if (!heldSeek) return;
+  if (heldSeek.fromBar && performance.now() < heldSeek.fromBar) {
+    heldSeek.play = true;
+    $("player").pause();
+    return;
+  }
+  cancelHeldSeek();
+});
+
+// The native seek bar spans the whole file under hls.js (startHls), so a pick on it can land
+// past the transcode's edge, where the element has nothing to play. It is held like any other
+// seek, and the element goes back to where it was (no further than the edge) to wait.
+const BAR_RELEASE_MS = 1000;  // how long after a pick on the bar its release's play may come
+let lastPlayhead = 0;  // the element's position before the seek in flight
+$("player").addEventListener("timeupdate", () => {
+  const player = $("player");
+  if (!player.seeking) lastPlayhead = player.currentTime;
+});
+$("player").addEventListener("seeking", () => {
+  const player = $("player");
+  if (!hls) return;
+  const t = player.currentTime;
+  const edge = transcodeEdge(player);
+  if (!beyondTranscodeEdge(t, edge, transcodeGrowing(player))) {
+    // Dragged back inside before letting go: that pick wins (not the element going back).
+    if (heldSeek && heldSeek.fromBar && Math.abs(t - heldSeek.back) > 0.01) cancelHeldSeek();
+    return;
+  }
+  // hls.js's own seek to its start position is a seek already held (a link's t=).
+  if (!heldSeek || Math.abs(heldSeek.t - t) > 0.5) {
+    const play = !player.paused;
+    cancelHeldSeek();
+    holdSeek(t, play);
+    heldSeek.fromBar = performance.now() + BAR_RELEASE_MS;
+  }
+  heldSeek.back = Math.min(lastPlayhead, edge);
+  player.currentTime = heldSeek.back;
+});
 
 let currentView = "browser";  // browser | item | clips | bookmarks
 const NAV_FOR_VIEW = { browser: "library-link", item: "library-link", clips: "clips-link", bookmarks: "bookmarks-link" };
@@ -2430,7 +2478,12 @@ async function openItem(path, name, opts) {
           if (data && data.fatal && hls === inst) fallbackToPipe(playerTime());
         });
         inst.loadSource(url);
-        inst.attachMedia(player);
+        // The playlist grows while the transcode runs, and the element's duration with it:
+        // the seek bar read 30:00 on a 2:07 film. hls.js keeps a duration override over the
+        // playlist's, so the bar spans the probed duration from the start (M20).
+        inst.attachMedia(probedDuration > 0
+          ? { media: player, overrides: { duration: probedDuration } }
+          : player);
         return;
       }
       if (hlsNative()) {  // Safari: the element plays the playlist itself

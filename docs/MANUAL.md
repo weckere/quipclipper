@@ -266,7 +266,8 @@ Opening a file opens its workspace.
 - **The player** plays the file. When the browser can't play its audio (AC3, DTS, FLAC…)
   or video (HEVC in Firefox, XviD, MPEG-2…), the server converts it on the fly (with
   Intel Quick Sync when there is one) and a note says seeking may be slower; iOS plays an
-  HLS stream instead. The header has the **Subtitles**, audio and channel pickers: they
+  HLS stream instead. The seek bar spans the whole file while the conversion runs: a point
+  past what it has reached waits, paused, with a note, and plays once it gets there. The header has the **Subtitles**, audio and channel pickers: they
   change playback and what the clip contains (the subtitle you pick becomes the clip's
   default track).
 - **The dialogue map** under the player shows where the talking is over the whole file:

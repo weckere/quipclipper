@@ -34,6 +34,11 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   point instead (a line at 36:17 from 22:05, `t=1800` from 0:10). Such a seek now waits,
   paused, with a note saying how far the transcode has got, and jumps there once it arrives;
   pressing play meanwhile plays from where the player is.
+- While such a transcode runs, the player's own seek bar spans the whole file from the start
+  instead of only the part transcoded so far (it read 30:00 on a 2:07 film and stretched as
+  the transcode went on, so nothing past that could be picked there). A pick past the
+  transcode's edge waits like any other seek, and plays on if the player was playing;
+  dragging back inside before letting go drops it.
 
 ## [0.5.0] - 2026-10-26
 
