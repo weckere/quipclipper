@@ -283,6 +283,55 @@ def test_unknown_peer_and_bad_real_ip(tmp_path):
     assert caller.caller({"x-real-ip": "nope"}, "::1", nets)["address"] == "::1"
 
 
+def test_an_empty_allow_list_believes_no_one(tmp_path):
+    c = _client(tmp_path, QC_FORWARDED_ALLOW_IPS="")
+    _start(c, **TS)
+    row = _asked(c)
+    assert (row["address"], row["user"], row["user_name"]) == ("127.0.0.1", "", "")
+
+
+def test_ipv6_peers(tmp_path):
+    from quipclipper_web import caller
+    loop = caller.parse_networks(caller.DEFAULT_TRUSTED)
+    v6 = {"x-real-ip": "fd7a:115c:a1e0::1", "tailscale-user-login": "jo@example.com"}
+    # nginx over IPv6 loopback, naming an IPv6 caller.
+    assert caller.caller(v6, "::1", loop) == {
+        "address": "fd7a:115c:a1e0::1", "user": "jo@example.com", "user_name": ""}
+    # An IPv4 peer written IPv4-mapped is judged as that IPv4 address: loopback is trusted,
+    # a LAN address is not.
+    assert caller.caller(v6, "::ffff:127.0.0.1", loop)["user"] == "jo@example.com"
+    assert caller.caller(v6, "::ffff:192.168.1.50", loop) == {
+        "address": "::ffff:192.168.1.50", "user": "", "user_name": ""}
+    # IPv6 ranges in the list, and an IPv4 range never matching an IPv6 peer.
+    nets = caller.parse_networks("fd00::/8 10.0.0.0/8")
+    assert caller.caller(v6, "fd00::5", nets)["user"] == "jo@example.com"
+    assert caller.caller(v6, "fe80::1", nets)["user"] == ""
+    c = _client(tmp_path, peer="fd00::5", QC_FORWARDED_ALLOW_IPS="fd00::/8")
+    _start(c, **TS)
+    assert (_asked(c)["address"], _asked(c)["user"]) == ("100.116.110.76", "wiz@example.com")
+
+
+def test_the_docker_app_image_trusts_only_private_ranges():
+    from quipclipper_web import caller
+    dockerfile = Path(__file__).resolve().parents[2] / "Dockerfile"
+    if not dockerfile.is_file():
+        pytest.skip("not a full checkout")
+    value = re.search(r'QC_FORWARDED_ALLOW_IPS="([^"]*)"', dockerfile.read_text()).group(1)
+    nets = caller.parse_networks(value)
+    for peer in ("172.18.0.3", "10.1.2.3", "192.168.5.4", "fd12::3"):
+        assert caller.trusted(peer, nets), peer
+    for peer in ("100.116.110.76", "8.8.8.8", "2001:db8::1", "127.0.0.1"):
+        assert not caller.trusted(peer, nets), peer
+
+
+def test_forwarded_names_lose_format_characters(tmp_path):
+    from quipclipper_web import caller
+    got = caller.caller({"tailscale-user-login": "jo@example.com",
+                         "tailscale-user-name": "Jo\u202e moc.elpmaxe\u200b"},
+                        "127.0.0.1", caller.parse_networks("127.0.0.1"))
+    assert got["user_name"] == "Jo moc.elpmaxe"
+
+
 def test_clients_from_before_the_caller_fields_still_list(tmp_path):
     store = pairing.ClientStore(tmp_path)
     store.path.write_text(json.dumps({"clients": [{

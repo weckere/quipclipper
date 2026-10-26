@@ -303,8 +303,11 @@ Behind Tailscale serve, nginx also passes on the tailnet user it names
 (`Tailscale-User-Login`/`-Name`) from those proxies only, so the banner says "From
 wiz@example.com, 100.101.102.103" and Connected apps keeps it; anyone else's such headers
 are dropped. The backend in turn believes nginx's word only from `QC_FORWARDED_ALLOW_IPS`
-(default loopback; the Docker app image sets the private ranges its web container connects
-from) or with `QC_PROXY_SECRET`. If you publish the app container's port 8000, narrow
+(default loopback; NixOS: `forwardedAllowIps`, which adds a non-loopback `listenAddress`; the
+Docker app image sets the private ranges its web container connects from) or with
+`QC_PROXY_SECRET`. Another nginx server block of your own that proxies `/api/pair` (a listener
+for one app, say) must blank `Tailscale-User-Login`/`-Name` itself: the global
+`recommendedProxySettings` set `X-Real-IP` but pass the caller's other headers on. If you publish the app container's port 8000, narrow
 `QC_FORWARDED_ALLOW_IPS` to nginx's address or set the proxy secret. See
 [API.md](API.md#pairing).
 

@@ -18,18 +18,18 @@ from __future__ import annotations
 
 import ipaddress
 import re
+import unicodedata
 from email.header import decode_header, make_header
 
 DEFAULT_TRUSTED = "127.0.0.1,::1"
 _MAX = 200   # chars kept of a forwarded name
-_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 
 Network = ipaddress.IPv4Network | ipaddress.IPv6Network
 
 
 def parse_networks(value: str) -> tuple[Network, ...]:
-    """``QC_FORWARDED_ALLOW_IPS``: addresses or CIDR networks, comma- or space-separated.
-    Raises ValueError on an entry that is neither."""
+    """``QC_FORWARDED_ALLOW_IPS``: addresses or CIDR networks, comma- or space-separated;
+    empty believes no one. Raises ValueError on an entry that is neither."""
     out = []
     for part in re.split(r"[,\s]+", value or ""):
         if part:
@@ -66,7 +66,9 @@ def _text(value: str | None) -> str:
             value = str(make_header(decode_header(value)))
         except (ValueError, LookupError, UnicodeDecodeError):
             pass
-    return _CONTROL.sub("", value).strip()[:_MAX]
+    # No control or format characters (a bidi override could turn the banner's text around).
+    value = "".join(ch for ch in value if unicodedata.category(ch) not in ("Cc", "Cf"))
+    return value.strip()[:_MAX]
 
 
 def caller(headers, peer: str | None, networks: tuple[Network, ...],

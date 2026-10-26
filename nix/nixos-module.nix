@@ -384,6 +384,24 @@ in
       description = "Port the backend listens on.";
     };
 
+    forwardedAllowIps = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ "127.0.0.1" "::1" ]
+        ++ lib.optional (cfg.nginx.enable && !(builtins.elem cfg.listenAddress
+          [ "127.0.0.1" "::1" "localhost" "0.0.0.0" "::" ])) cfg.listenAddress;
+      defaultText = lib.literalExpression
+        ''[ "127.0.0.1" "::1" ] ++ (listenAddress, when nginx connects to it there)'';
+      example = [ "127.0.0.1" "10.0.0.5" ];
+      description = ''
+        Peers (addresses or CIDR ranges) whose `X-Real-IP` and `Tailscale-User-Login` /
+        `-Name` headers the backend believes about who a pairing request came from
+        (`QC_FORWARDED_ALLOW_IPS`): the bundled nginx, which connects from loopback, or from
+        `listenAddress` when that is a non-loopback address. From anyone else they're
+        ignored and the connection's own address is shown. Set it when your own front
+        (`nginx.enable = false`) connects from elsewhere; `[ ]` believes no one.
+      '';
+    };
+
     maxConcurrentJobs = lib.mkOption {
       type = lib.types.ints.positive;
       default = 2;
@@ -630,6 +648,10 @@ in
         message = "services.quipclipper-web.nginx.trustedProxies takes IP addresses or CIDR ranges (e.g. 172.30.88.2, 10.0.0.0/8), not host names.";
       }
       {
+        assertion = builtins.all (p: builtins.match "[0-9A-Fa-f.:]+(/[0-9]+)?" p != null) cfg.forwardedAllowIps;
+        message = "services.quipclipper-web.forwardedAllowIps takes IP addresses or CIDR ranges (e.g. 127.0.0.1, 10.0.0.0/8), not host names.";
+      }
+      {
         assertion = builtins.match "[A-Za-z0-9-]+" cfg.nginx.realIpHeader != null;
         message = "services.quipclipper-web.nginx.realIpHeader must be a header name such as X-Forwarded-For.";
       }
@@ -768,6 +790,7 @@ in
         QC_MAX_CONCURRENT_JOBS = toString cfg.maxConcurrentJobs;
         QC_SUBTITLE_LANGS = lib.concatStringsSep "," cfg.subtitleLangs;
         QC_INDEX_CHECK_INTERVAL = toString cfg.indexCheckInterval;
+        QC_FORWARDED_ALLOW_IPS = lib.concatStringsSep "," cfg.forwardedAllowIps;
       } // lib.optionalAttrs (cfg.serverName != null) {
         QC_SERVER_NAME = cfg.serverName;
       } // lib.optionalAttrs (!cfg.pairing.enable) {

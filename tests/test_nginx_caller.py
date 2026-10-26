@@ -78,3 +78,12 @@ def test_nixos_module_passes_the_tailnet_user_only_from_a_trusted_proxy():
     assert "proxy_set_header Tailscale-User-Login $quipclipper_ts_login;" in headers
     assert "proxy_set_header Tailscale-User-Name $quipclipper_ts_name;" in headers
     assert "appendHttpConfig = trustedProxyHttp;" in nix
+
+
+def test_nixos_module_tells_the_backend_whose_word_to_take():
+    nix = MODULE.read_text()
+    assert 'QC_FORWARDED_ALLOW_IPS = lib.concatStringsSep "," cfg.forwardedAllowIps;' in nix
+    # Loopback, plus a non-loopback backend address nginx connects to it at.
+    opt = re.search(r"forwardedAllowIps = lib.mkOption \{(.*?)\n    \};", nix, re.S).group(1)
+    assert 'default = [ "127.0.0.1" "::1" ]' in opt and "cfg.listenAddress" in opt
+    assert "cfg.forwardedAllowIps;" in nix.split("assertions = [", 1)[1]

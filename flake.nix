@@ -114,6 +114,8 @@
                   # A root-only hook token, the same way (re-index hooks).
                   "f /etc/qc-hook-token 0400 root root - hook-test-token"
                 ];
+                # machine calls the backend directly (who-is-asking: not believed).
+                networking.firewall.allowedTCPPorts = [ 8000 ];
                 services.quipclipper-web = {
                   enable = true;
                   mediaRoots = [ "/srv/media" ];
@@ -214,11 +216,17 @@
                 # listing and approving stay behind it, and the client token it collects
                 # then passes the gate on its own (nginx asks the backend about it).
                 import json
+                # It also claims to be someone else: nginx (no trusted proxy in front) sets
+                # X-Real-IP itself and blanks Tailscale-User-*, so the banner names the caller.
                 ask = machine.succeed(
                     "curl -fsS -H 'X-Quipclipper: 1' -H 'Content-Type: application/json'"
+                    " -H 'X-Real-IP: 203.0.113.9' -H 'Tailscale-User-Login: mallory@example.com'"
                     " -d '{\"name\": \"LeadStinger\", \"host\": \"vm\"}'"
                     " http://localhost/api/pair")
                 pair = json.loads(ask)
+                (asked,) = json.loads(machine.succeed(
+                    "curl -fsS -u quip:test123 -H 'X-Quipclipper: 1' http://localhost/api/pair"))["requests"]
+                assert (asked["address"], asked["user"]) == ("127.0.0.1", ""), asked
                 poll = f"curl -fsS -H 'X-Pair-Secret: {pair['poll_secret']}' http://localhost/api/pair/{pair['id']}"
                 machine.succeed(f"{poll} -o /tmp/poll.json")
                 machine.succeed("grep -q pending /tmp/poll.json")
@@ -238,6 +246,15 @@
                 backendonly.wait_for_open_port(8000)
                 backendonly.fail("systemctl is-active nginx.service")
                 backendonly.fail("curl -fsS http://localhost:80/")
+                # A caller reaching the backend directly (not its nginx: not loopback) names
+                # nobody, whatever it sends.
+                machine.succeed(
+                    "curl -fsS -H 'X-Quipclipper: 1' -H 'Content-Type: application/json'"
+                    " -H 'X-Real-IP: 203.0.113.9' -H 'Tailscale-User-Login: mallory@example.com'"
+                    " -d '{\"name\": \"Direct\"}' http://backendonly:8000/api/pair")
+                (direct,) = json.loads(backendonly.succeed(
+                    "curl -fsS -H 'X-Quipclipper: 1' http://localhost:8000/api/pair"))["requests"]
+                assert direct["address"] not in ("203.0.113.9", "127.0.0.1") and not direct["user"], direct
                 backendonly.succeed("curl -fsS http://localhost:8000/api/health -o /tmp/h.json")
                 backendonly.succeed("grep -q ok /tmp/h.json")
                 # Jellyfin: the root-only key reached the service (Now playing is on);

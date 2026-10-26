@@ -492,9 +492,15 @@ throw them out. Times are UTC ISO 8601 with `Z`.
     them and its peer is the caller. It sends the result as `X-Real-IP`.
   - **The backend** believes `X-Real-IP` and `Tailscale-User-*` only from a peer in
     `QC_FORWARDED_ALLOW_IPS` (default `127.0.0.1,::1`, where the NixOS module's nginx connects
-    from; the Docker app image sets the private ranges, where the web container connects
-    from), or from any peer once the `QC_PROXY_SECRET` check passed. From anyone else the
-    connection's own address is the caller.
+    from; the module's `forwardedAllowIps` adds a non-loopback `listenAddress`; the Docker app
+    image sets the private ranges, where the web container connects from; empty believes no
+    one), or from any peer once the `QC_PROXY_SECRET` check passed. From anyone else the
+    connection's own address is the caller. An IPv4 peer written IPv4-mapped (`::ffff:…`)
+    counts as its IPv4 address. Names lose control and format characters and are cut at 200
+    characters.
+  - A front of your own in place of the bundled nginx must do the same on every route to
+    `/api/pair`: set `X-Real-IP` to the caller and set (or blank) `Tailscale-User-Login` and
+    `-Name`, or a caller's own headers pass through it.
 - **Polling:** every 2 s, with `X-Pair-Secret: <poll_secret>`. An unknown id and a wrong or
   missing secret both answer `404`, so a poll reveals nothing. `approved` hands out the
   token once and the request is gone after that (a later poll is `404`); `denied` and
