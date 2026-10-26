@@ -156,11 +156,91 @@ function loadHlsLib() {
 }
 
 function destroyHls() {
+  cancelHeldSeek();
   if (hls) {
     try { hls.destroy(); } catch { /* already gone */ }
     hls = null;
   }
 }
+
+// --- Seeks past a growing transcode (M20) ---
+// An HLS transcode segments the file from its start, faster than real time, into a
+// playlist that grows until ffmpeg finishes. Until then the element knows only the part
+// segmented so far and clamps a seek past it to the playlist's end: a line at 36:17 played
+// from 22:05, a link's t=1800 from 0:10. Such a seek is held instead (paused, with a note)
+// and made once the playlist reaches it.
+let heldSeek = null;  // { t, play, item, timer } while a seek waits for the transcode
+
+/** The end of what the element can seek to now (0 before it has a playlist). */
+function seekableEnd(player) {
+  const s = player.seekable;
+  return s.length ? s.end(s.length - 1) : 0;
+}
+
+/** True when `t` lies past what a still-growing transcode has segmented so far (`edge`,
+ *  the element's seekable end). A finished playlist holds nothing back. */
+function beyondTranscodeEdge(t, edge, growing) {
+  return growing && t > edge + 0.5;
+}
+
+/** Is the element playing an HLS playlist (hls.js, or Safari's own)? */
+function isHlsSource(player) {
+  return !!hls || player.src.includes("/api/media/hls");
+}
+
+/** Is the playlist still growing? hls.js knows (a playlist without EXT-X-ENDLIST is
+ *  "live"; before its first load, assume so). Safari's own player doesn't say: there, a
+ *  playlist short of the probed duration by more than a segment is still growing. */
+function transcodeGrowing(player) {
+  if (hls) return hls.latestLevelDetails ? hls.latestLevelDetails.live : true;
+  return currentDuration > 0 && seekableEnd(player) < currentDuration - HLS_SEGMENT_SLACK;
+}
+const HLS_SEGMENT_SLACK = 15;  // a long segment (EXT-X-TARGETDURATION; -hls_time is 6)
+
+/** Seek the element to `t` (and play, if asked), or hold the seek while a transcode
+ *  hasn't segmented that far yet. */
+function seekPlayer(t, play) {
+  const player = $("player");
+  cancelHeldSeek();
+  if (isHlsSource(player) && beyondTranscodeEdge(t, seekableEnd(player), transcodeGrowing(player))) {
+    holdSeek(t, play);
+    return;
+  }
+  player.currentTime = t;
+  if (play) player.play().catch(() => {});
+}
+
+function holdSeek(t, play) {
+  const player = $("player");
+  player.pause();
+  const held = heldSeek = { t, play, item: currentItem, timer: null };
+  const tick = () => {
+    if (heldSeek !== held) return;
+    if (currentItem !== held.item) { cancelHeldSeek(); return; }
+    const edge = seekableEnd(player);
+    if (!beyondTranscodeEdge(t, edge, transcodeGrowing(player))) {
+      cancelHeldSeek();
+      seekPlayer(t, play);
+      return;
+    }
+    $("preview-note").textContent =
+      `⏳ Transcoding the audio — this jumps to ${formatTime(t)} once it gets there ` +
+      `(ready up to ${formatTime(edge)}).`;
+  };
+  held.timer = setInterval(tick, 1000);
+  tick();
+}
+
+/** Drop a held seek: a new seek, another item or source, the user pressing play. */
+function cancelHeldSeek() {
+  if (!heldSeek) return;
+  clearInterval(heldSeek.timer);
+  heldSeek = null;
+  $("preview-note").textContent = "";
+}
+// Play pressed while a seek waits plays from where the player is. (Not its seeks: hls.js
+// moves the element itself, to its start position, and that mustn't drop the hold.)
+$("player").addEventListener("play", () => heldSeek && cancelHeldSeek());
 
 let currentView = "browser";  // browser | item | clips | bookmarks
 const NAV_FOR_VIEW = { browser: "library-link", item: "library-link", clips: "clips-link", bookmarks: "bookmarks-link" };
@@ -2007,6 +2087,9 @@ function seekTo(seconds) {
   if (transcodeOffset > 0 || player.src.includes("/api/media/transcode")) {
     // For transcoded streams, request a new segment from the server
     player.dispatchEvent(new CustomEvent("transcode-seek", { detail: seconds }));
+  } else if (isHlsSource(player)) {
+    seekPlayer(seconds, true);  // held while the transcode hasn't got that far
+    return;
   } else {
     player.currentTime = seconds;
     // Before the element has metadata (an HLS stream still attaching, a cold transcode) the
@@ -2015,8 +2098,7 @@ function seekTo(seconds) {
       const item = currentItem;
       player.addEventListener("loadedmetadata", () => {
         if (currentItem !== item) return;
-        player.currentTime = seconds;
-        player.play().catch(() => {});
+        seekPlayer(seconds, true);
       }, { once: true });
     }
   }
@@ -2320,8 +2402,8 @@ async function openItem(path, name, opts) {
    *  Falls back to the transcode pipe if hls.js is needed but unavailable. */
   function startHls(url, at, autoplay) {
     const applySeek = () => {
-      if (at) player.currentTime = at;
-      if (autoplay) player.play().catch(() => {});
+      if (at) seekPlayer(at, autoplay);
+      else if (autoplay) player.play().catch(() => {});
     };
     destroyHls();
     // hls.js first, native second — see hlsNative() for why the reverse order
@@ -2403,8 +2485,8 @@ async function openItem(path, name, opts) {
     if (isTranscoding) {
       loadTranscode(t, autoplay);
     } else {
-      player.currentTime = t;
-      if (autoplay) player.play().catch(() => {}); else player.pause();
+      seekPlayer(t, autoplay);
+      if (!autoplay) player.pause();
     }
   }
 
@@ -2655,9 +2737,7 @@ async function openItem(path, name, opts) {
   autoScope();
   if (searchQuery) doSearch(searchQuery, { focus: false });  // the hit's own cue is already selected
   if (seekTarget != null && !needsTranscode) {
-    player.addEventListener("loadedmetadata", () => {
-      player.currentTime = seekTarget;
-    }, { once: true, signal });
+    player.addEventListener("loadedmetadata", () => seekPlayer(seekTarget, false), { once: true, signal });
   }
 
   // When opening a clip from the clips library, pre-select the whole file

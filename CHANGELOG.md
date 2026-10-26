@@ -11,6 +11,15 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 
 ## [Unreleased]
 
+### Fixed
+
+- A seek into a file whose audio the browser can't play (DTS, TrueHD) while its transcode
+  is still running lands where it was asked: the transcode segments the file from the start,
+  and a line, a waveform click or a link's `t=` past what it had reached played from that
+  point instead (a line at 36:17 from 22:05, `t=1800` from 0:10). Such a seek now waits,
+  paused, with a note saying how far the transcode has got, and jumps there once it arrives;
+  pressing play meanwhile plays from where the player is.
+
 ## [0.5.0] - 2026-10-26
 
 ### Play at the line on Jellyfin (M22)
