@@ -261,6 +261,8 @@ def _sample_per_folder(client: JellyfinClient, lib_id: str, locations: list[str]
     read a page at a time until each folder has its samples (or ``DERIVE_SCAN_MAX`` files
     were read): the first few files alone can all come from one folder."""
     found: dict[str, list[str]] = {loc: [] for loc in locations}
+    # One folder: its first few files are its samples, unless they don't sit below it
+    # (a folder Jellyfin spells differently); then, as for several, a page at a time.
     page = samples if len(locations) == 1 else DERIVE_PAGE
     start = 0
     while start < DERIVE_SCAN_MAX:
@@ -272,6 +274,7 @@ def _sample_per_folder(client: JellyfinClient, lib_id: str, locations: list[str]
         if len(paths) < page or all(len(v) >= samples for v in found.values()):
             break
         start += page
+        page = DERIVE_PAGE
     return found
 
 
