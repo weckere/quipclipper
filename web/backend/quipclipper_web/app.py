@@ -546,7 +546,7 @@ _PAIR_ROUTE = re.compile(r"^/api/pair(?:/|$)")
 _CLIENT_REVOKED = {"detail": "This client token isn't valid: the app was disconnected "
                              "(revoked) here, or never paired. Pair it again."}
 def _out_of_scope(client: dict) -> dict:
-    can = ", ".join(pairing.SCOPES[s][0] for s in client.get("scopes") or [] if s in pairing.SCOPES)
+    can = " and ".join(pairing.SCOPES[s][0] for s in client.get("scopes") or [] if s in pairing.SCOPES)
     return {"detail": f"{client.get('name') or 'This app'}'s token may only "
                       f"{can or 'check itself'} here (scopes: "
                       f"{', '.join(client.get('scopes') or []) or 'none'})."}
