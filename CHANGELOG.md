@@ -16,8 +16,9 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 - **Play on…** starts a line found in quipclipper on a Jellyfin client: on a search hit, a
   match in the workspace's Matches tab, or the workspace selection, it lists the clients
   that can be controlled (Jellyfin in a browser, the Jellyfin Android TV app) and plays the
-  file there from a second before the line; a client already on that file seeks. Infuse is
-  listed as "can't be controlled" (it takes no remote control). API `POST
+  file there from a second before the line; a client already on that file seeks. Infuse
+  (no remote control) and Wholphin (ignores the command) are listed as "can't be
+  controlled". API `POST
   /api/jellyfin/play` and `GET /api/jellyfin/sessions?all=1` (every client, with
   `can_play`); CLI `jellyfin.play` and `nowplaying --all`.
 

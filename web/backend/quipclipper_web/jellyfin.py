@@ -205,13 +205,24 @@ def media_type(item_type: Any) -> str:
     return "Audio" if item_type in ("Audio", "AudioBook") else "Video"
 
 
+# Clients that say they take remote control but don't start what they're told to play,
+# by Jellyfin's ``Client`` name (checked on wizrock, 2026-10-26). Nothing in what they
+# report tells them apart, so they're named here.
+IGNORES_PLAY = {
+    "Wholphin": "Wholphin takes the command but doesn't play it (seen with 1.0.9).",
+}
+
+
 def control(s: dict) -> tuple[bool, str | None]:
     """Whether a client takes "play this" from quipclipper (M22), and if not, why.
 
     A client says so itself: ``SupportsRemoteControl`` (its socket to Jellyfin is open and
-    it obeys commands) and the media it can be told to play. Infuse reports neither."""
+    it obeys commands) and the media it can be told to play. Infuse reports neither;
+    Wholphin reports both and ignores the command (``IGNORES_PLAY``)."""
     if not s.get("SupportsRemoteControl"):
         return False, "This app doesn't take remote control from Jellyfin."
+    if s.get("Client") in IGNORES_PLAY:
+        return False, IGNORES_PLAY[s["Client"]]
     if not {"Video", "Audio"} & set(s.get("PlayableMediaTypes") or []):
         return False, "This app can't be told to play anything."
     return True, None
@@ -255,7 +266,8 @@ def now_playing(
                 continue
         item = s.get("NowPlayingItem")
         if not isinstance(item, dict):
-            if include_idle:
+            # No user: an API key's session (another app asking Jellyfin), not a player.
+            if include_idle and s.get("UserName"):
                 idle.append({**_session_fields(s), "idle": True})
             continue
         play = s.get("PlayState") or {}

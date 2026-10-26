@@ -1172,10 +1172,10 @@ footer { padding: 2rem 1.25rem; font-size: 0.8rem; }
 .settings-popover { width: min(24rem, calc(100vw - 2rem)); }
 /* Play on… (M22): placed by app.js beside the button that opened it. */
 .play-on-pop { position: fixed; top: 0; right: auto; left: 0; width: min(22rem, calc(100vw - 2rem)); }
-.play-on-row { display: flex; align-items: center; gap: 0.6rem; padding: 0.55rem 1rem; }
+.play-on-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 0.6rem; padding: 0.55rem 1rem; }
 .play-on-row + .play-on-row { border-top: 1px solid var(--line); }
-.play-on-row .btn { flex-shrink: 0; }
-.play-on-what { min-width: 0; font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.play-on-row .btn { max-width: 100%; text-align: left; overflow-wrap: anywhere; }
+.play-on-what { min-width: 0; font-size: 0.8rem; overflow-wrap: anywhere; }
 .play-on-cant { margin: 0; padding: 0 1rem 0.8rem; font-size: 0.8rem; }
 .settings-saved { font-size: 0.8rem; }
 .settings-body { padding: 0.9rem 1rem 1rem; }

@@ -562,10 +562,14 @@ ones, most recently active first. It reaches back a day for clients that can be 
 (a TV app parked on its home screen keeps its connection open for hours) and the usual
 10 minutes for the rest, so an Infuse session from this morning isn't listed.
 
-| Client | `can_play` |
+| Client (checked on wizrock, 2026-10-26) | `can_play` |
 |---|---|
-| Jellyfin Web (a browser), the Jellyfin Android and Android TV apps | yes |
-| Infuse (Apple TV, iOS) | no: it reports no remote control, so nothing can start a line on it |
+| Jellyfin Web 12.2 (a browser) | yes: plays from `at`, and seeks when already on the file |
+| Jellyfin Android TV 0.19 (the Sony) | yes |
+| Wholphin 1.0.9 (the Sony) | no: it reports remote control (commands `DisplayMessage`, `SendString` only) but ignores PlayNow, so it is named as one that can't |
+| Infuse 8.5 (Apple TV) | no: it reports no remote control and no commands |
+
+Sessions with no user (another app's API key talking to Jellyfin) are left out.
 
 **`POST /api/jellyfin/play`** `{"session": "5f2…", "path": "/srv/shows/…/S03E26.mkv",
 "at": 1233.5}` starts the file on that client `at` seconds in (Jellyfin's `PlayNow` with

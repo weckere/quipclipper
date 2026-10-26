@@ -1109,7 +1109,9 @@ than a second; with nothing selected, from the playhead.
 
 | Client | Play on… |
 |---|---|
-| Jellyfin in a browser (Jellyfin Web), the Jellyfin Android TV and Android apps | works |
+| Jellyfin in a browser (Jellyfin Web) | works; a second Play on… for the same file jumps there |
+| The Jellyfin Android TV app | works |
+| Wholphin | can't: it accepts the command and ignores it (Wholphin 1.0.9) |
 | Infuse (Apple TV, iPhone, iPad) | can't: Infuse doesn't take remote control from Jellyfin |
 
 A TV app has to be open (on its home screen is enough) to be listed. The client plays the

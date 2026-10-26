@@ -987,3 +987,20 @@ def test_cli_play_prints_what_it_did(fake, known, tmp_path, monkeypatch, capsys)
     assert out[0] == "Playing The Best of Both Worlds on BRAVIA (Android TV) at 1:02"
     assert out[1] == "Seeked X on Firefox (Jellyfin Web) at 1:01:40"
     assert out[2].startswith("infuse  Apple TV (Infuse-Library, wiz)  idle, can't be controlled")
+
+
+def test_wholphin_and_api_key_sessions(fake, tmp_path, known):
+    """Wholphin says it takes remote control but ignores PlayNow (wizrock, 2026-10-26), so
+    it is listed as one that can't; an API key's session (no user) isn't a client at all."""
+    root, ep = known
+    fake.sessions = [
+        _client_session("wh", "SONY XR-65X90CK", "Wholphin", media=("Video",),
+                        SupportedCommands=["DisplayMessage", "SendString"]),
+        _client_session("hermes", "Jellyfin Server", "Hermes", remote=False, media=(),
+                        UserName=None),
+    ]
+    c = _playing(_client(_env(fake, tmp_path, root)))
+    (wh,) = c.get("/api/jellyfin/sessions", params={"all": "1"}).json()["sessions"]
+    assert wh["id"] == "wh" and wh["can_play"] is False and "Wholphin" in wh["control_note"]
+    r = c.post("/api/jellyfin/play", json={"session": "wh", "path": str(ep)})
+    assert r.status_code == 409 and fake.commands == []
