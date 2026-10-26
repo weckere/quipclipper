@@ -4010,11 +4010,6 @@ const WF_DEFAULT_FPS = 25;    // the Alt-nudge frame when the source has no vide
 const WF_DRAG_PX = 4;         // px a press moves before it is a drag, not a click
 const WF_HOLD_MS = 450;       // a touch held this long without moving drags out a selection
 const WF_POINT_SPAN = 2;      // s: I or O with nothing selected selects this much from the playhead
-const WF_MAX_BINS = 8192;     // the most bins one peaks request carries
-const WF_KEYFRAME_SPAN = 60;  // s: windows this short or shorter list their keyframes
-const WF_FOLLOW_MIN_SPAN = 0.5;  // s: closer than this, Follow playback turns pages instead of scrolling
-const WF_FOLLOW_KEY = "qc_wf_follow";
-const wfReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
 const wf = {
   path: null, audio: 0, dur: 0, fps: 0, hasVideo: false,
@@ -4034,10 +4029,6 @@ const wf = {
   auditionEnd: null, auditionTimer: null,
   cue: -1,           // the line the cue lane's keyboard focus is on (an index into scriptCues)
   hover: -1,         // the line whose label the pointer is over
-  gliding: false,    // the view scrolls with playback this frame (Follow playback)
-  held: false,       // your own move on the strip paused Follow playback, until the next play
-  lead: null,        // [start, end] of the window a fetch ahead is bringing while following
-  wasPlaying: false,
 };
 let clipTargetOn = false;  // showClipTarget's state: a range is ready to clip
 
@@ -4088,17 +4079,6 @@ function wfCancel() {
   wf.req++;
   if (wf.abort) wf.abort.abort();
   wf.abort = null;
-  wf.lead = null;
-}
-
-/** Load the view's peaks once a quick run of changes has settled (`ms` after the last).
- *  While the view follows playback, the load reaches ahead of it (wfFollowFetch). */
-function wfLoadSoon(ms) {
-  clearTimeout(wf.loadTimer);
-  wf.loadTimer = setTimeout(() => {
-    wf.loadTimer = 0;
-    if (wf.gliding) wfFollowFetch(); else wfLoad();
-  }, ms);
 }
 
 function wfHide() {
@@ -4111,7 +4091,6 @@ function wfHide() {
   wf.drag = null;
   $("wf-stage").classList.remove("wf-holding", "wf-panning");
   clearTimeout(wf.loadTimer);
-  wf.loadTimer = 0;
   clearTimeout(wf.pollTimer);
   cancelAnimationFrame(wf.raf);
   wf.raf = 0;
@@ -4132,13 +4111,12 @@ function wfReset(path, info, primaryVideo) {
     path, dur, view: [0, dur], data: null, base: null, filePeak: 0, keyframes: null, failed: false,
     audio: getSelectedAudio() ?? 0, hasVideo: !!primaryVideo,
     fps: (primaryVideo && primaryVideo.frame_rate) || 0, lastHead: null, cue: -1, hover: -1,
-    gliding: false, held: false, wasPlaying: false,
   });
   $("waveform").hidden = false;
   wfNote("");
   wfCutNote();
   wfViewChanged();
-  setTimeout(() => wfLoad(), 0);  // after openItem fills the stream selector (the audio stream)
+  setTimeout(wfLoad, 0);  // after openItem fills the stream selector (the audio stream)
   wf.raf = requestAnimationFrame(wfTick);
 }
 
@@ -4153,7 +4131,8 @@ function wfSetView(a, b) {
   wfCancel();
   wf.failed = false;
   wfViewChanged();
-  wfLoadSoon(120);
+  clearTimeout(wf.loadTimer);
+  wf.loadTimer = setTimeout(wfLoad, 120);
 }
 
 function wfViewChanged() {
@@ -4221,22 +4200,19 @@ function b64ToInt16(s) {
 /** How many bins to ask for across `span` seconds. Under ~170 ms, every sample (the server
  *  sends raw samples when they fit in the bins). */
 function wfBins(span) {
-  return span <= 0.17 ? WF_MAX_BINS
-    : Math.max(16, Math.min(WF_MAX_BINS, Math.round(wfWidth() * Math.min(2, window.devicePixelRatio || 1))));
+  return span <= 0.17 ? 8192
+    : Math.max(16, Math.min(8192, Math.round(wfWidth() * Math.min(2, window.devicePixelRatio || 1))));
 }
 
-/** Fetch the view's peaks, or with `lead` ({start, end, bins}) a window reaching ahead of
- *  it while it follows playback. */
-async function wfLoad(lead) {
+async function wfLoad() {
   clearTimeout(wf.pollTimer);
   if (!wf.path) return;
   const audio = getSelectedAudio() ?? 0;
   if (audio !== wf.audio) Object.assign(wf, { audio, base: null, data: null, filePeak: 0 });
-  const [a, b] = lead ? [lead.start, lead.end] : wf.view;
-  const bins = lead ? lead.bins : wfBins(b - a);
-  const kf = wf.hasVideo && b - a <= WF_KEYFRAME_SPAN;
+  const [a, b] = wf.view;
+  const bins = wfBins(b - a);
+  const kf = wf.hasVideo && b - a <= 60;
   wfCancel();
-  if (lead) wf.lead = [a, b];
   const req = wf.req;
   const ctl = wf.abort = new AbortController();
   wf.failed = false;
@@ -4265,11 +4241,10 @@ async function wfLoad(lead) {
     wfNote(failed ? `The waveform overview failed: ${ov.error || "ffmpeg error"}.`
       : `Building the waveform overview… ${Math.round((ov.progress || 0) * 100)}% ` +
         "(zoom in under 2 minutes to see the audio now).", !failed);
-    if (!failed) wf.pollTimer = setTimeout(() => wfLoad(lead), 1500);
+    if (!failed) wf.pollTimer = setTimeout(wfLoad, 1500);
     wfDraw();
     return;
   }
-  wf.lead = null;
   const building = ov.state === "queued" || ov.state === "building";
   wfNote(building ? `Building the waveform overview… ${Math.round((ov.progress || 0) * 100)}%` : "",
     building);
@@ -4339,15 +4314,12 @@ function wfColors() {
 /** Within a pixel of the view's edges (the server echoes them rounded, the file's end clamped). */
 const wfNear = (x, y) => Math.abs(x - y) <= Math.max(1e-5, wfSpan() / wfWidth());
 
-/** Is response `d` sharp enough to draw at this zoom? While the view scrolls with playback,
- *  a bin per CSS pixel is (a fetch ahead covers several views, so its bins can be wider). */
+/** Is response `d` sharp enough to draw at this zoom? */
 function wfSharp(d) {
   if (!d) return false;
   const [a, b] = wf.view;
   if (d.kind === "samples" || (wfNear(d.start, a) && wfNear(d.end, b))) return true;
-  let bin = (b - a) / wfBins(b - a);
-  if (wf.gliding) bin = Math.max(bin, (b - a) / wfWidth());
-  return (d.end - d.start) / (d.values.length >> 1) <= bin * 1.1;
+  return (d.end - d.start) / (d.values.length >> 1) <= ((b - a) / wfBins(b - a)) * 1.1;
 }
 
 /** What to draw: {src, full}. `src` is the sharp response that covers the view (`full`), else
@@ -4576,90 +4548,25 @@ function wfPlaceHead(force) {
   head.style.left = `${x}px`;
 }
 
-/** Each frame: move the playhead, and keep the view with it while playing. With Follow
- *  playback on, the view scrolls so the playhead stays in the middle (a page at a time under
- *  reduced motion, or zoomed closer than WF_FOLLOW_MIN_SPAN). Otherwise, or once your own
- *  move on the strip has paused following, the view turns a page when the playhead runs
- *  off its right edge. */
+/** The Playhead button (and P): centre the view on the playhead at this zoom. */
+function wfGoToHead() {
+  if (!wf.path) return;
+  const t = Math.max(0, Math.min(wf.dur, playerTime())), span = wfSpan();
+  wfSetView(t - span / 2, t + span / 2);
+}
+
+/** Each frame: move the playhead, and page the view along while playing. */
 function wfTick() {
   if (!wf.path) return;
   wf.raf = requestAnimationFrame(wfTick);
   if (document.hidden || $("waveform").hidden) return;
   const t = playerTime();
   const playing = ytEmbed ? ytEmbedPlaying() : !$("player").paused;
-  // A play picks following up again (not an audition: that plays what you are working on).
-  if (playing && !wf.wasPlaying && wf.auditionEnd == null) wf.held = false;
-  wf.wasPlaying = playing;
   const [a, b] = wf.view;
-  const span = b - a;
-  const follow = playing && !wf.drag && !wf.held && $("wf-follow").checked;
-  const glide = follow && !wfReducedMotion.matches && span >= WF_FOLLOW_MIN_SPAN;
-  if (wf.gliding && !glide) {
-    // Stopped scrolling: the sound fetched ahead may be coarser than a still view asks for.
-    wf.gliding = false;
-    if (!wfSource().full) wfLoadSoon(120);
-  }
-  wf.gliding = glide;
-  if (glide) {
-    wfGlide(t - span / 2);
-  } else if (follow && (t < a || (t > b && b < wf.dur - 1e-6))) {
-    wfSetView(t, t + span);  // a page at a time, from the playhead
-  } else if (playing && !wf.drag && wf.lastHead != null && wf.lastHead <= b && t > b && t < b + span) {
-    wfSetView(b, b + span);  // the playhead ran off the right edge: next page
+  if (playing && !wf.drag && wf.lastHead != null && wf.lastHead <= b && t > b && t < b + (b - a)) {
+    wfSetView(b, b + (b - a));  // the playhead ran off the right edge: next page
   }
   wfPlaceHead(false);
-}
-
-/** Move the view to start at `a` (same zoom) as it scrolls with playback: unlike wfSetView,
- *  the fetch ahead keeps going, so the wave stays drawn while it moves. */
-function wfGlide(a) {
-  const span = wfSpan();
-  a = Math.max(0, Math.min(wf.dur - span, a));
-  if (Math.abs(a - wf.view[0]) >= span / wfWidth() / 8) {  // an eighth of a pixel or more
-    wf.view = [a, a + span];
-    wfViewChanged();
-  }
-  wfFollowFetch();
-}
-
-/** How many views one fetch ahead covers while following: as many as fit in a request at a
- *  bin per CSS pixel (2–4), and on video no more than the keyframes are listed for. */
-function wfLeadSpans(span) {
-  let n = Math.floor(WF_MAX_BINS / wfWidth());
-  if (wf.hasVideo && span <= WF_KEYFRAME_SPAN) n = Math.min(n, Math.floor(WF_KEYFRAME_SPAN / span));
-  return Math.max(2, Math.min(4, n));
-}
-
-/** While following: before the view runs out of sound, fetch a window reaching a few views
- *  ahead of it. Not while a quick run of zooms settles (wfLoadSoon fetches after the last),
- *  and not again after a failure until the view is set anew. */
-function wfFollowFetch() {
-  if (!wf.path || wf.loadTimer || wf.failed) return;
-  const [a, b] = wf.view, span = b - a;
-  const n = wfLeadSpans(span);
-  // Enough on hand: from the view's start to half the lead past its end (or the file's end).
-  const need = Math.min(wf.dur, b + (span * (n - 1)) / 2);
-  const has = (s, e) => s <= a + 1e-6 && e >= need - 0.05;
-  const d = wf.data;
-  if (d && wfSharp(d) && has(d.start, d.end)) return;
-  if (wf.lead && has(wf.lead[0], wf.lead[1])) return;  // on its way
-  const end = Math.min(wf.dur, a + span * n);
-  wfLoad({ start: a, end, bins: Math.min(WF_MAX_BINS, Math.round((wfBins(span) * (end - a)) / span)) });
-}
-
-/** The Playhead button (and P): centre the view on the playhead at this zoom, and pick
- *  Follow playback up again if your own move paused it. */
-function wfGoToHead() {
-  if (!wf.path) return;
-  wf.held = false;
-  const t = Math.max(0, Math.min(wf.dur, playerTime())), span = wfSpan();
-  wfSetView(t - span / 2, t + span / 2);
-}
-
-/** Your own move on the strip (a pan, a handle, a drag-select, a jump): it wins over Follow
- *  playback until the next play or a press of the Playhead button. */
-function wfHold() {
-  wf.held = true;  // the next frame stops the scroll (and reloads the view if it must)
 }
 
 // --- moving the handles --------------------------------------------------------------------
@@ -4761,7 +4668,6 @@ function wfHandleKey(e, k) {
   const d = { ArrowRight: step, ArrowUp: step, ArrowLeft: -step, ArrowDown: -step, PageUp: 1, PageDown: -1 }[e.key];
   if (d === undefined) return;
   e.preventDefault();
-  wfHold();
   wf.snapSeq++;  // a drag's snap still on its way would undo this nudge
   wfMoveHandle(k, sel[k] + d);
   wfReveal(wfSel()[k]);
@@ -4783,7 +4689,6 @@ function wfReveal(t) {
 function wfJumpTo(k) {
   const sel = wfSel();
   if (!sel) return;
-  wfHold();
   wfReveal(sel[k]);
   $(k === 0 ? "wf-in" : "wf-out").focus();
 }
@@ -4942,7 +4847,6 @@ function wfFocusCue(i, say) {
   wf.cue = i;
   const [a, b] = wf.view, span = b - a;
   if (cue.start < a || cue.end > b) {
-    wfHold();
     if (cue.end - cue.start < span * 0.8) {
       const m = (cue.start + cue.end) / 2;
       wfSetView(m - span / 2, m + span / 2);
@@ -5028,17 +4932,10 @@ $("wf-play-out").onclick = () => { const s = wfSel(); if (s) wfAudition(Math.max
 
 $("wf-zoom-in").onclick = () => wfZoom(WF_ZOOM_STEP);
 $("wf-zoom-out").onclick = () => wfZoom(1 / WF_ZOOM_STEP);
-$("wf-zoom-sel").onclick = () => { if (!wfSel()) { wfSetView(0, wf.dur); return; } wfHold(); wfFollowSelection(); };
-$("wf-go-head").onclick = wfGoToHead;
+$("wf-zoom-sel").onclick = () => (wfSel() ? wfFollowSelection() : wfSetView(0, wf.dur));
 $("wf-zoom-all").onclick = () => wfSetView(0, wf.dur);
+$("wf-go-head").onclick = wfGoToHead;
 ["wf-snap-zero", "wf-snap-silence", "wf-snap-cue"].forEach((id) => $(id).addEventListener("change", wfDraw));
-// Follow playback is remembered in this browser, like the theme. Turning it on picks it up
-// again after your own move paused it.
-$("wf-follow").checked = readPref(WF_FOLLOW_KEY) === "1";
-$("wf-follow").addEventListener("change", (e) => {
-  writePref(WF_FOLLOW_KEY, e.target.checked ? "1" : null);
-  if (e.target.checked) wf.held = false;
-});
 ["clip-exact", "clip-format", "clip-audio-only"].forEach((id) => $(id).addEventListener("change", wfCutNote));
 $("ss-audio").addEventListener("change", () => { wf.base = null; wfLoad(); });
 
@@ -5051,7 +4948,6 @@ $("wf-stage").addEventListener("wheel", (e) => {
   } else {
     const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
     const dt = (d / wfWidth()) * wfSpan();
-    wfHold();
     wfSetView(wf.view[0] + dt, wf.view[1] + dt);
   }
 }, { passive: false });
@@ -5077,7 +4973,6 @@ $("wf-stage").addEventListener("pointerdown", (e) => {
     e.preventDefault();
     const k = handle.id === "wf-in" ? 0 : 1;
     handle.focus();
-    wfHold();
     if (pb) pb.pause();
     wf.snapSeq++;  // a pending snap must not move the handle out from under the drag
     wf.drag = { kind: "handle", k, grab: wfX(wfSel()[k]) - wfPointerX(e) };
@@ -5127,7 +5022,6 @@ $("wf-stage").addEventListener("pointermove", (e) => {
     if (Math.abs(dx) > WF_DRAG_PX) d.moved = true;
     if (!d.moved) return;
     clearTimeout(d.hold);
-    wfHold();
     $("wf-stage").classList.add("wf-panning");
     if (wf.hover >= 0) wfHover(-1);
     const dt = (-dx / wfWidth()) * (d.view[1] - d.view[0]);
@@ -5137,7 +5031,6 @@ $("wf-stage").addEventListener("pointermove", (e) => {
     if (!d.moved && Math.abs(x - d.x) <= WF_DRAG_PX) return;
     if (!d.moved) {
       d.moved = true;
-      wfHold();
       if (wf.hover >= 0) wfHover(-1);  // a drag from a label selects across, not the line
       d.t = wfCueSnap(d.t);
       if (pb) pb.pause();
@@ -5193,7 +5086,7 @@ document.addEventListener("keydown", (e) => {
   act();
 });
 
-new ResizeObserver(() => { if (wf.path) { wfDraw(); wfLoadSoon(200); } })
+new ResizeObserver(() => { if (wf.path) { wfDraw(); clearTimeout(wf.loadTimer); wf.loadTimer = setTimeout(wfLoad, 200); } })
   .observe($("wf-stage"));
 // Redraw in the other theme's colours.
 window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", wfDraw);

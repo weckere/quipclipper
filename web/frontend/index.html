@@ -364,14 +364,13 @@
                  in and out handles, the subtitle lines as spans, the playhead and keyframes. -->
             <div id="waveform" class="waveform" hidden>
               <div class="wf-toolbar">
-                <div class="wf-group" role="group" aria-label="Waveform view">
+                <div class="wf-group" role="group" aria-label="Waveform zoom">
                   <button type="button" id="wf-zoom-out" data-action="item.peaks" class="wf-btn" title="Zoom out (-)" aria-label="Zoom out"><span aria-hidden="true">−</span></button>
                   <button type="button" id="wf-zoom-in" data-action="item.peaks" class="wf-btn" title="Zoom in (+), down to 20 ms across; Ctrl/⌘-scroll or pinch zooms at the pointer" aria-label="Zoom in"><span aria-hidden="true">+</span></button>
                   <button type="button" id="wf-zoom-sel" class="wf-btn" title="Fit the selection in the strip">Fit selection</button>
                   <button type="button" id="wf-zoom-all" class="wf-btn" title="Show the whole file">Whole</button>
                   <button type="button" id="wf-go-head" class="wf-btn" title="Bring the playhead into view, in the middle, at this zoom (P)" aria-keyshortcuts="P">Playhead</button>
                   <span id="wf-span" class="wf-span"></span>
-                  <label class="checkbox-label" title="While playing, scroll the waveform so the playhead stays in the middle (a page at a time with reduced motion). A pan, a handle or a drag on the waveform pauses it until the next play or Playhead (P)."><input id="wf-follow" class="switch" type="checkbox" aria-label="Follow playback on the waveform" /> Follow playback</label>
                 </div>
                 <div class="wf-group" role="group" aria-label="Snap the handles">
                   <span class="wf-label">Snap</span>

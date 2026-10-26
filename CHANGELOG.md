@@ -38,17 +38,10 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   the library's folder there. An explicit map still wins. `/api/jellyfin/lookup`'s `index`
   says which map is in use (`path_map`).
 
-### Waveform follows playback (M20)
+### Waveform Playhead button (M20)
 
 - **Playhead** (or **P**) on the waveform brings the playhead into view, in the middle, at
-  the current zoom.
-- **Follow playback**, a switch beside it, scrolls the waveform while it plays so the
-  playhead stays in the middle, at the current zoom; the sound ahead is fetched a few views
-  at a time, so the wave stays drawn while it moves. A pan, a handle or a drag on the
-  waveform pauses it until the next play or **Playhead**. Under reduced motion, and zoomed
-  in closer than half a second, it turns a page at a time instead. Off, the view turns a
-  page when the playhead runs off its right edge, as before. The switch is remembered in
-  the browser.
+  the current zoom, for when you have panned or zoomed away from it.
 
 ### Fixed
 

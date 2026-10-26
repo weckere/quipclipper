@@ -41,7 +41,7 @@ def test_only_a_response_as_sharp_as_the_view_is_drawn():
     # The old fallback drew the whole-file overview whatever the zoom: that is the blocks.
     assert "return wf.base || d" not in src
     # wfLoad asks for the bins wfSharp compares against.
-    assert "const bins = lead ? lead.bins : wfBins(b - a)" in _function("wfLoad")
+    assert "const bins = wfBins(b - a)" in _function("wfLoad")
 
 
 def test_the_strip_is_busy_until_the_views_peaks_cover_it():
