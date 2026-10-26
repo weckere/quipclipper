@@ -731,10 +731,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # explicit but wrong token (X-API-Key / Bearer) is rejected outright.
         # Pairing switched off (QC_PAIRING=0): every /api/pair* route is gone, before a
         # body is even read, so an app sees the 404 of a QuipClipper without pairing.
-        if not settings.pairing and _PAIR_ROUTE.match(request.url.path):
+        if not settings.pairing and _PAIR_ROUTE.match(request.scope["path"]):
             return JSONResponse({"detail": "Not Found"}, status_code=404)
         api_client = False
-        hook_route = request.url.path in _HOOK_ROUTES
+        hook_route = request.scope["path"] in _HOOK_ROUTES
         request.state.client = None
         # A paired app's own token (qcc_…) counts as a machine client like QC_API_TOKEN,
         # also when no QC_API_TOKEN is set. Named outright and not current: 401.
@@ -743,8 +743,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return JSONResponse(_CLIENT_REVOKED, status_code=401)
         if client_status == "ok":
             # A scoped token (M22) opens only its scopes' routes.
+            # scope["path"] is what the router matches; url.path re-parses it, so a decoded
+            # "#" or "?" in it would cut it short.
             if not pairing.scope_allows(client.get("scopes"), request.method,
-                                        request.url.path):
+                                        request.scope["path"]):
                 return JSONResponse(_out_of_scope(client), status_code=403)
             api_client = True
             request.state.client = client
@@ -2212,8 +2214,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         path_map = None
         if source == "jellyfin":
             path_map = _jf_map()
-            if jf_index is not None and not settings.jellyfin_path_map:
-                jf_index.refresh_if_stale()  # no map derived yet: the first build finds one
+            if (jf_index is not None and not settings.jellyfin_path_map
+                    and jf_index.map_status()["source"] == "none"):
+                # No map derived yet (a fresh install): the first build finds one. Until
+                # then nothing could map, and a 422 would make the plugin drop these.
+                jf_index.refresh_if_stale()
+                raise HTTPException(status_code=503, detail="Jellyfin's path map isn't "
+                                    "derived yet (QC_JELLYFIN_PATH_MAP is unset); try again "
+                                    "in a minute.")
         result = await asyncio.to_thread(_queue_files, raw, force, True, path_map)
         if event is not None:
             result["event"] = event

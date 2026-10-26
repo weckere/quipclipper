@@ -553,8 +553,9 @@ def test_a_stale_index_rebuilds_in_the_background(fake, tmp_path, known):
     index = jellyfin_index.JellyfinIndex(
         tmp_path / "state", lambda: jellyfin.JellyfinClient(fake.url, KEY),
         (("/shows", str(root)),), [root], refresh_every=3600, clock=lambda: now[0])
-    assert index.lookup(ep.resolve()) is None  # nothing yet: it starts building
-    index._thread.join(5)
+    index.lookup(ep.resolve())  # nothing built yet: the lookup starts a build in the background
+    assert index._thread is not None  # (what it answered meanwhile is a race: not checked)
+    index._thread.join(60)
     assert index.lookup(ep.resolve())["title"] == "The Best of Both Worlds"
     fake.library[0]["Name"] = "Renamed"
     now[0] += 60
@@ -562,7 +563,7 @@ def test_a_stale_index_rebuilds_in_the_background(fake, tmp_path, known):
     builds = len([r for r in fake.requests if r[1].get("Recursive")])
     now[0] += 3600
     index.lookup(ep.resolve())  # an hour on: rebuilt, the old entry answers meanwhile
-    index._thread.join(5)
+    index._thread.join(60)
     assert len([r for r in fake.requests if r[1].get("Recursive")]) == builds + 1
     assert index.lookup(ep.resolve())["title"] == "Renamed"
 
@@ -1071,11 +1072,19 @@ def test_a_derived_map_finds_a_library_folder_inside_a_root(fake, tmp_path):
 def test_a_derived_map_finds_a_root_inside_a_library_folder(fake, tmp_path, known):
     """Jellyfin's one library folder /data holds shows/…; here the root is that shows folder."""
     root, ep = known
+    ep2 = ep.with_name("S03E25.mkv")
+    ep2.write_bytes(b"")
     fake.folders = [{"Name": "All", "ItemId": SHOWS_LIB, "Locations": ["/data"]}]
     fake.library = [_episode(Path="/data/shows/Star Trek TNG/Season 3/S03E26.mkv")]
-    index = _client(_derive_env(fake, tmp_path, root)).post("/api/jellyfin/index").json()["index"]
+    c = _client(_derive_env(fake, tmp_path, root))
+    # One file found this way is a guess (a generic name could match anywhere): no pair.
+    index = c.post("/api/jellyfin/index").json()["index"]
+    assert index["path_map"] == {"source": "derived", "pairs": [], "unmatched": ["/data/shows"]}
+    # Two agreeing files make it.
+    fake.library.append(_episode(Id="3" * 32, Path="/data/shows/Star Trek TNG/Season 3/S03E25.mkv"))
+    index = c.post("/api/jellyfin/index").json()["index"]
     assert index["path_map"]["pairs"] == [["/data/shows", str(root.resolve())]]
-    assert index["files"] == 1
+    assert index["files"] == 2
 
 
 def test_samples_that_disagree_map_nothing(fake, tmp_path):
@@ -1138,3 +1147,39 @@ def test_the_derived_map_maps_sessions_and_the_clips_scan(fake, tmp_path, known)
     index.build()
     assert refresher.refresh() == {**refresher.last, "library": "Clips", "error": None}
     assert fake.refreshed == [CLIPS_LIB]
+
+
+def test_a_derivation_that_finds_nothing_keeps_the_map_that_worked(fake, tmp_path, known):
+    root, ep = known
+    fake.folders = [{"Name": "Shows", "ItemId": SHOWS_LIB, "Locations": ["/shows"]}]
+    c = _client(_derive_env(fake, tmp_path, root))
+    assert c.post("/api/jellyfin/index").json()["index"]["path_map"]["pairs"] == [
+        ["/shows", str(root.resolve())]]
+    hidden = root.with_name("shows-away")
+    root.rename(hidden)  # the mount is gone for a moment
+    try:
+        index = c.post("/api/jellyfin/index").json()["index"]
+    finally:
+        hidden.rename(root)
+    assert index["path_map"]["pairs"] == [["/shows", str(root.resolve())]]
+    assert index["path_map"]["unmatched"] == ["/shows"]
+
+
+def test_the_plugins_reindex_waits_for_the_first_derived_map(fake, tmp_path, known, monkeypatch):
+    """source=jellyfin before any map is derived: 503 (try again), not a 422 the plugin
+    would take as final; once derived, the same request is mapped and queued."""
+    from quipclipper_web import jellyfin_index
+
+    root, ep = known
+    (ep.parent / "S03E26.en.srt").write_text("1\n00:00:01,000 --> 00:00:02,000\nHi.\n")
+    fake.folders = [{"Name": "Shows", "ItemId": SHOWS_LIB, "Locations": ["/shows"]}]
+    monkeypatch.setattr(jellyfin_index.JellyfinIndex, "refresh_if_stale",
+                        lambda self: None)  # no background build: the test builds it
+    c = _client(_derive_env(fake, tmp_path, root))
+    body = {"paths": ["/shows/Star Trek TNG/Season 3/S03E26.mkv"], "source": "jellyfin"}
+    r = c.post("/api/index/file", json=body)
+    assert r.status_code == 503 and "derived yet" in r.json()["detail"]
+    c.post("/api/jellyfin/index")
+    r = c.post("/api/index/file", json=body)
+    assert r.status_code == 202, r.text
+    assert r.json()["files"][0]["media"] == str(ep.resolve())

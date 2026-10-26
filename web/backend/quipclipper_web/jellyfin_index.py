@@ -173,25 +173,28 @@ def _under(path: str, prefix: str) -> bool:
 
 
 def _match_sample(jf_path: str, location: str, bases: list[str],
-                  children: Callable[[str], list[str]]) -> tuple[str, str] | None:
-    """Where one of Jellyfin's files is here: ``(Jellyfin folder, local folder)`` such that
-    the file's path below the Jellyfin folder exists below the local one. Tried in order:
-    a base folder (a media root, the clips folder) holds the file as it sits below the
-    library's folder; or below one of the library's subfolders (Jellyfin's ``/data`` over
-    a root that is its ``/data/movies``); or one of a base's subfolders holds it
-    (``/movies`` onto the ``movies`` folder in a root)."""
+                  children: Callable[[str], list[str]]) -> tuple[str, str, bool] | None:
+    """Where one of Jellyfin's files is here: ``(Jellyfin folder, local folder, stripped)``
+    such that the file's path below the Jellyfin folder exists below the local one. Tried
+    in order: a base folder (a media root, the clips folder) holds the file as it sits below
+    the library's folder; one of a base's subfolders does (``/movies`` onto the ``movies``
+    folder in a root); or a base holds it as it sits below one of the library's subfolders
+    (Jellyfin's ``/data`` over a root that is its ``/data/movies``). That last guess matches
+    on fewer path components, so ``stripped`` marks it: it needs a second sample to agree."""
     rest = [p for p in jf_path[len(location):].split("/") if p]
     if not rest:
         return None
     for base in bases:
-        for k in range(0, min(DERIVE_STRIP, len(rest) - 1) + 1):
-            if os.path.isfile(os.path.join(base, *rest[k:])):
-                src = "/".join([location.rstrip("/"), *rest[:k]]) if k else location
-                return src, base
+        if os.path.isfile(os.path.join(base, *rest)):
+            return location, base, False
     for base in bases:
         for child in children(base):
             if os.path.isfile(os.path.join(child, *rest)):
-                return location, child
+                return location, child, False
+    for base in bases:
+        for k in range(1, min(DERIVE_STRIP, len(rest) - 1) + 1):
+            if os.path.isfile(os.path.join(base, *rest[k:])):
+                return "/".join([location.rstrip("/"), *rest[:k]]), base, True
     return None
 
 
@@ -200,7 +203,8 @@ def derive_path_map(client: JellyfinClient, bases: list[Path],
     """A Jellyfin path map found by looking: for each folder of each Jellyfin library, a
     few of its files' paths, and the local folder under which the same relative path
     exists (``bases`` are where to look: the media roots and the clips folder). A pair is
-    kept only when every sample that was found agrees on it. Returns ``(pairs, report)``,
+    kept only when every sample that was found agrees on it (two of them, for a pair found
+    below one of the library's subfolders). Returns ``(pairs, report)``,
     ``report`` naming the library folders nothing was found for. Raises JellyfinError."""
     real_bases = []
     for b in bases:
@@ -221,6 +225,8 @@ def derive_path_map(client: JellyfinClient, bases: list[Path],
         return listed[base]
 
     found: dict[str, set[str]] = {}
+    hits_for: dict[str, int] = {}
+    stripped: set[str] = set()
     unmatched: list[str] = []
     for lib in client.virtual_folders():
         locations = [loc.rstrip("/") or "/" for loc in lib.get("Locations") or []
@@ -234,11 +240,15 @@ def derive_path_map(client: JellyfinClient, bases: list[Path],
                     for m in [_match_sample(p, loc, real_bases, children)] if m]
             if not hits:
                 unmatched.append(loc)
-            for src, dst in hits:
+            for src, dst, strip in hits:
                 found.setdefault(src, set()).add(dst)
-    pairs = tuple(sorted((src, next(iter(dsts))) for src, dsts in found.items()
-                         if len(dsts) == 1))
-    disagree = sorted(src for src, dsts in found.items() if len(dsts) > 1)
+                hits_for[src] = hits_for.get(src, 0) + 1
+                if strip:
+                    stripped.add(src)
+    keep = {src for src, dsts in found.items()
+            if len(dsts) == 1 and (src not in stripped or hits_for[src] >= 2)}
+    pairs = tuple(sorted((src, next(iter(found[src]))) for src in keep))
+    disagree = sorted(set(found) - keep)
     return pairs, {"unmatched": sorted(set(unmatched) | set(disagree))}
 
 
@@ -391,7 +401,11 @@ class JellyfinIndex:
                 client = self._client()
                 if not self._explicit:
                     pairs, report = derive_path_map(client, self._derive_from)
-                    self._path_map, self._map_report = _real_map(pairs), report
+                    # Nothing found (a mount missing for a moment) never replaces a map that
+                    # worked: lookups and the plugin's re-indexes would all miss meanwhile.
+                    if pairs or not self._path_map:
+                        self._path_map = _real_map(pairs)
+                    self._map_report = report
                 files, folders = build_index(self._pages(client), self._path_map,
                                              self._roots)
             except JellyfinError as exc:

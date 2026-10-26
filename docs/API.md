@@ -303,7 +303,9 @@ it is; only other paths go through `QC_PATH_MAP`.
 **`"source": "jellyfin"`** (in the body, or `source=jellyfin` in the query) says the paths
 are Jellyfin's, as the [Jellyfin plugin](HOOKS.md#4-jellyfin-the-plugin) sends them: they
 go through Jellyfin's path map (`QC_JELLYFIN_PATH_MAP`, or the one [derived](#titles-and-artwork-jellyfin)
-when that is unset) instead of `QC_PATH_MAP`. Any other `source` is a `400`.
+when that is unset) instead of `QC_PATH_MAP`. Any other `source` is a `400`. While no map has
+been derived yet (a fresh server, `QC_JELLYFIN_PATH_MAP` unset) it answers `503`, so the plugin
+tries again instead of dropping the paths.
 
 <a id="changed-subtitles"></a>**Changed subtitles.** A file's index entry belongs to one version
 of its subtitle source (its sidecar's date, or the file's own for embedded subtitles), so
@@ -637,7 +639,9 @@ each folder of each Jellyfin library (`/Library/VirtualFolders`), a few of its f
 and the folder here under which the same relative path exists. It looks in each media root
 and the clips folder, in a folder Jellyfin's path holds below the library's folder (Jellyfin's
 `/data` over a root that is its `/data/movies`), and in a root's subfolders (`/movies` onto a
-root's `movies` folder). A pair is kept only when every sample found agrees. Now playing,
+root's `movies` folder). A pair is kept only when every sample found agrees, and a pair found
+below one of the library's subfolders needs two. A build that finds nothing at all (a mount
+missing for a moment) keeps the map it had. Now playing,
 Play on…, the clips scan and the Jellyfin plugin's re-index requests use the same map. An
 explicit map always wins. `index.path_map` says which: `{"source": "explicit" | "derived" |
 "none", "pairs": [[theirs, ours], …], "unmatched": [library folders nothing was found for]}`
