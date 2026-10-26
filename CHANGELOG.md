@@ -11,6 +11,8 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-26
+
 ### Play at the line on Jellyfin (M22)
 
 - **Play on…** starts a line found in quipclipper on a Jellyfin client: on a search hit, a
@@ -729,7 +731,8 @@ The first version, before releases were tagged. Highlights:
   guard, and an optional password gate.
 - **Deployment:** a Nix flake and NixOS module (with a VM test), and Docker images on GHCR.
 
-[Unreleased]: https://github.com/weckere/quipclipper/compare/v0.4.1...dev
+[Unreleased]: https://github.com/weckere/quipclipper/compare/v0.5.0...dev
+[0.5.0]: https://github.com/weckere/quipclipper/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/weckere/quipclipper/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/weckere/quipclipper/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/weckere/quipclipper/compare/v0.3.0...v0.3.1
