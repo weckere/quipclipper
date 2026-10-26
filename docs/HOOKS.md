@@ -202,7 +202,9 @@ added, removed or rewritten) it sends that file to `POST /api/index/file`.
   storm of item updates) and sends at most 1,000 paths per request. While quipclipper is
   down it keeps what's waiting (up to 10,000 files) and retries with growing pauses.
 - **Never a burden to Jellyfin:** it does its work off Jellyfin's scan, with short
-  timeouts, and nothing it does can fail a scan.
+  timeouts, and nothing it does can fail a scan. If a Jellyfin update takes away something
+  it uses, it logs that once and stops (its settings page says so) until the plugin is
+  updated.
 
 The queue, the idle priority and the statuses below are the same as for Bazarr's hook.
 

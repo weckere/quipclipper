@@ -223,6 +223,27 @@ still reads and cuts the media from its own folders. From the CLI: `quipclipper
 nowplaying`, `quipclipper clip.nowplaying -t audio` and `quipclipper jellyfin.lookup PATH`.
 Setup and path mapping: [docs/MANUAL.md](docs/MANUAL.md#now-playing-jellyfin).
 
+### Jellyfin plugin
+
+[jellyfin-plugin-quipclipper](https://github.com/weckere/jellyfin-plugin-quipclipper) (MIT,
+Jellyfin 12.x) is quipclipper's side inside Jellyfin. Install it from its repository in
+Jellyfin's dashboard (**Plugins › Repositories**, add
+`https://weckere.github.io/jellyfin-plugin-quipclipper/manifest.json`), restart Jellyfin, and:
+
+- **Clips by their line:** a Home Videos library on quipclipper's clips folder shows each clip
+  named by its line, with the source's artwork, overview and show. Nothing to set up.
+- **Subtitles searchable at once:** connect it on its settings page (enter quipclipper's URL,
+  or **Find on this network** when quipclipper advertises itself, then Allow the code in
+  quipclipper's banner) and every subtitle Jellyfin brings in is re-indexed here within a
+  minute.
+- **Machine transcripts as a subtitle source:** Jellyfin's **Search subtitles** dialog offers
+  quipclipper's machine transcript of a movie or episode.
+
+Its key can only queue re-indexes and read transcripts. Install, pairing, the network route a
+Jellyfin in a container needs, and troubleshooting: the
+[plugin's README](https://github.com/weckere/jellyfin-plugin-quipclipper#readme) and
+[docs/DEPLOY.md](docs/DEPLOY.md#the-jellyfin-plugin).
+
 ### Bazarr, Sonarr and Radarr
 
 When Bazarr downloads or upgrades a subtitle, a one-line post-processing command tells

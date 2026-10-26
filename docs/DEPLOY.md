@@ -308,6 +308,16 @@ folder), so that file is re-indexed within seconds (see [HOOKS.md](HOOKS.md#4-je
 Install it from its repository in Jellyfin's dashboard (**Plugins › Repositories**,
 `https://weckere.github.io/jellyfin-plugin-quipclipper/manifest.json`), restart Jellyfin, and
 on its settings page enter this server's URL as Jellyfin reaches it and press **Connect**.
+Its [README](https://github.com/weckere/jellyfin-plugin-quipclipper#readme) has the whole
+setup, what each feature writes where, and troubleshooting.
+
+- **Clip metadata needs no pairing.** Add a Home Videos library on this server's clips folder
+  (`QC_CLIPS_DIR`, as Jellyfin sees it): each clip shows by its line, read from the
+  `.<clip>.qc.json` sidecar quipclipper writes beside it.
+- **Finding the URL.** When this server [advertises itself](#advertising-on-the-local-network),
+  the plugin's **Find on this network** lists it and fills in the URL. Jellyfin needs to see
+  the LAN's multicast for that: a Jellyfin in Docker finds it only with `network_mode: host`.
+  Otherwise type the URL; that always works.
 
 - **It pairs.** Allow the code it shows in quipclipper's banner. It asks only for
   [scopes](API.md#scopes) `index.file` and `transcripts.read`, so its token, which Jellyfin keeps
@@ -329,13 +339,20 @@ on its settings page enter this server's URL as Jellyfin reaches it and press **
   that already has a `.whisper.srt`.
 - **Paths.** The plugin sends Jellyfin's own paths with `"source": "jellyfin"`;
   `QC_JELLYFIN_PATH_MAP`, or the map derived from Jellyfin's libraries when that is unset, turns
-  them into this server's.
+  them into this server's. The derived map needs `QC_JELLYFIN_URL` and an API key (Now playing's
+  setup) and finds a few files of each library folder under the media roots; a folder it can't
+  place is listed as `unmatched` in `GET /api/jellyfin/lookup`'s `index.path_map`, and its files
+  are refused (422) until `QC_JELLYFIN_PATH_MAP` names it.
+- **A newer Jellyfin.** Each of the plugin's features stops on its own, logged once, if a
+  Jellyfin update removes something it uses; its settings page then says which is off. Update
+  the plugin.
 
 ## Advertising on the local network
 
 Opt-in. The server announces itself over mDNS/Bonjour as `_quipclipper._tcp` (TXT `v=1`,
 `url`, `id`), so LeadStinger lists "QuipClipper on nas" without anyone typing an address,
-and Send to LeadStinger links name the advertised URL.
+the Jellyfin plugin's **Find on this network** offers it, and Send to LeadStinger links name
+the advertised URL.
 
 **Tailnet-only installs: leave advertising off.** It tells every device on the LAN that
 quipclipper runs here, and where; for an install reached only over a tailnet or VPN that is

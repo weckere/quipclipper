@@ -163,7 +163,9 @@ def build_index(items: Iterable[dict], path_map: tuple[tuple[str, str], ...],
 
 # --- the path map, derived when none is set (M22, D-056 decision 6) ----------------------
 
-DERIVE_SAMPLES = 5      # files asked for per library
+DERIVE_SAMPLES = 5      # files looked at per library folder
+DERIVE_PAGE = 200       # files asked for at a time, for a library of several folders
+DERIVE_SCAN_MAX = 10_000  # files read at most per library, looking for each folder's samples
 DERIVE_STRIP = 2        # leading folders a library's path may have above a media root
 DERIVE_CHILDREN = 500   # a media root's subfolders tried as a library's local folder
 
@@ -234,9 +236,9 @@ def derive_path_map(client: JellyfinClient, bases: list[Path],
         lib_id = lib.get("ItemId")
         if not locations or not (isinstance(lib_id, str) and ITEM_ID_RE.match(lib_id)):
             continue
-        paths = client.sample_paths(lib_id, samples * len(locations))
+        per_folder = _sample_per_folder(client, lib_id, locations, samples)
         for loc in locations:
-            hits = [m for p in paths if _under(p, loc)
+            hits = [m for p in per_folder[loc]
                     for m in [_match_sample(p, loc, real_bases, children)] if m]
             if not hits:
                 unmatched.append(loc)
@@ -250,6 +252,27 @@ def derive_path_map(client: JellyfinClient, bases: list[Path],
     pairs = tuple(sorted((src, next(iter(found[src]))) for src in keep))
     disagree = sorted(set(found) - keep)
     return pairs, {"unmatched": sorted(set(unmatched) | set(disagree))}
+
+
+def _sample_per_folder(client: JellyfinClient, lib_id: str, locations: list[str],
+                       samples: int) -> dict[str, list[str]]:
+    """Up to ``samples`` file paths below each of a library's folders. Jellyfin lists a
+    library's files in its own order, not by folder, so a library of several folders is
+    read a page at a time until each folder has its samples (or ``DERIVE_SCAN_MAX`` files
+    were read): the first few files alone can all come from one folder."""
+    found: dict[str, list[str]] = {loc: [] for loc in locations}
+    page = samples if len(locations) == 1 else DERIVE_PAGE
+    start = 0
+    while start < DERIVE_SCAN_MAX:
+        paths = client.sample_paths(lib_id, page, start)
+        for path in paths:
+            for loc in locations:
+                if _under(path, loc) and len(found[loc]) < samples:
+                    found[loc].append(path)
+        if len(paths) < page or all(len(v) >= samples for v in found.values()):
+            break
+        start += page
+    return found
 
 
 def _real_map(path_map: tuple[tuple[str, str], ...]) -> tuple[tuple[str, str], ...]:

@@ -115,12 +115,12 @@ class JellyfinClient:
         items = (data.get("Items") or []) if isinstance(data, dict) else []
         return [i for i in items if isinstance(i, dict)]
 
-    def sample_paths(self, library_id: str, limit: int) -> list[str]:
-        """The paths of a few files in one library (any kind Jellyfin plays, home videos
-        too): what the path map is derived from when none is set."""
+    def sample_paths(self, library_id: str, limit: int, start: int = 0) -> list[str]:
+        """The paths of a page of files in one library (any kind Jellyfin plays, home videos
+        too), from ``start``: what the path map is derived from when none is set."""
         data = self.get("/Items", {
             "ParentId": library_id, "Recursive": "true", "Fields": "Path",
-            "IncludeItemTypes": INDEX_TYPES + ",Video", "Limit": limit,
+            "IncludeItemTypes": INDEX_TYPES + ",Video", "StartIndex": start, "Limit": limit,
             "EnableUserData": "false", "EnableTotalRecordCount": "false",
             "EnableImages": "false",
         })

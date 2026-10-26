@@ -71,7 +71,8 @@ class FakeJellyfin:
                                  if f.get("ItemId") == query["ParentId"]), [])
                     found = [i for i in fake.library if any(
                         i["Path"].startswith(loc.rstrip("/") + "/") for loc in locs)]
-                    return self._send(200, {"Items": found[:int(query["Limit"])]})
+                    start, limit = int(query.get("StartIndex", 0)), int(query["Limit"])
+                    return self._send(200, {"Items": found[start:start + limit]})
                 if url.path == "/Items" and query.get("Recursive") == "true":
                     start, limit = int(query["StartIndex"]), int(query["Limit"])
                     return self._send(200, {"Items": fake.library[start:start + limit]})
@@ -1085,6 +1086,39 @@ def test_a_derived_map_finds_a_root_inside_a_library_folder(fake, tmp_path, know
     index = c.post("/api/jellyfin/index").json()["index"]
     assert index["path_map"]["pairs"] == [["/data/shows", str(root.resolve())]]
     assert index["files"] == 2
+
+
+def test_each_folder_of_a_library_gets_its_own_samples(fake, tmp_path, monkeypatch):
+    """A library of two folders whose first dozen files are all in one of them: the other
+    folder is still sampled (Jellyfin's order isn't by folder), a page at a time."""
+    from quipclipper_web import jellyfin_index
+
+    monkeypatch.setattr(jellyfin_index, "DERIVE_PAGE", 4)
+    a, b = tmp_path / "a", tmp_path / "b"
+    fake.folders = [{"Name": "Shows", "ItemId": SHOWS_LIB, "Locations": ["/shows", "/more"]}]
+    fake.library = []
+    for n in range(12):
+        (a / "S").mkdir(parents=True, exist_ok=True)
+        (a / "S" / f"e{n:02}.mkv").write_bytes(b"")
+        fake.library.append(_episode(Id=f"{n:032}", Path=f"/shows/S/e{n:02}.mkv"))
+    (b / "T").mkdir(parents=True)
+    (b / "T" / "x.mkv").write_bytes(b"")
+    fake.library.append(_episode(Id="f" * 32, Path="/more/T/x.mkv"))
+    env = _derive_env(fake, tmp_path, a, QC_MEDIA_ROOTS=f"{a}:{b}")
+    index = _client(env).post("/api/jellyfin/index").json()["index"]
+    assert index["path_map"] == {"source": "derived", "unmatched": [], "pairs": [
+        ["/more", str(b.resolve())], ["/shows", str(a.resolve())]]}
+    pages = [r[1] for r in fake.requests if r[1].get("ParentId") == SHOWS_LIB]
+    assert [(p["StartIndex"], p["Limit"]) for p in pages] == [
+        ("0", "4"), ("4", "4"), ("8", "4"), ("12", "4")]
+
+
+def test_a_one_folder_library_asks_for_its_samples_only(fake, tmp_path, known):
+    root, _ = known
+    fake.folders = [{"Name": "Shows", "ItemId": SHOWS_LIB, "Locations": ["/shows"]}]
+    _client(_derive_env(fake, tmp_path, root)).post("/api/jellyfin/index")
+    pages = [r[1] for r in fake.requests if r[1].get("ParentId") == SHOWS_LIB]
+    assert [(p["StartIndex"], p["Limit"]) for p in pages] == [("0", "5")]
 
 
 def test_samples_that_disagree_map_nothing(fake, tmp_path):

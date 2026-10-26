@@ -34,8 +34,10 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   through Jellyfin's path map. This is what the Jellyfin plugin's new subtitle watcher sends
   when Jellyfin downloads a subtitle or notices one dropped into a library.
 - **The Jellyfin path map is derived** when `QC_JELLYFIN_PATH_MAP` is unset: quipclipper finds
-  a few of each Jellyfin library's files under its media roots and the clips folder, and maps
-  the library's folder there. An explicit map still wins. `/api/jellyfin/lookup`'s `index`
+  a few files of each Jellyfin library folder under its media roots and the clips folder, and
+  maps that folder there. A library of several folders is read a page at a time until each
+  folder has its samples (Jellyfin doesn't list a library by folder, so the first few files
+  can all come from one). An explicit map still wins. `/api/jellyfin/lookup`'s `index`
   says which map is in use (`path_map`).
 
 ### Machine transcripts in Jellyfin's subtitle search (M22)
