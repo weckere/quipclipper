@@ -457,3 +457,90 @@ def test_gaps_of_a_file_whose_subtitles_cannot_be_read_transcribe_nothing(env, m
     monkeypatch.setattr(sc, "list_embedded_tracks", lambda v: [])  # no text track either
     job = _wait(c, c.post("/api/items/transcribe", json={"path": str(root / "film.mkv")}).json()["job_id"])
     assert job["status"] == "done" and job["result"]["transcribed"] == [[0.0, 5400.0]], job
+
+
+# --- the Jellyfin plugin's subtitle provider (M22 Phase 3): source=jellyfin, lines= ---------
+
+def _heard(env: dict, media: Path, cues: list[tuple[float, float, str]],
+           span: tuple[float, float] = (0.0, 12.0)) -> None:
+    """Give ``media`` a stored transcript of these lines (no whisper needed)."""
+    from quipclipper import transcribe as stt
+    from quipclipper.models import Cue
+    store = stt.TranscriptStore(Path(env["QC_STATE_DIR"]) / "transcripts")
+    store.add(media, span, [Cue(i, s, e, t, None, stt.MACHINE)
+                            for i, (s, e, t) in enumerate(cues, 1)], model="small.en")
+
+
+@pytest.fixture
+def episode(env):
+    """An episode Jellyfin knows as /shows/…, with one subtitle line and a stored
+    transcript that heard it and one line more."""
+    root = Path(env["QC_MEDIA_ROOTS"])
+    folder = root / "Darkplace" / "Season 01"
+    folder.mkdir(parents=True)
+    media = folder / "Darkplace - S01E06.mkv"
+    media.write_bytes(b"")
+    (folder / "Darkplace - S01E06.en.srt").write_text(SRT)
+    _heard(env, media, [(0.5, 1.5, "Why won't she be mine?"), (6.0, 7.0, "Garth Marenghi.")])
+    env["QC_JELLYFIN_PATH_MAP"] = f"/shows={root}"
+    return media
+
+
+def test_lines_machine_leaves_out_what_the_subtitles_have(env, episode):
+    c = _client(env)
+    q = {"path": str(episode), "lines": "machine"}
+    got = c.get("/api/items/transcript", params=q).json()
+    assert [x["text"] for x in got["lines"]] == ["Garth Marenghi."]
+    assert got["stored"]["lines"] == 2 and got["stored"]["models"] == ["small.en"]
+    every = c.get("/api/items/transcript", params={**q, "lines": "all"}).json()["lines"]
+    assert [x["text"] for x in every] == ["Why won't she be mine?", "Garth Marenghi."]
+    srt = c.get("/api/items/transcript", params={**q, "fmt": "srt"})
+    assert srt.status_code == 200
+    assert srt.text == "1\n00:00:06,000 --> 00:00:07,000\nGarth Marenghi.\n"
+    assert srt.headers["content-disposition"].endswith("Darkplace%20-%20S01E06.en.whisper.srt")
+    assert c.get("/api/items/transcript", params={**q, "lines": "some"}).status_code == 422
+
+
+def test_lines_reads_the_stored_transcript_not_a_library_copy(env, episode):
+    # A copy already in the library isn't offered again as stored lines (nor counted twice).
+    episode.with_name("Darkplace - S01E06.en.whisper.srt").write_text(
+        "1\n00:00:09,000 --> 00:00:10,000\nOnly in the copy.\n")
+    c = _client(env)
+    got = c.get("/api/items/transcript", params={"path": str(episode), "lines": "all"}).json()
+    assert "Only in the copy." not in {x["text"] for x in got["lines"]}
+    assert got["library"] == ["Darkplace - S01E06.en.whisper.srt"]
+    both = c.get("/api/items/transcript", params={"path": str(episode)}).json()["lines"]
+    assert "Only in the copy." in {x["text"] for x in both}
+
+
+def test_source_jellyfin_maps_the_path(env, episode):
+    c = _client(env)
+    jf = "/shows/Darkplace/Season 01/Darkplace - S01E06.mkv"
+    q = {"path": jf, "source": "jellyfin", "lines": "machine"}
+    got = c.get("/api/items/transcript", params=q)
+    assert got.status_code == 200, got.text
+    assert got.json()["path"] == jf and [x["text"] for x in got.json()["lines"]] == [
+        "Garth Marenghi."]
+    # A path already under a media root isn't mapped again.
+    assert c.get("/api/items/transcript", params={**q, "path": str(episode)}).status_code == 200
+    # Without the source, Jellyfin's /shows is nowhere here.
+    assert c.get("/api/items/transcript", params={"path": jf}).status_code in (403, 404)
+    bad = c.get("/api/items/transcript", params={**q, "source": "plex"})
+    assert bad.status_code == 400 and "jellyfin" in bad.json()["detail"]
+
+
+def test_lines_with_nothing_stored_or_nothing_new(env, episode):
+    c = _client(env)
+    bare = episode.with_name("Darkplace - S01E05.mkv")
+    bare.write_bytes(b"")
+    got = c.get("/api/items/transcript", params={"path": str(bare), "lines": "all"}).json()
+    assert got["stored"] is None and got["lines"] == []
+    srt = c.get("/api/items/transcript", params={"path": str(bare), "lines": "all", "fmt": "srt"})
+    assert srt.status_code == 404 and "transcribe it first" in srt.json()["detail"]
+    # Every line heard is in the subtitles already: no machine lines to serve.
+    _heard(env, episode, [(0.5, 1.5, "Why won't she be mine?")])
+    srt = c.get("/api/items/transcript", params={"path": str(episode), "lines": "machine",
+                                                 "fmt": "srt"})
+    assert srt.status_code == 404 and "already" in srt.json()["detail"]
+    # The default (no lines) keeps serving an empty export, as before.
+    assert c.get("/api/items/transcript", params={"path": str(bare), "fmt": "srt"}).text == ""

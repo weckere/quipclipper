@@ -38,6 +38,16 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   the library's folder there. An explicit map still wins. `/api/jellyfin/lookup`'s `index`
   says which map is in use (`path_map`).
 
+### Machine transcripts in Jellyfin's subtitle search (M22)
+
+- `GET /api/items/transcript` takes `lines=machine` (the stored lines no subtitle has, what
+  Copy to library writes) or `lines=all` (the whole stored transcript), and
+  `source=jellyfin` (the path is Jellyfin's, mapped as for `POST /api/index/file`). With
+  `lines`, an SRT or VTT export with nothing to serve is a 404. CLI `item.transcript
+  --lines --source`. The Jellyfin plugin's new subtitle provider uses it, so Jellyfin's
+  **Search subtitles** dialog offers a transcribed movie's or episode's machine lines and
+  saves them as `<name>.en.whisper.srt`, which quipclipper reads as machine lines.
+
 ### Waveform Playhead button (M20)
 
 - **Playhead** (or **P**) on the waveform brings the playhead into view, in the middle, at

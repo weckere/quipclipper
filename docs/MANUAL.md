@@ -345,7 +345,9 @@ Opening a file opens its workspace.
   out of the video's captions until **Copy to library** writes them next to the file as
   `<name>.en.whisper.srt` (writable folders only); then the captions show them too, marked
   ≈, and Jellyfin offers that file as a subtitle track. **Export .srt** saves them,
-  **Remove from library** and **Delete transcript** undo the two. See
+  **Remove from library** and **Delete transcript** undo the two. With the Jellyfin plugin,
+  Jellyfin's own **Search subtitles** dialog offers the transcript too and saves it under the
+  same name, also in folders only Jellyfin may write to. See
   [Machine transcription](#machine-transcription-whispercpp).
 - **The Selection panel** shows the selected range and acts on it: **★ Bookmark** (with
   a label you can edit; a range dragged on the waveform can be bookmarked too), **✂ Make clip**, and **Send to LeadStinger** (an icon button showing a broadcast tape cart:

@@ -134,6 +134,37 @@ def test_local_copy_writes_what_the_server_would(tmp_path, monkeypatch):
     assert "mine" not in (tmp_path / "ep.en.whisper.srt").read_text()
 
 
+def test_local_transcript_lines_as_the_server(tmp_path, monkeypatch):
+    monkeypatch.setenv("QC_TRANSCRIBE", "1")  # no whisper needed: forced on (D-053)
+    # --lines machine|all read the stored transcript only, as GET /api/items/transcript (M22).
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    media = tmp_path / "ep.mkv"
+    media.write_bytes(b"")
+    (tmp_path / "ep.en.srt").write_text("1\n00:00:01,000 --> 00:00:03,000\nWhy won't she be mine\n")
+    (tmp_path / "ep.en.whisper.srt").write_text("1\n00:00:15,000 --> 00:00:16,000\nA copy\n")
+    tr.TranscriptStore(tr.default_store_dir()).add(
+        media, (0, 20), [tr.Cue(0, 1.0, 3.0, "why won't she be mine", source=tr.MACHINE),
+                         tr.Cue(1, 8.0, 10.0, "Driving way too fast", source=tr.MACHINE)],
+        model="small.en")
+
+    def texts(*args):
+        got = _json(runner.invoke(cli.app, ["--json", "item.transcript", str(media), *args]))
+        return [x["text"] for x in got["lines"]]
+
+    assert texts("--lines", "machine") == ["Driving way too fast"]
+    assert texts("--lines", "all") == ["why won't she be mine", "Driving way too fast"]
+    assert "A copy" in texts()
+    srt = runner.invoke(cli.app, ["item.transcript", str(media), "--lines", "machine",
+                                  "--fmt", "srt"])
+    assert srt.stdout.startswith("1\n00:00:08,000 --> 00:00:10,000\nDriving way too fast")
+    bare = tmp_path / "bare.mkv"
+    bare.write_bytes(b"")
+    none = runner.invoke(cli.app, ["item.transcript", str(bare), "--lines", "all", "--fmt", "srt"])
+    assert none.exit_code != 0 and "no machine transcript" in none.output
+    jf = runner.invoke(cli.app, ["item.transcript", str(media), "--source", "jellyfin"])
+    assert jf.exit_code == 2 and "needs a server" in jf.output
+
+
 def test_local_orphans_listed_then_cleaned(tmp_path, monkeypatch):
     monkeypatch.setenv("QC_TRANSCRIBE", "1")  # no whisper needed: forced on (D-053)
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))

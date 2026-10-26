@@ -318,6 +318,15 @@ on its settings page enter this server's URL as Jellyfin reaches it and press **
   reach (another container network, a tailnet that closes containers off), open just the plugin's
   routes to just Jellyfin's address: `/api/pair` and `/api/pair/<id>`, `POST /api/index/file`
   and `GET /api/items/transcript`.
+- **Machine transcripts in Jellyfin's subtitle search.** For a movie or episode quipclipper
+  has transcribed, Jellyfin's **Search subtitles** dialog lists "quipclipper (machine
+  transcript)" results: **Machine lines only** (the lines no subtitle has) and **Full machine
+  transcript**. Picking one makes Jellyfin save it beside the media as
+  `<name>.en.whisper.srt`, the name Copy to library uses, so it is a separate "whisper" track
+  in Jellyfin and quipclipper reads it as machine lines, never as subtitles. Only a search
+  someone runs by hand gets results: Jellyfin's own automatic downloads never do, an item
+  with no stored transcript gets none (nothing starts a transcription), and neither does one
+  that already has a `.whisper.srt`.
 - **Paths.** The plugin sends Jellyfin's own paths with `"source": "jellyfin"`;
   `QC_JELLYFIN_PATH_MAP`, or the map derived from Jellyfin's libraries when that is unset, turns
   them into this server's.

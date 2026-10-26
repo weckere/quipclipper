@@ -281,7 +281,13 @@ COMMANDS: tuple[Command, ...] = (
             "with what was transcribed.", "GET", "/api/items/transcript",
             params=(Param("path", "str", "Media file.", main=True, required=True),
                     Param("fmt", "str", "json, or srt / vtt to export the lines.",
-                          default="json", choices=("json", "srt", "vtt"))),
+                          default="json", choices=("json", "srt", "vtt")),
+                    Param("lines", "str", "The stored transcript only: machine = the lines "
+                          "no subtitle has (what transcript-copy writes), all = every line. "
+                          "Default: the stored transcript and any copy in the library.",
+                          choices=("machine", "all")),
+                    Param("source", "str", "jellyfin: the path is as Jellyfin reports it "
+                          "(mapped with Jellyfin's path map).", choices=("jellyfin",))),
             mode="both", ui="Machine transcript bar (workspace)", transcription=True),
     Command("item.transcript-clear", "Delete a file's machine transcript (not a copy in the "
             "library).", "DELETE", "/api/items/transcript",

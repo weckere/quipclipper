@@ -74,6 +74,13 @@ subtitle track. Only lines the subtitles don't already have are copied. `item.tr
 again (only this file's copy: `Show.Part2.en.whisper.srt` belongs to `Show.Part2.mkv`, not
 to `Show.mkv`).
 
+**From Jellyfin.** With the [Jellyfin plugin](DEPLOY.md#the-jellyfin-plugin) connected, a
+movie's or episode's **Search subtitles** dialog in Jellyfin offers its stored transcript as
+"Machine lines only" or "Full machine transcript", and Jellyfin saves the one picked under
+the same `<name>.en.whisper.srt` name, so it stays machine lines here too. Jellyfin writes
+that file, not quipclipper, so it works in folders quipclipper can only read, as long as Jellyfin can write there. It offers
+only what is already transcribed, and only to a search run by hand.
+
 **Running it on your own machine.** With no server set, the CLI runs `whisper-cli` itself:
 install whisper.cpp (`nix shell nixpkgs#whisper-cpp`, `brew install whisper-cpp`), fetch a
 model from [Hugging Face](https://huggingface.co/ggerganov/whisper.cpp/tree/main) and set
@@ -156,7 +163,7 @@ the CLI (whisper-cli and a model there, or `QC_TRANSCRIBE=1`); `search`, `search
 | Command | What it does | Arguments | API | Web UI |
 |---|---|---|---|---|
 | `item.transcribe` | Transcribe a file's audio with whisper.cpp, for lines the subtitles leave out: a range (--start/--end), every gap between subtitle lines, or the whole file. Runs as a background job at idle priority; lines it hears are searchable and marked as machine-made. | `PATH` `--mode` `--start` `--end` `--model` `--audio` `--redo` `--wait` `--out-dir` | `POST /api/items/transcribe` · local | Transcribe selection (waveform); Fill gaps / Transcribe file (Machine transcript bar) |
-| `item.transcript` | Show a file's machine transcript: the lines whisper heard, with what was transcribed. | `PATH` `--fmt` | `GET /api/items/transcript` · local | Machine transcript bar (workspace) |
+| `item.transcript` | Show a file's machine transcript: the lines whisper heard, with what was transcribed. | `PATH` `--fmt` `--lines` `--source` | `GET /api/items/transcript` · local | Machine transcript bar (workspace) |
 | `item.transcript-clear` ⚠ | Delete a file's machine transcript (not a copy in the library). | `PATH` | `DELETE /api/items/transcript` · local | Machine transcript bar: Delete transcript |
 | `item.transcript-copy` ⚠ | Copy a file's machine transcript into the library as a subtitle sidecar, <name>.<lang>.whisper.srt, next to the file (writable folders only). From then on it also shows in the player's captions and in Jellyfin. | `PATH` | `POST /api/items/transcript/library` · local | Machine transcript bar: Copy to library |
 | `item.transcript-uncopy` ⚠ | Remove the machine transcript sidecar (…whisper.srt) from the library; the transcript itself stays. | `PATH` | `DELETE /api/items/transcript/library` · local | Machine transcript bar: Remove from library |

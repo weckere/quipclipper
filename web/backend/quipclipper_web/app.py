@@ -2121,6 +2121,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except library.PathNotAllowed:
             return False
 
+    def _jf_source_map() -> tuple[tuple[str, str], ...]:
+        """Jellyfin's path map for a ``source=jellyfin`` request (M22: the plugin)."""
+        path_map = _jf_map()
+        if (jf_index is not None and not settings.jellyfin_path_map
+                and jf_index.map_status()["source"] == "none"):
+            # No map derived yet (a fresh install): the first build finds one. Until
+            # then nothing could map, and a 422 or 404 would make the plugin give up.
+            jf_index.refresh_if_stale()
+            raise HTTPException(status_code=503, detail="Jellyfin's path map isn't "
+                                "derived yet (QC_JELLYFIN_PATH_MAP is unset); try again "
+                                "in a minute.")
+        return path_map
+
     def _queue_files(raw: list[str], force: bool, limit: bool = True,
                      path_map: tuple[tuple[str, str], ...] | None = None) -> dict:
         """Map, check and queue ``raw`` paths; one result row per path. A path already
@@ -2211,17 +2224,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if source not in (None, "", "jellyfin"):
             raise HTTPException(status_code=400, detail=f"Unknown source {source!r} "
                                 "(only \"jellyfin\": paths as Jellyfin reports them).")
-        path_map = None
-        if source == "jellyfin":
-            path_map = _jf_map()
-            if (jf_index is not None and not settings.jellyfin_path_map
-                    and jf_index.map_status()["source"] == "none"):
-                # No map derived yet (a fresh install): the first build finds one. Until
-                # then nothing could map, and a 422 would make the plugin drop these.
-                jf_index.refresh_if_stale()
-                raise HTTPException(status_code=503, detail="Jellyfin's path map isn't "
-                                    "derived yet (QC_JELLYFIN_PATH_MAP is unset); try again "
-                                    "in a minute.")
+        path_map = _jf_source_map() if source == "jellyfin" else None
         result = await asyncio.to_thread(_queue_files, raw, force, True, path_map)
         if event is not None:
             result["event"] = event
@@ -2430,15 +2433,47 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             active_stt[key] = job.id
         return {"job_id": job.id}
 
+    def _real_cues(p: Path) -> list:
+        """A file's subtitle lines (its own, not machine ones); none when they can't be read."""
+        try:
+            return sub_cache.resolve(p)
+        except (ValueError, FileNotFoundError, RuntimeError):
+            return []
+
     @app.get("/api/items/transcript")
     def item_transcript(
         path: str = Query(...),
         fmt: str = Query("json", pattern="^(json|srt|vtt)$"),
+        lines: str | None = Query(None, pattern="^(machine|all)$"),
+        source: str | None = Query(None),
     ) -> Response:
         """A file's machine transcript: what was transcribed and the lines heard (json), or
-        the lines as SubRip / WebVTT to save."""
-        p = _library_media(path)
-        heard = stt.machine_cues(p, transcripts)
+        the lines as SubRip / WebVTT to save. By default the stored transcript and any copy
+        in the library; ``lines`` reads the stored transcript only: ``machine``, the lines
+        no subtitle has (what Copy to library writes), or ``all`` of it. ``source=jellyfin``
+        (M22: the plugin's subtitle provider) says the path is Jellyfin's."""
+        if source not in (None, "", "jellyfin"):
+            raise HTTPException(status_code=400, detail=f"Unknown source {source!r} "
+                                "(only \"jellyfin\": a path as Jellyfin reports it).")
+        mapped = path
+        if source == "jellyfin":
+            path_map = _jf_source_map()
+            given = path.strip()
+            if path_map and "\0" not in given and not _inside_roots(given):
+                mapped = file_index.map_in(given, path_map)
+        p = _library_media(mapped)
+        if lines is None:
+            heard = stt.machine_cues(p, transcripts)
+        else:
+            t = transcripts.load(p)
+            heard = t.cues if t is not None else []
+            if lines == "machine" and heard:
+                heard = stt.library_lines(_real_cues(p), heard)
+            if not heard and fmt != "json":
+                raise HTTPException(status_code=404, detail=(
+                    "This file has no machine transcript: transcribe it first."
+                    if t is None or not t.cues else
+                    "Its subtitles already have every line of its machine transcript."))
         if fmt in ("srt", "vtt"):
             name = stt.machine_sidecar_path(p, settings.whisper.language)
             body = stt.cues_to_srt(heard) if fmt == "srt" else stt.cues_to_vtt(heard)
@@ -2467,11 +2502,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not os.access(p.parent, os.W_OK):
             raise HTTPException(status_code=403, detail="That folder is read-only — add it to "
                                 "writableMediaRoots to copy transcripts into it.")
-        try:
-            real = sub_cache.resolve(p)
-        except (ValueError, FileNotFoundError, RuntimeError):
-            real = []
-        lines = stt.library_lines(real, t.cues)
+        lines = stt.library_lines(_real_cues(p), t.cues)
         try:
             side = stt.write_sidecar(p, lines, t.language)
         except ValueError as exc:

@@ -1831,11 +1831,27 @@ def _local_transcribe(c: Context, v: dict) -> Any:
 def _local_transcript(c: Context, v: dict) -> Any:
     from quipclipper import transcribe as tr
 
+    if v.get("source"):
+        raise CliError("--source jellyfin needs a server: Jellyfin's path map is there.",
+                       code="usage", exit_code=EXIT_USAGE)
     media = _media_arg(v)
     store = _store()
     t = store.load(media)
-    cues = tr.machine_cues(media, store)
     fmt = v.get("fmt") or "json"
+    if v.get("lines") is None:
+        cues = tr.machine_cues(media, store)
+    else:  # the stored transcript only, as the server
+        cues = t.cues if t is not None else []
+        if v["lines"] == "machine" and cues:
+            try:
+                real = resolve_subtitles(subs=None, video=media,
+                                         langs=c.settings.get("sub_langs")).cues
+            except (ValueError, FileNotFoundError, RuntimeError):
+                real = []
+            cues = tr.library_lines(real, cues)
+        if not cues and fmt != "json":
+            raise CliError("No machine lines to export." if t is not None and t.cues else
+                           "This file has no machine transcript.", code="not_found")
     if fmt == "srt":
         return tr.cues_to_srt(cues)
     if fmt == "vtt":
