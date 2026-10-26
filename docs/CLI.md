@@ -192,7 +192,8 @@ by default land where they always did.
 
 | Command | What it does | Arguments | API | Web UI |
 |---|---|---|---|---|
-| `jellyfin.sessions` (`nowplaying`) | What each Jellyfin client is playing: device, title, playhead and the file in the library. |  | `GET /api/jellyfin/sessions` | Now playing card (library) and scope (search box) |
+| `jellyfin.sessions` (`nowplaying`) | What each Jellyfin client is playing: device, title, playhead and the file in the library, and whether jellyfin.play can start something on it. | `--all` | `GET /api/jellyfin/sessions` | Now playing card (library) and scope (search box); the device list of Play on… |
+| `jellyfin.play` | Play a library file on a Jellyfin client (a TV app, Jellyfin in a browser), starting at a time: e.g. a little before a line found here. A client already playing that file seeks there. Infuse can't be controlled. | `PATH` `--session` `--at` | `POST /api/jellyfin/play` | Play on… (a search hit, a match in the workspace, the workspace selection) |
 | `jellyfin.lookup` | What Jellyfin knows about a library file or folder: its title, series, season, episode, year, ids and artwork, and the values its clip names get. | `PATH` | `GET /api/jellyfin/lookup` | Posters and titles on library rows, the workspace header and Now playing |
 | `jellyfin.reindex` | Rebuild the path index from Jellyfin now (it is rebuilt hourly on its own), e.g. after adding media. |  | `POST /api/jellyfin/index` | — |
 

@@ -525,6 +525,12 @@ def _fmt_sessions(data: dict) -> None:
     if not rows:
         typer.echo("Nothing is playing on Jellyfin.")
     for r in rows:
+        if r.get("idle"):  # --all: a client with nothing playing
+            can = ("can play" if r.get("can_play") else
+                   f"can't be controlled: {r.get('control_note')}")
+            typer.echo(f"{r.get('id')}  {r.get('device')} ({r.get('client')}, "
+                       f"{r.get('user')})  idle, {can}")
+            continue
         what = r.get("title") or "?"
         if r.get("series"):
             what = f"{r['series']} S{r.get('season') or 0:02d}E{r.get('episode') or 0:02d} {what}"
@@ -532,6 +538,14 @@ def _fmt_sessions(data: dict) -> None:
         typer.echo(f"{r.get('id')}  {r.get('device')} ({r.get('user')})  {state} at "
                    f"{format_clock(r.get('position') or 0)}  {what}")
         typer.secho(f"  {r.get('path') or r.get('note')}", dim=True)
+        if r.get("can_play") is False:
+            typer.secho(f"  can't be controlled: {r.get('control_note')}", dim=True)
+
+
+def _fmt_play(data: dict) -> None:
+    did = "Seeked" if data.get("command") == "seek" else "Playing"
+    typer.echo(f"{did} {data.get('title') or data.get('path')} on {data.get('device')} "
+               f"({data.get('client')}) at {format_clock(data.get('at') or 0)}")
 
 
 def _fmt_jf_index(index: dict) -> str:
@@ -673,7 +687,7 @@ _FORMATTERS = {
     "bookmark.list": _fmt_bookmarks, "clips.list": _fmt_clips,
     "item.script": _fmt_script, "item.info": _fmt_item, "server.health": _fmt_health,
     "jellyfin.sessions": _fmt_sessions, "jellyfin.lookup": _fmt_lookup,
-    "jellyfin.reindex": _fmt_reindex, "item.link": _fmt_link,
+    "jellyfin.reindex": _fmt_reindex, "jellyfin.play": _fmt_play, "item.link": _fmt_link,
     "leadstinger.connect": _fmt_link, "pair.list": _fmt_pairs, "clients.list": _fmt_clients,
     "settings.list": _fmt_settings, "settings.get": _fmt_settings,
     "settings.set": _fmt_settings,

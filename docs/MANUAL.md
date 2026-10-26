@@ -48,6 +48,7 @@ code is built the way it is, see [`DESIGN_NOTES.md`](DESIGN_NOTES.md).
   - [EPUB3 audiobooks (experimental)](#epub3-audiobooks-experimental)
   - [Sending clips to LeadStinger](#sending-clips-to-leadstinger)
   - [Now playing (Jellyfin)](#now-playing-jellyfin)
+  - [Play on… (Jellyfin)](#play-on-jellyfin)
   - [Titles, posters and the clips library (Jellyfin)](#titles-posters-and-the-clips-library-jellyfin)
 - [Architecture](#architecture)
 - [Development](#development)
@@ -1085,6 +1086,45 @@ started, which is the one you just heard.
    nowhere, or outside the media roots, shows on the card as not in the library.
 
 `GET /api/health` and `/api/config` report `jellyfin: true` once the URL and key are set.
+
+### Play on… (Jellyfin)
+
+Found the line? Watch it on the TV: **Play on…** starts that file on a Jellyfin client at
+the line, so it plays on the big screen with Jellyfin's own player.
+
+**Where it is:** the screen-with-a-play-triangle button on each search hit (beside ✂ and
+Copy link), on each match in the workspace's **Matches** tab, and **Play on…** in the
+workspace's selection bar (beside Copy link). It lists the Jellyfin clients that are on
+and can be controlled, by device name, with what each is doing (idle, or playing
+something); click one and it starts there. A client already playing that file just jumps
+to the line. Clients that can't be controlled are named underneath ("Can't be controlled:
+Apple TV (Infuse-Library)"), and when none can be, it says so.
+
+**Where it starts:** one second before the line, so the first word isn't lost while the TV
+gets going. In the workspace it starts from the selection's start (the line, or a range
+from a bookmark or the waveform), or earlier when **Before** pads the selection by more
+than a second; with nothing selected, from the playhead.
+
+**Which clients:**
+
+| Client | Play on… |
+|---|---|
+| Jellyfin in a browser (Jellyfin Web), the Jellyfin Android TV and Android apps | works |
+| Infuse (Apple TV, iPhone, iPad) | can't: Infuse doesn't take remote control from Jellyfin |
+
+A TV app has to be open (on its home screen is enough) to be listed. The client plays the
+file as the user it's signed in as, so that user must be allowed to see it in Jellyfin.
+
+**From the CLI** (needs a server):
+
+```sh
+quipclipper nowplaying --all                                  # every client, and which can play
+quipclipper jellyfin.play "/srv/shows/…/S03E26.mkv" --session bravia --at 1233
+```
+
+`--session` is a session id from `nowplaying --all`, or part of a device, user or client
+name; `--at` is seconds into the file. Search first and pass a hit's `start` (less a
+second) as `--at` to play a line found with `search`.
 
 ### Titles, posters and the clips library (Jellyfin)
 

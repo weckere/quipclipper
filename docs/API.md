@@ -528,7 +528,8 @@ from `/api/config`). **Tailnet-only installs should not advertise.**
 ### Now playing (Jellyfin)
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/jellyfin/sessions` | What each Jellyfin client is playing or has paused, its playhead and the file in the library. |
+| GET | `/api/jellyfin/sessions?all=` | What each Jellyfin client is playing or has paused, its playhead and the file in the library; with `all=1`, every client, for Play on…. |
+| POST | `/api/jellyfin/play` | Play a library file on a Jellyfin client from a time (Play on…, M22). |
 
 Needs `QC_JELLYFIN_URL` and an API key (503 without them; 502 when Jellyfin can't be
 reached or refuses the key). The reply, newest report first:
@@ -550,6 +551,43 @@ why. Sessions with nothing playing are left out. To clip the line just heard, ta
 cue at or before `position` from `/api/items/subtitles` and `POST /api/clip` it; the CLI's
 `clip.nowplaying` does exactly that. Each session also has `art`, its poster
 (`{"id", "type", "tag"}`, the series' for an episode; see the image proxy below), or `null`.
+
+Every session also says whether quipclipper can start something on it: `can_play` is true
+when the client takes remote control from Jellyfin (`SupportsRemoteControl`) and can be
+told to play video or audio (`media_types`, Jellyfin's `PlayableMediaTypes`); otherwise
+`control_note` says why. `last_active` is Jellyfin's `LastActivityDate`. **`all=1`** adds
+the clients with nothing playing (`"idle": true`, with only `id`, `user`, `device`,
+`client`, `can_play`, `control_note`, `media_types` and `last_active`), after the playing
+ones, most recently active first. It reaches back a day for clients that can be controlled
+(a TV app parked on its home screen keeps its connection open for hours) and the usual
+10 minutes for the rest, so an Infuse session from this morning isn't listed.
+
+| Client | `can_play` |
+|---|---|
+| Jellyfin Web (a browser), the Jellyfin Android and Android TV apps | yes |
+| Infuse (Apple TV, iOS) | no: it reports no remote control, so nothing can start a line on it |
+
+**`POST /api/jellyfin/play`** `{"session": "5f2…", "path": "/srv/shows/…/S03E26.mkv",
+"at": 1233.5}` starts the file on that client `at` seconds in (Jellyfin's `PlayNow` with
+`startPositionTicks`). A client already playing that file seeks there instead (`Seek`, and
+`Unpause` when it was paused). `session` is a session id from `?all=1`, or part of a
+device, user or client name that only one controllable client has (`"firefox"`); `at`
+defaults to 0. The file is found in the path index (below), so it must be one Jellyfin has
+scanned. The reply:
+
+```json
+{"session": "5f2…", "device": "BRAVIA 4K VH2", "client": "Android TV", "item_id": "a41…",
+ "title": "The Best of Both Worlds", "path": "/srv/shows/…/S03E26.mkv", "at": 1233.5,
+ "command": "play"}
+```
+
+`command` is `play` or `seek`. Errors: **404** when the file isn't there or Jellyfin
+doesn't know it, or no client matches `session` (or it closed meanwhile); **409** when the
+client can't be controlled (Infuse) or can't play that kind of media (an audio-only client
+and an episode); **400** when a name matches several controllable clients (the detail lists
+their ids); 502 and 503 as above. The web UI starts one second before the line (or at the
+selection's in point when Before pads more), so the first word isn't lost while the TV
+starts.
 
 ### Titles and artwork (Jellyfin)
 | Method | Path | Purpose |

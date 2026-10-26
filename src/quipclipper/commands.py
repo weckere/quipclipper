@@ -479,8 +479,25 @@ COMMANDS: tuple[Command, ...] = (
 
     # --- jellyfin --------------------------------------------------------------------------
     Command("jellyfin.sessions", "What each Jellyfin client is playing: device, title, "
-            "playhead and the file in the library.", "GET", "/api/jellyfin/sessions",
-            shortcut="nowplaying", ui="Now playing card (library) and scope (search box)"),
+            "playhead and the file in the library, and whether jellyfin.play can start "
+            "something on it.", "GET", "/api/jellyfin/sessions",
+            params=(Param("all", "bool", "Also list the clients with nothing playing (the "
+                          "ones jellyfin.play can use, and the ones it can't).",
+                          default=False, flags=("-a",)),),
+            shortcut="nowplaying", ui="Now playing card (library) and scope (search box); "
+                                      "the device list of Play on…"),
+    Command("jellyfin.play", "Play a library file on a Jellyfin client (a TV app, Jellyfin "
+            "in a browser), starting at a time: e.g. a little before a line found here. A "
+            "client already playing that file seeks there. Infuse can't be controlled.",
+            "POST", "/api/jellyfin/play",
+            params=(Param("path", "str", "Media file under the media roots.", where=BODY,
+                          main=True, required=True),
+                    Param("session", "str", "Which client: a session id from "
+                          "jellyfin.sessions --all, or part of its device, user or client "
+                          "name.", where=BODY, required=True, flags=("-S",)),
+                    Param("at", "float", "Where to start, in seconds.", where=BODY,
+                          default=0.0)),
+            ui="Play on… (a search hit, a match in the workspace, the workspace selection)"),
     Command("jellyfin.lookup", "What Jellyfin knows about a library file or folder: its "
             "title, series, season, episode, year, ids and artwork, and the values its "
             "clip names get.", "GET", "/api/jellyfin/lookup",

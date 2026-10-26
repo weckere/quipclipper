@@ -948,6 +948,7 @@ async function dialogueSearch(query, folders) {
           `<button type="button" class="mark-icon-btn hit-bookmark" data-action="bookmark.add" title="Save this line as a bookmark" aria-label="Bookmark the line at ${hit.start_ts}"><span class="star" aria-hidden="true">★</span></button>` +
           `<button type="button" class="mark-icon-btn make-clip-btn hit-clip" data-action="clip.create" title="Cut a clip of this line with the bar's options" aria-label="Clip the line at ${hit.start_ts}"><span class="scissors" aria-hidden="true">✂</span></button>` +
           `<button type="button" class="mark-icon-btn hit-link" data-action="item.link" title="Copy a link to this line: it opens the file here with the line selected" aria-label="Copy a link to the line at ${hit.start_ts}">${iconSvg("link")}</button>` +
+          (playOnOffered(hit.path) ? `<button type="button" class="mark-icon-btn hit-play-on" data-action="jellyfin.play" aria-haspopup="dialog" aria-expanded="false" aria-controls="play-on-pop" title="Play on a Jellyfin client (a TV app, Jellyfin in a browser) from a second before this line" aria-label="Play the line at ${hit.start_ts} on a Jellyfin client">${iconSvg("play-on")}</button>` : "") +
           `<span class="hit-status" data-action="job.get"></span>` +
         `</div>`;
       // Checkbox drives the batch bar (and carries the data the batch bodies need).
@@ -966,6 +967,11 @@ async function dialogueSearch(query, folders) {
       li.querySelector(".hit-link").onclick = (e) => {
         e.stopPropagation();
         copyLink(routeLink(itemRoute(hit.path, { sel: [hit.start, hit.end] })), e.currentTarget);
+      };
+      const playOn = li.querySelector(".hit-play-on");
+      if (playOn) playOn.onclick = (e) => {
+        e.stopPropagation();
+        openPlayOn(e.currentTarget, hit.path, playOnAt(hit.start), hit.text);
       };
       const open = () => openItem(hit.path, hit.file, {
         searchQuery: query,
@@ -2082,6 +2088,9 @@ async function openItem(path, name, opts) {
     t: seekTarget, sel: markRange && markRange.start != null ? [markRange.start, markRange.end] : null, track,
   }), { replace: !!shown && shown.view === "item" && shown.params.get("path") === path });
   showItem();
+  closePlayOn();
+  currentJellyfin = null;  // until /api/items says whether Jellyfin knows this file
+  $("play-on-btn").hidden = true;
   // A dialogue-search match to auto-select in Marks once the script loads.
   pendingCueSelect = markRange || null;
   // Consume any pending bookmark clip immediately so an early return (e.g.
@@ -2154,6 +2163,8 @@ async function openItem(path, name, opts) {
   // listeners below are already signal-scoped; these direct assignments are not.
   if (signal.aborted) return;
   showItemArtwork(info.jellyfin || null);
+  currentJellyfin = appConfig.jellyfin && info.jellyfin && info.jellyfin.id ? info.jellyfin : null;
+  $("play-on-btn").hidden = !currentJellyfin;
 
   const player = $("player");
   player.style.aspectRatio = "";  // back to the default box until this item's dims load
@@ -3201,6 +3212,14 @@ async function doSearch(query, { focus = true } = {}) {
         `<span class="result-score" title="${SCORE_TITLE}">${m.score}%</span>` +
         `<span>${m.start_ts} – ${m.end_ts}</span>` +
       `</span>`;
+    if (currentJellyfin) {  // Play on… for this match, beside its time
+      li.querySelector(".result-meta").insertAdjacentHTML("beforeend",
+        `<button type="button" class="mark-icon-btn result-play-on" data-action="jellyfin.play" aria-haspopup="dialog" aria-expanded="false" aria-controls="play-on-pop" title="Play on a Jellyfin client from a second before this line" aria-label="Play the line at ${m.start_ts} on a Jellyfin client">${iconSvg("play-on")}</button>`);
+      li.querySelector(".result-play-on").onclick = (e) => {
+        e.stopPropagation();
+        openPlayOn(e.currentTarget, item.path, playOnAt(m.start), m.text);
+      };
+    }
     makeActivatable(li, "Select this line and play it; ▶ and Loop selection then play just this line");
     if (m.machine) li.title = `${MACHINE_TITLE}. ${li.title}`;
     // A click selects the match's line(s), as a library hit opens with them selected, and
@@ -6363,7 +6382,7 @@ $("global-search").addEventListener("submit", (e) => { e.preventDefault(); runGl
 
 // "/" jumps to the search box from anywhere that isn't a text field.
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") { toggleScopeMenu(false, true); toggleJobs(false, true); toggleSettings(false, true); return; }
+  if (e.key === "Escape") { toggleScopeMenu(false, true); toggleJobs(false, true); toggleSettings(false, true); closePlayOn(true); return; }
   if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey) return;
   const t = e.target;
   if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
@@ -6374,6 +6393,7 @@ document.addEventListener("click", (e) => {
   if (!e.target.closest("#global-search")) toggleScopeMenu(false);
   if (!e.target.closest("#jobs-popover") && !e.target.closest("#jobs-pill")) toggleJobs(false);
   if (!e.target.closest("#settings-popover") && !e.target.closest("#settings-btn")) toggleSettings(false);
+  if (!e.target.closest("#play-on-pop")) closePlayOn();  // its buttons stop their own click
 });
 
 // --- Now playing: what Jellyfin clients are playing (M15) --------------------
@@ -6469,6 +6489,125 @@ async function jumpToNowPlaying() {
   await browse(null);
   $("nowplaying-card").scrollIntoView({ block: "nearest" });
 }
+
+// --- Play on…: start a line on a Jellyfin client (M22) ---------------------
+//
+// GET /api/jellyfin/sessions?all=1 (jellyfin.sessions --all) lists Jellyfin's clients, and
+// each says whether it takes remote control (can_play): the Jellyfin apps on a TV or phone
+// and Jellyfin in a browser do, Infuse never does. The ones that do get a button that
+// starts the file there (POST /api/jellyfin/play, jellyfin.play); a client already playing
+// that file seeks instead. The others are named as "can't be controlled", not hidden, so
+// the Apple TV's absence isn't a mystery. Playback starts PLAY_LEAD_IN before the line, or
+// at the selection's in point when Before pads it further, so the TV, which takes a moment
+// to start, doesn't clip the first word.
+
+const PLAY_LEAD_IN = 1;  // seconds
+let currentJellyfin = null;  // what Jellyfin knows about the open file, when it does
+let playOnTarget = null;  // {btn, path, at}
+
+/** Play on… for a search hit: Jellyfin is set up and the hit is a file (not a book part). */
+const playOnOffered = (path) => !!appConfig.jellyfin && !String(path).includes("#seg=");
+/** Where Play on… starts for a line at `start` with `before` seconds of padding. */
+const playOnAt = (start, before = 0) => Math.max(0, start - Math.max(PLAY_LEAD_IN, before));
+const playOnName = (s) => (s.device || "Unnamed device") + (s.client ? ` (${s.client})` : "");
+
+function closePlayOn(restore) {
+  const pop = $("play-on-pop");
+  if (pop.hidden || !playOnTarget) return;
+  setPopover(pop, playOnTarget.btn, false, restore);
+  playOnTarget = null;
+}
+
+function placePlayOn(pop, btn) {
+  const r = btn.getBoundingClientRect();
+  const w = pop.offsetWidth, h = pop.offsetHeight;
+  const left = Math.min(Math.max(8, r.right - w), window.innerWidth - w - 8);
+  const below = r.bottom + 6;
+  pop.style.left = `${Math.max(8, left)}px`;
+  pop.style.top = `${below + h > window.innerHeight - 8 && r.top - 6 - h > 8 ? r.top - 6 - h : below}px`;
+}
+
+/** Open Play on… beside `btn` for `path`, starting at `at` seconds (a second click closes). */
+async function openPlayOn(btn, path, at, what) {
+  const pop = $("play-on-pop");
+  if (!pop.hidden && playOnTarget && playOnTarget.btn === btn) { closePlayOn(true); return; }
+  closePlayOn();
+  toggleScopeMenu(false); toggleJobs(false); toggleSettings(false);
+  const target = playOnTarget = { btn, path, at };
+  $("play-on-heading").textContent = `Play on… from ${formatTimeWhole(at)}`;
+  $("play-on-heading").title = what ? `From a second before “${what}”` : "";
+  $("play-on-list").innerHTML = "";
+  $("play-on-cant").hidden = true;
+  $("play-on-status").hidden = false;
+  $("play-on-status").textContent = "Asking Jellyfin which clients are on…";
+  setPopover(pop, btn, true);
+  placePlayOn(pop, btn);
+  pop.focus();
+  let sessions;
+  try {
+    sessions = (await getJSON("/api/jellyfin/sessions?all=1")).sessions || [];
+  } catch (err) {
+    if (playOnTarget !== target) return;
+    $("play-on-status").textContent = `Couldn't ask Jellyfin: ${err.message}`;
+    return;
+  }
+  if (playOnTarget !== target) return;  // closed, or opened for another line meanwhile
+  renderPlayOn(sessions, target);
+  placePlayOn(pop, btn);
+}
+
+function renderPlayOn(sessions, target) {
+  const list = $("play-on-list");
+  const seen = new Set();
+  const can = sessions.filter((s) => s.can_play && !seen.has(s.id) && seen.add(s.id));
+  // The ones that can't, once per device and app (Infuse opens several sessions).
+  const cant = [...new Set(sessions.filter((s) => !s.can_play).map(playOnName))];
+  for (const s of can) {
+    const li = document.createElement("li");
+    li.className = "play-on-row";
+    const doing = s.idle ? "idle" : `${s.paused ? "paused" : "playing"}: ${nowPlayingTitle(s)}`;
+    li.innerHTML =
+      `<button type="button" class="btn primary" data-action="jellyfin.play" title="Start it on ${escapeHtml(playOnName(s))} from ${formatTimeWhole(target.at)}">${escapeHtml(playOnName(s))}</button>` +
+      `<span class="muted play-on-what">${escapeHtml([s.user, doing].filter(Boolean).join(" · "))}</span>`;
+    li.querySelector("button").onclick = () => playOnSession(s, target);
+    list.appendChild(li);
+  }
+  const status = $("play-on-status");
+  status.hidden = can.length > 0;
+  status.textContent = "No Jellyfin client can be controlled right now. Open the Jellyfin app " +
+    "on the TV (not Infuse), or Jellyfin in a browser, and try again.";
+  $("play-on-cant").hidden = !cant.length;
+  $("play-on-cant").textContent = cant.length ? `Can't be controlled: ${cant.join(", ")}.` : "";
+  $("play-on-cant").title = "These apps don't take remote control from Jellyfin, so nothing can start a line on them.";
+  const first = list.querySelector("button");
+  if (first) first.focus();
+}
+
+async function playOnSession(s, target) {
+  const status = $("play-on-status");
+  status.hidden = false;
+  status.textContent = `Starting it on ${playOnName(s)}…`;
+  try {
+    const r = await postJSON("/api/jellyfin/play", { session: s.id, path: target.path, at: target.at });
+    if (playOnTarget !== target) return;
+    const msg = `${r.command === "seek" ? "Moved" : "Playing on"} ${r.device || playOnName(s)}` +
+      `${r.command === "seek" ? " to" : " from"} ${formatTimeWhole(r.at)}`;
+    status.textContent = msg + ".";
+    announce(msg);
+  } catch (err) {
+    if (playOnTarget !== target) return;
+    status.textContent = `Couldn't start it: ${err.message}`;
+  }
+}
+
+$("play-on-btn").onclick = (e) => {
+  e.stopPropagation();
+  if (!currentItem) return;
+  const a = wfAnchor();
+  openPlayOn(e.currentTarget, currentItem.path,
+    a ? playOnAt(a[0], clipPadBefore()) : Math.max(0, playerTime()), a ? selectionCue() : "");
+};
+trapTab($("play-on-pop"));
 
 // --- Jobs: the pill counts running jobs, the popover lists them -------------
 //

@@ -1,8 +1,9 @@
-"""Jellyfin: now playing (M15), and titles, artwork and library scans (M18).
+"""Jellyfin: now playing (M15), titles, artwork and library scans (M18), Play on… (M22).
 
 A fake Jellyfin (a real HTTP server on a loopback port) answers ``/Sessions``, ``/Items``
-(one item, or the whole library in pages), images, ``/Library/VirtualFolders`` and library
-refreshes, so the client's urllib requests, auth header and error handling run for real.
+(one item, or the whole library in pages), images, ``/Library/VirtualFolders``, library
+refreshes and remote-control commands, so the client's urllib requests, auth header and
+error handling run for real.
 """
 
 from __future__ import annotations
@@ -37,6 +38,7 @@ class FakeJellyfin:
         self.folders: list[dict] = []  # /Library/VirtualFolders
         self.images: dict[tuple[str, str], tuple[bytes, str]] = {}
         self.refreshed: list[str] = []
+        self.commands: list[tuple[str, str, dict]] = []  # (session, command, query)
         self.requests: list[tuple[str, dict, str]] = []
         self.status = 200
         fake = self
@@ -80,12 +82,20 @@ class FakeJellyfin:
                 self._send(404, {})
 
             def do_POST(self):
-                url, _ = self._start()
+                url, query = self._start()
                 if url is None:
                     return
                 parts = url.path.split("/")
                 if len(parts) == 4 and parts[1] == "Items" and parts[3] == "Refresh":
                     fake.refreshed.append(parts[2])
+                    self.send_response(204)
+                    self.end_headers()
+                    return
+                if len(parts) in (4, 5) and parts[1] == "Sessions" and parts[3] == "Playing":
+                    if not any(s.get("Id") == parts[2] for s in fake.sessions):
+                        return self._send(404, {})
+                    command = parts[4] if len(parts) == 5 else query.get("playCommand")
+                    fake.commands.append((parts[2], command, query))
                     self.send_response(204)
                     self.end_headers()
                     return
@@ -801,3 +811,179 @@ def test_cli_lookup_prints_what_jellyfin_knows(fake, known, cli_run, capsys):
     assert "Episode " + EP_ID in out
     assert "Star Trek: The Next Generation S03E26 The Best of Both Worlds (1990)" in out
     assert "{title}=The_Best_of_Both_Worlds" in out
+
+
+# --- Play on… (M22): list the clients that can be controlled, start a line on one --------
+
+NOW = datetime.now(timezone.utc)
+
+
+def _client_session(id, device, client, *, remote=True, media=("Audio", "Video"),
+                    ago=30, **over) -> dict:
+    """A session with nothing playing, as Jellyfin lists a connected client."""
+    s = {"Id": id, "UserName": "wiz", "DeviceName": device, "Client": client,
+         "SupportsRemoteControl": remote, "PlayableMediaTypes": list(media),
+         "LastActivityDate": _iso(NOW - timedelta(seconds=ago))}
+    s.update(over)
+    return s
+
+
+def _clients() -> list[dict]:
+    return [
+        _client_session("tv", "BRAVIA 4K VH2", "Android TV", ago=7200),  # parked for hours
+        _client_session("web", "Firefox", "Jellyfin Web"),
+        _client_session("infuse", "Apple TV", "Infuse-Library", remote=False, media=()),
+        _client_session("old", "Apple TV", "Infuse-Library", remote=False, media=(),
+                        ago=7200),  # gone quiet, and can't be controlled: left out
+    ]
+
+
+def _asked_within(fake) -> str:
+    """How far back the last /Sessions request reached (a poster lookup may follow it)."""
+    return [q for path, q, _ in fake.requests if path == "/Sessions"][-1]["activeWithinSeconds"]
+
+
+def _playing(c: TestClient):
+    """The app with the path index built, so the TNG episode has its Jellyfin id."""
+    assert c.post("/api/jellyfin/index").status_code == 200
+    return c
+
+
+def test_sessions_all_lists_idle_clients_and_says_which_can_be_controlled(
+        fake, tmp_path, known):
+    root, _ = known
+    fake.sessions = [_session(SupportsRemoteControl=True, PlayableMediaTypes=["Video"]),
+                     *_clients()]
+    c = _client(_env(fake, tmp_path, root))
+    playing = c.get("/api/jellyfin/sessions").json()["sessions"]
+    assert [s["id"] for s in playing] == ["sess1"]  # by default only what's playing
+    assert playing[0]["can_play"] is True and playing[0]["idle"] is False
+    assert _asked_within(fake) == str(jellyfin.ACTIVE_WITHIN)
+
+    every = c.get("/api/jellyfin/sessions", params={"all": "1"}).json()["sessions"]
+    assert _asked_within(fake) == str(jellyfin.CONTROLLABLE_WITHIN)
+    # Playing first, then the idle ones by last activity; the quiet Infuse session is gone.
+    assert [s["id"] for s in every] == ["sess1", "web", "infuse", "tv"]
+    by_id = {s["id"]: s for s in every}
+    assert by_id["tv"]["can_play"] is True and by_id["tv"]["idle"] is True
+    assert by_id["infuse"]["can_play"] is False
+    assert "remote control" in by_id["infuse"]["control_note"]
+    assert by_id["web"]["media_types"] == ["Audio", "Video"]
+
+
+def test_play_starts_the_file_at_the_time_on_the_client(fake, tmp_path, known):
+    root, ep = known
+    fake.sessions = _clients()
+    c = _playing(_client(_env(fake, tmp_path, root)))
+    r = c.post("/api/jellyfin/play", json={"session": "tv", "path": str(ep), "at": 1233.5})
+    assert r.status_code == 200, r.text
+    assert r.json() == {"session": "tv", "device": "BRAVIA 4K VH2", "client": "Android TV",
+                        "item_id": EP_ID, "title": "The Best of Both Worlds",
+                        "path": str(ep.resolve()), "at": 1233.5, "command": "play"}
+    ((sid, command, query),) = fake.commands
+    assert (sid, command) == ("tv", "PlayNow")
+    assert query["itemIds"] == EP_ID and query["startPositionTicks"] == str(12335000000)
+
+
+def test_a_client_already_on_the_file_seeks_and_unpauses(fake, tmp_path, known):
+    root, ep = known
+    fake.sessions = [_session(Id="tv", SupportsRemoteControl=True,
+                              PlayableMediaTypes=["Video"],
+                              NowPlayingItem={**_session()["NowPlayingItem"], "Id": EP_ID})]
+    c = _playing(_client(_env(fake, tmp_path, root)))
+    r = c.post("/api/jellyfin/play", json={"session": "tv", "path": str(ep), "at": 10})
+    assert r.status_code == 200 and r.json()["command"] == "seek"
+    assert [(cmd, q.get("seekPositionTicks")) for _, cmd, q in fake.commands] == [
+        ("Seek", str(10 * jellyfin.TICKS)), ("Unpause", None)]
+
+
+def test_play_names_a_client_by_part_of_its_name(fake, tmp_path, known):
+    root, ep = known
+    fake.sessions = _clients()
+    c = _playing(_client(_env(fake, tmp_path, root)))
+    r = c.post("/api/jellyfin/play", json={"session": "firefox", "path": str(ep)})
+    assert r.status_code == 200 and r.json()["session"] == "web"
+    # "wiz" is every session's user: two controllable ones match, so it asks which.
+    r = c.post("/api/jellyfin/play", json={"session": "wiz", "path": str(ep)})
+    assert r.status_code == 400 and "tv = BRAVIA" in r.json()["detail"]
+
+
+def test_play_refuses_what_cant_be_controlled_or_found(fake, tmp_path, known):
+    root, ep = known
+    fake.sessions = [*_clients(), _client_session("radio", "Kitchen", "Jellyfin Web",
+                                                  media=("Audio",))]
+    c = _playing(_client(_env(fake, tmp_path, root)))
+
+    def play(session, path=ep):
+        return c.post("/api/jellyfin/play", json={"session": session, "path": str(path)})
+
+    r = play("infuse")
+    assert r.status_code == 409 and "can't be controlled" in r.json()["detail"]
+    r = play("apple tv")  # by name: Infuse is the only match, and it can't
+    assert r.status_code == 409 and "Infuse" in r.json()["detail"]
+    r = play("kitchen")  # it plays audio only, and this is an episode
+    assert r.status_code == 409 and "can't play video" in r.json()["detail"]
+    assert play("bedroom").status_code == 404
+    other = ep.parent / "S03E25.mkv"  # in the roots, but Jellyfin doesn't know it
+    other.write_bytes(b"")
+    r = play("tv", other)
+    assert r.status_code == 404 and "doesn't know this file" in r.json()["detail"]
+    assert play("tv", ep.parent / "nope.mkv").status_code == 404
+    assert c.post("/api/jellyfin/play", json={"session": "tv", "path": str(ep),
+                                              "at": -1}).status_code == 422
+    assert fake.commands == []
+
+
+def test_play_when_the_client_closed_meanwhile_or_jellyfin_is_down(fake, tmp_path, known,
+                                                                   monkeypatch):
+    root, ep = known
+    fake.sessions = _clients()
+    c = _playing(_client(_env(fake, tmp_path, root)))
+    real = jellyfin.JellyfinClient.sessions
+    # Listed when asked, closed by the time the command arrives.
+    monkeypatch.setattr(jellyfin.JellyfinClient, "sessions",
+                        lambda self, active_within=0: [_client_session("gone", "TV", "x")])
+    r = c.post("/api/jellyfin/play", json={"session": "gone", "path": str(ep)})
+    assert r.status_code == 404 and "closed" in r.json()["detail"]
+    monkeypatch.setattr(jellyfin.JellyfinClient, "sessions", real)
+    fake.status = 500
+    assert c.post("/api/jellyfin/play", json={"session": "tv",
+                                              "path": str(ep)}).status_code == 502
+
+
+def test_play_needs_jellyfin(tmp_path, media):
+    root, ep = media
+    c = _client({"QC_MEDIA_ROOTS": str(root), "QC_STATE_DIR": str(tmp_path / "state")})
+    r = c.post("/api/jellyfin/play", json={"session": "tv", "path": str(ep)})
+    assert r.status_code == 503
+
+
+def test_cli_play_and_sessions_all(fake, known, cli_run, capsys):
+    _, ep = known
+    fake.sessions = _clients()
+    code, out = cli_run("jellyfin.reindex")
+    assert code == 0
+    code, out = cli_run("jellyfin.play", str(ep), "--session", "bravia", "--at", "62")
+    assert code == 0, out
+    assert out["command"] == "play" and out["device"] == "BRAVIA 4K VH2"
+    assert fake.commands[-1][2]["startPositionTicks"] == str(62 * jellyfin.TICKS)
+    code, out = cli_run("nowplaying", "--all")
+    assert code == 0 and {s["id"] for s in out["sessions"]} == {"tv", "web", "infuse"}
+
+
+def test_cli_play_prints_what_it_did(fake, known, tmp_path, monkeypatch, capsys):
+    from quipclipper import cli
+
+    _fmt = cli._FORMATTERS["jellyfin.play"]
+    _fmt({"command": "play", "title": "The Best of Both Worlds", "device": "BRAVIA",
+          "client": "Android TV", "at": 62})
+    _fmt({"command": "seek", "title": "X", "device": "Firefox", "client": "Jellyfin Web",
+          "at": 3700})
+    cli._FORMATTERS["jellyfin.sessions"]({"sessions": [
+        {**_session(), "id": "infuse", "device": "Apple TV", "client": "Infuse-Library",
+         "user": "wiz", "idle": True, "can_play": False,
+         "control_note": "This app doesn't take remote control from Jellyfin."}]})
+    out = capsys.readouterr().out.splitlines()
+    assert out[0] == "Playing The Best of Both Worlds on BRAVIA (Android TV) at 1:02"
+    assert out[1] == "Seeked X on Firefox (Jellyfin Web) at 1:01:40"
+    assert out[2].startswith("infuse  Apple TV (Infuse-Library, wiz)  idle, can't be controlled")

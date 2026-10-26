@@ -293,6 +293,17 @@ class LeadStingerQuipRequest(BaseModel):
     set: str | None = Field(None, max_length=100)
 
 
+class JellyfinPlayRequest(BaseModel):
+    """JSON body for POST /api/jellyfin/play (M22): start a library file on a client."""
+
+    # A session id (jellyfin.sessions?all=1), or part of its device, user or client name
+    # that only one controllable session has.
+    session: str = Field(..., min_length=1, max_length=200)
+    path: str
+    # Where to start, in seconds into the file. The web UI sends a little before the line.
+    at: float = Field(0.0, ge=0)
+
+
 class ClipRequest(BaseModel):
     """JSON body for POST /api/clip — full CLI option parity."""
 
@@ -810,23 +821,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # --- Jellyfin now playing (M15) ---------------------------------------------
 
     @app.get("/api/jellyfin/sessions")
-    def jellyfin_sessions() -> dict:
+    def jellyfin_sessions(all_: bool = Query(False, alias="all")) -> dict:
         """What each Jellyfin client is playing, its playhead and the file in the library.
 
         ``position`` is the playhead estimated from the client's last report (clients
         report every ~10 s while playing; a paused one is exact). ``path`` is the file
-        under the media roots, or null with a ``note`` saying why."""
+        under the media roots, or null with a ``note`` saying why. Every session says
+        whether Play on… can start something on it (``can_play``, M22); ``all`` adds the
+        clients with nothing playing (``idle``), for Play on… to offer."""
         if not settings.jellyfin_enabled:
             raise HTTPException(status_code=503, detail="Jellyfin isn't configured "
                                 "(QC_JELLYFIN_URL and an API key).")
         client = _jf_client()
         try:
-            raw = client.sessions()
+            raw = client.sessions(jellyfin.CONTROLLABLE_WITHIN if all_ else
+                                  jellyfin.ACTIVE_WITHIN)
         except jellyfin.JellyfinError as exc:
             raise HTTPException(status_code=502, detail=str(exc))
         sessions = jellyfin.now_playing(
             raw, settings.jellyfin_path_map, settings.media_roots,
-            item_path=client.item_path)
+            item_path=client.item_path, include_idle=all_)
         for s in sessions:  # the item's own artwork; else what the index has for the file
             if s.get("art") is None and s.get("path") and jf_index is not None:
                 known = jf_index.lookup(s["path"])
@@ -882,6 +896,76 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                         "folder")}
         return {"path": str(p), "known": item is not None, "item": item,
                 "naming": meta, "index": index.status()}
+
+    def _jf_play_target(raw: list[dict], want: str) -> dict:
+        """The session ``want`` names: its id, else the one controllable session whose
+        device, user or client name contains it."""
+        by_id = [s for s in raw if s.get("Id") == want]
+        if by_id:
+            hits = by_id
+        else:
+            key = want.casefold()
+            named = [s for s in raw if any(key in str(s.get(f) or "").casefold()
+                                           for f in ("DeviceName", "UserName", "Client"))]
+            hits = [s for s in named if jellyfin.control(s)[0]] or named[:1]
+            if len(hits) > 1:
+                names = "; ".join(f"{s.get('Id')} = {s.get('DeviceName')} ({s.get('Client')})"
+                                  for s in hits)
+                raise HTTPException(status_code=400, detail=f"{len(hits)} Jellyfin clients "
+                                    f"match {want!r}; name one by its id: {names}")
+        if not hits:
+            raise HTTPException(status_code=404, detail=f"No Jellyfin client matches {want!r} "
+                                "(it may have closed).")
+        target = hits[0]
+        ok, why = jellyfin.control(target)
+        if not ok:
+            raise HTTPException(status_code=409, detail=f"{target.get('DeviceName')} "
+                                f"({target.get('Client')}) can't be controlled: {why}")
+        return target
+
+    @app.post("/api/jellyfin/play")
+    def jellyfin_play(req: JellyfinPlayRequest) -> dict:
+        """Play a library file on a Jellyfin client, starting at ``at`` (M22). The file is
+        found in the path index; a client already playing it just seeks there."""
+        index = _jf_required()
+        p = _resolve(req.path)
+        if not p.is_file():
+            raise HTTPException(status_code=404, detail=f"Not found: {req.path}")
+        item = index.lookup(p)
+        if not item or not item.get("id"):
+            hint = (" Its path index isn't built yet; try again in a minute."
+                    if index.built is None else "")
+            raise HTTPException(status_code=404, detail="Jellyfin doesn't know this file."
+                                + hint)
+        client = _jf_client()
+        try:
+            raw = client.sessions(jellyfin.CONTROLLABLE_WITHIN)
+        except jellyfin.JellyfinError as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+        target = _jf_play_target(raw, req.session)
+        kind = jellyfin.media_type(item.get("type"))
+        if kind not in (target.get("PlayableMediaTypes") or []):
+            raise HTTPException(status_code=409, detail=f"{target.get('DeviceName')} "
+                                f"({target.get('Client')}) can't play {kind.lower()}.")
+        sid = str(target["Id"])
+        playing = target.get("NowPlayingItem") or {}
+        try:
+            if playing.get("Id") == item["id"]:  # already on it: move the playhead
+                command = "seek"
+                client.playstate(sid, "Seek", req.at)
+                if (target.get("PlayState") or {}).get("IsPaused"):
+                    client.playstate(sid, "Unpause")
+            else:
+                command = "play"
+                client.play_now(sid, item["id"], req.at)
+        except jellyfin.JellyfinError as exc:
+            if exc.status == 404:
+                raise HTTPException(status_code=404, detail="That Jellyfin client has closed.")
+            raise HTTPException(status_code=502, detail=str(exc))
+        return {"session": sid, "device": target.get("DeviceName"),
+                "client": target.get("Client"), "item_id": item["id"],
+                "title": item.get("title"), "path": str(p), "at": req.at,
+                "command": command}
 
     @app.post("/api/jellyfin/index")
     def jellyfin_reindex() -> dict:

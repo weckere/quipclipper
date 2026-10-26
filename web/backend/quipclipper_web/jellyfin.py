@@ -1,4 +1,5 @@
 """Jellyfin "Now playing" (M15): what is playing on each Jellyfin client, and where.
+Since M22, "Play on…" too: start a library file on a client at a line.
 
 quipclipper reads media from disk, so Jellyfin is used for what only it knows: its live
 sessions (``GET /Sessions``) and their playheads, so the web app can open the file a TV
@@ -26,6 +27,10 @@ from quipclipper_web import library
 _HEX32 = re.compile(r"[0-9a-f]{32}\Z")  # a Jellyfin item id or image tag
 TICKS = 10_000_000  # Jellyfin ticks per second
 ACTIVE_WITHIN = 600  # seconds: sessions seen this recently
+# Play on… (M22) also offers an idle client that can be controlled when it was last active
+# this long ago: a TV app parked on its home screen keeps its socket open for hours, and
+# Jellyfin calls a session controllable only while that socket is open.
+CONTROLLABLE_WITHIN = 86400
 # A playing client reports its position every ~10 s. Between reports the playhead is
 # estimated from the last report's age, but never by more than this: a client that
 # stopped reporting is not assumed to have kept playing.
@@ -123,9 +128,22 @@ class JellyfinClient:
             "ReplaceAllImages": "false",
         })
 
-    def sessions(self) -> list[dict]:
-        data = self.get("/Sessions", {"activeWithinSeconds": ACTIVE_WITHIN})
+    def sessions(self, active_within: int = ACTIVE_WITHIN) -> list[dict]:
+        data = self.get("/Sessions", {"activeWithinSeconds": active_within})
         return [s for s in data if isinstance(s, dict)] if isinstance(data, list) else []
+
+    def play_now(self, session_id: str, item_id: str, at: float) -> None:
+        """Start an item on a client at ``at`` seconds (Jellyfin's PlayNow)."""
+        self.post(f"/Sessions/{urllib.parse.quote(session_id, safe='')}/Playing", {
+            "playCommand": "PlayNow", "itemIds": item_id,
+            "startPositionTicks": int(round(at * TICKS)),
+        })
+
+    def playstate(self, session_id: str, command: str, at: float | None = None) -> None:
+        """Seek, Unpause, … on a client that is already playing."""
+        query = {"seekPositionTicks": int(round(at * TICKS))} if at is not None else None
+        self.post(f"/Sessions/{urllib.parse.quote(session_id, safe='')}/Playing/{command}",
+                  query)
 
     def item_path(self, item_id: str) -> str | None:
         """An item's path, for a session whose NowPlayingItem left it out."""
@@ -182,6 +200,37 @@ def session_art(item: dict) -> dict | None:
             or art(item.get("AlbumId"), item.get("AlbumPrimaryImageTag")))
 
 
+def media_type(item_type: Any) -> str:
+    """The media type a client must play for an item: Audio for tracks, else Video."""
+    return "Audio" if item_type in ("Audio", "AudioBook") else "Video"
+
+
+def control(s: dict) -> tuple[bool, str | None]:
+    """Whether a client takes "play this" from quipclipper (M22), and if not, why.
+
+    A client says so itself: ``SupportsRemoteControl`` (its socket to Jellyfin is open and
+    it obeys commands) and the media it can be told to play. Infuse reports neither."""
+    if not s.get("SupportsRemoteControl"):
+        return False, "This app doesn't take remote control from Jellyfin."
+    if not {"Video", "Audio"} & set(s.get("PlayableMediaTypes") or []):
+        return False, "This app can't be told to play anything."
+    return True, None
+
+
+def _session_fields(s: dict) -> dict:
+    can_play, why = control(s)
+    return {
+        "id": s.get("Id"),
+        "user": s.get("UserName"),
+        "device": s.get("DeviceName"),
+        "client": s.get("Client"),
+        "can_play": can_play,
+        "control_note": why,
+        "media_types": [m for m in s.get("PlayableMediaTypes") or [] if isinstance(m, str)],
+        "last_active": s.get("LastActivityDate"),
+    }
+
+
 def now_playing(
     raw: list[dict],
     path_map: tuple[tuple[str, str], ...],
@@ -189,13 +238,25 @@ def now_playing(
     *,
     item_path: Callable[[str], str | None] | None = None,
     now: datetime | None = None,
+    include_idle: bool = False,
 ) -> list[dict]:
-    """The sessions that have something playing (or paused), newest report first."""
+    """The sessions that have something playing (or paused), newest report first.
+
+    ``include_idle`` (Play on…, M22) adds the sessions with nothing playing, after them,
+    most recently active first: each one seen within ``ACTIVE_WITHIN``, and any that can
+    be controlled (``raw`` may then reach further back, ``CONTROLLABLE_WITHIN``)."""
     now = now or datetime.now(timezone.utc)
-    out = []
+    out, idle = [], []
     for s in raw:
+        if include_idle:  # raw reaches back further: keep only what the default would, or
+            seen = _parse_time(s.get("LastActivityDate"))  # what can be controlled
+            recent = seen is not None and (now - seen).total_seconds() <= ACTIVE_WITHIN
+            if not (recent or control(s)[0]):
+                continue
         item = s.get("NowPlayingItem")
         if not isinstance(item, dict):
+            if include_idle:
+                idle.append({**_session_fields(s), "idle": True})
             continue
         play = s.get("PlayState") or {}
         paused = bool(play.get("IsPaused"))
@@ -227,10 +288,8 @@ def now_playing(
                 except library.PathNotAllowed:
                     note = "Not in quipclipper's library (outside the media roots)."
         out.append({
-            "id": s.get("Id"),
-            "user": s.get("UserName"),
-            "device": s.get("DeviceName"),
-            "client": s.get("Client"),
+            **_session_fields(s),
+            "idle": False,
             "item_id": item.get("Id"),
             "type": item.get("Type"),
             "title": item.get("Name"),
@@ -249,4 +308,5 @@ def now_playing(
             "art": session_art(item),
         })
     out.sort(key=lambda r: r["reported_at"] or "", reverse=True)
-    return out
+    idle.sort(key=lambda r: r["last_active"] or "", reverse=True)
+    return out + idle

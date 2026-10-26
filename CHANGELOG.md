@@ -11,6 +11,16 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 
 ## [Unreleased]
 
+### Play at the line on Jellyfin (M22)
+
+- **Play on…** starts a line found in quipclipper on a Jellyfin client: on a search hit, a
+  match in the workspace's Matches tab, or the workspace selection, it lists the clients
+  that can be controlled (Jellyfin in a browser, the Jellyfin Android TV app) and plays the
+  file there from a second before the line; a client already on that file seeks. Infuse is
+  listed as "can't be controlled" (it takes no remote control). API `POST
+  /api/jellyfin/play` and `GET /api/jellyfin/sessions?all=1` (every client, with
+  `can_play`); CLI `jellyfin.play` and `nowplaying --all`.
+
 ### Fixed
 
 - Pairing request and client ids never start with "-": about 1 in 64 did, and the CLI then read
