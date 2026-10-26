@@ -364,12 +364,14 @@
                  in and out handles, the subtitle lines as spans, the playhead and keyframes. -->
             <div id="waveform" class="waveform" hidden>
               <div class="wf-toolbar">
-                <div class="wf-group" role="group" aria-label="Waveform zoom">
+                <div class="wf-group" role="group" aria-label="Waveform view">
                   <button type="button" id="wf-zoom-out" data-action="item.peaks" class="wf-btn" title="Zoom out (-)" aria-label="Zoom out"><span aria-hidden="true">−</span></button>
                   <button type="button" id="wf-zoom-in" data-action="item.peaks" class="wf-btn" title="Zoom in (+), down to 20 ms across; Ctrl/⌘-scroll or pinch zooms at the pointer" aria-label="Zoom in"><span aria-hidden="true">+</span></button>
                   <button type="button" id="wf-zoom-sel" class="wf-btn" title="Fit the selection in the strip">Fit selection</button>
                   <button type="button" id="wf-zoom-all" class="wf-btn" title="Show the whole file">Whole</button>
+                  <button type="button" id="wf-go-head" class="wf-btn" title="Bring the playhead into view, in the middle, at this zoom (P)" aria-keyshortcuts="P">Playhead</button>
                   <span id="wf-span" class="wf-span"></span>
+                  <label class="checkbox-label" title="While playing, scroll the waveform so the playhead stays in the middle (a page at a time with reduced motion). A pan, a handle or a drag on the waveform pauses it until the next play or Playhead (P)."><input id="wf-follow" class="switch" type="checkbox" aria-label="Follow playback on the waveform" /> Follow playback</label>
                 </div>
                 <div class="wf-group" role="group" aria-label="Snap the handles">
                   <span class="wf-label">Snap</span>
@@ -394,7 +396,7 @@
                 <div id="wf-in" class="wf-handle wf-in" role="slider" tabindex="0" aria-label="In point" title="In point: drag it, or ← → 10 ms (Shift 100 ms, Alt one frame); [ and ] jump between the handles" hidden><span class="wf-grip" aria-hidden="true"></span></div>
                 <div id="wf-out" class="wf-handle wf-out" role="slider" tabindex="0" aria-label="Out point" title="Out point: drag it, or ← → 10 ms (Shift 100 ms, Alt one frame); [ and ] jump between the handles" hidden><span class="wf-grip" aria-hidden="true"></span></div>
               </div>
-              <p class="wf-hint"><span class="wf-hint-fine">Drag to select, Shift-drag or scroll to pan, click to play from there; click a line's label to select the line, Shift-click to add it.</span><span class="wf-hint-touch">Long-press, then drag, to select; drag to pan; tap to play from there, or tap a line's label to select the line.</span> <kbd>I</kbd> and <kbd>O</kbd> set the in and out points at the playhead.<span id="wf-cues-help" class="visually-hidden"> On the subtitle lines, ← and → move between lines, Enter selects the line, Shift+Enter adds it to the selection, and S and E set the start and end.</span></p>
+              <p class="wf-hint"><span class="wf-hint-fine">Drag to select, Shift-drag or scroll to pan, click to play from there; click a line's label to select the line, Shift-click to add it.</span><span class="wf-hint-touch">Long-press, then drag, to select; drag to pan; tap to play from there, or tap a line's label to select the line.</span> <kbd>I</kbd> and <kbd>O</kbd> set the in and out points at the playhead. <kbd>P</kbd> brings the playhead into view.<span id="wf-cues-help" class="visually-hidden"> On the subtitle lines, ← and → move between lines, Enter selects the line, Shift+Enter adds it to the selection, and S and E set the start and end.</span></p>
               <p class="wf-notes"><span id="wf-cut-note"></span> <span id="wf-note" role="status"></span></p>
             </div>
             <div id="playback-controls" class="playback-controls">

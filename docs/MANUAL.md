@@ -283,6 +283,14 @@ Opening a file opens its workspace.
   decode. It never stretches a coarser view over the new one (older sound that is just as
   sharp, after a pan or zooming out, stays visible under the grey). The handles, playhead
   and selection keep working meanwhile, and only the last zoom of a quick run is fetched.
+  **Playhead** (or **P**) brings the playhead into view, in the middle, at the current
+  zoom. While the file plays, the view turns a page when the playhead runs off its right
+  edge; with **Follow playback** on, it scrolls instead, keeping the playhead in the middle
+  at the current zoom (a zoom keeps it there). Your own move on the waveform (a pan, a
+  handle, a drag-select, **[** / **]**, **Fit selection**) pauses following until the next
+  play or **Playhead**. With the system's *reduce motion* setting, or zoomed in closer than
+  half a second, it turns a page at a time instead of scrolling. The switch is remembered
+  in this browser.
   **Drag across the waveform** (away from the handles) to select from where the drag
   starts to where it ends; on a touch screen, **long-press, then drag**. That is how you
   select something with no line of its own, such as a song: it replaces any line selection,
@@ -407,7 +415,7 @@ The web app aims at WCAG 2.2 AA.
   dialogue map and the seek bar are sliders: the arrow keys step 1 s (Shift: 10 s).
   The waveform's in and out handles are sliders too: **← →** move one 10 ms (Shift 100 ms,
   Alt one frame, Page Up/Down 1 s), **[** and **]** jump between them, **+** and **−**
-  zoom. **I** and **O** set the in and out points at the playhead (and say where: "In at
+  zoom, and **P** brings the playhead into view. **I** and **O** set the in and out points at the playhead (and say where: "In at
   5:53.2"); the **Set in** and **Set out** buttons do the same.
   The waveform's subtitle labels are one tab stop: **← →** move between lines (bringing
   the line into view, and saying it), Home/End go to the first and last, **Enter** or

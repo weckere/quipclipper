@@ -790,6 +790,7 @@ EXEMPT_UI_SETTINGS: dict[str, str] = {
     "qc_sub_size": "presentation: subtitle size on the video in the browser",
     "qc_sub_bg": "presentation: solid background behind the video's subtitles in the browser",
     "qc_stt_open": "presentation: whether the machine transcript bar is open in the browser",
+    "qc_wf_follow": "presentation: whether the waveform scrolls with playback in the browser",
 }
 
 
