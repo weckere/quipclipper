@@ -62,7 +62,9 @@ in the same way, **even when no `QC_API_TOKEN` is set**. An explicit (`X-API-Key
 learns that it was revoked. A client token can't approve, deny or list pairing requests, or
 list or revoke clients (`403`). Behind the password gate, nginx lets a request with a client
 token in `X-API-Key` or `Bearer` through after asking the backend whether it is current
-(`GET /api/clients/check`); the gate's `api` login still knows only `QC_API_TOKEN`.
+(`GET /api/clients/check`); the gate's `api` login still knows only `QC_API_TOKEN`. An app
+that paired with [scopes](#scopes) (the Jellyfin plugin) gets a token that opens only those
+scopes' routes; any other route answers `403`.
 
 **CSRF header (browser clients only).** State-changing requests
 (`POST`/`PUT`/`PATCH`/`DELETE`) that are **not** token-authenticated must carry
@@ -298,6 +300,11 @@ re-index job waiting behind it; if the run is cancelled while it re-indexes a ho
 that file goes back to the front of the queue. A path already under a media root is used as
 it is; only other paths go through `QC_PATH_MAP`.
 
+**`"source": "jellyfin"`** (in the body, or `source=jellyfin` in the query) says the paths
+are Jellyfin's, as the [Jellyfin plugin](HOOKS.md#4-jellyfin-the-plugin) sends them: they
+go through Jellyfin's path map (`QC_JELLYFIN_PATH_MAP`, or the one [derived](#titles-and-artwork-jellyfin)
+when that is unset) instead of `QC_PATH_MAP`. Any other `source` is a `400`.
+
 <a id="changed-subtitles"></a>**Changed subtitles.** A file's index entry belongs to one version
 of its subtitle source (its sidecar's date, or the file's own for embedded subtitles), so
 `index_state` (library rows) is `changed` for a file that was indexed but whose subtitles
@@ -451,12 +458,12 @@ laptop wants access, code 7F3K. Allow / Deny") or with the CLI (`pair.list`, `pa
 
 | Method | Path | Who | Purpose |
 |---|---|---|---|
-| POST | `/api/pair` | the app (CSRF header, no token) | Ask for access: `{name, host}` → `{id, code, poll_secret, expires_in}`. |
-| GET | `/api/pair/{id}` | the app (`X-Pair-Secret`) | Poll: `pending`, `approved` with `token` and `client_id` (once), `denied` or `expired`. |
-| GET | `/api/pair` | a person | The requests waiting: `{requests: [{id, name, host, code, address, created, expires_at}]}`. |
+| POST | `/api/pair` | the app (CSRF header, no token) | Ask for access: `{name, host, scopes?}` → `{id, code, poll_secret, expires_in}`. |
+| GET | `/api/pair/{id}` | the app (`X-Pair-Secret`) | Poll: `pending`, `approved` with `token`, `client_id` and `scopes` (once), `denied` or `expired`. |
+| GET | `/api/pair` | a person | The requests waiting: `{requests: [{id, name, host, code, address, created, expires_at, scopes}]}`. |
 | POST | `/api/pair/{id}/approve` | a person | Let it in: `{status: "approved", client_id}`. |
 | POST | `/api/pair/{id}/deny` | a person | Turn it down: `{status: "denied"}`. |
-| GET | `/api/clients` | a person | The paired apps: `{clients: [{id, name, host, created, last_used}]}`. |
+| GET | `/api/clients` | a person | The paired apps: `{clients: [{id, name, host, created, last_used, scopes}]}`. |
 | DELETE | `/api/clients/{id}` | a person | Revoke one: `{removed: true\|false}`. |
 | DELETE | `/api/clients/self` | the app (its client token) | Revoke its own token: `{removed: true}`; `401` without a client token. |
 | GET | `/api/clients/check` | the password gate | `200 {client_id}` for a current client token, else `401`. |
@@ -477,9 +484,26 @@ throw them out. Times are UTC ISO 8601 with `Z`.
   token once and the request is gone after that (a later poll is `404`); `denied` and
   `expired` answer for a minute, then `404`. An approval nobody collects within a minute
   (and before the request's expiry) is dropped with its client.
+- <a id="scopes"></a>**Scopes:** an app that needs only part of the API names it,
+  `"scopes": ["index.file", "transcripts.read"]`, and its token opens only these routes:
+
+  | Scope | Banner says | Routes |
+  |---|---|---|
+  | `index.file` | queue subtitle re-indexes | `POST` and `GET /api/index/file` |
+  | `transcripts.read` | read transcripts | `GET /api/items/transcript` |
+
+  plus what every client may do: `GET /api/health`, `GET /api/clients/check`,
+  `DELETE /api/clients/self`, and pairing again (`POST /api/pair`, `GET /api/pair/{id}`).
+  Anything else answers `403` with a `detail` naming what the token may do. The banner reads
+  "Jellyfin on wizfin wants to queue subtitle re-indexes and read transcripts, code …", and
+  Settings ▸ Connected apps and `clients.list` show each app's scopes, or full access. No
+  `scopes` (or `null`) asks for a full token, as before scopes existed; an empty list or an
+  unknown scope is a `422`. `scopes` in the replies is a sorted list, or `null` for full
+  access.
 - **Storage:** requests live in memory (a restart forgets them; the app asks again). Clients
   live in `state_dir/clients.json` (0600, written atomically): `{clients: [{id, name, host,
-  token_sha256, created, last_used}]}`. The token itself is never stored. `last_used` is
+  token_sha256, created, last_used, scopes?}]}` (no `scopes`: full access; a `scopes` that
+  isn't a list of known names opens nothing). The token itself is never stored. `last_used` is
   written at most once a minute.
 - **Behind the password gate** (`QC_PASSWORD` / `passwordFile`), nginx lets exactly
   `POST /api/pair` and `GET /api/pair/<id>` through without the password. Listing, approving
@@ -608,6 +632,17 @@ background once an hour old; lookups never wait for Jellyfin. A file it doesn't 
 (Jellyfin hasn't scanned it, or its folder has no path map entry) gets the names parsed
 from its path, as before.
 
+**With `QC_JELLYFIN_PATH_MAP` unset, the map is derived** each time the index is built: for
+each folder of each Jellyfin library (`/Library/VirtualFolders`), a few of its files' paths,
+and the folder here under which the same relative path exists. It looks in each media root
+and the clips folder, in a folder Jellyfin's path holds below the library's folder (Jellyfin's
+`/data` over a root that is its `/data/movies`), and in a root's subfolders (`/movies` onto a
+root's `movies` folder). A pair is kept only when every sample found agrees. Now playing,
+Play on…, the clips scan and the Jellyfin plugin's re-index requests use the same map. An
+explicit map always wins. `index.path_map` says which: `{"source": "explicit" | "derived" |
+"none", "pairs": [[theirs, ours], …], "unmatched": [library folders nothing was found for]}`
+(`unmatched` only when derived; `none` until the first build).
+
 ```json
 {"path": "/srv/shows/Star Trek TNG/Season 3/S03E26.mkv", "known": true,
  "item": {"id": "a41…", "type": "Episode", "title": "The Best of Both Worlds",
@@ -616,7 +651,8 @@ from its path, as before.
    "art": {"id": "a41…", "type": "Primary", "tag": "21d…", "wide": true}},
  "naming": {"title": "The_Best_of_Both_Worlds", "show": "Star_Trek_The_Next_Generation",
    "season": "03", "episode": "26", "year": "1990", "folder": "Star_Trek_TNG"},
- "index": {"built": "2026-10-21T01:00:00Z", "files": 25992, "folders": 2711, "building": false, "error": null}}
+ "index": {"built": "2026-10-21T01:00:00Z", "files": 25992, "folders": 2711, "building": false, "error": null,
+   "path_map": {"source": "explicit", "pairs": [["/shows", "/srv/shows"]]}}}
 ```
 
 For a folder, `item` is the show, season or movie it holds (`type` `Series`, `Season` or

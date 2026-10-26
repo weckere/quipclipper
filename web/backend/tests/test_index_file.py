@@ -534,3 +534,34 @@ def test_the_servers_own_paths_are_not_mapped_again(tmp_path, monkeypatch):
 def test_path_map_syntax(env, want):
     assert Settings.from_env({"QC_PATH_MAP": env}).path_map == want
     assert Settings.from_env({"QC_JELLYFIN_PATH_MAP": env}).jellyfin_path_map == want
+
+
+# --- the Jellyfin plugin (M22): "source": "jellyfin" ----------------------------------------
+
+
+def test_source_jellyfin_maps_with_the_jellyfin_path_map(tmp_path, monkeypatch):
+    media = _media(tmp_path)
+    c = _client(tmp_path, media, monkeypatch, QC_PATH_MAP=f"/data/shows={media}",
+                QC_JELLYFIN_PATH_MAP=f"/shows={media}")
+    sub = "/shows/Show (2001) [x]/Season 01/Show - S01E01.en.srt"
+    ep = media / "Show (2001) [x]" / "Season 01" / "Show - S01E01.mkv"
+    hook = {"Authorization": f"Bearer {HOOK}"}
+    r = c.post("/api/index/file", json={"paths": [sub], "source": "jellyfin"}, headers=hook)
+    assert r.status_code == 202, r.text
+    assert r.json()["files"] == [{"path": sub, "media": str(ep), "status": "queued"}]
+    _settle(c)
+    # Without the source the arr map applies, which doesn't know Jellyfin's /shows.
+    r = c.post("/api/index/file", json={"paths": [sub]}, headers=hook)
+    assert r.status_code == 422 and r.json()["files"][0]["status"] == "outside_roots"
+    # The query string form says it the same way.
+    r = c.post("/api/index/file", params={"path": sub, "source": "jellyfin"}, headers=hook)
+    assert r.status_code == 202, r.text
+    _settle(c)
+
+
+def test_an_unknown_source_is_a_400(tmp_path, monkeypatch):
+    media = _media(tmp_path)
+    c = _client(tmp_path, media, monkeypatch)
+    r = c.post("/api/index/file", json={"paths": [str(media / "silent.mkv")], "source": "plex"},
+               headers={"Authorization": f"Bearer {HOOK}"})
+    assert r.status_code == 400 and "jellyfin" in r.json()["detail"]

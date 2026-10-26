@@ -70,7 +70,9 @@ def test_pairing_happy_path(tmp_path):
     listed = c.get("/api/pair").json()["requests"]
     assert len(listed) == 1
     row = listed[0]
-    assert set(row) == {"id", "name", "host", "code", "address", "created", "expires_at"}
+    assert set(row) == {"id", "name", "host", "code", "address", "created", "expires_at",
+                        "scopes"}
+    assert row["scopes"] is None   # asked for none: full access
     assert (row["id"], row["name"], row["host"], row["code"]) == (
         req["id"], "LeadStinger", "laptop", req["code"])
     assert row["created"].endswith("Z") and row["expires_at"].endswith("Z")
@@ -84,11 +86,13 @@ def test_pairing_happy_path(tmp_path):
 
     got = _poll(c, req).json()
     assert got["status"] == "approved" and got["client_id"] == client_id
+    assert got["scopes"] is None
     assert re.fullmatch(r"qcc_[A-Za-z0-9_-]{43}", got["token"])
     clients = c.get("/api/clients").json()["clients"]
     assert [(x["id"], x["name"], x["host"]) for x in clients] == [
         (client_id, "LeadStinger", "laptop")]
-    assert set(clients[0]) == {"id", "name", "host", "created", "last_used"}
+    assert set(clients[0]) == {"id", "name", "host", "created", "last_used", "scopes"}
+    assert clients[0]["scopes"] is None
 
 
 def test_the_token_is_handed_out_once(tmp_path):
@@ -608,3 +612,122 @@ def test_ids_never_start_with_a_dash(tmp_path, monkeypatch):
     seq = iter(["-dashfirst", "-again", "okid"])
     monkeypatch.setattr(pairing.secrets, "token_urlsafe", lambda n=None: next(seq))
     assert pairing._new_id(9) == "okid"
+
+
+# --- scoped client tokens (M22) ----------------------------------------------------------
+
+
+def _paired_scoped(c: TestClient, scopes: list[str]) -> tuple[str, str, dict]:
+    """Pair one app that asks for ``scopes``; its (token, client_id, what its poll said)."""
+    req = _start(c, {"name": "Jellyfin", "host": "wizfin", "scopes": scopes}).json()
+    assert c.post(f"/api/pair/{req['id']}/approve", headers=CSRF).status_code == 200
+    got = _poll(c, req).json()
+    return got["token"], got["client_id"], got
+
+
+def test_a_request_names_its_scopes_and_the_token_keeps_them(tmp_path):
+    c = _client(tmp_path)
+    req = _start(c, {"name": "Jellyfin", "host": "wizfin",
+                     "scopes": ["transcripts.read", "index.file", "index.file"]}).json()
+    listed = c.get("/api/pair").json()["requests"]
+    assert listed[0]["scopes"] == ["index.file", "transcripts.read"]  # sorted, no repeats
+    c.post(f"/api/pair/{req['id']}/approve", headers=CSRF)
+    got = _poll(c, req).json()
+    assert got["scopes"] == ["index.file", "transcripts.read"]
+    assert c.get("/api/clients").json()["clients"][0]["scopes"] == [
+        "index.file", "transcripts.read"]
+    saved = json.loads((tmp_path / "state" / "clients.json").read_text())["clients"][0]
+    assert saved["scopes"] == ["index.file", "transcripts.read"]
+
+
+@pytest.mark.parametrize("scopes", [[], ["everything"], ["index.file", "clips.delete"], "index.file",
+                                    [1]])
+def test_unknown_or_empty_scopes_are_refused(tmp_path, scopes):
+    c = _client(tmp_path)
+    r = _start(c, {"name": "Jellyfin", "scopes": scopes})
+    assert r.status_code == 422
+    assert c.get("/api/pair").json() == {"requests": []}
+
+
+def test_a_scoped_token_opens_only_its_scopes_routes(tmp_path):
+    c = _client(tmp_path, QC_API_TOKEN="server-token")
+    token, client_id, _ = _paired_scoped(c, ["index.file"])
+    key = {"X-API-Key": token}
+    # Its scope: the re-index queue, read and write (a POST with no path is a 400, not 403).
+    assert c.get("/api/index/file", headers=key).status_code == 200
+    assert c.post("/api/index/file", json={"paths": []}, headers=key).status_code == 400
+    # What every client may do: check itself, see the server is up.
+    assert c.get("/api/clients/check", headers=key).json() == {"client_id": client_id}
+    assert c.get("/api/health", headers=key).status_code == 200
+    # Anything else is 403, naming what it may do.
+    for method, path in [("GET", "/api/clips"), ("GET", "/api/config"),
+                         ("GET", "/api/items/transcript"), ("DELETE", "/api/bookmarks"),
+                         ("GET", "/api/clients"), ("GET", "/api/pair"),
+                         ("DELETE", f"/api/clients/{client_id}")]:
+        r = c.request(method, path, headers=key)
+        assert r.status_code == 403, (method, path, r.text)
+        assert "may only queue subtitle re-indexes" in r.json()["detail"]
+    # Other tokens are untouched: the server's own, and a full client token.
+    full, _ = _paired(c)
+    assert c.get("/api/clips", headers={"X-API-Key": full}).status_code == 200
+    assert c.get("/api/clips", headers={"X-API-Key": "server-token"}).status_code == 200
+    # It disconnects itself like any client.
+    assert c.delete("/api/clients/self", headers=key).json() == {"removed": True}
+    assert c.get("/api/index/file", headers=key).status_code == 401
+
+
+def test_a_transcripts_read_token_reads_transcripts_only(tmp_path):
+    c = _client(tmp_path)
+    token, _, _ = _paired_scoped(c, ["transcripts.read"])
+    key = {"Authorization": f"Bearer {token}"}
+    # Past the gate (a missing path is FastAPI's 422), not refused by it.
+    assert c.get("/api/items/transcript", headers=key).status_code == 422
+    assert c.delete("/api/items/transcript", headers=key).status_code == 403
+    assert c.get("/api/index/file", headers=key).status_code == 403
+
+
+def test_a_scoped_basic_password_is_held_to_its_scopes_too(tmp_path):
+    c = _client(tmp_path)
+    token, _, _ = _paired_scoped(c, ["index.file"])
+    auth = {"Authorization": _basic("jellyfin", token)}
+    assert c.get("/api/index/file", headers=auth).status_code == 200
+    assert c.get("/api/clips", headers=auth).status_code == 403
+
+
+def test_a_scoped_token_may_poll_and_pair_again(tmp_path):
+    c = _client(tmp_path)
+    token, _, _ = _paired_scoped(c, ["index.file"])
+    key = {"X-API-Key": token}
+    again = c.post("/api/pair", json={"name": "Jellyfin", "scopes": ["index.file"]}, headers=key)
+    assert again.status_code == 200
+    req = again.json()
+    assert c.get(f"/api/pair/{req['id']}", headers={**key, "X-Pair-Secret": req["poll_secret"]}
+                 ).json() == {"status": "pending"}
+
+
+@pytest.mark.parametrize("stored", ["index.file", {"x": 1}, ["clips.delete"]])
+def test_a_damaged_scopes_entry_opens_nothing(tmp_path, stored):
+    """A hand-edited clients.json whose scopes aren't a list of known names fails closed."""
+    c = _client(tmp_path)
+    token, _, _ = _paired_scoped(c, ["index.file"])
+    path = tmp_path / "state" / "clients.json"
+    data = json.loads(path.read_text())
+    data["clients"][0]["scopes"] = stored
+    path.write_text(json.dumps(data))
+    key = {"X-API-Key": token}
+    assert c.get("/api/index/file", headers=key).status_code == 403
+    assert c.get("/api/clips", headers=key).status_code == 403
+    assert c.get("/api/clients/check", headers=key).status_code == 200
+
+
+def test_scope_allows_matches_whole_routes_only():
+    allows = pairing.scope_allows
+    assert allows(None, "GET", "/api/clips")
+    assert allows(("index.file",), "post", "/api/index/file")
+    assert not allows(("index.file",), "POST", "/api/index/file/x")
+    assert not allows(("index.file",), "DELETE", "/api/index/file")
+    assert not allows(("index.file",), "GET", "/api/index/changes")
+    assert allows(("index.file",), "GET", "/api/pair/abc")
+    assert not allows(("index.file",), "GET", "/api/pair/abc/approve")
+    assert not allows(("index.file",), "POST", "/api/pair/abc/approve")
+    assert not allows((), "GET", "/api/index/file")

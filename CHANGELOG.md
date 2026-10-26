@@ -22,6 +22,22 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   /api/jellyfin/play` and `GET /api/jellyfin/sessions?all=1` (every client, with
   `can_play`); CLI `jellyfin.play` and `nowplaying --all`.
 
+### Subtitle re-index from Jellyfin (M22)
+
+- **Scoped client tokens:** an app that pairs may ask for only part of the API
+  (`"scopes": ["index.file", "transcripts.read"]` in `POST /api/pair`). The pairing banner
+  says what it asks for ("wants to queue subtitle re-indexes and read transcripts"), Settings
+  ▸ Connected apps and `clients.list` / `pair.list` show each app's scopes, and its token
+  answers 403 on every other route. An app that names no scopes gets a full token, as
+  before (LeadStinger is unchanged).
+- `POST /api/index/file` takes `"source": "jellyfin"`: the paths are Jellyfin's and go
+  through Jellyfin's path map. This is what the Jellyfin plugin's new subtitle watcher sends
+  when Jellyfin downloads a subtitle or notices one dropped into a library.
+- **The Jellyfin path map is derived** when `QC_JELLYFIN_PATH_MAP` is unset: quipclipper finds
+  a few of each Jellyfin library's files under its media roots and the clips folder, and maps
+  the library's folder there. An explicit map still wins. `/api/jellyfin/lookup`'s `index`
+  says which map is in use (`path_map`).
+
 ### Fixed
 
 - Pairing request and client ids never start with "-": about 1 in 64 did, and the CLI then read

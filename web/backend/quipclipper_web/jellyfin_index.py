@@ -161,6 +161,87 @@ def build_index(items: Iterable[dict], path_map: tuple[tuple[str, str], ...],
     return files, folders
 
 
+# --- the path map, derived when none is set (M22, D-056 decision 6) ----------------------
+
+DERIVE_SAMPLES = 5      # files asked for per library
+DERIVE_STRIP = 2        # leading folders a library's path may have above a media root
+DERIVE_CHILDREN = 500   # a media root's subfolders tried as a library's local folder
+
+
+def _under(path: str, prefix: str) -> bool:
+    return path == prefix or path.startswith(prefix.rstrip("/") + "/")
+
+
+def _match_sample(jf_path: str, location: str, bases: list[str],
+                  children: Callable[[str], list[str]]) -> tuple[str, str] | None:
+    """Where one of Jellyfin's files is here: ``(Jellyfin folder, local folder)`` such that
+    the file's path below the Jellyfin folder exists below the local one. Tried in order:
+    a base folder (a media root, the clips folder) holds the file as it sits below the
+    library's folder; or below one of the library's subfolders (Jellyfin's ``/data`` over
+    a root that is its ``/data/movies``); or one of a base's subfolders holds it
+    (``/movies`` onto the ``movies`` folder in a root)."""
+    rest = [p for p in jf_path[len(location):].split("/") if p]
+    if not rest:
+        return None
+    for base in bases:
+        for k in range(0, min(DERIVE_STRIP, len(rest) - 1) + 1):
+            if os.path.isfile(os.path.join(base, *rest[k:])):
+                src = "/".join([location.rstrip("/"), *rest[:k]]) if k else location
+                return src, base
+    for base in bases:
+        for child in children(base):
+            if os.path.isfile(os.path.join(child, *rest)):
+                return location, child
+    return None
+
+
+def derive_path_map(client: JellyfinClient, bases: list[Path],
+                    samples: int = DERIVE_SAMPLES) -> tuple[tuple[tuple[str, str], ...], dict]:
+    """A Jellyfin path map found by looking: for each folder of each Jellyfin library, a
+    few of its files' paths, and the local folder under which the same relative path
+    exists (``bases`` are where to look: the media roots and the clips folder). A pair is
+    kept only when every sample that was found agrees on it. Returns ``(pairs, report)``,
+    ``report`` naming the library folders nothing was found for. Raises JellyfinError."""
+    real_bases = []
+    for b in bases:
+        r = os.path.realpath(b)
+        if os.path.isdir(r) and r not in real_bases:
+            real_bases.append(r)
+    listed: dict[str, list[str]] = {}
+
+    def children(base: str) -> list[str]:
+        if base not in listed:
+            try:
+                with os.scandir(base) as it:
+                    found = sorted(e.path for e in it
+                                   if not e.name.startswith(".") and e.is_dir())
+            except OSError:
+                found = []
+            listed[base] = found[:DERIVE_CHILDREN]
+        return listed[base]
+
+    found: dict[str, set[str]] = {}
+    unmatched: list[str] = []
+    for lib in client.virtual_folders():
+        locations = [loc.rstrip("/") or "/" for loc in lib.get("Locations") or []
+                     if isinstance(loc, str) and loc.startswith("/")]
+        lib_id = lib.get("ItemId")
+        if not locations or not (isinstance(lib_id, str) and ITEM_ID_RE.match(lib_id)):
+            continue
+        paths = client.sample_paths(lib_id, samples * len(locations))
+        for loc in locations:
+            hits = [m for p in paths if _under(p, loc)
+                    for m in [_match_sample(p, loc, real_bases, children)] if m]
+            if not hits:
+                unmatched.append(loc)
+            for src, dst in hits:
+                found.setdefault(src, set()).add(dst)
+    pairs = tuple(sorted((src, next(iter(dsts))) for src, dsts in found.items()
+                         if len(dsts) == 1))
+    disagree = sorted(src for src, dsts in found.items() if len(dsts) > 1)
+    return pairs, {"unmatched": sorted(set(unmatched) | set(disagree))}
+
+
 def _real_map(path_map: tuple[tuple[str, str], ...]) -> tuple[tuple[str, str], ...]:
     """The path map with each local side resolved once, so index keys match the
     realpaths the library routes hand out (no per-file realpath over 25,000 files)."""
@@ -179,10 +260,16 @@ class JellyfinIndex:
 
     def __init__(self, state_dir: Path, client: Callable[[], JellyfinClient],
                  path_map: tuple[tuple[str, str], ...], roots: list[Path], *,
-                 refresh_every: float = REFRESH_EVERY, clock: Callable[[], float] = time.time):
+                 refresh_every: float = REFRESH_EVERY, clock: Callable[[], float] = time.time,
+                 derive_from: list[Path] | None = None):
         self.file = Path(state_dir) / INDEX_FILE
         self._client = client
+        # An explicit map (QC_JELLYFIN_PATH_MAP) wins; without one, each build derives the
+        # map by looking (derive_path_map) under the roots and ``derive_from``.
+        self._explicit = bool(path_map)
         self._path_map = _real_map(path_map)
+        self._derive_from = [*roots, *(derive_from or [])]
+        self._map_report: dict = {}
         self._roots = roots
         self._refresh_every = refresh_every
         self._clock = clock
@@ -204,8 +291,20 @@ class JellyfinIndex:
             return
         if not isinstance(data, dict) or data.get("version") != INDEX_VERSION:
             return
-        if data.get("path_map") != [list(p) for p in self._path_map]:
-            return  # mapped with another path map: its keys are wrong now
+        saved = data.get("path_map")
+        if self._explicit:
+            if saved != [list(p) for p in self._path_map]:
+                return  # mapped with another path map: its keys are wrong now
+        else:
+            # A derived map is kept with the index it built; an explicit one now unset
+            # is not, since its keys may name folders nothing derives.
+            if data.get("map_source") != "derived" or not isinstance(saved, list) or not all(
+                    isinstance(p, list) and len(p) == 2 and all(isinstance(x, str) for x in p)
+                    for p in saved):
+                return
+            self._path_map = tuple((a, b) for a, b in saved)
+            report = data.get("map_report")
+            self._map_report = report if isinstance(report, dict) else {}
         files, folders = data.get("files"), data.get("folders")
         if isinstance(files, dict) and isinstance(folders, dict):
             self._files, self._folders = files, folders
@@ -232,6 +331,23 @@ class JellyfinIndex:
             found[stem] = None if stem in found else (path, entry)
         return found.get
 
+    @property
+    def path_map(self) -> tuple[tuple[str, str], ...]:
+        """The Jellyfin path map in use: the explicit one, or the last one derived (empty
+        until the first build finds one)."""
+        return self._path_map
+
+    def map_status(self) -> dict:
+        """Where the path map came from (``explicit``, ``derived``, or ``none`` before the
+        first derivation), its pairs, and the library folders derivation found nothing
+        for."""
+        source = ("explicit" if self._explicit else
+                  "derived" if self._path_map or self._map_report else "none")
+        out = {"source": source, "pairs": [list(p) for p in self._path_map]}
+        if not self._explicit:
+            out["unmatched"] = list(self._map_report.get("unmatched") or [])
+        return out
+
     def status(self) -> dict:
         return {
             "built": _iso(self.built),
@@ -239,6 +355,7 @@ class JellyfinIndex:
             "folders": len(self._folders),
             "building": self._build_lock.locked(),
             "error": self.error,
+            "path_map": self.map_status(),
         }
 
     # --- building -----------------------------------------------------------------
@@ -271,7 +388,11 @@ class JellyfinIndex:
         with self._build_lock:
             started = self._clock()
             try:
-                files, folders = build_index(self._pages(self._client()), self._path_map,
+                client = self._client()
+                if not self._explicit:
+                    pairs, report = derive_path_map(client, self._derive_from)
+                    self._path_map, self._map_report = _real_map(pairs), report
+                files, folders = build_index(self._pages(client), self._path_map,
                                              self._roots)
             except JellyfinError as exc:
                 self.error = str(exc)
@@ -296,6 +417,8 @@ class JellyfinIndex:
     def _save(self) -> None:
         data = {"version": INDEX_VERSION, "built": self.built,
                 "path_map": [list(p) for p in self._path_map],
+                "map_source": "explicit" if self._explicit else "derived",
+                "map_report": self._map_report,
                 "files": self._files, "folders": self._folders}
         try:
             self.file.parent.mkdir(parents=True, exist_ok=True)
@@ -330,10 +453,12 @@ class LibraryRefresher:
     """Scan the Jellyfin library holding the clips folder once clips stop landing."""
 
     def __init__(self, client: Callable[[], JellyfinClient], clips_dir: Path,
-                 path_map: tuple[tuple[str, str], ...], delay: float | None = None):
+                 path_map: tuple[tuple[str, str], ...] | Callable[[], tuple[tuple[str, str], ...]],
+                 delay: float | None = None):
         self._client = client
         self._clips_dir = clips_dir
-        self._path_map = path_map
+        # A callable: the index's map, which may be derived after this is made.
+        self._path_map = path_map if callable(path_map) else (lambda: path_map)
         self._delay = REFRESH_DELAY if delay is None else delay
         self._timer: threading.Timer | None = None
         self._lock = threading.Lock()
@@ -355,7 +480,7 @@ class LibraryRefresher:
         result: dict = {"at": _iso(time.time()), "library": None, "error": None}
         try:
             client = self._client()
-            lib = library_for(client.virtual_folders(), self._clips_dir, self._path_map)
+            lib = library_for(client.virtual_folders(), self._clips_dir, self._path_map())
             if lib is None:
                 result["error"] = ("No Jellyfin library holds the clips folder "
                                    "(add one, and a path map entry for it).")

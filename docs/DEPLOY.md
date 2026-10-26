@@ -125,7 +125,7 @@ All settings are environment variables on the `app` service:
 | `QC_HOOK_TOKEN` / `QC_HOOK_TOKEN_FILE` | *(none)* | A low-privilege token for the **re-index hooks** (Bazarr, Sonarr, Radarr tell quipclipper a file's subtitles changed): it may only queue re-indexes. Behind a password, set it on the **web** service too, which adds a `hook` login. See [HOOKS.md](HOOKS.md). |
 | `QC_INDEX_CHECK_INTERVAL` | `3600` | Seconds between the background checks for files whose subtitles changed since they were indexed (folder listings and file dates only, at the idle I/O priority, skipped while a library run or re-index runs; it never re-indexes, the library page offers a button). `0` = off. See [MANUAL.md](MANUAL.md#changed-subtitles). |
 | `QC_PATH_MAP` | *(none)* | The hooks' paths → quipclipper's, e.g. `/tv=/media/shows:/movies=/media/movies`, when Bazarr, Sonarr or Radarr see the media elsewhere (their own containers). Or JSON, `{"/tv": "/media/shows"}`, for paths holding `:`, `;` or `=` (or a backslash before the character). |
-| `QC_JELLYFIN_PATH_MAP` | *(none)* | Jellyfin's paths → quipclipper's, e.g. `/movies=/media/movies:/shows=/media/shows`, when Jellyfin sees the media elsewhere (its own container). Same syntax as `QC_PATH_MAP` (JSON too). |
+| `QC_JELLYFIN_PATH_MAP` | *(derived)* | Jellyfin's paths → quipclipper's, e.g. `/movies=/media/movies:/shows=/media/shows`, when Jellyfin sees the media elsewhere (its own container). Same syntax as `QC_PATH_MAP` (JSON too). Unset, quipclipper derives it from Jellyfin's libraries by finding a few of each library's files under the media roots ([how](API.md#titles-and-artwork-jellyfin)); set it when that misses a library. |
 | `QC_YOUTUBE_DIR` | *(none)* | Where downloaded YouTube videos land (each as `<Title> [<id>].mp4` with a `.vtt` sidecar, a normal library item). Unset = private in the state dir. See [YouTube sources](MANUAL.md#youtube-sources-experimental). |
 | `QC_TRANSCRIBE` | *(automatic)* | [Machine transcription](TRANSCRIPTION.md) is on where `whisper-cli` and a model file are installed (the two rows below), off elsewhere. `0` turns it off even there; `1` forces it on (without whisper it then reports itself not set up). |
 | `QC_WHISPER_MODEL` / `QC_WHISPER_MODELS` | *(none)* | [Machine transcription](TRANSCRIPTION.md) with whisper.cpp: a ggml file (`/models/ggml-small.en.bin`), or `small.en=/models/ggml-small.en.bin,medium.en=/models/ggml-medium.en.bin` for a choice with `QC_WHISPER_MODEL` naming the default. A bare name needs `QC_WHISPER_MODELS` to say where its file is. No model file = off. It runs only when asked, at idle priority, one run at a time. |
@@ -298,6 +298,29 @@ nginx takes the caller from the proxy's header instead:
 With `X-Forwarded-For`, nginx reads the last entry, the one the nearest proxy added, so a
 caller can't forge it. List only proxies you run: anything that can reach nginx from a
 listed address can claim to be anyone, including to nginx's own `allow`/`deny` rules.
+
+## The Jellyfin plugin
+
+[jellyfin-plugin-quipclipper](https://github.com/weckere/jellyfin-plugin-quipclipper) (Jellyfin
+12.x) names quipclipper's clips by their line in Jellyfin, and tells quipclipper when Jellyfin
+brings in a subtitle (its own downloads, its subtitle dialog, a file dropped into a watched
+folder), so that file is re-indexed within seconds (see [HOOKS.md](HOOKS.md#4-jellyfin-the-plugin)).
+Install it from its repository in Jellyfin's dashboard (**Plugins › Repositories**,
+`https://weckere.github.io/jellyfin-plugin-quipclipper/manifest.json`), restart Jellyfin, and
+on its settings page enter this server's URL as Jellyfin reaches it and press **Connect**.
+
+- **It pairs.** Allow the code it shows in quipclipper's banner. It asks only for
+  [scopes](API.md#scopes) `index.file` and `transcripts.read`, so its token, which Jellyfin keeps
+  in its plugin configuration, can queue re-indexes and read transcripts and nothing else.
+  **Disconnect** on the plugin page, or Revoke under Settings ▸ Connected apps, ends it.
+- **Jellyfin must reach quipclipper.** Behind the password gate that works as it is: pairing and
+  client tokens pass the gate (above). If Jellyfin runs where quipclipper is deliberately out of
+  reach (another container network, a tailnet that closes containers off), open just the plugin's
+  routes to just Jellyfin's address: `/api/pair` and `/api/pair/<id>`, `POST /api/index/file`
+  and `GET /api/items/transcript`.
+- **Paths.** The plugin sends Jellyfin's own paths with `"source": "jellyfin"`;
+  `QC_JELLYFIN_PATH_MAP`, or the map derived from Jellyfin's libraries when that is unset, turns
+  them into this server's.
 
 ## Advertising on the local network
 

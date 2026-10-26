@@ -602,8 +602,14 @@ def _fmt_pairs(data: dict) -> None:
         who = r.get("name") or "?"
         if r.get("host"):
             who += f" on {r['host']}"
-        typer.echo(f"{r.get('code')}  {who}  from {r.get('address')}  "
+        typer.echo(f"{r.get('code')}  {who}  from {r.get('address')}  asks for {_scopes(r)}  "
                    f"(id {r.get('id')}, until {r.get('expires_at')})")
+
+
+def _scopes(row: dict) -> str:
+    """A pairing request's or client's scopes (M22): ``full access`` when it has none."""
+    scopes = row.get("scopes")
+    return "full access" if scopes is None else "scopes " + (",".join(scopes) or "(none)")
 
 
 def _fmt_clients(data: dict) -> None:
@@ -614,7 +620,7 @@ def _fmt_clients(data: dict) -> None:
         who = r.get("name") or "?"
         if r.get("host"):
             who += f" on {r['host']}"
-        typer.echo(f"{r.get('id')}  {who}  paired {r.get('created')}  "
+        typer.echo(f"{r.get('id')}  {who}  {_scopes(r)}  paired {r.get('created')}  "
                    f"last used {r.get('last_used') or 'never'}")
 
 

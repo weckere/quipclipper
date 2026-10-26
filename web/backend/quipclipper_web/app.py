@@ -389,6 +389,14 @@ class PairStart(BaseModel):
 
     name: str = Field(..., min_length=1, max_length=pairing.NAME_MAX)
     host: str = Field("", max_length=pairing.HOST_MAX)
+    # What the app's token may do (pairing.SCOPES, M22); left out: full access.
+    scopes: list[str] | None = None
+
+    @field_validator("scopes")
+    @classmethod
+    def _scopes(cls, v: list[str] | None) -> list[str] | None:
+        found = pairing.check_scopes(v)
+        return list(found) if found is not None else None
 
     @field_validator("name")
     @classmethod
@@ -537,6 +545,13 @@ def _client_address(request: Request) -> str:
 _PAIR_ROUTE = re.compile(r"^/api/pair(?:/|$)")
 _CLIENT_REVOKED = {"detail": "This client token isn't valid: the app was disconnected "
                              "(revoked) here, or never paired. Pair it again."}
+def _out_of_scope(client: dict) -> dict:
+    can = ", ".join(pairing.SCOPES[s][0] for s in client.get("scopes") or [] if s in pairing.SCOPES)
+    return {"detail": f"{client.get('name') or 'This app'}'s token may only "
+                      f"{can or 'check itself'} here (scopes: "
+                      f"{', '.join(client.get('scopes') or []) or 'none'})."}
+
+
 _PERSON_ONLY = ("A paired app can't approve, deny or list pairing requests, or list or revoke "
                 "apps: do it in QuipClipper's web UI, or with its own API token.")
 
@@ -556,11 +571,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return jellyfin.JellyfinClient(settings.jellyfin_url, settings.jellyfin_api_key)
 
     jf_index = jf_refresher = None
+
+    def _jf_map() -> tuple[tuple[str, str], ...]:
+        """Jellyfin's path map: QC_JELLYFIN_PATH_MAP, else the one the index derived (M22)."""
+        if settings.jellyfin_path_map or jf_index is None:
+            return settings.jellyfin_path_map
+        return jf_index.path_map
+
     if settings.jellyfin_enabled:
         jf_index = jellyfin_index.JellyfinIndex(
-            settings.state_dir, _jf_client, settings.jellyfin_path_map, settings.media_roots)
-        jf_refresher = jellyfin_index.LibraryRefresher(
-            _jf_client, settings.clips_dir, settings.jellyfin_path_map)
+            settings.state_dir, _jf_client, settings.jellyfin_path_map, settings.media_roots,
+            derive_from=[settings.clips_dir])
+        jf_refresher = jellyfin_index.LibraryRefresher(_jf_client, settings.clips_dir, _jf_map)
 
     def _clips_landed(job) -> None:
         """A clip job finished: if it wrote into the clips folder, Jellyfin scans it soon."""
@@ -720,6 +742,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if client_status == "bad":
             return JSONResponse(_CLIENT_REVOKED, status_code=401)
         if client_status == "ok":
+            # A scoped token (M22) opens only its scopes' routes.
+            if not pairing.scope_allows(client.get("scopes"), request.method,
+                                        request.url.path):
+                return JSONResponse(_out_of_scope(client), status_code=403)
             api_client = True
             request.state.client = client
             request.state.token = True
@@ -839,7 +865,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except jellyfin.JellyfinError as exc:
             raise HTTPException(status_code=502, detail=str(exc))
         sessions = jellyfin.now_playing(
-            raw, settings.jellyfin_path_map, settings.media_roots,
+            raw, _jf_map(), settings.media_roots,
             item_path=client.item_path, include_idle=all_)
         for s in sessions:  # the item's own artwork; else what the index has for the file
             if s.get("art") is None and s.get("path") and jf_index is not None:
@@ -2093,10 +2119,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except library.PathNotAllowed:
             return False
 
-    def _queue_files(raw: list[str], force: bool, limit: bool = True) -> dict:
+    def _queue_files(raw: list[str], force: bool, limit: bool = True,
+                     path_map: tuple[tuple[str, str], ...] | None = None) -> dict:
         """Map, check and queue ``raw`` paths; one result row per path. A path already
         under a media root is this server's own (the web app's Re-index, the change
-        list) and isn't mapped again: ``/data=/data/media`` would map it twice."""
+        list) and isn't mapped again: ``/data=/data/media`` would map it twice.
+        ``path_map``: the caller's (Jellyfin's, for ``source: jellyfin``); QC_PATH_MAP
+        by default."""
+        if path_map is None:
+            path_map = settings.path_map
         if limit and len(raw) > file_index.MAX_PATHS:
             raise HTTPException(status_code=400,
                                 detail=f"At most {file_index.MAX_PATHS} paths at a time.")
@@ -2106,9 +2137,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             row: dict = {"path": given}
             rows.append(row)
             given_s = given.strip()
-            mapped = (given_s if not settings.path_map or "\0" in given_s
+            mapped = (given_s if not path_map or "\0" in given_s
                       or _inside_roots(given_s)
-                      else file_index.map_in(given_s, settings.path_map))
+                      else file_index.map_in(given_s, path_map))
             if not mapped or "\0" in mapped:
                 row["status"] = "invalid"
                 continue
@@ -2148,9 +2179,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         too), or a Sonarr/Radarr webhook; or the same as ``?path=…&force=true``, which
         a proxy limits to ~8 KB (HTTP 414). Queued and deduplicated; one job
         re-indexes them at idle priority. 202 when at least one file was queued, 200
-        for a webhook event with no file (Test), 422 when no path could be queued."""
+        for a webhook event with no file (Test), 422 when no path could be queued.
+        ``"source": "jellyfin"`` (M22: the Jellyfin plugin) says the paths are Jellyfin's,
+        mapped with its path map instead of QC_PATH_MAP."""
         raw = list(request.query_params.getlist("path"))
         force = (request.query_params.get("force") or "").lower() in ("1", "true", "yes", "on")
+        source = request.query_params.get("source")
         event = None
         if (request.headers.get("content-type") or "").lower().startswith("application/json"):
             try:
@@ -2162,6 +2196,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if listed is not None:
                 raw += [x for x in listed if isinstance(x, str)]
                 force = force or body.get("force") is True
+                if isinstance(body.get("source"), str):
+                    source = body["source"]
             else:
                 found, event = file_index.webhook_paths(body)
                 raw += found
@@ -2170,7 +2206,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 return JSONResponse({"job_id": None, "queued": 0, "files": [],
                                      "event": event})
             raise HTTPException(status_code=400, detail="No path given.")
-        result = await asyncio.to_thread(_queue_files, raw, force)
+        if source not in (None, "", "jellyfin"):
+            raise HTTPException(status_code=400, detail=f"Unknown source {source!r} "
+                                "(only \"jellyfin\": paths as Jellyfin reports them).")
+        path_map = None
+        if source == "jellyfin":
+            path_map = _jf_map()
+            if jf_index is not None and not settings.jellyfin_path_map:
+                jf_index.refresh_if_stale()  # no map derived yet: the first build finds one
+        result = await asyncio.to_thread(_queue_files, raw, force, True, path_map)
         if event is not None:
             result["event"] = event
         if not result["queued"]:
@@ -3661,9 +3705,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/pair")
     def pair_start(req: PairStart, request: Request) -> dict:
         """An app asks for access: a pending request with a code to show, and the secret
-        it polls with. No token; behind the password gate, nginx lets this through."""
+        it polls with. No token; behind the password gate, nginx lets this through.
+        ``scopes`` limits what the token will open (M22); the banner names them."""
         try:
-            return pairs.start(req.name, req.host, _client_address(request))
+            return pairs.start(req.name, req.host, _client_address(request),
+                               tuple(req.scopes) if req.scopes is not None else None)
         except pairing.PairError as exc:
             raise HTTPException(status_code=exc.status, detail=exc.detail)
 

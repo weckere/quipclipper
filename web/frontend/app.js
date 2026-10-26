@@ -6912,6 +6912,10 @@ let pairNoteTimer = null;
 let pairWanted = new URLSearchParams(location.search).get("pair");  // ?pair=<id>, read once
 
 const pairWho = (r) => (r.host ? `${r.name} on ${r.host}` : r.name);
+// What a scoped app (M22) may do, in the server's words (pairing.SCOPES); null: everything.
+const SCOPE_LABELS = { "index.file": "queue subtitle re-indexes", "transcripts.read": "read transcripts" };
+const pairCan = (scopes) => (scopes == null ? null
+  : scopes.map((s) => SCOPE_LABELS[s] || s).join(" and ") || "nothing but check its key");
 
 function schedulePairs() {
   clearTimeout(pairTimer);
@@ -6991,8 +6995,9 @@ function pairRow(r) {
   li.tabIndex = -1;  // ?pair=<id> focuses it, not its Allow button: a stray Enter allows nothing
   const who = escapeHtml(pairWho(r));
   const code = escapeHtml(r.code);
+  const can = pairCan(r.scopes);
   li.innerHTML =
-    `<p class="pair-text"><strong>${who}</strong> wants access, code <strong class="pair-code">${code}</strong>. ` +
+    `<p class="pair-text"><strong>${who}</strong> wants ${can ? "to " + escapeHtml(can) : "access"}, code <strong class="pair-code">${code}</strong>. ` +
     `<span class="muted">From ${escapeHtml(r.address)}. Allow it only if the app shows this code.</span></p>` +
     `<span class="pair-actions">` +
     `<button type="button" class="btn primary pair-allow" data-action="pair.approve" title="Let ${who} in: it gets its own key to this server, which Settings, Connected apps can revoke" aria-label="Allow ${who}, code ${code}">Allow</button>` +
@@ -7045,8 +7050,9 @@ async function refreshClients() {
     const li = document.createElement("li");
     li.className = "app-row";
     const who = escapeHtml(pairWho(c));
+    const can = pairCan(c.scopes);
     li.innerHTML = `<div class="app-main"><strong>${who}</strong>` +
-      `<span class="muted">Connected ${escapeHtml(fmtWhen(c.created))} · ` +
+      `<span class="muted">${can ? "May only " + escapeHtml(can) : "Full access"} · Connected ${escapeHtml(fmtWhen(c.created))} · ` +
       `${c.last_used ? "last used " + escapeHtml(fmtWhen(c.last_used)) : "not used yet"}</span></div>` +
       `<button type="button" class="link-btn app-revoke" data-action="clients.revoke" title="Disconnect ${who}: its key to this server stops working; it can pair again" aria-label="Revoke ${who}">Revoke</button>`;
     li.querySelector("button").onclick = () => revokeClient(c);

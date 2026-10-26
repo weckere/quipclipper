@@ -115,6 +115,18 @@ class JellyfinClient:
         items = (data.get("Items") or []) if isinstance(data, dict) else []
         return [i for i in items if isinstance(i, dict)]
 
+    def sample_paths(self, library_id: str, limit: int) -> list[str]:
+        """The paths of a few files in one library (any kind Jellyfin plays, home videos
+        too): what the path map is derived from when none is set."""
+        data = self.get("/Items", {
+            "ParentId": library_id, "Recursive": "true", "Fields": "Path",
+            "IncludeItemTypes": INDEX_TYPES + ",Video", "Limit": limit,
+            "EnableUserData": "false", "EnableTotalRecordCount": "false",
+            "EnableImages": "false",
+        })
+        items = (data.get("Items") or []) if isinstance(data, dict) else []
+        return [i["Path"] for i in items if isinstance(i, dict) and isinstance(i.get("Path"), str)]
+
     def virtual_folders(self) -> list[dict]:
         """Jellyfin's libraries: name, ``ItemId`` and the folders (``Locations``) in each."""
         data = self.get("/Library/VirtualFolders")

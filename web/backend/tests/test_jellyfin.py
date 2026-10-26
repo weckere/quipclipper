@@ -65,6 +65,13 @@ class FakeJellyfin:
                     return
                 if url.path == "/Sessions":
                     return self._send(200, fake.sessions)
+                if url.path == "/Items" and query.get("ParentId"):
+                    # A few of one library's files (the path map derivation, M22).
+                    locs = next((f.get("Locations") or [] for f in fake.folders
+                                 if f.get("ItemId") == query["ParentId"]), [])
+                    found = [i for i in fake.library if any(
+                        i["Path"].startswith(loc.rstrip("/") + "/") for loc in locs)]
+                    return self._send(200, {"Items": found[:int(query["Limit"])]})
                 if url.path == "/Items" and query.get("Recursive") == "true":
                     start, limit = int(query["StartIndex"]), int(query["Limit"])
                     return self._send(200, {"Items": fake.library[start:start + limit]})
@@ -1004,3 +1011,130 @@ def test_wholphin_and_api_key_sessions(fake, tmp_path, known):
     assert wh["id"] == "wh" and wh["can_play"] is False and "Wholphin" in wh["control_note"]
     r = c.post("/api/jellyfin/play", json={"session": "wh", "path": str(ep)})
     assert r.status_code == 409 and fake.commands == []
+
+
+# --- the path map, derived when none is set (M22) ------------------------------------------
+
+SHOWS_LIB, CLIPS_LIB, MUSIC_LIB = "5" * 32, "6" * 32, "4" * 32
+
+
+def _derive_env(fake, tmp_path, root, **extra) -> dict[str, str]:
+    env = _env(fake, tmp_path, root, **extra)
+    if "QC_JELLYFIN_PATH_MAP" not in extra:
+        del env["QC_JELLYFIN_PATH_MAP"]
+    return env
+
+
+def test_with_no_path_map_one_is_derived_from_the_libraries(fake, tmp_path, known):
+    root, ep = known
+    clips = tmp_path / "clips"
+    (clips / "TNG").mkdir(parents=True)
+    (clips / "TNG" / "line.mp4").write_bytes(b"")
+    fake.folders = [{"Name": "Shows", "ItemId": SHOWS_LIB, "Locations": ["/shows"]},
+                    {"Name": "Clips", "ItemId": CLIPS_LIB, "Locations": ["/clips"]},
+                    {"Name": "Music", "ItemId": MUSIC_LIB, "Locations": ["/music"]}]
+    fake.library.append({"Id": "2" * 32, "Type": "Video", "Path": "/clips/TNG/line.mp4"})
+    c = _client(_derive_env(fake, tmp_path, root))
+    index = c.post("/api/jellyfin/index").json()["index"]
+    assert index["files"] == 1
+    assert index["path_map"] == {
+        "source": "derived",
+        "pairs": [["/clips", str(clips.resolve())], ["/shows", str(root.resolve())]],
+        "unmatched": ["/music"]}   # /music/x.flac is nowhere here
+    body = c.get("/api/jellyfin/lookup", params={"path": str(ep)}).json()
+    assert body["known"] is True and body["index"]["path_map"]["source"] == "derived"
+    samples = [r[1] for r in fake.requests if r[1].get("ParentId")]
+    assert {s["ParentId"] for s in samples} == {SHOWS_LIB, CLIPS_LIB, MUSIC_LIB}
+    assert samples[0]["Fields"] == "Path" and "Video" in samples[0]["IncludeItemTypes"]
+    # A restart keeps the derived map (and its index) without asking Jellyfin.
+    fake.requests.clear()
+    again = _client(_derive_env(fake, tmp_path, root)).get(
+        "/api/jellyfin/lookup", params={"path": str(ep)}).json()
+    assert again["known"] is True and again["index"]["path_map"] == index["path_map"]
+    assert not fake.requests
+
+
+def test_a_derived_map_finds_a_library_folder_inside_a_root(fake, tmp_path):
+    """Jellyfin's /tv is the "shows" folder inside the root /pool."""
+    pool = tmp_path / "pool"
+    ep = pool / "shows" / "TNG" / "Season 3" / "S03E26.mkv"
+    ep.parent.mkdir(parents=True)
+    ep.write_bytes(b"")
+    (pool / "movies").mkdir()
+    fake.folders = [{"Name": "Shows", "ItemId": SHOWS_LIB, "Locations": ["/tv"]}]
+    fake.library = [_episode(Path="/tv/TNG/Season 3/S03E26.mkv")]
+    index = _client(_derive_env(fake, tmp_path, pool)).post("/api/jellyfin/index").json()["index"]
+    assert index["path_map"]["pairs"] == [["/tv", str((pool / "shows").resolve())]]
+    assert index["files"] == 1
+
+
+def test_a_derived_map_finds_a_root_inside_a_library_folder(fake, tmp_path, known):
+    """Jellyfin's one library folder /data holds shows/…; here the root is that shows folder."""
+    root, ep = known
+    fake.folders = [{"Name": "All", "ItemId": SHOWS_LIB, "Locations": ["/data"]}]
+    fake.library = [_episode(Path="/data/shows/Star Trek TNG/Season 3/S03E26.mkv")]
+    index = _client(_derive_env(fake, tmp_path, root)).post("/api/jellyfin/index").json()["index"]
+    assert index["path_map"]["pairs"] == [["/data/shows", str(root.resolve())]]
+    assert index["files"] == 1
+
+
+def test_samples_that_disagree_map_nothing(fake, tmp_path):
+    """Two files of one library found under two different roots: no pair is a guess."""
+    a, b = tmp_path / "a", tmp_path / "b"
+    for root, name in ((a, "one.mkv"), (b, "two.mkv")):
+        (root / "S").mkdir(parents=True)
+        (root / "S" / name).write_bytes(b"")
+    fake.folders = [{"Name": "Shows", "ItemId": SHOWS_LIB, "Locations": ["/shows"]}]
+    fake.library = [_episode(Path="/shows/S/one.mkv"),
+                    _episode(Id="3" * 32, Path="/shows/S/two.mkv")]
+    env = _derive_env(fake, tmp_path, a, QC_MEDIA_ROOTS=f"{a}:{b}")
+    index = _client(env).post("/api/jellyfin/index").json()["index"]
+    assert index["path_map"] == {"source": "derived", "pairs": [], "unmatched": ["/shows"]}
+    assert index["files"] == 0
+
+
+def test_an_explicit_path_map_wins_and_nothing_is_derived(fake, tmp_path, known):
+    root, _ = known
+    fake.folders = [{"Name": "Shows", "ItemId": SHOWS_LIB, "Locations": ["/shows"]}]
+    index = _client(_env(fake, tmp_path, root)).post("/api/jellyfin/index").json()["index"]
+    assert index["path_map"]["source"] == "explicit"
+    assert "unmatched" not in index["path_map"]
+    assert not [r for r in fake.requests if r[1].get("ParentId")]
+
+
+def test_before_any_build_the_map_says_none(fake, tmp_path, known):
+    from quipclipper_web import jellyfin_index
+
+    root, _ = known
+    index = jellyfin_index.JellyfinIndex(
+        tmp_path / "state", lambda: jellyfin.JellyfinClient(fake.url, KEY), (), [root])
+    assert index.map_status() == {"source": "none", "pairs": [], "unmatched": []}
+    assert index.path_map == ()
+
+
+def test_the_derived_map_maps_sessions_and_the_clips_scan(fake, tmp_path, known):
+    from quipclipper_web import jellyfin_index
+
+    root, ep = known
+    clips = tmp_path / "clips"
+    (clips / "x").mkdir(parents=True)
+    (clips / "x" / "old.mp4").write_bytes(b"")
+    fake.folders = [{"Name": "Shows", "ItemId": SHOWS_LIB, "Locations": ["/shows"]},
+                    {"Name": "Clips", "ItemId": CLIPS_LIB, "Locations": ["/clips"]}]
+    fake.library.append({"Id": "2" * 32, "Type": "Video", "Path": "/clips/x/old.mp4"})
+    fake.sessions = [_session()]
+    c = _client(_derive_env(fake, tmp_path, root))
+    c.post("/api/jellyfin/index")
+    s = c.get("/api/jellyfin/sessions").json()["sessions"][0]
+    assert s["path"] == str(ep.resolve())
+    assert c.app.state.settings.jellyfin_path_map == ()
+    # The clips scan asks the index for its map when it runs (called here directly: no timer).
+    index = jellyfin_index.JellyfinIndex(
+        tmp_path / "state2", lambda: jellyfin.JellyfinClient(fake.url, KEY), (), [root],
+        derive_from=[clips])
+    refresher = jellyfin_index.LibraryRefresher(
+        lambda: jellyfin.JellyfinClient(fake.url, KEY), clips, lambda: index.path_map)
+    assert refresher.refresh()["error"].startswith("No Jellyfin library holds")  # none yet
+    index.build()
+    assert refresher.refresh() == {**refresher.last, "library": "Clips", "error": None}
+    assert fake.refreshed == [CLIPS_LIB]

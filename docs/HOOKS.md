@@ -1,4 +1,4 @@
-# Re-index hooks: Bazarr, Sonarr and Radarr
+# Re-index hooks: Bazarr, Sonarr, Radarr and Jellyfin
 
 Dialogue search reads only indexed files, and an index entry belongs to one version
 of a file's subtitles. When Bazarr downloads or upgrades a subtitle, or Sonarr or
@@ -23,7 +23,8 @@ Three pieces:
    script needed.
 
 The endpoint itself is [`POST /api/index/file`](API.md#re-index-hooks) (CLI:
-`quipclipper index.file`).
+`quipclipper index.file`). What Jellyfin downloads itself has a hook of its own, the
+Jellyfin plugin: see [section 4](#4-jellyfin-the-plugin).
 
 ## 1. The server
 
@@ -176,6 +177,34 @@ whose name starts the subtitle's, in the same folder). It exits 0 when the serve
 queued the files, 1 when it refused (the reason on stderr), 2 for a setup error. The
 token goes to `curl` through a pipe: it is never on a command line, in the process
 list or in the output.
+
+## 4. Jellyfin (the plugin)
+
+Jellyfin brings subtitles in on its own: its **Download missing subtitles** task, a search in
+an item's subtitle dialog (Open Subtitles, or the Bazarr plugin), and any `.srt` its folder
+monitor sees dropped into a library. None of those go through Bazarr. The
+[Jellyfin plugin](https://github.com/weckere/jellyfin-plugin-quipclipper) is the hook for
+them: it watches Jellyfin's items, and when an item's external subtitle files change (one
+added, removed or rewritten) it sends that file to `POST /api/index/file`.
+
+- **Setup** is pairing, not a token: install the plugin (see
+  [DEPLOY.md](DEPLOY.md#the-jellyfin-plugin)), enter quipclipper's URL on its settings page,
+  press **Connect** and Allow the code in quipclipper's banner. Its token is
+  [scoped](API.md#scopes) to `index.file` and `transcripts.read`: like the hook token, it can
+  queue re-indexes and nothing that changes anything else.
+- **Libraries:** the plugin page lists Jellyfin's libraries; it watches the ones you tick
+  (none ticked: all).
+- **No path map to write.** It sends Jellyfin's paths with `"source": "jellyfin"`, which
+  quipclipper maps with `QC_JELLYFIN_PATH_MAP`, or derives the map from Jellyfin's libraries
+  when that's unset.
+- **What it sends:** only a real change. On its first run it notes what every item has
+  and sends nothing; after that it waits ~10 s after the last change (a library scan is a
+  storm of item updates) and sends at most 1,000 paths per request. While quipclipper is
+  down it keeps what's waiting (up to 10,000 files) and retries with growing pauses.
+- **Never a burden to Jellyfin:** it does its work off Jellyfin's scan, with short
+  timeouts, and nothing it does can fail a scan.
+
+The queue, the idle priority and the statuses below are the same as for Bazarr's hook.
 
 ## What happens on the server
 

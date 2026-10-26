@@ -15,6 +15,11 @@ most :data:`RATE_PER_MINUTE` a minute from one address, each gone after
 
 Client tokens (``qcc_…``) are stored only as their SHA-256, in ``state_dir/clients.json``
 (0600, written atomically), and revoked one at a time. Nothing here touches the network.
+
+An app that needs only part of the API asks for **scopes** (``"scopes": ["index.file"]``,
+M22): the banner names them, and its token opens only their routes (:data:`SCOPES`) plus
+the few every client needs (:data:`CLIENT_ROUTES`); anything else answers 403. An app that
+asks for none gets a full token, as before scopes existed.
 """
 
 from __future__ import annotations
@@ -58,6 +63,20 @@ ADVERTISE_FILE = "advertise.json"
 
 _HEX32 = re.compile(r"^[0-9a-f]{32}$")
 
+# Scopes a paired app may ask for instead of full access (M22): what each lets it do, as
+# the banner says it, and the only routes its token then opens, as (method, path).
+SCOPES: dict[str, tuple[str, frozenset[tuple[str, str]]]] = {
+    "index.file": ("queue subtitle re-indexes",
+                   frozenset({("POST", "/api/index/file"), ("GET", "/api/index/file")})),
+    "transcripts.read": ("read transcripts",
+                         frozenset({("GET", "/api/items/transcript")})),
+}
+# What any client token may do, scoped or not: check itself (the nginx password gate asks),
+# disconnect itself, see the server is up, and pair again.
+CLIENT_ROUTES = frozenset({("GET", "/api/health"), ("GET", "/api/clients/check"),
+                           ("DELETE", "/api/clients/self"), ("POST", "/api/pair")})
+_POLL_ROUTE = re.compile(r"^/api/pair/[^/]+$")
+
 
 def iso(t: float) -> str:
     """UTC ISO 8601 with ``Z``, to the second."""
@@ -86,6 +105,32 @@ def check_label(value: str, what: str, lo: int, hi: int) -> str:
     if any(unicodedata.category(ch) in ("Cc", "Cf", "Zl", "Zp") for ch in value):
         raise ValueError(f"{what} must not hold control or invisible characters")
     return value
+
+
+def check_scopes(value) -> tuple[str, ...] | None:
+    """The scopes an app asks for, sorted and without repeats; None (full access) when it
+    names none. Raises ValueError for an unknown scope or an empty list (a token that
+    could do nothing is a mistake, not a request for everything)."""
+    if value is None:
+        return None
+    if not isinstance(value, (list, tuple)) or not all(isinstance(v, str) for v in value):
+        raise ValueError("scopes must be a list of scope names")
+    if not value:
+        raise ValueError("scopes must name at least one scope; leave it out for full access")
+    unknown = sorted(set(value) - SCOPES.keys())
+    if unknown:
+        raise ValueError(f"unknown scope {unknown[0]!r}; known: {', '.join(sorted(SCOPES))}")
+    return tuple(sorted(set(value)))
+
+
+def scope_allows(scopes, method: str, path: str) -> bool:
+    """Whether a client with ``scopes`` (None: full access) may call ``method path``."""
+    if scopes is None:
+        return True
+    want = (method.upper(), path)
+    if want in CLIENT_ROUTES or (want[0] == "GET" and _POLL_ROUTE.match(path)):
+        return True
+    return any(want in SCOPES[s][1] for s in scopes if s in SCOPES)
 
 
 # --- files in the state dir --------------------------------------------------------------
@@ -195,7 +240,7 @@ def _new_id(nbytes: int) -> str:
 
 class ClientStore:
     """Paired apps, in ``state_dir/clients.json``: ``{"clients": [{id, name, host,
-    token_sha256, created, last_used}]}``. The token itself is never stored; it is handed
+    token_sha256, created, last_used, scopes?}]}`` (no ``scopes``: full access). The token itself is never stored; it is handed
     to the app once, by the poll that collects an approval."""
 
     def __init__(self, state_dir: Path, clock: Callable[[], float] = time.time):
@@ -243,14 +288,20 @@ class ClientStore:
 
     @staticmethod
     def public(row: dict) -> dict:
-        return {k: row.get(k) for k in ("id", "name", "host", "created", "last_used")}
+        out = {k: row.get(k) for k in ("id", "name", "host", "created", "last_used")}
+        out["scopes"] = row_scopes(row)
+        return out
 
-    def add(self, name: str, host: str) -> tuple[dict, str]:
-        """A new client and its token (the only copy of it)."""
+    def add(self, name: str, host: str,
+            scopes: tuple[str, ...] | None = None) -> tuple[dict, str]:
+        """A new client and its token (the only copy of it). ``scopes``: what the token
+        may do; None for everything."""
         token = TOKEN_PREFIX + secrets.token_urlsafe(32)
         row = {"id": _new_id(9), "name": name, "host": host,
                "token_sha256": token_sha256(token), "created": iso(self.clock()),
                "last_used": None}
+        if scopes is not None:
+            row["scopes"] = list(scopes)
         with self._lock:
             self._load()
             self._clients.append(row)
@@ -298,6 +349,17 @@ class ClientStore:
             return True
 
 
+def row_scopes(row: dict) -> list[str] | None:
+    """A stored client's scopes; None for full access. A ``scopes`` entry that isn't a list
+    of names (a hand-edited file) opens nothing rather than everything: fail closed."""
+    if "scopes" not in row or row["scopes"] is None:
+        return None
+    raw = row["scopes"]
+    if not isinstance(raw, list):
+        return []
+    return [s for s in raw if isinstance(s, str) and s in SCOPES]
+
+
 # --- pair requests --------------------------------------------------------------------------
 
 
@@ -324,11 +386,13 @@ class _Request:
     settled_at: float | None = None
     token: str | None = field(default=None, repr=False)
     client_id: str | None = None
+    scopes: tuple[str, ...] | None = None   # None: the app asked for full access
 
     def public(self) -> dict:
         return {"id": self.id, "name": self.name, "host": self.host, "code": self.code,
                 "address": self.address, "created": iso(self.created),
-                "expires_at": iso(self.expires_at)}
+                "expires_at": iso(self.expires_at),
+                "scopes": list(self.scopes) if self.scopes is not None else None}
 
 
 class Pairing:
@@ -367,8 +431,10 @@ class Pairing:
             if code not in taken:
                 return code
 
-    def start(self, name: str, host: str, address: str) -> dict:
-        """A new pending request. Raises PairError(429) past either cap."""
+    def start(self, name: str, host: str, address: str,
+              scopes: tuple[str, ...] | None = None) -> dict:
+        """A new pending request (for ``scopes``, checked by :func:`check_scopes`; None
+        for full access). Raises PairError(429) past either cap."""
         now = self.clock()
         with self._lock:
             self._tidy(now)
@@ -383,7 +449,7 @@ class Pairing:
             times.append(now)
             r = _Request(id=_new_id(16), name=name, host=host, code=self._code(),
                          address=address, poll_secret=secrets.token_urlsafe(32),
-                         created=now, expires_at=now + EXPIRES_IN)
+                         created=now, expires_at=now + EXPIRES_IN, scopes=scopes)
             self._requests[r.id] = r
             return {"id": r.id, "code": r.code, "poll_secret": r.poll_secret,
                     "expires_in": EXPIRES_IN}
@@ -406,7 +472,8 @@ class Pairing:
                 return None
             if r.status == "approved":
                 del self._requests[r.id]
-                return {"status": "approved", "token": r.token, "client_id": r.client_id}
+                return {"status": "approved", "token": r.token, "client_id": r.client_id,
+                        "scopes": list(r.scopes) if r.scopes is not None else None}
             return {"status": r.status}
 
     def pending(self) -> list[dict]:
@@ -424,7 +491,7 @@ class Pairing:
             r = self._requests.get(request_id)
             if r is None or r.status != "pending":
                 return None
-            client, token = self.clients.add(r.name, r.host)
+            client, token = self.clients.add(r.name, r.host, r.scopes)
             r.status, r.settled_at, r.token, r.client_id = "approved", now, token, client["id"]
             return {"status": "approved", "client_id": client["id"]}
 
