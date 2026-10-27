@@ -30,6 +30,12 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   release. `QC_INSTALL` (docker, nixos, nix, pip) picks the update steps; a Docker build
   from a checkout is told to pull the checkout and rebuild.
 
+### Fixed
+
+- Settings ▸ Connected apps: the **Revoke** button is no longer squeezed to 25 px with its
+  label spilling past the popover's right edge. The row now keeps the button at its full size
+  and wraps the app's name, scopes and who paired it beside it.
+
 ## [0.5.1] - 2026-10-26
 
 ### Pairing (M23)

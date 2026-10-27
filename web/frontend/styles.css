@@ -1310,7 +1310,10 @@ input[type="checkbox"].switch:checked::after { transform: translateX(1rem); }
 .apps-list { list-style: none; margin: 0 0 0.4rem; padding: 0; }
 .app-row { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; padding: 0.4rem 0; }
 .app-row + .app-row { border-top: 1px solid var(--line); }
-.app-main { display: flex; flex-direction: column; min-width: 0; font-size: 0.88rem; overflow-wrap: anywhere; }
+.app-main { display: flex; flex: 1 1 0; flex-direction: column; min-width: 0; font-size: 0.88rem; overflow-wrap: anywhere; }
+/* The low-vision min-width (24px) on .link-btn replaces the button's automatic minimum, so
+   without this the row squeezes Revoke to 24px and its label spills out of the popover. */
+.app-revoke { flex: none; }
 .app-main .muted { font-size: 0.8rem; }
 #connect-ls { margin: 0.2rem 0 0.4rem; }
 #apps-setting { border-top: 1px solid var(--line); padding-top: 0.8rem; }
