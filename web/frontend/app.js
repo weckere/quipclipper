@@ -7245,7 +7245,8 @@ $("connect-ls").onclick = () => {
 // last check found a newer release it says so there, with the release notes and a way into
 // Settings ▸ Updates, which shows the last answer (GET /api/update, update.status), Check for
 // updates (POST /api/update/check, update.check), how to update this install, and the daily
-// check (PUT /api/update/settings, update.settings). Nothing here updates anything.
+// check (PUT /api/update/settings, update.settings). Nothing here updates anything. The
+// result block isn't a live region: a check's outcome is read out once, by announce().
 
 const INSTALL_NAMES = { docker: "Docker", nixos: "NixOS", nix: "Nix", pip: "pip" };
 const UPDATE_STALE_MS = 3600000;  // a page left open looks again after this long

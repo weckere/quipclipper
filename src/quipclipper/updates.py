@@ -10,10 +10,10 @@ The build says who it is through the environment: ``QC_BUILD_COMMIT`` (a build f
 ``dev`` carries its commit; a release image carries none) and ``QC_INSTALL`` (docker,
 nixos, nix; anything else is pip). Only the release script changes the version, so a dev
 build's version is the release it is based on: "dev build <sha>, ahead of X.Y.Z", and an
-update is available only when a release newer than that is out. A Nix build always carries
-its commit (the flake can't tell a release tag from a dev commit), so a check also asks
-which commit the base release's tag is, once per version: a build on exactly that commit
-is the release itself.
+update is available only when a release newer than that is out. The NixOS module always
+passes its flake's commit (the flake can't tell a release tag from a dev commit), so a check
+also asks which commit the base release's tag is, once per version: a build on exactly that
+commit is the release itself.
 
 Only the standard library is used, so the CLI keeps its small dependency set.
 """
@@ -21,7 +21,9 @@ Only the standard library is used, so the CLI keeps its small dependency set.
 from __future__ import annotations
 
 import contextlib
+import http.client
 import json
+import math
 import os
 import re
 import threading
@@ -106,10 +108,19 @@ class Build:
                 "label": self.label}
 
 
-def how_to_update(install: str, tag: str | None = None, web: bool = False) -> dict[str, Any]:
+def how_to_update(install: str, tag: str | None = None, web: bool = False,
+                  dev: bool = False) -> dict[str, Any]:
     """How to update an install of this kind to release ``tag`` (None: the latest).
-    ``web``: a quipclipper-web server, whose pip install has a second package."""
+    ``web``: a quipclipper-web server, whose pip install has a second package; ``dev``: a
+    build from a checkout (its images were built here, not pulled)."""
     ref = tag or "main"  # main is the latest release
+    if install == "docker" and dev:
+        return {"install": "docker",
+                "summary": "This server runs from images built from a checkout: update the "
+                           "checkout and rebuild them (or switch the compose file to the "
+                           "released images and pull those).",
+                "commands": ["git pull",
+                             "QC_BUILD_COMMIT=$(git rev-parse HEAD) docker compose up -d --build"]}
     if install == "docker":
         return {"install": "docker",
                 "summary": "This server runs from the Docker images: pull the new ones and "
@@ -148,9 +159,10 @@ class CheckError(Exception):
 
 def _header_float(headers: Any, name: str) -> float | None:
     try:
-        return float(headers.get(name))
+        value = float(headers.get(name))
     except (TypeError, ValueError, AttributeError):
         return None
+    return value if math.isfinite(value) else None
 
 
 def fetch_latest(version: str, url: str = LATEST_URL, timeout: float = TIMEOUT,
@@ -178,7 +190,7 @@ def fetch_latest(version: str, url: str = LATEST_URL, timeout: float = TIMEOUT,
         if exc.code == 404:
             raise CheckError("GitHub lists no release yet", kind="no_release") from None
         raise CheckError(f"GitHub answered {exc.code}", kind="http") from None
-    except (urllib.error.URLError, OSError, ValueError) as exc:
+    except (urllib.error.URLError, OSError, ValueError, http.client.HTTPException) as exc:
         reason = getattr(exc, "reason", None) or exc
         raise CheckError(f"couldn't reach GitHub ({reason})"[:300]) from None
     tag = data.get("tag_name") if isinstance(data, dict) else None
@@ -214,9 +226,43 @@ def fetch_tag_commit(version: str, tag: str, timeout: float = TIMEOUT,
         if exc.code in (404, 422):
             return None
         raise CheckError(f"GitHub answered {exc.code}", kind="http") from None
-    except (urllib.error.URLError, OSError, ValueError) as exc:
+    except (urllib.error.URLError, OSError, ValueError, http.client.HTTPException) as exc:
         raise CheckError(f"couldn't reach GitHub ({getattr(exc, 'reason', None) or exc})"[:300]) from None
     return sha if re.fullmatch(r"[0-9a-f]{40}", sha) else None
+
+
+def _when(value: Any) -> float | None:
+    """A stored time: a finite number of epoch seconds, else None."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if math.isfinite(value) else None
+
+
+def _clean(data: Any) -> dict[str, Any]:
+    """The state file's fields, each of the type it should be (others are left out): a
+    hand-edited or damaged file reads as if those fields were never written."""
+    if not isinstance(data, dict):
+        return {}
+    out: dict[str, Any] = {}
+    if isinstance(data.get("daily"), bool):
+        out["daily"] = data["daily"]
+    for key in ("attempted_at", "checked_at"):
+        if _when(data.get(key)) is not None:
+            out[key] = _when(data[key])
+    latest = data.get("latest")
+    if (isinstance(latest, dict) and isinstance(latest.get("version"), str)
+            and isinstance(latest.get("tag"), str) and parse_version(latest["tag"])):
+        out["latest"] = latest
+    error = data.get("error")
+    if isinstance(error, dict):
+        out["error"] = {"message": str(error.get("message") or "no answer")[:300],
+                        "kind": str(error.get("kind") or "http"),
+                        "retry_at": _when(error.get("retry_at"))}
+    base = data.get("base")
+    if isinstance(base, dict) and isinstance(base.get("version"), str) \
+            and isinstance(base.get("commit"), str):
+        out["base"] = {"version": base["version"], "commit": base["commit"]}
+    return out
 
 
 def _iso(ts: float | None) -> str | None:
@@ -254,15 +300,18 @@ class UpdateChecker:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._started_at: float | None = None
+        # The last attempt and rate-limit reset, also kept here: with a state file that
+        # can't be written, the daily check still waits a day, not a second.
+        self._attempted_at: float | None = None
+        self._retry_at: float | None = None
 
     # --- state --------------------------------------------------------------------------
 
     def _load(self) -> dict[str, Any]:
         try:
-            data = json.loads(self.path.read_text())
+            return _clean(json.loads(self.path.read_text()))
         except (OSError, ValueError):
             return {}
-        return data if isinstance(data, dict) else {}
 
     def _save(self, data: dict[str, Any]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -270,11 +319,17 @@ class UpdateChecker:
         tmp.write_text(json.dumps(data, indent=2) + "\n")
         os.replace(tmp, self.path)
 
-    def _update(self, **changes: Any) -> dict[str, Any]:
+    def _update(self, strict: bool = False, **changes: Any) -> dict[str, Any]:
+        """Write ``changes`` into the state file and return the whole state. A file that
+        can't be written raises only when ``strict``: a check still answers."""
         with self._lock:
             data = self._load()
             data.update(changes)
-            self._save(data)
+            try:
+                self._save(data)
+            except OSError:
+                if strict:
+                    raise
             return data
 
     def daily(self, data: dict[str, Any] | None = None) -> bool:
@@ -286,14 +341,13 @@ class UpdateChecker:
         data = self._load() if data is None else data
         if not self.daily(data):
             return None
-        last = data.get("attempted_at")
-        due = (last + self.interval) if isinstance(last, (int, float)) else 0.0
+        attempts = [t for t in (data.get("attempted_at"), self._attempted_at) if t is not None]
+        due = max(attempts) + self.interval if attempts else 0.0
         if self._started_at is not None:
             due = max(due, self._started_at + self.first_delay)
-        error = data.get("error") or {}
-        if isinstance(error.get("retry_at"), (int, float)):
-            due = max(due, error["retry_at"])
-        return due
+        resets = [t for t in ((data.get("error") or {}).get("retry_at"), self._retry_at)
+                  if t is not None]
+        return max([due, *resets])
 
     def current(self, data: dict[str, Any] | None = None) -> dict[str, Any]:
         """This build (``Build.describe``), and a build on exactly its base release's
@@ -330,46 +384,49 @@ class UpdateChecker:
             "daily_source": "setting" if isinstance(setting, bool) else "default",
             "next_check": _iso(self.next_check(data)),
             "how_to_update": how_to_update(self.build.install,
-                                           latest["tag"] if latest else None, web=self.web),
+                                           latest["tag"] if latest else None, web=self.web,
+                                           dev=self.build.dev),
         }
 
     def set_daily(self, on: bool) -> dict[str, Any]:
-        return self.status(self._update(daily=bool(on)))
+        return self.status(self._update(strict=True, daily=bool(on)))
 
     # --- checking -----------------------------------------------------------------------
 
     def check(self) -> dict[str, Any]:
-        """Ask GitHub now and return the status. A check already running is waited for
-        instead of starting a second; while GitHub's rate limit is used up, nothing is
-        asked until it resets."""
+        """Ask GitHub now and return the status. While a check is running another returns
+        the last answer at once (no second request, no thread held waiting); while
+        GitHub's rate limit is used up, nothing is asked until it resets."""
         if not self._checking.acquire(blocking=False):
-            with self._checking:  # the running check's answer is the answer
-                return self.status()
+            return self.status()
         try:
             now = self._now()
-            error = self._load().get("error") or {}
-            retry_at = error.get("retry_at")
-            if (error.get("kind") == "rate_limited" and isinstance(retry_at, (int, float))
-                    and now < retry_at):
+            retry_at = max([t for t in ((self._load().get("error") or {}).get("retry_at"),
+                                        self._retry_at) if t is not None], default=None)
+            if retry_at is not None and now < retry_at:
                 return self.status()
+            self._attempted_at = now
             try:
                 latest = self._fetch(self.build.version)
             except CheckError as exc:
+                self._retry_at = _when(exc.retry_at)
                 return self.status(self._update(attempted_at=now, error={
-                    "message": str(exc), "kind": exc.kind, "retry_at": exc.retry_at}))
+                    "message": str(exc), "kind": exc.kind, "retry_at": self._retry_at}))
             except Exception as exc:  # noqa: BLE001 -- a check must never take the app down
                 return self.status(self._update(attempted_at=now, error={
                     "message": f"the check failed ({exc})"[:300], "kind": "http",
                     "retry_at": None}))
             changes: dict[str, Any] = {"attempted_at": now, "checked_at": now,
                                        "latest": latest, "error": None}
+            self._retry_at = None
             base = self._load().get("base") or {}
             if self.build.dev and base.get("version") != self.build.version:
-                # Tags don't move: which commit is this build's base release, once.
-                with contextlib.suppress(CheckError):
-                    changes["base"] = {"version": self.build.version, "commit":
-                                       self._tag_commit(self.build.version,
-                                                        f"v{self.build.version}")}
+                # Tags don't move: which commit is this build's base release, once it is
+                # known (a tag not pushed yet is asked about again at the next check).
+                with contextlib.suppress(Exception):
+                    sha = self._tag_commit(self.build.version, f"v{self.build.version}")
+                    if sha:
+                        changes["base"] = {"version": self.build.version, "commit": sha}
             return self.status(self._update(**changes))
         finally:
             self._checking.release()
@@ -391,10 +448,15 @@ class UpdateChecker:
         self._stop.set()
 
     def _loop(self) -> None:
-        while not self._stop.wait(self._wait()):
+        wait = WAKE
+        with contextlib.suppress(Exception):
+            wait = self._wait()
+        while not self._stop.wait(wait):
+            wait = WAKE  # whatever goes wrong below, the next look is a while away
             with contextlib.suppress(Exception):
                 if self.due():
                     self.check()
+                wait = self._wait()
 
     def _wait(self) -> float:
         nxt = self.next_check()

@@ -311,6 +311,95 @@ def test_the_daily_check_is_due_once_a_day(tmp_path):
     assert not c.due() and c.status()["next_check"] is None
 
 
+def test_a_state_file_that_cant_be_written_still_waits_a_day(tmp_path):
+    """A full or read-only state dir must not turn the daily check into a request a second."""
+    clock = Clock()
+    calls = []
+
+    def fetch(version):
+        calls.append(clock.t)
+        return _release()
+
+    c = upd.UpdateChecker(tmp_path / "missing" / "update.json", upd.Build("0.5.1"),
+                          fetch=fetch, tag_commit=lambda v, t: None, now=clock, first_delay=0)
+    c._save = lambda data: (_ for _ in ()).throw(OSError("read-only file system"))
+    c._started_at = clock.t
+    assert c.check()["state"] == "update_available"  # the answer, even unsaved
+    assert not c.due() and c._wait() == upd.WAKE
+    clock.t += upd.DAY
+    assert c.due()
+    with pytest.raises(OSError):
+        c.set_daily(False)  # a setting that can't be saved says so
+    assert len(calls) == 1
+
+
+def test_a_rate_limit_is_waited_out_even_unsaved(tmp_path):
+    clock = Clock()
+
+    def limited(version):
+        raise upd.CheckError("rate limit", kind="rate_limited", retry_at=clock.t + upd.DAY * 2)
+
+    c = _checker(tmp_path, fetch=limited, now=clock)
+    c._save = lambda data: (_ for _ in ()).throw(OSError("disk full"))
+    c.check()
+    clock.t += upd.DAY + 1
+    assert not c.due()
+
+
+def test_a_tag_lookup_that_breaks_oddly_is_ignored(tmp_path):
+    import http.client
+
+    def odd(version, tag):
+        raise http.client.IncompleteRead(b"")
+
+    s = _checker(tmp_path, commit=SHA, tag_commit=odd).check()
+    assert s["error"] is None and s["current"]["dev"] is True
+
+
+def test_a_tag_not_pushed_yet_is_asked_about_again(tmp_path):
+    answers = [None, SHA]
+    c = _checker(tmp_path, commit=SHA, tag_commit=lambda v, t: answers.pop(0),
+                 fetch=lambda v: _release("v0.5.1"))
+    assert c.check()["current"]["dev"] is True
+    assert c.check()["current"]["dev"] is False
+    assert answers == []
+
+
+def test_a_check_already_running_returns_at_once(tmp_path):
+    c = _checker(tmp_path)
+    c._checking.acquire()
+    try:
+        assert c.check()["state"] == "unknown"  # no wait, no second request
+    finally:
+        c._checking.release()
+
+
+def test_a_docker_dev_build_rebuilds_instead_of_pulling(tmp_path):
+    how = _checker(tmp_path, commit=SHA, install="docker").status()["how_to_update"]
+    assert how["commands"][0] == "git pull" and "--build" in how["commands"][1]
+    assert upd.how_to_update("docker", "v0.6.0")["commands"][0] == "docker compose pull"
+
+
+@pytest.mark.parametrize("state", [
+    {"error": "x"}, {"latest": {"tag": "v1.0.0"}}, {"latest": "0.6.0"},
+    {"attempted_at": "yesterday", "checked_at": float("inf")}, {"daily": "yes"},
+    {"error": {"kind": "rate_limited", "retry_at": "soon"}}, {"base": ["v0.5.1"]}, [1, 2],
+])
+def test_wrong_typed_state_fields_read_as_unset(tmp_path, state):
+    (tmp_path / "update.json").write_text(json.dumps(state))
+    c = _checker(tmp_path, commit=SHA)
+    s = c.status()
+    assert s["state"] == "unknown" and s["current"]["dev"] is True
+    assert c.next_check() is not None and c.check()["state"] == "update_available"
+
+
+def test_a_non_finite_rate_limit_reset_is_dropped():
+    with pytest.raises(upd.CheckError) as exc:
+        upd.fetch_latest("0.5.1", opener=_opener(error=_http_error(
+            403, X_RateLimit_Remaining="0", X_RateLimit_Reset="inf")), now=Clock())
+    assert exc.value.kind == "rate_limited" and exc.value.retry_at is None
+
+
 def test_a_damaged_state_file_reads_as_never_checked(tmp_path):
     (tmp_path / "update.json").write_text("{not json")
     assert _checker(tmp_path).status()["state"] == "unknown"

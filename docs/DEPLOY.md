@@ -436,10 +436,14 @@ footer says "quipclipper X.Y.Z is available" by the version, with the release no
   (`QC_BUILD_COMMIT=$(git rev-parse HEAD) docker compose up --build`, with
   `web/docker-compose.yml`). The footer then reads "dev build 2da1479, ahead of 0.5.1": the
   commit, and the release it is based on (only a release changes the version). An update is
-  offered only when a release newer than that is out. The release images carry no commit.
-  A Nix build always has one, so a check also asks GitHub once which commit the base
-  release's tag is: a build on exactly that commit (a flake pinned to the release) reads as
-  the release.
+  offered only when a release newer than that is out, and a Docker dev build is told to
+  pull the checkout and rebuild rather than pull images. The release images carry no
+  commit, nor do the plain Nix packages (`nix run`, `nix profile`). The NixOS module always
+  passes one, so a check also asks GitHub once which commit the base release's tag is: a
+  build on exactly that commit (a flake pinned to the release) reads as the release.
+- **`/api/health`** names the commit and install kind too; it is the one route the proxy
+  secret doesn't guard, so a caller that reaches the backend port directly sees them, as
+  it already sees the version.
 
 ## Versions and upgrades
 

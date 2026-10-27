@@ -1321,8 +1321,8 @@ input[type="checkbox"].switch:checked::after { transform: translateX(1rem); }
 #update-check { margin: 0.2rem 0 0.3rem; }
 #update-check[aria-disabled="true"] { opacity: 0.6; cursor: progress; }
 .update-result p { margin: 0.3rem 0; }
-.update-commands { margin: 0.3rem 0; padding: 0.45rem 0.6rem; background: var(--raised); border-radius: var(--radius); overflow-x: auto; font-size: 0.78rem; }
-.update-commands code { padding: 0; background: none; white-space: pre; }
+.update-commands { margin: 0.3rem 0; padding: 0.45rem 0.6rem; background: var(--raised); border-radius: var(--radius); font-size: 0.78rem; }
+.update-commands code { padding: 0; background: none; white-space: pre-wrap; overflow-wrap: anywhere; }
 .update-note { margin-left: 0.6rem; }
 .update-note .link-btn { padding: 0; font-size: inherit; }
 h3.set-label { margin-top: 0; }

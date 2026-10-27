@@ -709,7 +709,7 @@ anything; see [DEPLOY.md](DEPLOY.md#checking-for-updates) for what a check sends
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/api/update` | The last answer, from the state dir (it never asks GitHub). |
-| POST | `/api/update/check` | Ask GitHub now (at most a few seconds) and return the same shape. GitHub unreachable or rate-limited is an `error` in a 200 reply; the last good answer stays. A check already running is waited for, not repeated. |
+| POST | `/api/update/check` | Ask GitHub now (at most a few seconds) and return the same shape. GitHub unreachable or rate-limited is an `error` in a 200 reply; the last good answer stays. While a check is already running, this returns the last answer at once. |
 | PUT | `/api/update/settings` | `{"daily": true\|false}`: the daily check for this server. Once set, it wins over `QC_UPDATE_CHECK`. |
 
 ```json

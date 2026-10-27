@@ -26,8 +26,9 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   and a Docker build from a checkout takes it as a build arg, so the footer, Settings,
   `/api/health` (`commit`, `dev`, `build`, `install`) and `quipclipper status` read
   "dev build 2da1479, ahead of 0.5.1". An update is offered only when a release newer than
-  the build's base is out, and a Nix build on exactly a release's commit reads as that
-  release. `QC_INSTALL` (docker, nixos, nix, pip) picks the update steps.
+  the build's base is out, and a NixOS build on exactly a release's commit reads as that
+  release. `QC_INSTALL` (docker, nixos, nix, pip) picks the update steps; a Docker build
+  from a checkout is told to pull the checkout and rebuild.
 
 ## [0.5.1] - 2026-10-26
 
