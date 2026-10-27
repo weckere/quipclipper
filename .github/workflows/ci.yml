@@ -1,19 +1,27 @@
 name: CI
 
 # Work lands on dev; main moves only at a release. release.yml calls this
-# workflow on a v* tag before it publishes anything.
+# workflow on a v* tag before it publishes anything. Run it by hand on another
+# runner image (gh workflow run ci.yml --ref dev -f runner=ubuntu-26.04) to try
+# that image before ubuntu-latest moves to it; a manual run also builds both
+# Docker images, without pushing them.
 on:
   push:
     branches: [dev, main]
   pull_request:
   workflow_call:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: Runner image for every job
+        default: ubuntu-latest
 
 permissions:
   contents: read
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
@@ -35,7 +43,7 @@ jobs:
         run: pytest -q
 
   web:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
 
@@ -58,9 +66,31 @@ jobs:
   # asserts nginx serves the app, the API responds, and the basic-auth gate
   # works. Runs on Linux (the VM needs it).
   nixos:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
       - uses: DeterminateSystems/nix-installer-action@v23
       - name: NixOS module VM test
         run: nix build --print-build-logs .#checks.x86_64-linux.nixos-module
+
+  # Manual runs only: build both images as release.yml does, but push nothing.
+  images:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: app
+            dockerfile: web/Dockerfile
+          - image: web
+            dockerfile: web/nginx/Dockerfile
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - name: Build ${{ matrix.image }}
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: false
