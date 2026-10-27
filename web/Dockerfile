@@ -40,5 +40,13 @@ ENV QC_BIND=0.0.0.0 \
     QC_STATE_DIR=/state \
     QC_FORWARDED_ALLOW_IPS="10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7"
 
+# Check for updates (M24): this is a Docker install (the update steps say pull the new
+# images). A build from a dev checkout passes its commit and reads "dev build <sha>, ahead
+# of X.Y.Z" (docker compose build: QC_BUILD_COMMIT=$(git rev-parse HEAD)); the release
+# images pass none and read as their version.
+ARG QC_BUILD_COMMIT=""
+ENV QC_INSTALL=docker \
+    QC_BUILD_COMMIT=$QC_BUILD_COMMIT
+
 EXPOSE 8000
 CMD ["quipclipper-web"]

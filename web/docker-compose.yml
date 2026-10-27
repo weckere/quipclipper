@@ -10,6 +10,10 @@ services:
     build:
       context: ..
       dockerfile: web/Dockerfile
+      args:
+        # A build from this checkout names its commit (M24): run it as
+        #   QC_BUILD_COMMIT=$(git rev-parse HEAD) docker compose up --build
+        QC_BUILD_COMMIT: ${QC_BUILD_COMMIT:-}
     environment:
       QC_MEDIA_ROOTS: /media
       QC_CLIPS_DIR: /clips

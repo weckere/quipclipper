@@ -18,6 +18,9 @@ let
   frontendPkg = self.packages.${pkgs.stdenv.hostPlatform.system}.quipclipper-web-frontend;
   vhostName = if cfg.virtualHost != null then cfg.virtualHost else "quipclipper-web";
   stateDir = "/var/lib/quipclipper-web/state";
+  # The commit this flake was built from (M24): the footer and Settings ▸ Updates read
+  # "dev build <sha>, ahead of X.Y.Z", unless a check finds it is the release's own commit.
+  buildRev = self.rev or self.dirtyRev or null;
   # Group owning the clips dir: an explicit shared group, else the service's own.
   clipsGroupName = if cfg.clipsGroup != null then cfg.clipsGroup else cfg.group;
   # youtubeDir needs its own writable bind + tmpfiles dir only when it isn't
@@ -187,6 +190,20 @@ in
         The name paired apps show for this server (`QC_SERVER_NAME`, at most 63
         characters), and the advertised name with `advertise.enable`. `null` uses the
         host name.
+      '';
+    };
+
+    updateCheck = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      example = false;
+      description = ''
+        Whether the daily check for updates is on (`QC_UPDATE_CHECK`) until someone turns
+        it on or off under Settings ▸ Updates (or `update.settings`): from then on that
+        setting wins. A check asks GitHub for the latest quipclipper release, sending only
+        the request (it names the version), and shows a notice by the version in the
+        footer when one is newer, with how to update (bump the flake input, rebuild). It
+        never updates anything. Check for updates in Settings works either way.
       '';
     };
 
@@ -791,6 +808,11 @@ in
         QC_SUBTITLE_LANGS = lib.concatStringsSep "," cfg.subtitleLangs;
         QC_INDEX_CHECK_INTERVAL = toString cfg.indexCheckInterval;
         QC_FORWARDED_ALLOW_IPS = lib.concatStringsSep "," cfg.forwardedAllowIps;
+        # Check for updates (M24): this install's kind picks the update steps.
+        QC_INSTALL = "nixos";
+        QC_UPDATE_CHECK = if cfg.updateCheck then "1" else "0";
+      } // lib.optionalAttrs (buildRev != null) {
+        QC_BUILD_COMMIT = buildRev;
       } // lib.optionalAttrs (cfg.serverName != null) {
         QC_SERVER_NAME = cfg.serverName;
       } // lib.optionalAttrs (!cfg.pairing.enable) {

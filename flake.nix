@@ -44,6 +44,8 @@
                 pkgs.ffmpeg
                 pkgs.mkvtoolnix-cli
               ])
+              # update.check's steps for this kind of install (M24).
+              "--set-default" "QC_INSTALL" "nix"
             ];
 
             meta = {
@@ -195,6 +197,8 @@
                 machine.succeed("grep -q quipclipper /tmp/index.html")
                 machine.succeed("curl -fsS -u quip:test123 http://localhost/api/health -o /tmp/health.json")
                 machine.succeed("grep -q ok /tmp/health.json")
+                # Check for updates (M24): the module says what kind of install this is.
+                machine.succeed("grep -q '\"install\":\"nixos\"' /tmp/health.json")
                 machine.succeed("curl -fsS -u quip:test123 http://localhost/api/library/roots -o /tmp/roots.json")
                 machine.succeed("grep -q /srv/media /tmp/roots.json")
                 # nginx serves finished clips straight from clipsDir (it's in the

@@ -44,6 +44,9 @@ python3Packages.buildPythonApplication {
 
   makeWrapperArgs = [
     "--prefix" "PATH" ":" (lib.makeBinPath [ ffmpeg mkvtoolnix-cli yt-dlp ])
+    # Check for updates (M24): the update steps for a Nix install; the NixOS module sets
+    # QC_INSTALL=nixos (and the commit) itself.
+    "--set-default" "QC_INSTALL" "nix"
   ];
 
   meta = {

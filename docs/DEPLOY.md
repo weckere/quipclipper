@@ -194,6 +194,7 @@ Optional settings (all off/defaulted unless set):
 | `serverName` | The name apps show for this server (`QC_SERVER_NAME`; default the host name), and the advertised name. |
 | `advertise.enable` / `advertise.port` | Announce the server on the LAN with Avahi (default off; the port defaults to the first `nginx.listen` port). **Leave it off on a tailnet-only install.** See [below](#advertising-on-the-local-network). |
 | `jellyfin.url` / `jellyfin.apiKeyFile` / `jellyfin.pathMap` | **Now playing** from Jellyfin: its URL, a file holding an API key (root-only is fine: it's passed as a systemd credential) and Jellyfin's paths → this host's (`{ "/movies" = "/srv/movies"; }`). |
+| `updateCheck` | The daily [check for updates](#checking-for-updates) (`QC_UPDATE_CHECK`, default `true`); Settings ▸ Updates wins once set. The module also passes the flake's commit (`QC_BUILD_COMMIT`) and `QC_INSTALL=nixos`. |
 | `indexCheckInterval` | Seconds between the checks for subtitles changed since indexing (`QC_INDEX_CHECK_INTERVAL`, default 3600, `0` = off). |
 | `hookTokenFile` / `pathMap` | **Re-index hooks** (Bazarr, Sonarr, Radarr; see [HOOKS.md](HOOKS.md)): a file holding a hook token that may only queue re-indexes (root-only is fine: a systemd credential), and the hooks' paths → this host's (`{ "/tv" = "/srv/shows"; }`). With `passwordFile`, add a `hook` line with the token as its password. |
 | `transcribe.enable` | [Machine transcription](TRANSCRIPTION.md) with whisper.cpp, on request only (no timer, no hook): `transcribe.models` (`[ "small.en" ]`; add `"medium.en"`, 1.5 GB) installs ggml models pinned by hash from Hugging Face (`transcribe.modelFiles` points a name at your own file; the others keep their pinned download, and a file outside the store is bound into the sandbox), `transcribe.defaultModel`, `transcribe.threads` (2; **1 to 3 only**: whisper shares the host with playback), `transcribe.vad` (Silero, for whole-file runs) and `transcribe.package` (`pkgs.whisper-cpp`; a CUDA override for a GPU). Every run is idle priority. Enabling it sets `QC_TRANSCRIBE=1`; left off, the service has no whisper and transcription stays out of sight. |
@@ -430,6 +431,15 @@ footer says "quipclipper X.Y.Z is available" by the version, with the release no
   quipclipper`, then rebuild), the Nix packages `nix`, and anything else is a pip install
   (`pip install --upgrade "git+https://github.com/weckere/quipclipper@vX.Y.Z"`, and the web
   backend with `#subdirectory=web/backend`).
+- **Dev builds** carry their commit (`QC_BUILD_COMMIT`): the NixOS module passes the
+  flake's, and a Docker build from a checkout takes it as a build arg
+  (`QC_BUILD_COMMIT=$(git rev-parse HEAD) docker compose up --build`, with
+  `web/docker-compose.yml`). The footer then reads "dev build 2da1479, ahead of 0.5.1": the
+  commit, and the release it is based on (only a release changes the version). An update is
+  offered only when a release newer than that is out. The release images carry no commit.
+  A Nix build always has one, so a check also asks GitHub once which commit the base
+  release's tag is: a build on exactly that commit (a flake pinned to the release) reads as
+  the release.
 
 ## Versions and upgrades
 
