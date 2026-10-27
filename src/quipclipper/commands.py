@@ -161,6 +161,22 @@ COMMANDS: tuple[Command, ...] = (
     Command("server.config", "Show the server's configuration (media roots, limits, "
             "subtitle languages).", "GET", "/api/config", ui="Loaded on start"),
 
+    # --- updates (M24): is a newer release out? Nothing here updates anything ------------------
+    Command("update.status", "Show this build (a release, or a dev build and the release it "
+            "is based on), what the last check for updates found, the daily check's setting "
+            "and how to update this install.", "GET", "/api/update", mode="both",
+            ui="Settings ▸ Updates, and the notice by the version at the foot of every page"),
+    Command("update.check", "Check for updates now: ask GitHub for the latest release and "
+            "say whether it is newer than this build (only the request is sent, naming the "
+            "version). It never updates anything.", "POST", "/api/update/check", mode="both",
+            ui="Check for updates (Settings ▸ Updates)"),
+    Command("update.settings", "Turn the server's daily check for updates on or off, for "
+            "every browser. Once set, this wins over QC_UPDATE_CHECK.", "PUT",
+            "/api/update/settings",
+            params=(Param("daily", "bool", "Check once a day (--no-daily: only when asked).",
+                          where=BODY, required=True),),
+            ui="Check once a day (Settings ▸ Updates)"),
+
     # --- library ----------------------------------------------------------------
     Command("library.roots", "List the media roots.", "GET", "/api/library/roots",
             ui="Library home"),

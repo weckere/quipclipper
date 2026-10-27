@@ -49,6 +49,7 @@ from quipclipper.clip import (
     vaapi_h264_available,
 )
 from quipclipper import transcribe as stt
+from quipclipper import updates as updates_mod
 from quipclipper.models import Match, format_timestamp
 from quipclipper.naming import (
     DEFAULT_CLIP_TEMPLATE,
@@ -291,6 +292,12 @@ class LeadStingerQuipRequest(BaseModel):
     after: float = Field(2.0, ge=0, le=60)
     # The LeadStinger set to put the tile in (created there if missing); else its current set.
     set: str | None = Field(None, max_length=100)
+
+
+class UpdateSettings(BaseModel):
+    """JSON body for PUT /api/update/settings (M24): the daily check for updates."""
+
+    daily: bool
 
 
 class JellyfinPlayRequest(BaseModel):
@@ -668,6 +675,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     clients = pairing.ClientStore(settings.state_dir)
     pairs = pairing.Pairing(clients)
     server_id: list[str] = []  # made on first use, so importing the app writes nothing
+    # Check for updates (M24): asks GitHub for the latest release, by hand or once a day;
+    # it never updates anything.
+    build = updates_mod.Build.from_env(__version__, {"QC_BUILD_COMMIT": settings.build_commit,
+                                                     "QC_INSTALL": settings.install})
+    updates = updates_mod.UpdateChecker(settings.state_dir / "update.json", build,
+                                        default_daily=settings.update_check, web=True)
     stt_submit = threading.Lock()  # one check-then-submit at a time (no twin jobs)
 
     def _stt_existing(key: str):
@@ -697,7 +710,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if jf_index is not None:
             jf_index.refresh_if_stale()  # build (or freshen) the path index in the background
         index_check.start()  # a check only: it never re-indexes
+        updates.start()  # the daily check for updates, while it's on
         yield
+        updates.stop()
         index_check.stop()
         stopping[0] = True
         if jf_refresher is not None:
@@ -780,10 +795,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/health")
     def health() -> dict:
         """Liveness probe plus a quick check that the cutting tools are present."""
+        cur = updates.current()
         return {
             "status": "ok",
             "service": "quipclipper-web",
             "version": __version__,
+            # Who this build is (M24): its commit (a dev or Nix build; else null), whether
+            # it is a dev build, "dev build 2da1479, ahead of 0.5.1" or the version, and
+            # how it was installed.
+            "commit": cur["commit"],
+            "dev": cur["dev"],
+            "build": cur["label"],
+            "install": cur["install"],
             "tools": {
                 "ffmpeg": shutil.which("ffmpeg") is not None,
                 "ffprobe": shutil.which("ffprobe") is not None,
@@ -842,6 +865,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                if k in ("available", "models", "default_model", "threads",
                                         "language")}} if stt_on else {}),
         }
+
+    # --- check for updates (M24) -------------------------------------------------
+
+    @app.get("/api/update")
+    def update_status() -> dict:
+        """This build, what the last check for updates found (``state``: update_available,
+        up_to_date, ahead or unknown), the daily check's setting and how to update this
+        install. Reads the state dir only: it never asks GitHub."""
+        return updates.status()
+
+    @app.post("/api/update/check")
+    def update_check() -> dict:
+        """Ask GitHub for the latest release now (a few seconds at most) and return the
+        status. GitHub unreachable or rate-limited is an ``error`` in the reply, never a
+        failed request; the last good answer stays."""
+        return updates.check()
+
+    @app.put("/api/update/settings")
+    def update_settings(body: UpdateSettings) -> dict:
+        """Turn the daily check on or off for this server. Once set, this wins over
+        QC_UPDATE_CHECK."""
+        return updates.set_daily(body.daily)
 
     # --- Jellyfin now playing (M15) ---------------------------------------------
 

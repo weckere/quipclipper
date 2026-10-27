@@ -123,6 +123,7 @@ All settings are environment variables on the `app` service:
 | `QC_JELLYFIN_URL` | *(none)* | Jellyfin's base URL, for **Now playing** (what each Jellyfin client is playing, opened at its playhead). Needs the key below. See [docs/MANUAL.md](MANUAL.md#now-playing-jellyfin). |
 | `QC_JELLYFIN_API_KEY` / `QC_JELLYFIN_API_KEY_FILE` | *(none)* | A Jellyfin API key, or a file holding one. |
 | `QC_HOOK_TOKEN` / `QC_HOOK_TOKEN_FILE` | *(none)* | A low-privilege token for the **re-index hooks** (Bazarr, Sonarr, Radarr tell quipclipper a file's subtitles changed): it may only queue re-indexes. Behind a password, set it on the **web** service too, which adds a `hook` login. See [HOOKS.md](HOOKS.md). |
+| `QC_UPDATE_CHECK` | `1` | The daily [check for updates](#checking-for-updates) (GitHub's latest release, nothing else sent; it never updates). `0` = off until someone turns it on under Settings ▸ Updates: once set there, that setting wins. **Check for updates** works either way. |
 | `QC_INDEX_CHECK_INTERVAL` | `3600` | Seconds between the background checks for files whose subtitles changed since they were indexed (folder listings and file dates only, at the idle I/O priority, skipped while a library run or re-index runs; it never re-indexes, the library page offers a button). `0` = off. See [MANUAL.md](MANUAL.md#changed-subtitles). |
 | `QC_PATH_MAP` | *(none)* | The hooks' paths → quipclipper's, e.g. `/tv=/media/shows:/movies=/media/movies`, when Bazarr, Sonarr or Radarr see the media elsewhere (their own containers). Or JSON, `{"/tv": "/media/shows"}`, for paths holding `:`, `;` or `=` (or a backslash before the character). |
 | `QC_JELLYFIN_PATH_MAP` | *(derived)* | Jellyfin's paths → quipclipper's, e.g. `/movies=/media/movies:/shows=/media/shows`, when Jellyfin sees the media elsewhere (its own container). Same syntax as `QC_PATH_MAP` (JSON too). Unset, quipclipper derives it from Jellyfin's libraries by finding a few of each library's files under the media roots ([how](API.md#titles-and-artwork-jellyfin)); set it when that misses a library. |
@@ -403,6 +404,32 @@ The web app is two containers:
 Media directories are mounted read-only. All file access is realpath-checked
 against the configured media roots — path traversal and symlink escapes are
 rejected.
+
+## Checking for updates
+
+Settings ▸ Updates has **Check for updates**, and the server also checks once a day. A
+check asks GitHub for the latest release of weckere/quipclipper
+(`https://api.github.com/repos/weckere/quipclipper/releases/latest`, with
+`User-Agent: quipclipper/<version>` and nothing else about the install; `https_proxy` is
+honoured; at most a few seconds). When that release is newer than the running one, the
+footer says "quipclipper X.Y.Z is available" by the version, with the release notes and
+**how to update** this install. quipclipper never updates itself.
+
+- **Daily check:** on unless `QC_UPDATE_CHECK=0` (NixOS `updateCheck = false;`). The
+  **Check once a day** switch under Settings ▸ Updates (or `update.settings --daily` /
+  `--no-daily`) is for the whole server and, once used, wins over `QC_UPDATE_CHECK`: the
+  variable is the install's default, the switch a person's later choice. The first daily
+  check comes ten minutes after the server starts, then one a day.
+- **GitHub unreachable or rate-limited** (60 requests an hour per address without a
+  token): the app carries on; Settings says "Couldn't check" and when the last check that
+  got an answer was, and nothing is asked again until the rate limit resets.
+- **The answer** is kept in the state dir (`update.json`).
+- **How to update** depends on the install, which the server knows from `QC_INSTALL`: the
+  Docker image sets `docker` (pull the new images: `docker compose pull && docker compose
+  up -d`, after changing a pinned tag), the NixOS module `nixos` (`nix flake update
+  quipclipper`, then rebuild), the Nix packages `nix`, and anything else is a pip install
+  (`pip install --upgrade "git+https://github.com/weckere/quipclipper@vX.Y.Z"`, and the web
+  backend with `#subdirectory=web/backend`).
 
 ## Versions and upgrades
 

@@ -102,6 +102,14 @@
             <button type="button" id="connect-ls" class="btn" data-action="leadstinger.connect" title="Open LeadStinger on this computer and connect it to this server. It shows a code; Allow that code here." hidden><svg class="icon" aria-hidden="true"><use href="#i-leadstinger"/></svg>Connect LeadStinger</button>
             <p id="apps-status" class="muted set-help" role="status"></p>
           </div>
+          <div class="set-row" id="update-setting">
+            <h3 class="set-label" id="update-label" tabindex="-1">Updates</h3>
+            <p id="update-build" class="set-help" data-action="update.status">This server: …</p>
+            <button type="button" id="update-check" class="btn" data-action="update.check" title="Ask GitHub for the latest quipclipper release. Only the request is sent; nothing updates by itself.">Check for updates</button>
+            <div id="update-result" class="set-help update-result" role="status"></div>
+            <label class="checkbox-label set-check" title="Once a day, ask GitHub whether a newer release is out. For this server, in every browser."><input id="update-daily" class="switch" type="checkbox" data-action="update.settings" /> Check once a day</label>
+            <p class="muted set-help">For this server, in every browser. A check asks GitHub for the latest release and sends nothing else; quipclipper never updates itself.</p>
+          </div>
           <p class="muted set-help">The clip name template is the Name field in the clip bar. The YouTube player choice is on a YouTube video.</p>
         </div>
       </div>
@@ -572,6 +580,7 @@
 
     <footer>
       <span id="status" data-action="server.health" class="muted">…</span>
+      <span id="update-note" class="update-note" hidden></span>
     </footer>
 
     <script src="app.js"></script>

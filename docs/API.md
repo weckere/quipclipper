@@ -698,8 +698,48 @@ seconds after the last one, so a batch is one scan and new clips show up on the 
 |---|---|---|
 | GET/POST | `/api/bookmarks` | List (optionally filtered by `?path=`) / create bookmarks. |
 | PATCH/DELETE | `/api/bookmarks/{id}` | Edit / delete one. `DELETE /api/bookmarks` clears all. |
-| GET | `/api/health` | Liveness + tool presence (no auth-secret required; `tools` includes `whisper-cli` while transcription is on), `jellyfin` (Now playing, titles and artwork configured) and, while [machine transcription](#machine-transcription) is on, `transcribe`: `{enabled, available, engine, binary, models: [{name, size, present}], default_model, threads, max_threads, vad, language}`. |
+| GET | `/api/health` | Liveness + tool presence (no auth-secret required; this build's `commit` (a dev or Nix build, else `null`), `dev`, `build` (`"dev build 2da1479, ahead of 0.5.1"`, or the version) and `install` ([updates](#check-for-updates)); `tools` includes `whisper-cli` while transcription is on), `jellyfin` (Now playing, titles and artwork configured) and, while [machine transcription](#machine-transcription) is on, `transcribe`: `{enabled, available, engine, binary, models: [{name, size, present}], default_model, threads, max_threads, vad, language}`. |
 | GET | `/api/config` | Non-secret config the UI needs, including `public_url` (`QC_PUBLIC_URL`, or `null`), `link_server` (the server [Send to LeadStinger links](#send-to-leadstinger-links) name for this request, or `null`), `jellyfin` (true when Now playing is configured), [pairing](#pairing)'s `pairing`, `server_id` and `server_name`, and, while [machine transcription](#machine-transcription) is on, `transcribe` (`{available, models, default_model, threads, language}`). |
+
+### Check for updates
+
+Whether a newer release than this build is out on GitHub (M24). Nothing here updates
+anything; see [DEPLOY.md](DEPLOY.md#checking-for-updates) for what a check sends.
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/update` | The last answer, from the state dir (it never asks GitHub). |
+| POST | `/api/update/check` | Ask GitHub now (at most a few seconds) and return the same shape. GitHub unreachable or rate-limited is an `error` in a 200 reply; the last good answer stays. A check already running is waited for, not repeated. |
+| PUT | `/api/update/settings` | `{"daily": true\|false}`: the daily check for this server. Once set, it wins over `QC_UPDATE_CHECK`. |
+
+```json
+{
+  "current": {"version": "0.5.1", "commit": "2da1479c…", "short": "2da1479", "dev": true,
+              "install": "nixos", "label": "dev build 2da1479, ahead of 0.5.1"},
+  "latest": {"version": "0.6.0", "tag": "v0.6.0", "name": "quipclipper 0.6.0",
+             "url": "https://github.com/weckere/quipclipper/releases/tag/v0.6.0",
+             "published_at": "2026-11-01T10:00:00Z"},
+  "state": "update_available",
+  "update_available": true,
+  "checked_at": "2026-11-02T08:00:00+00:00",
+  "attempted_at": "2026-11-02T08:00:00+00:00",
+  "error": null,
+  "daily": true, "daily_source": "default", "next_check": "2026-11-03T08:00:00+00:00",
+  "how_to_update": {"install": "nixos",
+                    "summary": "This is a NixOS install: update the quipclipper flake input, then rebuild.",
+                    "commands": ["nix flake update quipclipper",
+                                 "sudo nixos-rebuild switch --flake .#<host>"]}
+}
+```
+
+`state` is `update_available`, `up_to_date`, `ahead` (this build is newer than the latest
+release) or `unknown` (no check has had an answer). A dev build's version is the release
+it is based on, so `update_available` means a release newer than that base. `checked_at`
+is the last check that got an answer; `error` (`{message, kind, retry_at}`, `kind` one of
+`unreachable`, `rate_limited`, `no_release`, `http`) says why the latest attempt didn't.
+`daily_source` is `setting` once someone set the daily check, else `default`
+(`QC_UPDATE_CHECK`); `next_check` is `null` while it is off. CLI: `update.status`,
+`update.check`, `update.settings`.
 
 ## Clips library contract
 

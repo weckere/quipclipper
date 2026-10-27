@@ -40,6 +40,7 @@ except ImportError:  # older typer sits on the real click
     import click
 
 from quipclipper import commands as reg
+from quipclipper import updates as upd
 from quipclipper.client import (
     EXIT_REFUSED,
     EXIT_USAGE,
@@ -303,9 +304,13 @@ def _run_server(c: Context, cmd_id: str, values: dict[str, Any]) -> None:
 
 
 def _exit_for(cmd: reg.Command, data: Any) -> None:
-    """Exit 1 for a search with no matches, as a local search does (docs/CLI.md)."""
+    """Exit 1 for a search with no matches, as a local search does, and for a check for
+    updates that couldn't check (docs/CLI.md)."""
     if cmd.id in ("search.item", "search.folder") and isinstance(data, dict) \
             and not data.get("matches"):
+        raise typer.Exit(code=1)
+    # A check for updates that got no answer from GitHub (M24).
+    if cmd.id == "update.check" and isinstance(data, dict) and data.get("error"):
         raise typer.Exit(code=1)
 
 
@@ -516,8 +521,44 @@ def _fmt_item(data: dict) -> None:
 def _fmt_health(data: dict) -> None:
     tools = "  ".join(f"{'✓' if ok else '✗'} {k}" for k, ok in (data.get("tools") or {}).items())
     where = data.get("where", "server")
-    typer.echo(f"{data.get('service', 'quipclipper')} v{data.get('version', '?')} "
-               f"({where}) — {tools}")
+    # A dev build names its commit (M24): "dev build 2da1479, ahead of 0.5.1".
+    build = data.get("build") if data.get("dev") else f"v{data.get('version', '?')}"
+    typer.echo(f"{data.get('service', 'quipclipper')} {build} ({where}) — {tools}")
+
+
+def _fmt_update(data: dict) -> None:
+    cur = data.get("current") or {}
+    typer.echo(f"This {'install' if data.get('where') == 'local' else 'server'}: quipclipper "
+               f"{cur.get('label', '?')} ({cur.get('install', '?')})")
+    latest = data.get("latest") or {}
+    state = data.get("state")
+    if state == "update_available":
+        typer.secho(f"quipclipper {latest.get('version')} is available. Release notes: "
+                    f"{latest.get('url')}", fg="green", bold=True)
+        how = data.get("how_to_update") or {}
+        typer.echo(how.get("summary", ""))
+        for line in how.get("commands") or ():
+            typer.echo(f"  {line}")
+    elif state == "up_to_date":
+        typer.echo(f"Up to date: {latest.get('version')} is the latest release.")
+    elif state == "ahead":
+        typer.echo(f"This build is newer than the latest release ({latest.get('version')}).")
+    elif not data.get("error"):
+        typer.echo("Not checked yet: `quipclipper update.check` asks GitHub.")
+    err = data.get("error")
+    if err:
+        retry = f" GitHub takes requests again after {err['retry_at']}." if err.get("retry_at") else ""
+        last = (f" The last check that got an answer was at {data['checked_at']}."
+                if data.get("checked_at") else "")
+        typer.secho(f"Couldn't check for updates: {err.get('message')}.{retry}{last}",
+                    fg="yellow")
+    elif data.get("checked_at"):
+        typer.secho(f"Checked at {data['checked_at']}.", dim=True)
+    if "daily" in data:
+        how_set = "set here" if data.get("daily_source") == "setting" else "QC_UPDATE_CHECK"
+        nxt = f", next at {data['next_check']}" if data.get("next_check") else ""
+        typer.secho(f"Daily check: {'on' if data.get('daily') else 'off'} ({how_set}{nxt}).",
+                    dim=True)
 
 
 def _fmt_sessions(data: dict) -> None:
@@ -702,6 +743,8 @@ _FORMATTERS = {
     "index.changes": _fmt_index_changes, "index.reindex-changed": _fmt_index_file,
     "bookmark.list": _fmt_bookmarks, "clips.list": _fmt_clips,
     "item.script": _fmt_script, "item.info": _fmt_item, "server.health": _fmt_health,
+    "update.status": _fmt_update, "update.check": _fmt_update,
+    "update.settings": _fmt_update,
     "jellyfin.sessions": _fmt_sessions, "jellyfin.lookup": _fmt_lookup,
     "jellyfin.reindex": _fmt_reindex, "jellyfin.play": _fmt_play, "item.link": _fmt_link,
     "leadstinger.connect": _fmt_link, "pair.list": _fmt_pairs, "clients.list": _fmt_clients,
@@ -1374,7 +1417,10 @@ def status(ctx: typer.Context):
         return
     from quipclipper import __version__
 
+    build = _local_updates().current()
     data = {"service": "quipclipper", "version": __version__, "where": "local",
+            "commit": build["commit"], "dev": build["dev"], "build": build["label"],
+            "install": build["install"],
             "tools": {t: shutil.which(t) is not None
                       for t in ("ffmpeg", "ffprobe", "mkvmerge", "yt-dlp")}}
     _print(c, reg.BY_ID["server.health"], data)
@@ -1921,7 +1967,26 @@ def _local_transcript_clean(c: Context, v: dict) -> Any:
     return {"count": len(removed), "removed": [o.to_json() for o in removed]}
 
 
+def _local_updates() -> upd.UpdateChecker:
+    """This install's own check for updates (no server): the last answer is kept in the
+    user's cache dir, and there is no daily check."""
+    from quipclipper import __version__
+
+    return upd.UpdateChecker(upd.cache_path(), upd.Build.from_env(__version__),
+                             default_daily=False)
+
+
+def _local_update(c: Context, v: dict, check: bool) -> Any:
+    checker = _local_updates()
+    data = checker.check() if check else checker.status()
+    for key in ("daily", "daily_source", "next_check"):  # a server's daily check only
+        data.pop(key, None)
+    return {**data, "where": "local"}
+
+
 _LOCAL = {
+    "update.status": lambda c, v: _local_update(c, v, check=False),
+    "update.check": lambda c, v: _local_update(c, v, check=True),
     "item.transcribe": _local_transcribe,
     "index.transcript-orphans": _local_transcript_orphans,
     "index.transcript-clean": _local_transcript_clean,

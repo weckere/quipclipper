@@ -1314,4 +1314,15 @@ input[type="checkbox"].switch:checked::after { transform: translateX(1rem); }
 .app-main .muted { font-size: 0.8rem; }
 #connect-ls { margin: 0.2rem 0 0.4rem; }
 #apps-setting { border-top: 1px solid var(--line); padding-top: 0.8rem; }
+/* Settings ▸ Updates and the footer's notice (M24). */
+#update-setting { border-top: 1px solid var(--line); padding-top: 0.8rem; }
+#update-label:focus { outline: none; }
+#update-label:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
+#update-check { margin: 0.2rem 0 0.3rem; }
+#update-check[aria-disabled="true"] { opacity: 0.6; cursor: progress; }
+.update-result p { margin: 0.3rem 0; }
+.update-commands { margin: 0.3rem 0; padding: 0.45rem 0.6rem; background: var(--raised); border-radius: var(--radius); overflow-x: auto; font-size: 0.78rem; }
+.update-commands code { padding: 0; background: none; white-space: pre; }
+.update-note { margin-left: 0.6rem; }
+.update-note .link-btn { padding: 0; font-size: inherit; }
 h3.set-label { margin-top: 0; }

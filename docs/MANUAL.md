@@ -401,6 +401,16 @@ when it was last used, and **Revoke** to disconnect one (its key stops working; 
 again). **Connect LeadStinger** opens LeadStinger on this computer to connect it to this
 server. CLI: `clients.list`, `clients.revoke`, `leadstinger.connect`.
 
+**Updates** is for the whole server too. It names this build: the version, or for a build
+from `dev` "dev build 2da1479, ahead of 0.5.1" (its commit, and the release it is based
+on). **Check for updates** asks GitHub for the latest release and says whether it is newer,
+with its release notes and how to update this install (Docker, NixOS, Nix or pip); the
+answer is read out to a screen reader. **Check once a day** turns the server's daily check
+on or off; when it finds a newer release, the footer says "quipclipper X.Y.Z is available"
+by the version, with **release notes** and **how to update**, which opens this section.
+quipclipper never updates itself. CLI: `update.status`, `update.check`, `update.settings`;
+the server's settings are in [DEPLOY.md](DEPLOY.md#checking-for-updates).
+
 ### Keyboard, screen readers and low vision
 
 The web app aims at WCAG 2.2 AA.

@@ -7005,6 +7005,7 @@ function toggleSettings(open, restore) {
   if (show && !was) {
     toggleScopeMenu(false); toggleJobs(false);
     refreshClients();  // Connected apps: who is let in now
+    refreshUpdate();  // Updates: what the last check found
     // Into the appearance choice (its checked option is the group's tab stop).
     (pop.querySelector('[role="radio"][aria-checked="true"]') || pop).focus();
   }
@@ -7238,6 +7239,134 @@ $("connect-ls").onclick = () => {
   schedulePairs();
 };
 
+// --- Check for updates (M24) ----------------------------------------------------------------
+//
+// The footer names this build: the version, or "dev build <sha>, ahead of X.Y.Z". When the
+// last check found a newer release it says so there, with the release notes and a way into
+// Settings ▸ Updates, which shows the last answer (GET /api/update, update.status), Check for
+// updates (POST /api/update/check, update.check), how to update this install, and the daily
+// check (PUT /api/update/settings, update.settings). Nothing here updates anything.
+
+const INSTALL_NAMES = { docker: "Docker", nixos: "NixOS", nix: "Nix", pip: "pip" };
+const UPDATE_STALE_MS = 3600000;  // a page left open looks again after this long
+let updateInfo = null;
+let updateFetchedAt = 0;
+let updateChecking = false;
+
+async function refreshUpdate() {
+  updateFetchedAt = Date.now();
+  try { showUpdate(await getJSON("/api/update")); } catch { /* an older server: no notice */ }
+}
+
+/** The last answer, in words: what it found, and when (or why it couldn't check). */
+function updateResultHtml(u) {
+  const latest = u.latest || {};
+  const v = escapeHtml(latest.version || "");
+  const notes = latest.url ? ` <a href="${escapeHtml(latest.url)}" target="_blank" rel="noopener noreferrer" title="What's new in quipclipper ${v}, on GitHub (opens a new tab)">Release notes</a>` : "";
+  let html = "";
+  if (u.state === "update_available") {
+    const how = u.how_to_update || {};
+    html += `<p class="update-found"><strong>quipclipper ${v} is available.</strong>${notes}</p>`;
+    html += `<p>${escapeHtml(how.summary || "")}</p>`;
+    if ((how.commands || []).length) {
+      html += `<pre class="update-commands"><code>${how.commands.map(escapeHtml).join("\n")}</code></pre>`;
+    }
+  } else if (u.state === "up_to_date") {
+    html += `<p>Up to date: ${v} is the latest release.${notes}</p>`;
+  } else if (u.state === "ahead") {
+    html += `<p>This build is newer than the latest release (${v}).${notes}</p>`;
+  } else if (!u.error) {
+    html += "<p>Not checked yet.</p>";
+  }
+  if (u.error) {
+    const retry = u.error.retry_at ? ` GitHub takes requests again after ${escapeHtml(fmtWhen(u.error.retry_at))}.` : "";
+    const last = u.checked_at ? ` The last check that got an answer was ${escapeHtml(fmtWhen(u.checked_at))}.` : "";
+    html += `<p class="error">Couldn't check: ${escapeHtml(u.error.message || "no answer")}.${retry}${last}</p>`;
+  } else if (u.checked_at) {
+    html += `<p class="muted">Last checked ${escapeHtml(fmtWhen(u.checked_at))}.</p>`;
+  }
+  if (u.next_check) html += `<p class="muted">Next daily check ${escapeHtml(fmtWhen(u.next_check))}.</p>`;
+  return html;
+}
+
+/** One line for the live region after Check for updates. */
+function updateSummary(u) {
+  if (u.error) return `Couldn't check for updates: ${u.error.message || "no answer"}.`;
+  if (u.state === "update_available") return `quipclipper ${u.latest.version} is available.`;
+  if (u.state === "up_to_date") return `Up to date: ${u.latest.version} is the latest release.`;
+  if (u.state === "ahead") return `This build is newer than the latest release, ${u.latest.version}.`;
+  return "Checked for updates.";
+}
+
+function showUpdate(u) {
+  updateInfo = u;
+  const cur = u.current || {};
+  $("update-build").textContent = `This server: quipclipper ${cur.label} (${INSTALL_NAMES[cur.install] || cur.install}).`;
+  $("update-result").innerHTML = updateResultHtml(u);
+  $("update-daily").checked = !!u.daily;
+  const note = $("update-note");
+  if (u.update_available && u.latest) {
+    const url = u.latest.url ? `<a href="${escapeHtml(u.latest.url)}" target="_blank" rel="noopener noreferrer" title="What's new in quipclipper ${escapeHtml(u.latest.version)}, on GitHub (opens a new tab)">release notes</a>, ` : "";
+    note.innerHTML = `<strong>quipclipper ${escapeHtml(u.latest.version)} is available</strong>: ${url}` +
+      `<button type="button" class="link-btn update-how" data-action="update.status" aria-haspopup="dialog" title="How to update this install (Settings ▸ Updates)">how to update</button>`;
+    note.querySelector("button").onclick = (e) => { e.stopPropagation(); openUpdates(); };
+    note.hidden = false;
+  } else {
+    note.hidden = true;
+    note.textContent = "";
+  }
+}
+
+/** Settings, at Updates (the footer's "how to update"). */
+function openUpdates() {
+  toggleSettings(true);
+  $("update-label").focus({ preventScroll: true });
+  $("update-label").scrollIntoView({ block: "start" });
+}
+
+$("update-check").onclick = async () => {
+  if (updateChecking) return;  // aria-disabled, not disabled: focus stays on the button
+  updateChecking = true;
+  const btn = $("update-check");
+  btn.setAttribute("aria-disabled", "true");
+  btn.textContent = "Checking…";
+  announce("Checking for updates…");
+  try {
+    const u = await postJSON("/api/update/check", {});
+    updateFetchedAt = Date.now();
+    showUpdate(u);
+    announce(updateSummary(u));
+  } catch (err) {
+    $("update-result").innerHTML = `<p class="error">Couldn't check: ${escapeHtml(err.message)}</p>`;
+    announce(`Couldn't check for updates: ${err.message}`);
+  } finally {
+    updateChecking = false;
+    btn.removeAttribute("aria-disabled");
+    btn.textContent = "Check for updates";
+  }
+};
+
+$("update-daily").onchange = async (e) => {
+  const on = e.target.checked;
+  try {
+    const resp = await apiFetch("/api/update/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ daily: on }),
+    });
+    if (!resp.ok) throw new Error(`${resp.status}`);
+    showUpdate(await resp.json());
+    announce(on ? "Daily check for updates on." : "Daily check for updates off.");
+  } catch (err) {
+    e.target.checked = !on;
+    announce(`Couldn't change the daily check: ${err.message}`);
+  }
+};
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && Date.now() - updateFetchedAt > UPDATE_STALE_MS) refreshUpdate();
+});
+
 // --- boot -------------------------------------------------------------------
 
 let appConfig = {};
@@ -7251,10 +7380,12 @@ async function loadStatus() {
     const tools = Object.entries(h.tools)
       .map(([k, v]) => `${v ? "✓" : "✗"} ${k}`)
       .join("  ");
-    $("status").textContent = `${h.service} v${h.version} — ${tools}`;
+    // A dev build names its commit (M24): "dev build 2da1479, ahead of 0.5.1".
+    $("status").textContent = `${h.service} ${h.dev ? h.build : `v${h.version}`} — ${tools}`;
   }).catch((err) => {
     $("status").textContent = `backend unreachable: ${err.message}`;
   });
+  refreshUpdate();  // the footer's update notice and Settings ▸ Updates (M24)
   const roots = getJSON("/api/library/roots").catch(() => null);
   // Load config (subtitle_langs, hw_encode, etc.)
   try {

@@ -11,6 +11,17 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 
 ## [Unreleased]
 
+### Check for updates (M24)
+
+- **Check for updates** in Settings ▸ Updates, and a quiet daily check (on unless
+  `QC_UPDATE_CHECK=0`; the **Check once a day** switch wins once used): when the latest GitHub release is newer than the running one, the footer says
+  "quipclipper X.Y.Z is available" by the version, with its release notes and how to update
+  this install (Docker, NixOS, Nix or pip). It never updates itself, sends nothing but the
+  request (`User-Agent: quipclipper/<version>`), and GitHub unreachable or rate-limited only
+  reads "Couldn't check" with the last good answer. `GET /api/update`,
+  `POST /api/update/check`, `PUT /api/update/settings`; CLI `update.status`, `update.check`
+  (also with no server, for the CLI's own install) and `update.settings`.
+
 ## [0.5.1] - 2026-10-26
 
 ### Pairing (M23)

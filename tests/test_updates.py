@@ -11,8 +11,12 @@ import json
 import urllib.error
 
 import pytest
+from typer.testing import CliRunner
+
+import quipclipper.cli as cli
 from quipclipper import updates as upd
 
+runner = CliRunner()
 SHA = "2da1479c0ffee0123456789abcdef0123456789a"
 
 
@@ -319,3 +323,48 @@ def test_the_thread_stops(tmp_path):
     c.stop()
     c._thread.join(timeout=5)
     assert not c._thread.is_alive()
+
+
+# --- the CLI on its own ---------------------------------------------------------------------
+
+
+@pytest.fixture
+def local_cache(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    for var in ("QC_BUILD_COMMIT", "QC_INSTALL"):
+        monkeypatch.delenv(var, raising=False)
+    return tmp_path / "cache" / "quipclipper" / "update.json"
+
+
+def test_cli_update_check_here(local_cache, monkeypatch):
+    monkeypatch.setattr(upd, "fetch_latest", lambda version, **kw: _release("v99.0.0"))
+    monkeypatch.setattr(upd, "fetch_tag_commit", lambda version, tag, **kw: None)
+    r = runner.invoke(cli.app, ["update.check"])
+    assert r.exit_code == 0, r.output
+    assert "quipclipper 99.0.0 is available" in r.output
+    assert "pip install --upgrade" in r.output
+    assert "Daily check" not in r.output  # a server's only
+    assert local_cache.exists()
+    r = runner.invoke(cli.app, ["--json", "update.status"])
+    data = json.loads(r.output)
+    assert data["where"] == "local" and data["latest"]["version"] == "99.0.0"
+    assert "daily" not in data
+
+
+def test_cli_update_check_that_cannot_reach_github_exits_1(local_cache, monkeypatch):
+    def down(version, **kw):
+        raise upd.CheckError("couldn't reach GitHub (offline)")
+
+    monkeypatch.setattr(upd, "fetch_latest", down)
+    r = runner.invoke(cli.app, ["update.check"])
+    assert r.exit_code == 1
+    assert "Couldn't check for updates: couldn't reach GitHub (offline)" in r.output
+
+
+def test_cli_status_names_a_dev_build(local_cache, monkeypatch):
+    monkeypatch.setenv("QC_BUILD_COMMIT", SHA)
+    r = runner.invoke(cli.app, ["--json", "status"])
+    data = json.loads(r.output)
+    assert data["commit"] == SHA and data["build"].startswith("dev build 2da1479, ahead of ")
+    r = runner.invoke(cli.app, ["status"])
+    assert "dev build 2da1479" in r.output

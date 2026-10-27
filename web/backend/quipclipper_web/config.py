@@ -147,6 +147,13 @@ class Settings:
     # Peers whose X-Real-IP and Tailscale-User-* headers say who the caller is
     # (QC_FORWARDED_ALLOW_IPS; quipclipper_web.caller): the bundled nginx. Default loopback.
     trusted_proxies: tuple = caller.parse_networks(caller.DEFAULT_TRUSTED)
+    # Check for updates (M24): whether the daily check is on until someone sets it in
+    # Settings ▸ Updates (QC_UPDATE_CHECK; the setting wins once made), and who this build
+    # is: its commit (QC_BUILD_COMMIT, dev builds only) and how it was installed
+    # (QC_INSTALL: docker, nixos, nix; else pip), which picks the update instructions.
+    update_check: bool = True
+    build_commit: str = ""
+    install: str = ""
 
     @property
     def jellyfin_enabled(self) -> bool:
@@ -240,4 +247,7 @@ class Settings:
             advertise_port=int(e["QC_ADVERTISE_PORT"]) if e.get("QC_ADVERTISE_PORT") else None,
             trusted_proxies=caller.parse_networks(
                 e.get("QC_FORWARDED_ALLOW_IPS", caller.DEFAULT_TRUSTED)),
+            update_check=_switch(e.get("QC_UPDATE_CHECK"), default=True),
+            build_commit=e.get("QC_BUILD_COMMIT", "").strip(),
+            install=e.get("QC_INSTALL", "").strip(),
         )

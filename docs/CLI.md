@@ -66,6 +66,20 @@ exit with code 3.
 - `quipclipper run script.jsonl` runs one command per line,
   `{"command": "bookmark.add", "params": {...}}`, and prints one JSON result per line.
 
+## Checking for updates
+
+`quipclipper update.check` asks GitHub for the latest release and says whether it is
+newer than this build, and how to update this kind of install (Docker, NixOS, Nix or
+pip). It never updates anything. Against a server it checks for the server (the web
+app's Settings ▸ Updates); with no server, for this install of the CLI, keeping the
+answer in `~/.cache/quipclipper/update.json` for `update.status`. A server also checks
+once a day unless that is turned off (`update.settings --no-daily`, or
+`QC_UPDATE_CHECK=0`: see [DEPLOY.md](DEPLOY.md#checking-for-updates)).
+
+A build from `dev` reads `dev build 2da1479, ahead of 0.5.1`: its commit, and the
+release it is based on. An update is available only when a release newer than that is
+out.
+
 ## Settings
 
 `quipclipper settings.set <key> <value>` stores defaults in
@@ -107,7 +121,7 @@ by default land where they always did.
 | Code | Meaning |
 |---|---|
 | 0 | OK |
-| 1 | Failed: a server error, a failed job, or no matches |
+| 1 | Failed: a server error, a failed job, no matches, or `update.check` couldn't reach GitHub |
 | 2 | Usage error, or the server rejected the request as invalid |
 | 3 | No server configured, the server can't be reached, or it redirects (use the URL it redirects to) |
 | 4 | The server refused the token |
@@ -121,6 +135,14 @@ by default land where they always did.
 |---|---|---|---|---|
 | `server.health` (`status`) | Show the version and which media tools are installed. |  | `GET /api/health` · local | Status line at the foot of every page |
 | `server.config` | Show the server's configuration (media roots, limits, subtitle languages). |  | `GET /api/config` | Loaded on start |
+
+## update
+
+| Command | What it does | Arguments | API | Web UI |
+|---|---|---|---|---|
+| `update.status` | Show this build (a release, or a dev build and the release it is based on), what the last check for updates found, the daily check's setting and how to update this install. |  | `GET /api/update` · local | Settings ▸ Updates, and the notice by the version at the foot of every page |
+| `update.check` | Check for updates now: ask GitHub for the latest release and say whether it is newer than this build (only the request is sent, naming the version). It never updates anything. |  | `POST /api/update/check` · local | Check for updates (Settings ▸ Updates) |
+| `update.settings` | Turn the server's daily check for updates on or off, for every browser. Once set, this wins over QC_UPDATE_CHECK. | `--daily` | `PUT /api/update/settings` | Check once a day (Settings ▸ Updates) |
 
 ## library
 

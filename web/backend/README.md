@@ -57,6 +57,8 @@ Environment variables (mirrored by the NixOS module options):
 | `QC_JELLYFIN_API_KEY` / `QC_JELLYFIN_API_KEY_FILE` | (unset) | a Jellyfin API key, or a file holding it (an unreadable file = off, not a failed start) |
 | `QC_JELLYFIN_PATH_MAP` | (unset) | Jellyfin's paths → the media roots: `<jellyfin>=<local>` pairs separated by `:` or `;` (`\` makes the next character literal), or JSON (`{"/movies": "/srv/movies"}`); longest prefix wins |
 | `QC_HOOK_TOKEN` / `QC_HOOK_TOKEN_FILE` | (unset) | low-privilege token(s) for the re-index hooks (Bazarr, Sonarr, Radarr): accepted only on `/api/index/file`, 403 anywhere else. See [`../../docs/HOOKS.md`](../../docs/HOOKS.md) |
+| `QC_UPDATE_CHECK` | `1` | the daily check for updates (GitHub's latest release; never updates); `0` = off until set under Settings ▸ Updates, which wins once set |
+| `QC_INSTALL` / `QC_BUILD_COMMIT` | `pip` / *(none)* | this build: how it was installed (`docker`, `nixos`, `nix`, `pip`: the update steps) and a dev build's commit ("dev build <sha>, ahead of X.Y.Z"); the Docker image and the Nix packaging set them |
 | `QC_INDEX_CHECK_INTERVAL` | `3600` | seconds between the timestamp-only checks for subtitles changed since indexing (idle I/O priority; never re-indexes); `0` = off |
 | `QC_PATH_MAP` | (unset) | the hooks' paths → the media roots: `<theirs>=<local>` pairs separated by `:` or `;` (`\` makes the next character literal), or JSON (`{"/tv": "/srv/shows"}`); longest prefix wins |
 | `QC_PROXY_SECRET` | (unset) | defence-in-depth: when set on **both** services, nginx injects it and the backend rejects any request that reaches port 8000 without it (except `/api/health`), blocking direct hits that bypass nginx |

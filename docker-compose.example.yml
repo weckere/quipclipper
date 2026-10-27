@@ -49,6 +49,11 @@ services:
       # Pairing: LeadStinger asks for access and you Allow it in the web UI, with
       # no token to copy. "0" turns it off. See docs/API.md (Pairing).
       # QC_PAIRING: "0"
+      # Check for updates: once a day the server asks GitHub for the latest release
+      # (nothing else is sent; it never updates itself) and the footer says when a
+      # newer one is out. "0" turns the daily check off until someone turns it on in
+      # Settings > Updates. See docs/DEPLOY.md (Checking for updates).
+      # QC_UPDATE_CHECK: "0"
       # Now playing: what each Jellyfin client is playing, opened at its playhead.
       # An API key (Jellyfin -> Dashboard -> API Keys), and Jellyfin's paths mapped
       # to the in-container paths above when they differ. See docs/MANUAL.md.
