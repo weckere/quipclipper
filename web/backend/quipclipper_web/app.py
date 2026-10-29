@@ -3129,10 +3129,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 ]
                 # Keep stderr: when ffmpeg refuses the command it is the only
                 # record of why, and the fail-fast branch below reports it.
-                with open(d / "ffmpeg.log", "wb") as log:
-                    _hls_procs[token] = await asyncio.create_subprocess_exec(
-                        *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=log,
-                    )
+                try:
+                    with open(d / "ffmpeg.log", "wb") as log:
+                        _hls_procs[token] = await asyncio.create_subprocess_exec(
+                            *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=log,
+                        )
+                except BaseException:
+                    # No ffmpeg started (none installed, no file handles, a full state
+                    # dir): drop the sentinel, or every later request waits it out (504).
+                    _hls_procs.pop(token, None)
+                    raise
 
         def _ready() -> bool:
             return playlist.exists() and any(d.glob("seg*.m4s"))

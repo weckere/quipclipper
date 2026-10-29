@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 from quipclipper.clip import ClipRange
@@ -1385,6 +1386,25 @@ def test_hls_stream_selectors_are_optional(tmp_path: Path) -> None:
     assert resp.status_code == 200
     maps = [cmds[0][i + 1] for i, a in enumerate(cmds[0]) if a == "-map"]
     assert maps == ["0:v:0?", "0:a:3?"]
+
+
+def test_hls_retries_after_ffmpeg_could_not_be_started(tmp_path: Path) -> None:
+    """No ffmpeg to start (or no file handles): the next request tries again instead of
+    waiting out the start timeout behind a transcode that never began."""
+    video = tmp_path / "movie.mkv"
+    video.write_bytes(b"")
+    client = _client(tmp_path)
+
+    async def _missing(*_cmd: str, **_kw):
+        raise FileNotFoundError("ffmpeg")
+
+    with patch("asyncio.create_subprocess_exec", _missing), pytest.raises(FileNotFoundError):
+        client.get("/api/media/hls", params={"path": str(video)})
+    cmds: list[list[str]] = []
+    with patch("asyncio.create_subprocess_exec", _fake_ffmpeg(cmds)), \
+            patch("quipclipper_web.app._HLS_START_TIMEOUT", 30.0):
+        resp = client.get("/api/media/hls", params={"path": str(video)})
+    assert resp.status_code == 200 and len(cmds) == 1
 
 
 def test_hls_fails_fast_when_ffmpeg_exits(tmp_path: Path) -> None:

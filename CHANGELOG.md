@@ -35,6 +35,9 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   release, as the full sha does.
 - A build whose version can't be compared with the latest release (`0.5.2.dev3`) says so
   after a check, in the CLI and Settings ▸ Updates, instead of "Not checked yet".
+- Playback: when ffmpeg couldn't be started for a transcoded (HLS) stream, every later try at
+  the same file waited two minutes and failed until the server restarted. The next try now
+  starts it again.
 
 ## [0.5.2] - 2026-10-27
 
