@@ -25,6 +25,9 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   open; nginx refuses the `hook` login on `/clips/` (Docker image and NixOS module).
 - With `QC_PROXY_SECRET` set, a request whose `X-Quip-Proxy-Secret` isn't plain ASCII is
   refused with `403` instead of failing with a `500`.
+- `clip.create` without a server searches the same lines as `search.item` (machine transcript
+  lines included), so it can cut a line only the transcript has, and `--index N` cuts the
+  line `search.item` numbered N. Before, it read the subtitles alone and answered "No matches."
 
 ## [0.5.2] - 2026-10-27
 

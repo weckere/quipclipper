@@ -206,3 +206,36 @@ def test_local_gaps_read_subtitles_at_idle_priority_and_never_guess(local_whispe
     out = runner.invoke(cli.app, ["item.transcribe", str(media)])
     assert out.exit_code != 0 and "gaps are unknown" in out.output, out.output
     assert seen == [True] and runs == []
+
+
+def test_local_clip_cuts_the_lines_local_search_lists(tmp_path, monkeypatch):
+    # search.item mixes machine lines in by default; clip.create searches the same lines, so
+    # a line only the transcript has can be cut, and --index counts as the search numbered.
+    monkeypatch.setenv("QC_TRANSCRIBE", "1")  # no whisper needed: forced on (D-053)
+    monkeypatch.delenv("QC_URL", raising=False)
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    video = tmp_path / "ep.mkv"
+    video.write_bytes(b"x")
+    (tmp_path / "ep.en.srt").write_text(
+        "1\n00:00:01,000 --> 00:00:02,000\nhello there\n\n"
+        "2\n00:00:10,000 --> 00:00:11,000\nhello there friend\n")
+    (tmp_path / "ep.en.whisper.srt").write_text(
+        "1\n00:00:05,000 --> 00:00:06,000\nhello there\n\n"
+        "2\n00:00:20,000 --> 00:00:21,000\nthe secret phrase\n")
+    cut = []
+    fake_cut = lambda v, rng, **kw: cut.append(rng) or tmp_path / "c.mka"  # noqa: E731
+    monkeypatch.setattr(cli, "cut_clip", fake_cut)
+    monkeypatch.setattr(cli, "cut_with_mkvmerge", fake_cut)
+
+    def clip(*args):
+        r = runner.invoke(cli.app, ["clip.create", *args, "--video", str(video), "--type", "audio",
+                                    "--before", "0", "--after", "0", "-y"])
+        assert r.exit_code == 0, r.output
+        return cut.pop()
+
+    assert clip("secret phrase").start == 20.0
+    found = json.loads(runner.invoke(cli.app, ["--json", "search.item", "hello there",
+                                               "--video", str(video)]).output)
+    starts = [m["start"] for m in found["matches"]]
+    for i, start in enumerate(starts):
+        assert clip("hello there", "--index", str(i)).start == start

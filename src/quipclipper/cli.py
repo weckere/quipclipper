@@ -200,6 +200,13 @@ def _local_cues(subs: Optional[Path], video: Optional[Path], track: Optional[int
     (this machine's transcript store, and a ….whisper.srt copy next to the file) mixed
     in, left out, or alone. A file with only a transcript has no subtitles to resolve.
     While transcription is off (D-053) machine lines are always left out."""
+    return _local_sources(subs, video, track, langs, machine)[0]
+
+
+def _local_sources(subs: Optional[Path], video: Optional[Path], track: Optional[int], langs,
+                   machine: str = "include") -> tuple[list, Optional[ResolvedSubtitles]]:
+    """``_local_cues``, and the subtitles they came from (None when there are none): a clip
+    embeds those alone, never a machine line."""
     from quipclipper import transcribe as tr
 
     if not stt_enabled():
@@ -207,16 +214,17 @@ def _local_cues(subs: Optional[Path], video: Optional[Path], track: Optional[int
     heard = (tr.machine_cues(video, tr.TranscriptStore(tr.default_store_dir()))
              if video is not None and subs is None and machine != "exclude" else [])
     if heard and machine == "only":
-        return heard
+        return heard, None
     if heard:
         try:
-            real = resolve_subtitles(subs=subs, video=video, track=track, langs=langs).cues
+            real = resolve_subtitles(subs=subs, video=video, track=track, langs=langs)
         except (ValueError, FileNotFoundError, RuntimeError):
-            real = []
-        return tr.merge_cues(real, heard)
+            real = None
+        return tr.merge_cues(real.cues if real else [], heard), real
     if machine == "only":
-        return []
-    return _resolve(subs, video, track, langs).cues
+        return [], None
+    resolved = _resolve(subs, video, track, langs)
+    return resolved.cues, resolved
 
 
 def _parse_tracks(spec: Optional[str]) -> Optional[list[int]]:
@@ -1175,9 +1183,10 @@ def clip(
         if embed_subs and kind == "video" and subs is not None:
             resolved = _resolve(subs, video, track, langs)
     else:
-        resolved = _resolve(subs, video, track, langs or c.settings.get("sub_langs"))
+        # The same lines search.item lists (machine ones too), so --index counts alike.
+        cues, resolved = _local_sources(subs, video, track, langs or c.settings.get("sub_langs"))
         candidates = search(
-            query, resolved.cues,
+            query, cues,
             limit=(limit if pick else max(index + 1, 5)),
             min_score=min_score, max_span=max_span,
         )
