@@ -715,6 +715,13 @@ a control without hover text or an accessible name, and `test_frontend_contrast.
 checks every token pair against WCAG 2.2 AA (4.5:1 for text, 3:1 for UI), in both themes
 and the `prefers-contrast: more` palettes. axe-core runs were clean on every page.
 
+**Live regions are `aria-live` divs, not `role="status"`.** Orca's event spam filter drops a
+text change that arrives within 0.1 s of the previous one of its kind from the same app, and
+exempts only live regions it sees as sections (a `div` with `aria-live`); a `<p role="status">`
+is an ATK status bar and gets filtered. A message set in the same tick as a list render (a
+search's match count beside its results) is therefore silent in Orca unless the region is a
+plain `aria-live` div, which every screen reader treats the same as `role="status"`.
+
 **Pairing instead of a shared token.** LeadStinger used to connect with the server's one
 `QC_API_TOKEN`, typed in by hand. Now an app asks for access (`POST /api/pair`, its name and
 host, no secret), shows a 4-character code, and polls with a per-request secret; a person

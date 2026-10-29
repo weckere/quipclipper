@@ -158,7 +158,7 @@
           </div>
           <p id="yt-add-status" class="muted" hidden></p>
         </div>
-        <p id="dialogue-search-status" class="muted" role="status" hidden></p>
+        <div id="dialogue-search-status" class="muted" aria-live="polite" aria-atomic="true" hidden></div>
         <!-- Files here (or in these results) whose subtitles changed since they were indexed:
              search leaves them out until they are re-indexed, which only this button starts. -->
         <div id="changed-banner" class="changed-banner" hidden>
@@ -575,8 +575,11 @@
       <p id="play-on-cant" class="muted play-on-cant" hidden></p>
     </div>
 
-    <!-- One polite live region: jobs finishing or failing, the selection, match counts. -->
-    <div id="announcer" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></div>
+    <!-- One polite live region: jobs finishing or failing, the selection, match counts.
+         A plain aria-live div, not role="status": Orca drops a status bar's text change
+         that lands within 0.1 s of another (its spam filter) and only exempts live
+         *sections*, so a count set in the same tick as a list render went unspoken. -->
+    <div id="announcer" class="visually-hidden" aria-live="polite" aria-atomic="true"></div>
 
     <footer>
       <span id="status" data-action="server.health" class="muted">…</span>

@@ -11,6 +11,14 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 
 ## [Unreleased]
 
+### Fixed
+
+- Orca now speaks a library search's match count. The search status and the app's announcer
+  are plain `aria-live` regions rather than `role="status"`: Orca ignores a status bar's text
+  change that arrives within 0.1 s of another from the same app, and the count was set in the
+  same tick as the results list, so it was never read. Orca exempts live sections from that
+  filter; VoiceOver and NVDA read both kinds alike.
+
 ## [0.5.2] - 2026-10-27
 
 ### Check for updates (M24)
