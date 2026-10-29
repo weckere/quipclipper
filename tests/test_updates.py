@@ -400,6 +400,38 @@ def test_a_non_finite_rate_limit_reset_is_dropped():
     assert exc.value.kind == "rate_limited" and exc.value.retry_at is None
 
 
+@pytest.mark.parametrize("state", [
+    {"checked_at": 1e20}, {"attempted_at": 1e20, "checked_at": -5},
+    {"error": {"message": "x", "kind": "rate_limited", "retry_at": 1e300}},
+])
+def test_an_out_of_range_time_in_the_state_file_reads_as_unset(tmp_path, state):
+    (tmp_path / "update.json").write_text(json.dumps(state))
+    c = _checker(tmp_path, now=Clock())
+    s = c.status()
+    assert s["checked_at"] is None and (s["error"] or {}).get("retry_at") is None
+    assert c.check()["state"] == "update_available"  # and GitHub is asked
+
+
+def test_a_rate_limit_reset_more_than_a_day_ahead_is_not_waited_for(tmp_path):
+    clock = Clock()
+    (tmp_path / "update.json").write_text(json.dumps({"error": {
+        "message": "x", "kind": "rate_limited", "retry_at": clock.t + 30 * 86400}}))
+    assert _checker(tmp_path, now=clock).check()["state"] == "update_available"
+    # One within the day is still honoured.
+    (tmp_path / "update.json").write_text(json.dumps({"error": {
+        "message": "x", "kind": "rate_limited", "retry_at": clock.t + 600}}))
+    asked = []
+    c = _checker(tmp_path, now=clock, fetch=lambda v: asked.append(v) or _release())
+    assert c.check()["error"]["kind"] == "rate_limited" and not asked
+
+
+def test_a_short_build_commit_on_the_release_commit_reads_as_the_release(tmp_path):
+    c = _checker(tmp_path, version="0.6.0", commit=SHA[:7], install="nixos",
+                 tag_commit=lambda v, tag: SHA)
+    s = c.check()
+    assert s["current"]["dev"] is False and s["current"]["label"] == "0.6.0"
+
+
 def test_a_damaged_state_file_reads_as_never_checked(tmp_path):
     (tmp_path / "update.json").write_text("{not json")
     assert _checker(tmp_path).status()["state"] == "unknown"
@@ -457,3 +489,12 @@ def test_cli_status_names_a_dev_build(local_cache, monkeypatch):
     assert data["commit"] == SHA and data["build"].startswith("dev build 2da1479, ahead of ")
     r = runner.invoke(cli.app, ["status"])
     assert "dev build 2da1479" in r.output
+
+
+def test_a_build_version_that_cant_be_compared_says_so_after_a_check(tmp_path, capsys):
+    s = _checker(tmp_path, version="0.5.2.dev3").check()
+    assert s["state"] == "unknown"
+    cli._fmt_update({**s, "where": "local"})
+    out = capsys.readouterr().out
+    assert "Not checked yet" not in out
+    assert "The latest release is 0.6.0; this build's version (0.5.2.dev3) can't be compared" in out

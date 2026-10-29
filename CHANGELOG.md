@@ -28,6 +28,13 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 - `clip.create` without a server searches the same lines as `search.item` (machine transcript
   lines included), so it can cut a line only the transcript has, and `--index N` cuts the
   line `search.item` numbered N. Before, it read the subtitles alone and answered "No matches."
+- Check for updates: a damaged state file with an out-of-range time no longer makes
+  `update.status`, `update.check` and `GET /api/update` fail (it reads as never checked), and
+  a stored rate-limit reset more than a day ahead no longer stops checks until then.
+- A dev build whose `QC_BUILD_COMMIT` is the short form of a release's commit reads as that
+  release, as the full sha does.
+- A build whose version can't be compared with the latest release (`0.5.2.dev3`) says so
+  after a check, in the CLI and Settings ▸ Updates, instead of "Not checked yet".
 
 ## [0.5.2] - 2026-10-27
 

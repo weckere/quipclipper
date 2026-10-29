@@ -7276,6 +7276,9 @@ function updateResultHtml(u) {
     html += `<p>Up to date: ${v} is the latest release.${notes}</p>`;
   } else if (u.state === "ahead") {
     html += `<p>This build is newer than the latest release (${v}).${notes}</p>`;
+  } else if (latest.version) {
+    // A build whose own version isn't a plain X.Y.Z (a local or pre-release version).
+    html += `<p>The latest release is ${v}; this build's version (${escapeHtml((u.current || {}).version || "?")}) can't be compared with it.${notes}</p>`;
   } else if (!u.error) {
     html += "<p>Not checked yet.</p>";
   }

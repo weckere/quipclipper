@@ -47,6 +47,10 @@ DAY = 86400.0
 FIRST_DELAY = 600.0
 WAKE = 3600.0
 MAX_REPLY = 2 * 1024 * 1024
+# A stored time past this (the year 3000) is damage, not a time; and a rate-limit reset more
+# than a day ahead is never GitHub's (it resets hourly), so it can't hold checks off for good.
+MAX_TIME = 32_503_680_000.0
+MAX_RETRY_WAIT = 86400.0
 
 INSTALLS = ("docker", "nixos", "nix", "pip")
 _COMMIT = re.compile(r"[0-9a-f]{7,40}(-dirty)?")
@@ -232,10 +236,10 @@ def fetch_tag_commit(version: str, tag: str, timeout: float = TIMEOUT,
 
 
 def _when(value: Any) -> float | None:
-    """A stored time: a finite number of epoch seconds, else None."""
+    """A stored time: a number of epoch seconds between 1970 and 3000, else None."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    return float(value) if math.isfinite(value) else None
+    return float(value) if math.isfinite(value) and 0 <= value <= MAX_TIME else None
 
 
 def _clean(data: Any) -> dict[str, Any]:
@@ -345,9 +349,13 @@ class UpdateChecker:
         due = max(attempts) + self.interval if attempts else 0.0
         if self._started_at is not None:
             due = max(due, self._started_at + self.first_delay)
-        resets = [t for t in ((data.get("error") or {}).get("retry_at"), self._retry_at)
-                  if t is not None]
-        return max([due, *resets])
+        return max([due, *self._resets(data)])
+
+    def _resets(self, data: dict[str, Any]) -> list[float]:
+        """The rate-limit resets still to wait for: none more than a day ahead."""
+        until = self._now() + MAX_RETRY_WAIT
+        return [t for t in ((data.get("error") or {}).get("retry_at"), self._retry_at)
+                if t is not None and t <= until]
 
     def current(self, data: dict[str, Any] | None = None) -> dict[str, Any]:
         """This build (``Build.describe``), and a build on exactly its base release's
@@ -355,8 +363,9 @@ class UpdateChecker:
         data = self._load() if data is None else data
         out = self.build.describe()
         base = data.get("base") if isinstance(data.get("base"), dict) else {}
+        # A short QC_BUILD_COMMIT (git rev-parse --short) names the tag's full sha too.
         if (self.build.dev and base.get("version") == self.build.version
-                and base.get("commit") == self.build.commit):
+                and str(base.get("commit") or "").startswith(self.build.commit)):
             out.update(dev=False, label=self.build.version)
         return out
 
@@ -401,8 +410,7 @@ class UpdateChecker:
             return self.status()
         try:
             now = self._now()
-            retry_at = max([t for t in ((self._load().get("error") or {}).get("retry_at"),
-                                        self._retry_at) if t is not None], default=None)
+            retry_at = max(self._resets(self._load()), default=None)
             if retry_at is not None and now < retry_at:
                 return self.status()
             self._attempted_at = now

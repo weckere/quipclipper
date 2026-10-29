@@ -551,6 +551,9 @@ def _fmt_update(data: dict) -> None:
         typer.echo(f"Up to date: {latest.get('version')} is the latest release.")
     elif state == "ahead":
         typer.echo(f"This build is newer than the latest release ({latest.get('version')}).")
+    elif latest.get("version"):
+        typer.echo(f"The latest release is {latest.get('version')}; this build's version "
+                   f"({cur.get('version', '?')}) can't be compared with it.")
     elif not data.get("error"):
         typer.echo("Not checked yet: `quipclipper update.check` asks GitHub.")
     err = data.get("error")
