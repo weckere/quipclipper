@@ -16,12 +16,16 @@ from quipclipper.subtitles import StreamInfo, best_track, find_sidecar, list_str
 
 
 def probe_duration(path: Path) -> float | None:
-    """Get file duration in seconds via ffprobe, or None on failure."""
-    result = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-         "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
-        capture_output=True, text=True,
-    )
+    """Get file duration in seconds via ffprobe, or None on failure (or after a minute:
+    a hung disk must not hold a request forever)."""
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
+            capture_output=True, text=True, timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        return None
     val = result.stdout.strip()
     if val and val != "N/A":
         try:

@@ -18,6 +18,7 @@ import contextlib
 import hashlib
 import hmac
 import json
+import math
 import os
 import re
 import shutil
@@ -33,6 +34,8 @@ from typing import Annotated
 from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
@@ -309,7 +312,7 @@ class JellyfinPlayRequest(BaseModel):
     session: str = Field(..., min_length=1, max_length=200)
     path: str
     # Where to start, in seconds into the file. The web UI sends a little before the line.
-    at: float = Field(0.0, ge=0)
+    at: float = Field(0.0, ge=0, allow_inf_nan=False)
 
 
 class ClipRequest(BaseModel):
@@ -728,6 +731,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(title="quipclipper-web", version=__version__, lifespan=lifespan)
     app.state.settings = settings
+
+    @app.exception_handler(RequestValidationError)
+    async def _invalid_request(request: Request, exc: RequestValidationError):
+        # FastAPI's own 422 echoes the input, and JSON has no infinity: a body number like
+        # 1e400 (read as inf) made the error itself fail, a 500. Name such a value as text.
+        def safe(v):
+            if isinstance(v, float) and not math.isfinite(v):
+                return str(v)
+            if isinstance(v, dict):
+                return {k: safe(x) for k, x in v.items()}
+            if isinstance(v, list):
+                return [safe(x) for x in v]
+            return v
+        return JSONResponse(status_code=422, content={"detail": safe(jsonable_encoder(exc.errors()))})
 
     @app.middleware("http")
     async def _security_gate(request: Request, call_next):
@@ -2916,10 +2933,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not p.is_file():
             raise HTTPException(status_code=404, detail=f"Not found: {path}")
 
-        duration = media.probe_duration(p)
+        # ffprobe runs off the event loop: a slow disk must not stall every other request.
+        duration = await asyncio.to_thread(media.probe_duration, p)
         # Which audio stream the pan (if any) operates on; default a:0.
         aidx = audio if audio is not None else (0 if chan and chan != "whole" else None)
-        pan = _live_pan_filter(p, aidx or 0, chan) if chan and chan != "whole" else None
+        pan = (await asyncio.to_thread(_live_pan_filter, p, aidx or 0, chan)
+               if chan and chan != "whole" else None)
 
         hw = bool(venc) and _vaapi_h264_available()
 
@@ -3081,7 +3100,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Which audio stream the pan (if any) operates on; default a:0 — mirrors
         # the transcode endpoint so both paths resolve a selection the same way.
         aidx = audio if audio is not None else (0 if chan and chan != "whole" else None)
-        pan = _live_pan_filter(p, aidx or 0, chan) if chan and chan != "whole" else None
+        pan = (await asyncio.to_thread(_live_pan_filter, p, aidx or 0, chan)
+               if chan and chan != "whole" else None)
 
         # Serialize the check→rebuild→register sequence: the registry write used
         # to happen after an await, so two concurrent requests both passed the

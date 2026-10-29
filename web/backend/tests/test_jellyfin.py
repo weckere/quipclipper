@@ -906,6 +906,16 @@ def test_a_client_already_on_the_file_seeks_and_unpauses(fake, tmp_path, known):
         ("Seek", str(10 * jellyfin.TICKS)), ("Unpause", None)]
 
 
+def test_play_refuses_a_start_too_big_to_be_a_time(fake, tmp_path, known):
+    root, ep = known
+    fake.sessions = _clients()
+    c = _playing(_client(_env(fake, tmp_path, root)))
+    # JSON's 1e400 reads as infinity: a 422, not a 500 from the tick conversion.
+    r = c.post("/api/jellyfin/play", content=f'{{"session": "tv", "path": "{ep}", "at": 1e400}}',
+               headers={"Content-Type": "application/json"})
+    assert r.status_code == 422 and not fake.commands
+
+
 def test_play_names_a_client_by_part_of_its_name(fake, tmp_path, known):
     root, ep = known
     fake.sessions = _clients()

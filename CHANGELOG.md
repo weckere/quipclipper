@@ -38,6 +38,11 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 - Playback: when ffmpeg couldn't be started for a transcoded (HLS) stream, every later try at
   the same file waited two minutes and failed until the server restarted. The next try now
   starts it again.
+- A request body with a number too big to be one (`"at": 1e400`, read as infinity) is a `422`
+  naming the field, not a `500`; `POST /api/jellyfin/play` refuses an infinite `at`.
+- Starting a transcoded stream no longer runs ffprobe on the server's event loop, and ffprobe
+  reading a file's duration gives up after a minute: a stalled disk can't hold every other
+  request up.
 
 ## [0.5.2] - 2026-10-27
 
