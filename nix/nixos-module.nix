@@ -404,10 +404,12 @@ in
     forwardedAllowIps = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [ "127.0.0.1" "::1" ]
+        # A host name can't be listed (the assertion below): it is left out, not a failure.
         ++ lib.optional (cfg.nginx.enable && !(builtins.elem cfg.listenAddress
-          [ "127.0.0.1" "::1" "localhost" "0.0.0.0" "::" ])) cfg.listenAddress;
+          [ "127.0.0.1" "::1" "localhost" "0.0.0.0" "::" ])
+          && builtins.match "[0-9A-Fa-f.:]+" cfg.listenAddress != null) cfg.listenAddress;
       defaultText = lib.literalExpression
-        ''[ "127.0.0.1" "::1" ] ++ (listenAddress, when nginx connects to it there)'';
+        ''[ "127.0.0.1" "::1" ] ++ (listenAddress, when it is an IP address nginx connects to)'';
       example = [ "127.0.0.1" "10.0.0.5" ];
       description = ''
         Peers (addresses or CIDR ranges) whose `X-Real-IP` and `Tailscale-User-Login` /

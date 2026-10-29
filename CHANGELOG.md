@@ -49,6 +49,8 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   yet.", and its error goes away once a listing works.
 - The pairing banner: a request just allowed or denied no longer comes back for a moment, with
   live buttons, when an older poll answers after it.
+- NixOS module: a host name as `listenAddress` (`"box.lan"`) evaluates again; it is left out
+  of `forwardedAllowIps`' default instead of failing that option's assertion.
 
 ## [0.5.2] - 2026-10-27
 

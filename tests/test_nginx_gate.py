@@ -104,3 +104,12 @@ def test_nixos_module_exempts_only_the_pairing_requests():
     assert "error_page 418 = @quipclipper_pair_open;" in nix
     assert "auth_request /_quipclipper_client;" in nix
     assert '"${proxyTarget}/api/clients/check"' in nix
+
+
+def test_a_host_name_listen_address_stays_out_of_the_trusted_peers():
+    # forwardedAllowIps must be addresses (an assertion says so): its default copies
+    # listenAddress in only when that is one, so `listenAddress = "box.lan"` still evaluates.
+    nix = MODULE.read_text()
+    default = nix[nix.index("forwardedAllowIps = lib.mkOption"):]
+    default = default[:default.index("defaultText")]
+    assert 'builtins.match "[0-9A-Fa-f.:]+" cfg.listenAddress != null' in default
