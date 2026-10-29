@@ -482,7 +482,7 @@ throw them out. Times are UTC ISO 8601 with `Z`.
   (no 0/O, 1/I/L), shown by the app and in the banner so the person can compare them.
   `expires_in` is 600 seconds. At most 5 requests wait at once and at most 10 new ones a
   minute come from one address (the caller's, below); past either, `429 {"detail": …}`.
-- **Who is asking:** the banner says "From wiz@example.com, 100.101.102.103", and Connected
+- **Who is asking:** the banner says "From alex@example.com, 100.101.102.103", and Connected
   apps keeps it with the app. `address` is the caller's IP; `user` and `user_name` are the
   tailnet login and display name Tailscale serve names (`Tailscale-User-Login`/`-Name`),
   else `""` (a tagged device, or no Tailscale in front). Tailscale serve doesn't say which
@@ -506,8 +506,8 @@ throw them out. Times are UTC ISO 8601 with `Z`.
 - **Polling:** every 2 s, with `X-Pair-Secret: <poll_secret>`. An unknown id and a wrong or
   missing secret both answer `404`, so a poll reveals nothing. `approved` hands out the
   token once and the request is gone after that (a later poll is `404`); `denied` and
-  `expired` answer for a minute, then `404`. An approval nobody collects within a minute
-  (and before the request's expiry) is dropped with its client.
+  `expired` answer for a minute, then `404`. An approval nobody collects is dropped with its
+  client once the request has expired and a minute has passed since the approval.
 - <a id="scopes"></a>**Scopes:** an app that needs only part of the API names it,
   `"scopes": ["index.file", "transcripts.read"]`, and its token opens only these routes:
 
@@ -519,7 +519,7 @@ throw them out. Times are UTC ISO 8601 with `Z`.
   plus what every client may do: `GET /api/health`, `GET /api/clients/check`,
   `DELETE /api/clients/self`, and pairing again (`POST /api/pair`, `GET /api/pair/{id}`).
   Anything else answers `403` with a `detail` naming what the token may do. The banner reads
-  "Jellyfin on wizfin wants to queue subtitle re-indexes and read transcripts, code …", and
+  "Jellyfin on media-box wants to queue subtitle re-indexes and read transcripts, code …", and
   Settings ▸ Connected apps and `clients.list` show each app's scopes, or full access. No
   `scopes` (or `null`) asks for a full token, as before scopes existed; an empty list or an
   unknown scope is a `422`. `scopes` in the replies is a sorted list, or `null` for full
@@ -584,7 +584,7 @@ Needs `QC_JELLYFIN_URL` and an API key (503 without them; 502 when Jellyfin can'
 reached or refuses the key). The reply, newest report first:
 
 ```json
-{"sessions": [{"id": "5f2…", "user": "wiz", "device": "Living room TV", "client": "Jellyfin Android TV",
+{"sessions": [{"id": "5f2…", "user": "alex", "device": "Living room TV", "client": "Jellyfin Android TV",
   "item_id": "a41…", "type": "Episode", "title": "The Best of Both Worlds", "series": "Star Trek: TNG",
   "season": 3, "episode": 26, "year": 1990, "duration": 2716.4,
   "position": 2003.1, "reported_position": 1998.0, "reported_at": "2026-10-20T01:02:03.123456Z",
@@ -611,11 +611,11 @@ ones, most recently active first. It reaches back a day for clients that can be 
 (a TV app parked on its home screen keeps its connection open for hours) and the usual
 10 minutes for the rest, so an Infuse session from this morning isn't listed.
 
-| Client (checked on wizrock, 2026-10-26) | `can_play` |
+| Client (checked 2026-10-26) | `can_play` |
 |---|---|
 | Jellyfin Web 12.2 (a browser) | yes: plays from `at`, and seeks when already on the file |
-| Jellyfin Android TV 0.19 (the Sony) | yes |
-| Wholphin 1.0.9 (the Sony) | no: it reports remote control (commands `DisplayMessage`, `SendString` only) but ignores PlayNow, so it is named as one that can't |
+| Jellyfin Android TV 0.19 (a Sony TV) | yes |
+| Wholphin 1.0.9 (a Sony TV) | no: it reports remote control (commands `DisplayMessage`, `SendString` only) but ignores PlayNow, so it is named as one that can't |
 | Infuse 8.5 (Apple TV) | no: it reports no remote control and no commands |
 
 Sessions with no user (another app's API key talking to Jellyfin) are left out.
@@ -700,7 +700,7 @@ seconds after the last one, so a batch is one scan and new clips show up on the 
 |---|---|---|
 | GET/POST | `/api/bookmarks` | List (optionally filtered by `?path=`) / create bookmarks. |
 | PATCH/DELETE | `/api/bookmarks/{id}` | Edit / delete one. `DELETE /api/bookmarks` clears all. |
-| GET | `/api/health` | Liveness + tool presence (no auth-secret required; this build's `commit` (a dev or Nix build, else `null`), `dev`, `build` (`"dev build 2da1479, ahead of 0.5.1"`, or the version) and `install` ([updates](#check-for-updates)); `tools` includes `whisper-cli` while transcription is on), `jellyfin` (Now playing, titles and artwork configured) and, while [machine transcription](#machine-transcription) is on, `transcribe`: `{enabled, available, engine, binary, models: [{name, size, present}], default_model, threads, max_threads, vad, language}`. |
+| GET | `/api/health` | Liveness + tool presence (no auth-secret required; this build's `commit` (a dev build from the NixOS module or a Docker build from a checkout, else `null`), `dev`, `build` (`"dev build 2da1479, ahead of 0.5.1"`, or the version) and `install` ([updates](#check-for-updates)); `tools` includes `whisper-cli` while transcription is on), `jellyfin` (Now playing, titles and artwork configured) and, while [machine transcription](#machine-transcription) is on, `transcribe`: `{enabled, available, engine, binary, models: [{name, size, present}], default_model, threads, max_threads, vad, language}`. |
 | GET | `/api/config` | Non-secret config the UI needs, including `public_url` (`QC_PUBLIC_URL`, or `null`), `link_server` (the server [Send to LeadStinger links](#send-to-leadstinger-links) name for this request, or `null`), `jellyfin` (true when Now playing is configured), [pairing](#pairing)'s `pairing`, `server_id` and `server_name`, and, while [machine transcription](#machine-transcription) is on, `transcribe` (`{available, models, default_model, threads, language}`). |
 
 ### Check for updates
@@ -711,7 +711,7 @@ anything; see [DEPLOY.md](DEPLOY.md#checking-for-updates) for what a check sends
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/api/update` | The last answer, from the state dir (it never asks GitHub). |
-| POST | `/api/update/check` | Ask GitHub now (at most a few seconds) and return the same shape. GitHub unreachable or rate-limited is an `error` in a 200 reply; the last good answer stays. While a check is already running, this returns the last answer at once. |
+| POST | `/api/update/check` | Ask GitHub now (each request to GitHub gives up after 10 s; a dev build's first check makes two) and return the same shape. GitHub unreachable or rate-limited is an `error` in a 200 reply; the last good answer stays. While a check is already running, this returns the last answer at once. |
 | PUT | `/api/update/settings` | `{"daily": true\|false}`: the daily check for this server. Once set, it wins over `QC_UPDATE_CHECK`. |
 
 ```json
@@ -826,7 +826,7 @@ sidecars existed get one from `POST /api/clips/backfill` (`clips.backfill`), mar
 
 ### `GET /api/clips/download/{path}?as=flac`
 
-Converts the clip (no cut) to FLAC in D-024's format: the first audio stream, every
+Converts the clip (no cut) to FLAC, in the format of a whole-mix FLAC clip: the first audio stream, every
 channel kept (a 5.1 clip stays 5.1), `audio/flac`, saved as `<stem>.flac`. The result is
 cached in the state folder by the clip's path, modification time and size, so a second
 download is instant and a re-cut clip converts again (its old copy goes an hour later).

@@ -765,7 +765,7 @@ def test_ids_never_start_with_a_dash(tmp_path, monkeypatch):
 
 def _paired_scoped(c: TestClient, scopes: list[str]) -> tuple[str, str, dict]:
     """Pair one app that asks for ``scopes``; its (token, client_id, what its poll said)."""
-    req = _start(c, {"name": "Jellyfin", "host": "wizfin", "scopes": scopes}).json()
+    req = _start(c, {"name": "Jellyfin", "host": "media-box", "scopes": scopes}).json()
     assert c.post(f"/api/pair/{req['id']}/approve", headers=CSRF).status_code == 200
     got = _poll(c, req).json()
     return got["token"], got["client_id"], got
@@ -773,7 +773,7 @@ def _paired_scoped(c: TestClient, scopes: list[str]) -> tuple[str, str, dict]:
 
 def test_a_request_names_its_scopes_and_the_token_keeps_them(tmp_path):
     c = _client(tmp_path)
-    req = _start(c, {"name": "Jellyfin", "host": "wizfin",
+    req = _start(c, {"name": "Jellyfin", "host": "media-box",
                      "scopes": ["transcripts.read", "index.file", "index.file"]}).json()
     listed = c.get("/api/pair").json()["requests"]
     assert listed[0]["scopes"] == ["index.file", "transcripts.read"]  # sorted, no repeats

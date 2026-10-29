@@ -218,7 +218,7 @@ def media_type(item_type: Any) -> str:
 
 
 # Clients that say they take remote control but don't start what they're told to play,
-# by Jellyfin's ``Client`` name (checked on wizrock, 2026-10-26). Nothing in what they
+# by Jellyfin's ``Client`` name (checked 2026-10-26). Nothing in what they
 # report tells them apart, so they're named here.
 IGNORES_PLAY = {
     "Wholphin": "Wholphin takes the command but doesn't play it (seen with 1.0.9).",

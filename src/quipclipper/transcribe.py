@@ -454,7 +454,7 @@ def whisper_argv(cfg: WhisperConfig, model_path: str, wav: str | Path, out_base:
     """``whisper-cli`` arguments: JSON out, English, capped threads, no console text.
 
     ``vad`` (Silero, when a VAD model is configured) skips what it hears as non-speech.
-    Only whole-file runs use it (:func:`use_vad`): on wizrock it dropped every sung line
+    Only whole-file runs use it (:func:`use_vad`): on a home library it dropped every sung line
     of the Darkplace song, the very lines a range or a gap is transcribed for. A seed
     ``prompt`` of the file's names made small.en write a single "." there, so runs
     don't use one (M21 phase 0)."""
@@ -583,7 +583,7 @@ def _whisper(cfg: WhisperConfig, model_path: str, wav: Path, out: Path, *, secon
 # --- the second look (D-047) ----------------------------------------------------------
 # whisper hears audio 30 s at a time and moves on from the last timestamp it wrote. A sung
 # line near the end of one of those windows is sometimes dropped, and which lines that hits
-# depends only on where the decode starts: measured on wizrock, small.en missed two of
+# depends only on where the decode starts: measured on a home server, small.en missed two of
 # Darkplace S01E06's sung lines from one start and none 4 s later; medium.en missed none,
 # then three, and heard nothing of a Glee song from one start. No decoding option (-nfa,
 # -mc 0, -dtw) helped. So a stretch of a range or a gap where whisper heard
@@ -809,7 +809,7 @@ class Transcript:
                 "updated": self.updated, "engine": ENGINE}
 
 
-# EN-7, measured on wizrock at 8 chunk edges of a podcast (VAD) and a Darkplace episode: a
+# EN-7, measured on a home server at 8 chunk edges of a podcast (VAD) and a Darkplace episode: a
 # line that runs across a chunk's edge is heard by both chunks, each with the CONTEXT
 # decoded past the edge, and each can place its midpoint on its own side, so 3 lines were
 # kept twice ("So those of you that aren't aware…" at 178-182 s from both chunks). None of

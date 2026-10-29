@@ -62,7 +62,7 @@ def make_ref(epub_path: str | Path, seg: int) -> str:
 
 def is_epub_book(p: Path) -> bool:
     """A read-along EPUB (media overlays). The zip is read once per path and mtime: a
-    library-wide search checks every .epub (wizrock: 312, 8 s unchecked)."""
+    library-wide search checks every .epub (a home library: 312, 8 s unchecked)."""
     if p.suffix.lower() != ".epub":
         return False
     try:
@@ -77,7 +77,7 @@ def _is_overlay(path_str: str, mtime: float) -> bool:
     return is_media_overlay_epub(path_str)
 
 
-# Enough for every read-along book a library-wide search parses (wizrock: 31).
+# Enough for every read-along book a library-wide search parses (a home library: 31).
 @functools.lru_cache(maxsize=64)
 def _read_cached(path_str: str, mtime: float) -> EpubBook:
     return read_epub(path_str)

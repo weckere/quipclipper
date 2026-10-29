@@ -368,7 +368,7 @@ non-word character (punctuation, `♪`, speaker dashes) a word break. Then:
 any line holding the query's words in any order scored 100 alongside the real line;
 `partial_ratio` aligns the *shorter* string inside the longer, so a one-word caption
 ("HOT") scored 100 for a longer query ("tea earl grey hot"), and it matched inside
-words ("make it so" in "make it sound"). On wizrock's library, "make it so" had 315
+words ("make it so" in "make it sound"). On a home library, "make it so" had 315
 hits at 100 across 1,278 files, most of them not the line.
 
 **Cost.** Each cue is normalised once per search (not once per window), words are
@@ -402,13 +402,13 @@ behaviour for callers that want every variant.
 
 **Folder and library search read indexed files only (D-042, 2026-10-23).** A folder
 search used to stop after 500 media files (R3: one request must finish inside nginx's
-600 s) and extracted the subtitles of any it reached that weren't cached. On wizrock
+600 s) and extracted the subtitles of any it reached that weren't cached. On a home library
 (~33k media files, ~1k indexed) the walk never left `shows/`, so a library search
 missed most indexed files and still ran ffmpeg mid-search. Now it searches every file
 whose subtitles are cached and no others: extraction (1-9 s a file) belongs to the
 folder's Index, and the response counts what it left out (`not_indexed`,
 `books_not_searched`). Read-along books are left out of folder sweeps too: a book has
-no index and parsing wizrock's 31 took 30-40 s a search. To keep a sweep of ~70k files
+no index and parsing a home library's 31 took 30-40 s a search. To keep a sweep of ~70k files
 quick on a FUSE mount, each folder is listed once (`scandir` file types, no stat per
 file), each file gets only its own sidecars from that listing, the cache folder and
 transcript store are listed once instead of stat-ed per file, the index check's stats
@@ -422,7 +422,7 @@ media is on HDD pools whose schedulers ignore I/O classes and two readers would 
 and runs every ffprobe and ffmpeg it starts through `quipclipper.idle` (`SCHED_IDLE`,
 nice 19, idle I/O) via a per-thread `at_idle_priority()` context, so search requests
 on other threads keep normal priority. The subtitle cache is its resume state: a rerun
-skips files indexed and current or marked as having none. A full run on wizrock is
+skips files indexed and current or marked as having none. A full run on a home library is
 about two days.
 
 **Other apps say when subtitles change (D-044, 2026-10-23).** `POST /api/index/file`

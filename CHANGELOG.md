@@ -86,9 +86,9 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 ### Pairing (M23)
 
 - **The banner says who is really asking:** behind Tailscale serve it also names the tailnet
-  user ("From wiz@example.com, 100.101.102.103"), and Settings ▸ Connected apps keeps who
+  user ("From alex@example.com, 100.101.102.103"), and Settings ▸ Connected apps keeps who
   paired each app, scoped or not (`address`, `user`, `user_name` in `/api/pair` and
-  `/api/clients`; `pair list` and `clients list` print them). nginx passes Tailscale serve's
+  `/api/clients`; `pair.list` and `clients.list` print them). nginx passes Tailscale serve's
   `Tailscale-User-Login`/`-Name` on only from a trusted proxy (`QC_TRUSTED_PROXIES`,
   `nginx.trustedProxies`) and drops them from anyone else, and the backend believes nginx's
   `X-Real-IP` and those headers only from a peer in the new `QC_FORWARDED_ALLOW_IPS`
@@ -182,7 +182,7 @@ Sung lines and stretches the subtitles skip, and files with no subtitles at all,
 searchable: whisper.cpp transcribes what you ask it to, and its lines show apart from the real
 subtitles everywhere. See [docs/TRANSCRIPTION.md](docs/TRANSCRIPTION.md).
 
-- **On where whisper.cpp is installed (D-053):** transcription turns itself on where
+- **On where whisper.cpp is installed:** transcription turns itself on where
   `whisper-cli` and a whisper model file are installed (`QC_WHISPER_MODEL`; the NixOS
   module's `transcribe.enable` installs both), and stays off elsewhere. `QC_TRANSCRIBE=0`
   turns it off and `QC_TRANSCRIBE=1` forces it on. The Docker images carry no whisper, so it
@@ -288,16 +288,16 @@ subtitles everywhere. See [docs/TRANSCRIPTION.md](docs/TRANSCRIPTION.md).
 - **Fill gaps** (one file or a folder) extracts the subtitles of a file not indexed yet at idle
   priority, as the folder index does, and Cancel stops that extraction too (it ran at normal
   priority).
-- **Songs get a second look (D-047):** whisper hears audio 30 s at a time and sometimes drops
+- **Songs get a second look:** whisper hears audio 30 s at a time and sometimes drops
   a sung line at the end of one of those windows, depending only on where the decode starts.
   A range or gaps run now hears every stretch of 4 s or more where it heard nothing (not
   quiet, no subtitle line there) again on its own, starting at a breath just before it.
-  Measured on wizrock, the worst start of three songs found 88 % instead of 83 % of
+  Measured on a home server, the worst start of three songs found 88 % instead of 83 % of
   Darkplace's lines and 73 % instead of 64 % of a Glee song's, with no line made up; dialogue
   is unchanged and costs nothing more. medium.en stays an option but isn't the fix: on the
   same songs it dropped more lines than small.en and took three to five times as long.
 - A line spoken across the edge of two 3-minute pieces of a long transcription is kept once
-  (it could come out twice, with slightly different words). Measured on wizrock at 8 edges
+  (it could come out twice, with slightly different words). Measured on a home server at 8 edges
   of a podcast and an episode: 3 lines were doubled and none was lost.
 - The workspace's machine transcript bar is one slim row above the script, about a line tall,
   instead of three or four: **auto Machine transcript**, the state in a few words ("14 lines",
@@ -539,8 +539,8 @@ subtitles everywhere. See [docs/TRANSCRIPTION.md](docs/TRANSCRIPTION.md).
 - Release: `scripts/release.sh` leaves a changelog block marked `<!-- held back -->` in
   Unreleased for a later release (`scripts/changelog-cut.py`, now tested).
 - Release: `:latest` and `:X.Y` move only once both images are pushed. A failed image build
-  used to leave `latest` pointing at the new app with the old web image (NIX-7, deferred in
-  0.2.0's review).
+  used to leave `latest` pointing at the new app with the old web image (deferred in 0.2.0's
+  review).
 - The waveform, snaps and exact cuts land on the sample again when the audio is resampled on
   the way: detail views over 15 s (decoded at 16 kHz), any view of a 88.2/96/192 kHz file
   (drawn at 48 kHz), silence snaps, and an mp3 cut of a 96 kHz file. The anchored decode

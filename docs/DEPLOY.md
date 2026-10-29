@@ -306,7 +306,7 @@ listed address can claim to be anyone, including to nginx's own `allow`/`deny` r
 
 Behind Tailscale serve, nginx also passes on the tailnet user it names
 (`Tailscale-User-Login`/`-Name`) from those proxies only, so the banner says "From
-wiz@example.com, 100.101.102.103" and Connected apps keeps it; anyone else's such headers
+alex@example.com, 100.101.102.103" and Connected apps keeps it; anyone else's such headers
 are dropped. The backend in turn believes nginx's word only from `QC_FORWARDED_ALLOW_IPS`
 (default loopback; NixOS: `forwardedAllowIps`, which adds a non-loopback `listenAddress`; the
 Docker app image sets the private ranges its web container connects from) or with
@@ -415,7 +415,7 @@ Settings ▸ Updates has **Check for updates**, and the server also checks once 
 check asks GitHub for the latest release of weckere/quipclipper
 (`https://api.github.com/repos/weckere/quipclipper/releases/latest`, with
 `User-Agent: quipclipper/<version>` and nothing else about the install; `https_proxy` is
-honoured; at most a few seconds). When that release is newer than the running one, the
+honoured; each request gives up after 10 s). When that release is newer than the running one, the
 footer says "quipclipper X.Y.Z is available" by the version, with the release notes and
 **how to update** this install. quipclipper never updates itself.
 

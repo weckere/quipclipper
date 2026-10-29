@@ -1021,7 +1021,7 @@ LeadStinger can connect without anyone copying a token: it asks, and you let it 
    access, code 7F3K."** Check that the code is the one LeadStinger shows, then **Allow**
    (or **Deny**). LeadStinger may open quipclipper for you with that request highlighted.
    The banner also says who is asking: the computer's address and, behind Tailscale serve,
-   the tailnet user ("From wiz@example.com, 100.101.102.103"). Behind a proxy it shows the
+   the tailnet user ("From alex@example.com, 100.101.102.103"). Behind a proxy it shows the
    proxy's address until the proxy is listed as trusted (`nginx.trustedProxies` in the
    NixOS module, `QC_TRUSTED_PROXIES` on the Docker web service; see
    [DEPLOY.md](DEPLOY.md)).

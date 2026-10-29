@@ -28,7 +28,7 @@ whole. Parts transcribed before are skipped, so asking again only does what's ne
 does it again, say with a bigger model). English only. **Models:** `small.en` (the
 default: quick, a few word errors) or `medium.en` (better punctuation and names in
 dialogue, three to five times slower, and no better on songs: measured on three songs it
-dropped more sung lines than `small.en`, D-047). Set your default with
+dropped more sung lines than `small.en`). Set your default with
 `quipclipper settings.set stt_model medium.en`, or pass `--model` per run.
 
 **Songs get a second look.** whisper hears audio 30 s at a time and sometimes drops a sung

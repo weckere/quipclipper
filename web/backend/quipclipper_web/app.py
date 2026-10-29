@@ -1759,7 +1759,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # changed since (listed in `changed_files` for the banner's Re-index, and noted
         # for the out-of-date badge). A read-along book found in a folder is counted in
         # `books_not_searched`: it has no index, and parsing it each search is slow
-        # (wizrock: 31 books, 30-40 s); a book given as a path is searched. One listing
+        # (a home library: 31 books, 30-40 s); a book given as a path is searched. One listing
         # per folder serves each file's sidecar lookups, and the per-file stats of the
         # index check run in threads (a library is ~70k files on a FUSE mount).
         stored = transcripts.names() if stt_on and machine != "exclude" else {}

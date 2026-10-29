@@ -750,7 +750,7 @@ def test_clips_landing_scan_their_library_once(fake, tmp_path, media, monkeypatc
     from quipclipper_web import jellyfin_index
 
     # Long enough that the second cut lands inside the delay even on a loaded build host
-    # (a 0.2 s delay failed on wizrock at load 40: two scans).
+    # (a 0.2 s delay failed on a busy build host at load 40: two scans).
     monkeypatch.setattr(jellyfin_index, "REFRESH_DELAY", 3.0)
     root, ep = media
     fake.folders = [
@@ -1009,7 +1009,7 @@ def test_cli_play_prints_what_it_did(fake, known, tmp_path, monkeypatch, capsys)
 
 
 def test_wholphin_and_api_key_sessions(fake, tmp_path, known):
-    """Wholphin says it takes remote control but ignores PlayNow (wizrock, 2026-10-26), so
+    """Wholphin says it takes remote control but ignores PlayNow (checked 2026-10-26), so
     it is listed as one that can't; an API key's session (no user) isn't a client at all."""
     root, ep = known
     fake.sessions = [

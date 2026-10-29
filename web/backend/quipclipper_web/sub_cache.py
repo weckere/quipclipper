@@ -226,7 +226,7 @@ class SubtitleCache:
     # Sweeping one file's stale entries (after every extraction) and clearing a file or
     # a folder need that file's entries. Finding them by reading every entry cost a full
     # read of the cache per extraction, so indexing a library took time quadratic in its
-    # size (wizrock: ~42 KB an entry, ~33k files). Instead each entry's owner is read
+    # size (a home library: ~42 KB an entry, ~33k files). Instead each entry's owner is read
     # once, from its head, and the map is kept current as entries come and go.
 
     def _owners(self) -> dict[str, set[str]]:

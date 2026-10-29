@@ -432,16 +432,16 @@ def test_round_trip_pairing_and_connected_apps(served, capsys):
     assert cli.main(["clients.list"], transport=transport) == 0
     assert f"{client_id}  LeadStinger on laptop  full access" in capsys.readouterr().out
     # A scoped app (M22): its scopes, in the listing and in the pairing request.
-    scoped = web.post("/api/pair", json={"name": "Jellyfin", "host": "wizfin",
+    scoped = web.post("/api/pair", json={"name": "Jellyfin", "host": "media-box",
                                          "scopes": ["index.file"]},
                       headers={"X-Quipclipper": "1"}).json()
     assert cli.main(["pair.list"], transport=transport) == 0
-    assert "Jellyfin on wizfin  from testclient  asks for scopes index.file" in (
+    assert "Jellyfin on media-box  from testclient  asks for scopes index.file" in (
         capsys.readouterr().out)
     code, out = _run(transport, ["pair.approve", scoped["id"]], capsys)
     scoped_id = _last_json(out)["client_id"]
     assert cli.main(["clients.list"], transport=transport) == 0
-    assert f"{scoped_id}  Jellyfin on wizfin  scopes index.file" in capsys.readouterr().out
+    assert f"{scoped_id}  Jellyfin on media-box  scopes index.file" in capsys.readouterr().out
     assert _run(transport, ["clients.revoke", scoped_id], capsys)[0] == 0
     code, out = _run(transport, ["clients.revoke", client_id], capsys)
     assert code == 0 and _last_json(out) == {"removed": True}
