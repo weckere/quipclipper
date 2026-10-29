@@ -1051,6 +1051,11 @@ in
         };
         locations."/clips/" = {
           alias = "${cfg.clipsDir}/";
+          # The hook login may only queue re-indexes (docs/HOOKS.md): the backend refuses
+          # it everywhere else, but these files never reach the backend.
+          extraConfig = ''
+            if ($remote_user = "hook") { return 403; }
+          '';
         };
         basicAuthFile = lib.mkIf (cfg.passwordFile != null) cfg.passwordFile;
       } (lib.mkIf cfg.pairing.enable {
@@ -1097,6 +1102,10 @@ in
             proxy_pass_request_body off;
             proxy_set_header Content-Length "";
             proxy_set_header Host $host;
+            # Which request this is about: a scoped token passes only for what its scopes
+            # open (so not /clips/, which nginx serves itself).
+            proxy_set_header X-Original-URI $request_uri;
+            proxy_set_header X-Original-Method $request_method;
           '';
         };
       }) ];

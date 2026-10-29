@@ -64,7 +64,9 @@ list or revoke clients (`403`). Behind the password gate, nginx lets a request w
 token in `X-API-Key` or `Bearer` through after asking the backend whether it is current
 (`GET /api/clients/check`); the gate's `api` login still knows only `QC_API_TOKEN`. An app
 that paired with [scopes](#scopes) (the Jellyfin plugin) gets a token that opens only those
-scopes' routes; any other route answers `403`.
+scopes' routes; any other route answers `403`. The gate names the request it asks about
+(`X-Original-Method`, `X-Original-URI`), so a scoped token gets `401` there for anything its
+scopes don't open, including the finished clips nginx serves itself (`/clips/`).
 
 **CSRF header (browser clients only).** State-changing requests
 (`POST`/`PUT`/`PATCH`/`DELETE`) that are **not** token-authenticated must carry

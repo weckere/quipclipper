@@ -171,9 +171,11 @@
                   "d /srv/media 0755 root root - -"
                   "d /var/lib/quipclipper-web/clips/probe 2775 quipclipper-web media - -"
                   "f /var/lib/quipclipper-web/clips/probe/clip.txt 0664 quipclipper-web media - hello-clip"
+                  "f /var/lib/quipclipper-web/clips/probe/kept.txt 0664 quipclipper-web media - kept-clip"
                 ];
+                # "hook" (same password) is a re-index hook's login: it may not read clips.
                 environment.etc."quipclipper.htpasswd".text =
-                  "quip:$apr1$NF6aL6Je$uO.ixyjrDUHxSp2DgD2Rj0\n";
+                  "quip:$apr1$NF6aL6Je$uO.ixyjrDUHxSp2DgD2Rj0\nhook:$apr1$NF6aL6Je$uO.ixyjrDUHxSp2DgD2Rj0\n";
                 services.quipclipper-web = {
                   enable = true;
                   mediaRoots = [ "/srv/media" ];
@@ -205,6 +207,9 @@
                 # clips group); without that this download 403s.
                 machine.succeed("curl -fsS -u quip:test123 http://localhost/clips/probe/clip.txt -o /tmp/clip.txt")
                 machine.succeed("grep -q hello-clip /tmp/clip.txt")
+                # The hook login passes the password check but may only queue re-indexes:
+                # nginx serves clips itself, so nginx refuses it there.
+                machine.succeed("test $(curl -s -o /dev/null -w '%{http_code}' -u hook:test123 http://localhost/clips/probe/clip.txt) = 403")
                 # Shared clips: the module owns clipsDir setgid to the shared group,
                 # so a separate service account (samba/Jellyfin) in that group can
                 # read finished clips — the whole point of clipsGroup/clipsMode.
@@ -241,6 +246,20 @@
                 machine.succeed(f"curl -fsS -H 'X-API-Key: {token}' http://localhost/api/library/roots -o /tmp/roots2.json")
                 machine.succeed("grep -q /srv/media /tmp/roots2.json")
                 machine.fail("curl -fsS -H 'X-API-Key: qcc_unknown' http://localhost/api/library/roots")
+                # A full client token reads clips; a scoped one (re-indexes only) doesn't: the
+                # gate tells the backend which request it is asking about.
+                machine.succeed(f"curl -fsS -H 'X-API-Key: {token}' http://localhost/clips/probe/kept.txt -o /tmp/kept.txt")
+                machine.succeed("grep -q kept-clip /tmp/kept.txt")
+                ask = json.loads(machine.succeed(
+                    "curl -fsS -H 'X-Quipclipper: 1' -H 'Content-Type: application/json'"
+                    " -d '{\"name\": \"Jellyfin\", \"scopes\": [\"index.file\"]}'"
+                    " http://localhost/api/pair"))
+                machine.succeed(f"curl -fsS -u quip:test123 -X POST -H 'X-Quipclipper: 1' http://localhost/api/pair/{ask['id']}/approve")
+                scoped = json.loads(machine.succeed(
+                    f"curl -fsS -H 'X-Pair-Secret: {ask['poll_secret']}' http://localhost/api/pair/{ask['id']}"))["token"]
+                machine.succeed(f"curl -fsS -H 'X-API-Key: {scoped}' http://localhost/api/index/file -o /dev/null")
+                machine.fail(f"curl -fsS -H 'X-API-Key: {scoped}' http://localhost/clips/probe/kept.txt")
+                machine.fail(f"curl -fsS -H 'X-API-Key: {scoped}' http://localhost/")
                 machine.succeed("curl -fsS -u quip:test123 http://localhost/api/config -o /tmp/cfg.json")
                 machine.succeed("grep -q '\"server_id\"' /tmp/cfg.json")
                 machine.succeed("test $(stat -c %a /var/lib/quipclipper-web/state/clients.json) = 600")

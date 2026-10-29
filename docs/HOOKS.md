@@ -72,7 +72,7 @@ network and the token are right. `"token":false` means the server has no hook to
 (or none matching): the re-index requests themselves would be refused.
 
 The login name `hook` is reserved for this: anywhere but `/api/index/file` it gets 403,
-whatever the password.
+whatever the password (the finished clips under `/clips/` included).
 
 ## 2. Bazarr
 

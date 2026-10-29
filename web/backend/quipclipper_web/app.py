@@ -25,6 +25,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import urllib.parse
 from collections.abc import AsyncIterator, Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -3840,10 +3841,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/clients/check")
     def clients_check(request: Request) -> dict:
         """200 when the request carries a current client token, else 401: what the nginx
-        password gate asks before it lets a paired app through without a password."""
-        if request.state.client is None:
+        password gate asks before it lets a paired app through without a password. The gate
+        names the request it is asking about (X-Original-Method, X-Original-URI): a scoped
+        token gets 401 for anything its scopes don't open, so it can't reach what nginx
+        serves itself (/clips/), where no scope check of ours runs."""
+        client = request.state.client
+        if client is None:
             raise HTTPException(status_code=401, detail="No client token.")
-        return {"client_id": request.state.client["id"]}
+        uri = request.headers.get("x-original-uri")
+        if uri is not None:
+            method = request.headers.get("x-original-method", "GET")
+            path = urllib.parse.unquote(urllib.parse.urlsplit(uri).path)
+            if not pairing.scope_allows(client.get("scopes"), method, path):
+                raise HTTPException(status_code=401, detail="Not within this client's scopes.")
+        return {"client_id": client["id"]}
 
     @app.delete("/api/clients/{client_id}")
     def clients_revoke(client_id: str, request: Request) -> dict:

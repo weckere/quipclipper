@@ -68,6 +68,21 @@ def test_docker_gate_asks_the_backend_about_client_tokens():
     assert "proxy_pass http://app:8000/api/clients/check;" in check
     # No client token: nginx answers itself and the password decides.
     assert 'if ($quip_client_token = "") { return 401; }' in check
+    # It names the request, so a scoped token passes only for what its scopes open.
+    assert "proxy_set_header X-Original-URI $request_uri;" in check
+    assert "proxy_set_header X-Original-Method $request_method;" in check
+
+
+def test_the_hook_login_cant_read_clips():
+    # nginx serves /clips/ itself: the backend's hook-only rule never sees those requests.
+    clips = _own(_locations(re.sub(r"#.*", "", NGINX.read_text()))["^~ /clips/"])
+    assert 'if ($remote_user = "hook") { return 403; }' in clips
+    nix = MODULE.read_text()
+    block = nix[nix.index('locations."/clips/"'):]
+    block = block[:block.index("};")]
+    assert 'if ($remote_user = "hook") { return 403; }' in block
+    gate = nix[nix.index('locations."= /_quipclipper_client"'):]
+    assert "proxy_set_header X-Original-URI $request_uri;" in gate[:gate.index("};")]
 
 
 def test_docker_api_proxy_keeps_the_browsers_port():

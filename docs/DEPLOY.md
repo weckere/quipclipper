@@ -271,9 +271,12 @@ bundled nginx (the Docker image and the NixOS module alike) makes exactly these 
   approves it; at most 5 wait at once and 10 a minute come from one address.
 - A request with a client token (`qcc_…`) in `X-API-Key` or `Authorization: Bearer` passes
   once the backend says the token is current (`satisfy any` with an `auth_request` to
-  `/api/clients/check`); a revoked or unknown one gets `401`. Requests without a client
+  `/api/clients/check`, naming the request in `X-Original-Method` and `X-Original-URI`); a
+  revoked or unknown one gets `401`, and so does a scoped one (the Jellyfin plugin's) asking
+  for anything its scopes don't open, such as `/clips/`. Requests without a client
   token are answered by nginx alone, so browsers don't cost the backend anything extra.
-  The gate's `api` login still knows only `QC_API_TOKEN`.
+  The gate's `api` login still knows only `QC_API_TOKEN`, and its `hook` login gets `403`
+  on `/clips/` (nginx serves those files without the backend, which refuses it elsewhere).
 
 The API locations also pass the `Host` the browser sent, port included, as `X-Quip-Host`,
 so links without `QC_PUBLIC_URL` name the address the browser used. A proxy in front of

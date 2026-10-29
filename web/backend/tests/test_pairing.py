@@ -798,6 +798,30 @@ def test_a_scoped_request_shows_its_scopes_and_who_asked(tmp_path):
         ["index.file"], "wiz@example.com", "Wiz Example", "100.116.110.76")
 
 
+def test_the_gate_check_applies_a_scoped_tokens_scopes_to_the_request_it_asks_about(tmp_path):
+    # nginx's auth_request names the request (X-Original-Method / -URI). What nginx serves
+    # itself (/clips/, the page) never reaches our scope check, so the answer must say no.
+    c = _client(tmp_path, QC_API_TOKEN="server-token")
+    scoped, _, _ = _paired_scoped(c, ["index.file"])
+    full, _ = _paired(c)
+
+    def check(token, uri, method="GET"):
+        return c.get("/api/clients/check", headers={
+            "X-API-Key": token, "X-Original-URI": uri, "X-Original-Method": method}).status_code
+
+    assert check(scoped, "/api/index/file?path=/tv/a.srt", "POST") == 200
+    assert check(scoped, "/api/index/file") == 200
+    assert check(scoped, "/api/health") == 200
+    assert check(scoped, "/clips/show/a.mka") == 401
+    assert check(scoped, "/") == 401
+    assert check(scoped, "/api/clips") == 401
+    assert check(scoped, "/api/index/%66ile") == 200  # the path as the backend will see it
+    assert check(full, "/clips/show/a.mka") == 200
+    assert check(full, "/") == 200
+    # Asked without naming a request (a direct caller): as before, any current token.
+    assert c.get("/api/clients/check", headers={"X-API-Key": scoped}).status_code == 200
+
+
 @pytest.mark.parametrize("scopes", [[], ["everything"], ["index.file", "clips.delete"], "index.file",
                                     [1]])
 def test_unknown_or_empty_scopes_are_refused(tmp_path, scopes):

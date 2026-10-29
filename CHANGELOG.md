@@ -18,6 +18,11 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   change that arrives within 0.1 s of another from the same app, and the count was set in the
   same tick as the results list, so it was never read. Orca exempts live sections from that
   filter; VoiceOver and NVDA read both kinds alike.
+- Behind the password gate, a scoped client token (the Jellyfin plugin's) and the `hook` login
+  could download every finished clip from `/clips/`, which nginx serves without asking the
+  backend. The gate now tells `/api/clients/check` which request it is about
+  (`X-Original-Method`, `X-Original-URI`) and a scoped token passes only for what its scopes
+  open; nginx refuses the `hook` login on `/clips/` (Docker image and NixOS module).
 
 ## [0.5.2] - 2026-10-27
 
