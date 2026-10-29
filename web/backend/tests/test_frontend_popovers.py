@@ -39,12 +39,14 @@ def test_opening_settings_or_jobs_closes_play_on(name):
 def test_settings_opened_from_the_footer_returns_focus_there():
     assert "back.focus()" in _function("setPopover")
     toggle = _function("toggleSettings")
-    assert "settingsOpener.isConnected" in toggle, "a re-rendered footer link can't take focus"
+    # Looked up at close: the footer is drawn again while Settings is open.
+    assert "settingsOpener && settingsOpener()" in toggle
+    assert '!opener.closest("[hidden]")' in toggle
     assert "setPopover(pop, $(\"settings-btn\"), show, restore, back)" in toggle
     assert "settingsOpener = null" in toggle
     assert "settingsOpener = from" in _function("openUpdates")
     js = (FRONTEND / "app.js").read_text()
-    assert "openUpdates(e.currentTarget)" in js
+    assert 'openUpdates(() => $("update-note").querySelector(".update-how"))' in js
 
 
 def test_a_failed_listing_of_connected_apps_says_only_that_and_clears_later():

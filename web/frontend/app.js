@@ -6997,13 +6997,16 @@ $("sub-bg").addEventListener("change", () => {
 new ResizeObserver(applyCueStyle).observe($("player"));
 showSubPrefs();
 
-let settingsOpener = null;  // what opened Settings, when not the gear (the footer's "how to update")
+// What opened Settings, when not the gear: the footer's "how to update". A function, as the
+// footer is drawn again while Settings is open (its old link is gone by Esc).
+let settingsOpener = null;
 
 function toggleSettings(open, restore) {
   const pop = $("settings-popover");
   const show = open === undefined ? pop.hidden : open;
   const was = !pop.hidden;
-  const back = settingsOpener && settingsOpener.isConnected ? settingsOpener : $("settings-btn");
+  const opener = settingsOpener && settingsOpener();
+  const back = opener && !opener.closest("[hidden]") ? opener : $("settings-btn");
   setPopover(pop, $("settings-btn"), show, restore, back);
   if (!show) settingsOpener = null;
   if (show && !was) {
@@ -7331,7 +7334,10 @@ function showUpdate(u) {
     const url = u.latest.url ? `<a href="${escapeHtml(u.latest.url)}" target="_blank" rel="noopener noreferrer" title="What's new in quipclipper ${escapeHtml(u.latest.version)}, on GitHub (opens a new tab)">release notes</a>, ` : "";
     note.innerHTML = `<strong>quipclipper ${escapeHtml(u.latest.version)} is available</strong>: ${url}` +
       `<button type="button" class="link-btn update-how" data-action="update.status" aria-haspopup="dialog" title="How to update this install (Settings ▸ Updates)">how to update</button>`;
-    note.querySelector("button").onclick = (e) => { e.stopPropagation(); openUpdates(e.currentTarget); };
+    note.querySelector("button").onclick = (e) => {
+      e.stopPropagation();
+      openUpdates(() => $("update-note").querySelector(".update-how"));
+    };
     note.hidden = false;
   } else {
     note.hidden = true;
@@ -7341,7 +7347,7 @@ function showUpdate(u) {
 
 /** Settings, at Updates (the footer's "how to update"). */
 function openUpdates(from) {
-  if ($("settings-popover").hidden) settingsOpener = from || null;  // Esc returns there
+  if ($("settings-popover").hidden) settingsOpener = from || null;  // Esc returns there (a function)
   toggleSettings(true);
   $("update-label").focus({ preventScroll: true });
   $("update-label").scrollIntoView({ block: "start" });
