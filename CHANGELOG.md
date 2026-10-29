@@ -11,6 +11,8 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-10-28
+
 ### Fixed
 
 - Orca now speaks a library search's match count. The search status and the app's announcer
@@ -832,7 +834,8 @@ The first version, before releases were tagged. Highlights:
   guard, and an optional password gate.
 - **Deployment:** a Nix flake and NixOS module (with a VM test), and Docker images on GHCR.
 
-[Unreleased]: https://github.com/weckere/quipclipper/compare/v0.5.2...dev
+[Unreleased]: https://github.com/weckere/quipclipper/compare/v0.5.3...dev
+[0.5.3]: https://github.com/weckere/quipclipper/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/weckere/quipclipper/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/weckere/quipclipper/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/weckere/quipclipper/compare/v0.4.1...v0.5.0
