@@ -23,6 +23,8 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   backend. The gate now tells `/api/clients/check` which request it is about
   (`X-Original-Method`, `X-Original-URI`) and a scoped token passes only for what its scopes
   open; nginx refuses the `hook` login on `/clips/` (Docker image and NixOS module).
+- With `QC_PROXY_SECRET` set, a request whose `X-Quip-Proxy-Secret` isn't plain ASCII is
+  refused with `403` instead of failing with a `500`.
 
 ## [0.5.2] - 2026-10-27
 

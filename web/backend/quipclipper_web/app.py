@@ -737,7 +737,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # liveness probes can hit the backend directly.
         if settings.proxy_secret and request.url.path != "/api/health":
             supplied = request.headers.get(_PROXY_SECRET_HEADER, "")
-            if not hmac.compare_digest(supplied, settings.proxy_secret):
+            if not _token_ok(supplied, frozenset([settings.proxy_secret])):
                 return JSONResponse({"detail": "Forbidden"}, status_code=403)
         # A programmatic client authenticated with an API token is a machine, not
         # a browser, so it's exempt from the CSRF-header requirement below. An

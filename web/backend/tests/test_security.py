@@ -71,6 +71,13 @@ def test_proxy_secret_rejects_a_wrong_header() -> None:
     assert resp.status_code == 403
 
 
+def test_proxy_secret_rejects_a_non_ascii_header() -> None:
+    # compare_digest refuses non-ASCII text (headers decode as latin-1): a 403, not a 500.
+    client = _app(_SECRET)
+    resp = client.get("/api/config", headers={"X-Quip-Proxy-Secret": "\u00e9t\u00e9".encode("latin-1")})
+    assert resp.status_code == 403
+
+
 def test_proxy_secret_exempts_health_for_liveness_probes() -> None:
     # Container/orchestrator health checks hit the backend directly, without the
     # secret nginx would inject — /api/health must stay reachable.
