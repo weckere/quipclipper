@@ -6,7 +6,11 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 FRONTEND = Path(__file__).resolve().parents[2] / "frontend"
+pytestmark = pytest.mark.skipif(not (FRONTEND / "index.html").exists(),
+                                reason="web/frontend is not part of this source tree")
 
 
 def _tag(id_: str) -> str:
