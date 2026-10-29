@@ -393,6 +393,8 @@ def _fmt_job(job: dict) -> None:
     result = job.get("result")
     if isinstance(result, dict) and "link" not in result:  # e.g. clips.backfill's counts
         typer.echo("  " + ", ".join(f"{k} {v}" for k, v in result.items()))
+    elif isinstance(result, dict):  # a Send to LeadStinger link (leadstinger.set, M25)
+        typer.echo(f"  link: {result['link']}")
     if job.get("error"):
         typer.secho(f"  error: {job['error']}", fg="red")
     if job.get("job_id") and not job.get("id"):
@@ -1601,7 +1603,11 @@ def _client_leadstinger_set(c: Context, v: dict) -> Any:
     job = _start_leadstinger_set(c, v, v.get("name"))
     if not v.get("wait", True):
         return job
-    return wait_job(c, job["job_id"], out_dir=v.get("out_dir") or c.settings.get("out_dir") or ".")
+    done = wait_job(c, job["job_id"], out_dir=v.get("out_dir") or c.settings.get("out_dir") or ".")
+    # The set's leadstinger://quip link (M25), when the server could name its address.
+    if (done.get("result") or {}).get("link"):
+        return {**done, "opened": _deliver_link(v, done["result"])["opened"]}
+    return done
 
 
 def _prune_leadstinger_cache() -> None:

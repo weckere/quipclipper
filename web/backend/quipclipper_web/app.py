@@ -3617,15 +3617,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # --- LeadStinger set files (M14) ---------------------------------------------------
 
     @app.post("/api/leadstinger/set")
-    def create_leadstinger_set(req: LeadStingerSetRequest) -> dict:
+    def create_leadstinger_set(req: LeadStingerSetRequest, request: Request) -> dict:
         """Cut every item as FLAC with its padding and zip them as a LeadStinger set file.
 
         A job on the clip pool: it cuts the items one after another into a staging
         folder, then writes ``LeadStinger/<name>.lsset`` in the clips library (its
         download is the job's file). Each item's before/after padding is handle audio
-        around the tile's trim, which sits on the line (D-024, D-026).
+        around the tile's trim, which sits on the line (D-024, D-026). When the server
+        can name its address (``_link_server``), the finished job's ``result`` carries
+        the set's ``leadstinger://quip`` link, which opens it in LeadStinger (M25).
         """
         items = list(req.items)
+        try:
+            server = _link_server(request)
+        except lslink.LinkError:
+            server = None  # the set file is still made; only the link is left out
         n = len(items)
 
         def build(job) -> list[Path]:
@@ -3691,6 +3697,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     except OSError as exc:
                         clipmeta.log.warning("set metadata for %s: %s", out, exc)
                     clipmeta.publish([out])
+                if server:
+                    try:
+                        clip = lslink.clip_path(out, settings.clips_dir)
+                        job.result = {"link": lslink.build_link(server, clip), "clip": clip}
+                    except lslink.LinkError as exc:  # the set file stands without its link
+                        clipmeta.log.warning("set link for %s: %s", out, exc)
                 job.progress = f"{n}/{n}"
                 return [out]
             finally:
@@ -3788,7 +3800,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """The ``leadstinger://quip`` link for a clip already in the clips library.
 
         ``clip`` is its path inside the library, as ``/api/clips/download/{path}`` takes
-        it. No ``start``/``end``: the tile plays the whole clip."""
+        it. No ``start``/``end``: the tile plays the whole clip. A set file (``.lsset``)
+        opens as a set of tiles and takes no ``title``/``start``/``end``/``set`` (400)."""
         server = _public_url(request)
         target = _clip_target(clip)
         if not target.is_file():

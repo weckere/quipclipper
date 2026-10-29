@@ -25,6 +25,7 @@ from pathlib import Path
 from urllib.parse import quote, urlsplit
 
 PREFIX = "leadstinger://quip?"
+SET_EXTENSION = ".lsset"  # a set file as the clip: LeadStinger imports it as a set of tiles
 PAIR_PREFIX = "leadstinger://pair?"
 MAX_SECONDS = 86400.0   # LeadStinger reads start/end from 0 to 86400
 TITLE_MAX = 200
@@ -194,8 +195,17 @@ def build_link(server: str, clip: str, *, title: str | None = None,
                start: float | None = None, end: float | None = None,
                set_name: str | None = None) -> str:
     """The ``leadstinger://quip?…`` link for one clip. Every value is percent-encoded the
-    way ``encodeURIComponent`` does; empty optional values are left out."""
+    way ``encodeURIComponent`` does; empty optional values are left out.
+
+    A set file (``.lsset``, M25) as the clip makes LeadStinger import it as a set of
+    tiles: it carries its own names and trims, so such a link takes no title, start, end
+    or set."""
     params = [("server", normalize_server(server)), ("clip", check_clip(clip))]
+    if clip.lower().endswith(SET_EXTENSION) and (
+            one_line(title, TITLE_MAX) or start is not None or end is not None
+            or one_line(set_name, SET_MAX)):
+        raise LinkError("a set file's link takes no title, start, end or set: "
+                        "the set file names and trims its own tiles")
     if t := one_line(title, TITLE_MAX):
         params.append(("title", t))
     s = seconds(start, "start") if start is not None else None

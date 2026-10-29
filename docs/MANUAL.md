@@ -932,9 +932,15 @@ Send to LeadStinger toggle beside Clip / Export selected with one line or clip t
 use a clip's Send to LeadStinger button in the Clips library; on
 the command line, `quipclipper leadstinger.quip` / `leadstinger.link`. quipclipper cuts
 the line, then opens a `leadstinger://quip` link; LeadStinger downloads the clip from the
-quipclipper server into a new tile whose trim is exactly the line. (With several lines
-ticked, the toggle makes a LeadStinger set file instead; so does the button when the server
-can't tell its own address, which is rare: see step 1 below.)
+quipclipper server into a new tile whose trim is exactly the line.
+
+With **several lines** ticked, the toggle makes a LeadStinger set file (one tile per line,
+each with its handles) and opens its link too, so the whole set goes straight into
+LeadStinger as tiles; the status line keeps **download the set file** for a LeadStinger too
+old to take a set by link (import that with File ▸ Import Set…). A set file already in the
+Clips library has the same Send to LeadStinger button beside its Download. When the server
+can't tell its own address, which is rare (see step 1 below), the toggle and the button only
+make the set file, to download and import by hand.
 
 The line is cut with **handles**: its padding, kept as extra audio either side (the clip
 bar's Before/After, a bookmark's saved padding, none for a search hit; `--before`/`--after`
@@ -1000,7 +1006,7 @@ leadstinger://quip?server=<QC_PUBLIC_URL>&clip=<clip path>&title=<text>&start=<s
 | Parameter | |
 |---|---|
 | `server` | quipclipper's address (step 1 above), without a trailing `/`. |
-| `clip` | The clip's path inside the clips library, as `/api/clips/download/{path}` takes it (`LeadStinger/S03E26_00-33-20_Resistance_is_futile.flac`). |
+| `clip` | The clip's path inside the clips library, as `/api/clips/download/{path}` takes it (`LeadStinger/S03E26_00-33-20_Resistance_is_futile.flac`). A set file (`LeadStinger/Borg.lsset`) is imported as a set of tiles, and its link has nothing after `clip`. |
 | `title` | The tile's title: the line (one line, at most 200 characters), or the clip's name. |
 | `start`, `end` | Where the line sits *inside the clip*, in seconds: the tile's trim. With 2 s before, a line from 33:22.4 to 33:24.0 gives `start=2&end=3.6`. Left out for a whole library clip. |
 | `set` | The LeadStinger set for the tile (made if missing). Left out: LeadStinger's current set. |
@@ -1057,8 +1063,10 @@ quipclipper --json leadstinger.quip "/shows/TNG/S03E26.mkv" --start 2002.4 --end
 
 Both open the link on the machine you run them on (`open` on macOS, `xdg-open` on
 Linux) and print it; `--no-open` only prints it, for a script or an agent to pass on.
-For several lines at once, `leadstinger.set` and `leadstinger.send` make a LeadStinger
-set file instead (see [`CLI.md`](CLI.md)).
+For several lines at once, `leadstinger.set` makes a LeadStinger set file and, when the
+server can name its address, opens the set's link the same way (`--no-open` only prints
+it; the set file is downloaded too); `leadstinger.send` imports one with LeadStinger on
+this machine (see [`CLI.md`](CLI.md)).
 
 ### Now playing (Jellyfin)
 

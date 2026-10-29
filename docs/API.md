@@ -402,6 +402,19 @@ numbers a name that's already taken. Download it with
 `GET /api/jobs/{id}/download/<name>.lsset`; import it with LeadStinger's File ▸ Import
 Set…, a drop on its window, or `leadstinger-cli set.import`.
 
+When the server can name its address (as for [the links](#send-to-leadstinger-links)
+below), the finished job also carries `result: {link, clip}`: the set's
+`leadstinger://quip` link, whose `clip` is the set file in the clips library and which
+has no `title`, `start`, `end` or `set`. Opening it makes LeadStinger download the set
+file and import it as a set of tiles; a LeadStinger that doesn't take a set by link yet
+needs the download. Without an address the job is the same, with no `result`.
+
+```json
+{"id": "…", "status": "done", "files": [{"name": "Borg.lsset", "size": 1234567}],
+ "result": {"link": "leadstinger://quip?server=https%3A%2F%2Fquip.example&clip=LeadStinger%2FBorg.lsset",
+            "clip": "LeadStinger/Borg.lsset"}}
+```
+
 ### Send to LeadStinger (links)
 | Method | Path | Purpose |
 |---|---|---|
@@ -449,7 +462,9 @@ into `LeadStinger/` in the clips library. The finished job carries
 
 `GET /api/leadstinger/link` takes `clip` as `/api/clips/download/{path}` does (relative to
 the clips library) and returns `{link, clip}`; without `start`/`end` the tile plays the
-whole clip. Open the link in a browser or with `open`/`xdg-open` on the machine with
+whole clip. A set file (`clip` ending `.lsset`) gets a link that opens it as a set of
+tiles; it takes no `title`, `start`, `end` or `set` (400), since the set file names and
+trims its own tiles. Open the link in a browser or with `open`/`xdg-open` on the machine with
 LeadStinger.
 
 ### Pairing

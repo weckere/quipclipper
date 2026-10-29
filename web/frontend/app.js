@@ -5719,7 +5719,8 @@ async function browseClips(folder, { fromLink = false } = {}) {
     return;
   }
 
-  // LeadStinger set files (.lsset) are listed too (M18): download-only rows.
+  // LeadStinger set files (.lsset) are listed too (M18): Download, and Send to LeadStinger
+  // (M25) when the server can name its address, which opens the set as tiles.
   const sets = data.clips.filter((c) => c.kind === "set");
   const clipRows = data.clips.filter((c) => c.kind !== "set");
   if (data.clips.length) {
@@ -5749,7 +5750,21 @@ async function browseClips(folder, { fromLink = false } = {}) {
       `<span class="icon-wrap"><svg class="icon" aria-hidden="true"><use href="#i-leadstinger"/></svg></span>` +
       `<span class="label clip-name">${escapeHtml(c.name)}</span>` +
       `<span class="chips"><span class="badge">LeadStinger set${tiles != null ? ` · ${plural(tiles, "tile")}` : ""}</span><span class="badge">${fmtSize(c.size)}</span></span>` +
+      (appConfig.link_server
+        ? `<button type="button" class="btn clip-ls" data-action="leadstinger.link" title="Send to LeadStinger: this set as tiles" aria-label="Send ${escapeHtml(c.name)} to LeadStinger"><svg class="icon" aria-hidden="true"><use href="#i-leadstinger"/></svg></button>`
+        : "") +
       `<a class="download-link clip-dl" data-action="clips.download" href="${escapeHtml(c.download_url)}" download title="Download this set file to open in LeadStinger" aria-label="Download ${escapeHtml(c.name)}">Download</a>`;
+    const ls = li.querySelector(".clip-ls");
+    if (ls) {
+      ls.onclick = async () => {
+        ls.disabled = true;
+        // A set file's link takes no title: the set names and trims its own tiles.
+        const it = lsClipItem(c.path, c.name, c.folder);
+        await sendLeadStingerLink({ ...it, title: undefined, what: lsSetWhat(c.name) },
+          $("clips-batch-status"));
+        ls.disabled = false;
+      };
+    }
     list.appendChild(li);
   }
 
@@ -6221,7 +6236,14 @@ function lsItemsFrom(prefix) {
   });
 }
 
-/** One set job for a batch bar's selection; offers (and starts) the .lsset download. */
+/** “the set “Borg”” for a status line, from a set file's name. */
+function lsSetWhat(file) {
+  return `the set “${(file || "").replace(/\.lsset$/i, "")}”`;
+}
+
+/** One set job for a batch bar's selection. With a link in the job's result (M25) the set
+ *  opens in LeadStinger as tiles, the download staying in the status as the fallback for a
+ *  LeadStinger too old to take a set by link; without one the .lsset download starts. */
 async function runLeadStingerBatch(prefix, onDone) {
   const items = lsItemsFrom(prefix);
   if (!items.length) return;
@@ -6260,8 +6282,14 @@ async function runLeadStingerBatch(prefix, onDone) {
     if (j.status === "done" && j.files && j.files.length) {
       const file = j.files[0].name;
       const href = `/api/jobs/${encodeURIComponent(job.job_id)}/download/${encodeURIComponent(file)}`;
-      status.innerHTML = `LeadStinger set ready: <a data-action="job.download" href="${escapeHtml(href)}" download title="Download the set file again">${escapeHtml(file)}</a>`;
-      status.querySelector("a").click();
+      const link = j.result && j.result.link;
+      if (link) {
+        launchLeadStinger(link, status, lsSetWhat(file));
+        status.insertAdjacentHTML("beforeend", ` · or <a data-action="job.download" href="${escapeHtml(href)}" download title="Download the set file to import it in LeadStinger by hand">download the set file</a>`);
+      } else {
+        status.innerHTML = `LeadStinger set ready: <a data-action="job.download" href="${escapeHtml(href)}" download title="Download the set file again">${escapeHtml(file)}</a>`;
+        status.querySelector("a").click();
+      }
       btn.disabled = false;
       if (onDone) onDone();
     } else if (j.status === "failed" || j.status === "cancelled") {
@@ -6275,7 +6303,8 @@ async function runLeadStingerBatch(prefix, onDone) {
   tick();
 }
 
-/** Send to LeadStinger with no public URL: the selection becomes a one-tile LeadStinger set. */
+/** Send to LeadStinger with no public URL: the selection becomes a one-tile LeadStinger set.
+ *  Should the job still carry a link (result.link, M25), its clip row opens it. */
 async function makeLeadStingerClip() {
   const cue = (selectedCueText() || (clipFirst < 0 ? loadedBookmarkCue : "") || "").trim();
   const item = {
@@ -6330,7 +6359,7 @@ function launchLeadStinger(link, status, what) {
 
 /** One item into LeadStinger by link, reporting in a batch bar's `status`. */
 async function sendLeadStingerLink(it, status) {
-  const what = it.title ? `“${it.title.length > 60 ? it.title.slice(0, 57) + "…" : it.title}”` : "the clip";
+  const what = it.what || (it.title ? `“${it.title.length > 60 ? it.title.slice(0, 57) + "…" : it.title}”` : "the clip");
   try {
     if (it.start == null) {
       const q = new URLSearchParams({ clip: it.clip });

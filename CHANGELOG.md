@@ -11,6 +11,16 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 
 ## [Unreleased]
 
+### Batch send to LeadStinger (M25)
+
+- Several lines ticked with the Send to LeadStinger toggle now go straight into LeadStinger
+  as a set of tiles: when the server can name its address, the set job's result carries a
+  `leadstinger://quip` link whose clip is the set file (`GET /api/leadstinger/link` takes an
+  `.lsset` too, without title/start/end/set), the batch bars open it and keep "download the
+  set file" as the fallback, the Clips library's set rows get Send to LeadStinger, and
+  `leadstinger.set` opens the link (`--no-open` only prints it). Needs a LeadStinger that
+  takes a set by link; an older one still imports the downloaded file.
+
 ## [0.5.3] - 2026-10-28
 
 ### Fixed

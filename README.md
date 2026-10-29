@@ -52,7 +52,7 @@ mkvmerge. quipclipper is a **self-hosted web app** over your own media folders, 
 - **Plays anything:** files the browser can't play are converted on the fly (audio, or the
   video too), and iOS gets an HLS stream.
 - **[Send to LeadStinger](#leadstinger):** hand a line straight to the LeadStinger
-  soundboard as a trimmed tile, or many lines as a set. LeadStinger connects by pairing:
+  soundboard as a trimmed tile, or many lines straight in as a set of tiles. LeadStinger connects by pairing:
   you click Allow on a banner, and no token gets copied.
 - **[Jellyfin Now playing](#jellyfin-now-playing):** open whatever a Jellyfin client is
   playing at its playhead, with the line just heard selected.
@@ -98,7 +98,9 @@ playhead. Below it, the home's Dialogue index card indexes the whole library.
 
 **Send to LeadStinger:** the cart button (a broadcast tape cart) beside Make clip cuts the selection with its
 Before/After padding and sends it to LeadStinger as a new tile, the padding becoming the
-tile's handles.
+tile's handles. Tick several lines with the Send to LeadStinger toggle and they go in
+together as a set of tiles; the set file stays there to download, for a LeadStinger that
+can't take a set by link yet.
 
 <img src="docs/screenshots/send-to-leadstinger.png" width="880" alt="The Selection panel with the pointer on the Send to LeadStinger button and its tooltip showing">
 
@@ -204,7 +206,8 @@ Click the **Send to LeadStinger** button (the broadcast-cart icon) beside Make c
 Clip / Export selected, and the line goes straight into LeadStinger as a new tile: quipclipper cuts it
 as a full-mix FLAC with its padding kept as handles, and the tile's trim sits exactly on
 the line, so it can still be nudged there. Several lines at once make a LeadStinger set
-file. LeadStinger connects once by **pairing**: it asks, you click Allow on the banner in
+file that goes straight in as a set of tiles; it stays there to download for a LeadStinger
+that can't take a set by link yet. LeadStinger connects once by **pairing**: it asks, you click Allow on the banner in
 quipclipper (after checking the code), and it gets its own key, revocable under Settings ▸
 Connected apps; no token to copy. On a LAN, quipclipper can also announce itself so
 LeadStinger finds it (opt-in). From the CLI it is `leadstinger.quip`, `leadstinger.link`,

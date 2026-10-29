@@ -314,6 +314,96 @@ def test_link_refuses_files_outside_or_missing(tmp_path):
         "leadstinger://quip?server=http%3A%2F%2Ftestserver&")
 
 
+# --- a set file as the clip (M25) ---------------------------------------------------------
+
+
+def test_a_set_files_link_carries_only_the_server_and_the_clip():
+    assert lslink.build_link(SERVER, "LeadStinger/Borg 2.lsset") == (
+        "leadstinger://quip?server=https%3A%2F%2Fquip.example&clip=LeadStinger%2FBorg%202.lsset")
+    # Blank optionals are left out, as for a clip.
+    assert lslink.build_link(SERVER, "x.LSSET", title="  ", set_name="") == (
+        "leadstinger://quip?server=https%3A%2F%2Fquip.example&clip=x.LSSET")
+
+
+@pytest.mark.parametrize("extra", [{"title": "Borg"}, {"start": 0.0}, {"end": 2.0},
+                                   {"set_name": "Movie Lines"}])
+def test_a_set_files_link_refuses_title_trims_and_set(extra):
+    with pytest.raises(lslink.LinkError, match="set file"):
+        lslink.build_link(SERVER, "LeadStinger/Borg.lsset", **extra)
+
+
+def _set_job(client: TestClient, media: Path) -> dict:
+    (media / "a.mkv").write_bytes(b"")
+    with patch("quipclipper_web.app.cut_clip", side_effect=_fake_cut):
+        resp = client.post("/api/leadstinger/set", json={"name": "Borg", "items": [
+            {"path": str(media / "a.mkv"), "start": 1.0, "end": 2.0, "title": "One"},
+            {"path": str(media / "a.mkv"), "start": 3.0, "end": 4.0, "title": "Two"}]})
+        assert resp.status_code == 200, resp.text
+        return _wait(client, resp.json()["job_id"])
+
+
+def test_the_set_job_returns_the_sets_link(tmp_path):
+    client, media, clips = _client(tmp_path)
+    job = _set_job(client, media)
+    assert job["status"] == "done", job
+    assert (clips / "LeadStinger" / "Borg.lsset").is_file()
+    assert job["files"][0]["name"] == "Borg.lsset"      # the download stays
+    assert job["result"] == {
+        "clip": "LeadStinger/Borg.lsset",
+        "link": "leadstinger://quip?server=https%3A%2F%2Fquip.example"
+                "&clip=LeadStinger%2FBorg.lsset"}
+    # A second set of the same name is numbered, and so is its link.
+    assert _set_job(client, media)["result"]["clip"] == "LeadStinger/Borg 2.lsset"
+
+
+def test_the_set_job_has_no_link_without_an_address(tmp_path):
+    client, media, clips = _client(tmp_path, public_url=None)
+    client.headers["host"] = "not a host"
+    job = _set_job(client, media)
+    assert job["status"] == "done", job
+    assert "result" not in job
+    assert (clips / "LeadStinger" / "Borg.lsset").is_file()
+    # A bad QC_PUBLIC_URL only leaves the link out too.
+    bad, bmedia, _ = _client(tmp_path, public_url="quip.example", sub="bad")
+    job = _set_job(bad, bmedia)
+    assert job["status"] == "done" and "result" not in job
+
+
+def test_link_for_a_set_file_in_the_clips_library(tmp_path):
+    client, _, clips = _client(tmp_path)
+    (clips / "LeadStinger").mkdir()
+    (clips / "LeadStinger" / "Borg.lsset").write_bytes(b"PK")
+    resp = client.get("/api/leadstinger/link", params={"clip": "LeadStinger/Borg.lsset"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {
+        "clip": "LeadStinger/Borg.lsset",
+        "link": "leadstinger://quip?server=https%3A%2F%2Fquip.example"
+                "&clip=LeadStinger%2FBorg.lsset"}
+    for extra in ({"title": "Borg"}, {"start": 0}, {"end": 2}, {"set": "Movie Lines"}):
+        bad = client.get("/api/leadstinger/link",
+                         params={"clip": "LeadStinger/Borg.lsset", **extra})
+        assert bad.status_code == 400, extra
+        assert "set file" in bad.json()["detail"]
+
+
+FRONTEND_JS = Path(__file__).resolve().parents[2] / "frontend" / "app.js"
+
+
+@pytest.mark.skipif(not FRONTEND_JS.exists(), reason="web/frontend is not part of this source tree")
+def test_the_batch_bars_open_the_sets_link_and_keep_the_download():
+    js = FRONTEND_JS.read_text()
+    batch = js[js.index("async function runLeadStingerBatch"):js.index("async function makeLeadStingerClip")]
+    # With a link: open it, and keep the set file's download as the fallback.
+    assert "j.result && j.result.link" in batch
+    assert "launchLeadStinger(link, status" in batch
+    assert "download the set file" in batch
+    # Without one: the download starts, as before.
+    assert 'status.querySelector("a").click()' in batch
+    # A set row's Send button sends no title (the link would be refused).
+    rows = js[js.index("for (const c of sets)"):js.index("for (const c of clipRows)")]
+    assert 'data-action="leadstinger.link"' in rows and "title: undefined" in rows
+
+
 # --- the CLI side -------------------------------------------------------------------------
 
 
@@ -375,3 +465,43 @@ def test_cli_quip_posts_the_line_and_delivers_the_jobs_link():
                       {"path": "/m/a.mkv", "start": 1.0, "end": 2.5, "title": "Hi",
                        "before": 2.0, "after": 0.5})]
     assert out == {"link": link, "opened": False}
+
+
+def test_cli_set_opens_the_sets_link_and_no_open_only_prints_it(capsys, monkeypatch):
+    import io
+
+    from quipclipper import cli
+    from quipclipper import commands as reg
+
+    opener = [p for p in reg.BY_ID["leadstinger.set"].params if p.name == "open"]
+    assert opener and opener[0].default is True and opener[0].where == reg.CLIENT
+
+    class Resp:
+        def json(self):
+            return {"job_id": "j1", "status": "queued"}
+
+    class Ctx:
+        settings: dict = {}
+
+    link = "leadstinger://quip?server=s&clip=LeadStinger%2FBorg.lsset"
+    done = {"id": "j1", "status": "done", "label": "LeadStinger set (1 clip)",
+            "result": {"link": link, "clip": "LeadStinger/Borg.lsset"}}
+    row = '{"path": "/m/a.mkv", "start": 1.0, "end": 2.0, "text": "Hi"}\n'
+    for want_open in (True, False):
+        monkeypatch.setattr("sys.stdin", io.StringIO(row))
+        with patch.object(cli, "call", return_value=Resp()), \
+                patch.object(cli, "wait_job", return_value=dict(done)), \
+                patch.object(cli, "_open_link", return_value=True) as opened:
+            out = cli._client_leadstinger_set(Ctx(), {"open": want_open, "wait": True})
+        assert out["opened"] is want_open
+        assert out["result"]["link"] == link
+        assert opened.call_count == (1 if want_open else 0)
+    cli._fmt_job(out)
+    assert f"link: {link}" in capsys.readouterr().out
+    # No link (the server can't name its address): the job as before, nothing opened.
+    monkeypatch.setattr("sys.stdin", io.StringIO(row))
+    with patch.object(cli, "call", return_value=Resp()), \
+            patch.object(cli, "wait_job", return_value={"id": "j1", "status": "done"}), \
+            patch.object(cli, "_open_link") as opened:
+        assert cli._client_leadstinger_set(Ctx(), {"open": True}) == {"id": "j1", "status": "done"}
+    opened.assert_not_called()

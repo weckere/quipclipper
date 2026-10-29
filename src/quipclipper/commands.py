@@ -641,7 +641,9 @@ COMMANDS: tuple[Command, ...] = (
     # --- LeadStinger (M14): hand clips to the soundboard ------------------------------------
     Command("leadstinger.set", "Make a LeadStinger set file (.lsset) from JSON lines on stdin: "
             "search hits, bookmarks or clips-library entries, each cut as FLAC with its "
-            "padding and trimmed to its line.", "POST", "/api/leadstinger/set",
+            "padding and trimmed to its line. When the server can name its address, it then "
+            "opens the set's leadstinger://quip link, so LeadStinger imports it as tiles.",
+            "POST", "/api/leadstinger/set",
             params=(Param("name", "str", "The set's name in LeadStinger. Default: the movie "
                           "or show, else quipclipper and the date.", where=BODY, main=True),
                     Param("before", "float", "Seconds of padding before each line (a "
@@ -651,7 +653,7 @@ COMMANDS: tuple[Command, ...] = (
                           where=CLIENT, default=0.0),
                     Param("path", "str", "Media file for hits that don't carry one "
                           "(search.item results).", where=CLIENT),
-                    *_JOB_FOLLOW),
+                    *_JOB_FOLLOW, *_OPEN_LINK),
             mode="client", response="job",
             ui="Send to LeadStinger button beside Make clip (when the server can't name "
                "its own address), or the toggle beside Clip / Export selected"),
@@ -698,7 +700,8 @@ COMMANDS: tuple[Command, ...] = (
             ui="Send to LeadStinger button beside Make clip, or the toggle with Clip / "
                "Export selected on one line"),
     Command("leadstinger.link", "The leadstinger://quip link for a clip already in the clips "
-            "library, opened here so LeadStinger downloads it into a new tile. The server it "
+            "library, opened here so LeadStinger downloads it into a new tile (a set file, "
+            ".lsset: its tiles, as a set; no --title, --start, --end or --set). The server it "
             "names is chosen as for leadstinger.quip.", "GET", "/api/leadstinger/link",
             params=(Param("clip", "str", "Path inside the clips library (as clips.download "
                           "takes it).", main=True, required=True),
@@ -709,8 +712,8 @@ COMMANDS: tuple[Command, ...] = (
                           "default: its current set)."),
                     *_OPEN_LINK),
             mode="client",
-            ui="Send to LeadStinger on a clip row (Clips library), or the toggle with "
-               "Export selected on one clip"),
+            ui="Send to LeadStinger on a clip or set row (Clips library), or the toggle "
+               "with Export selected on one clip"),
 
     Command("leadstinger.connect", "Open LeadStinger's Connect prompt for this server (a "
             "leadstinger://pair link): LeadStinger asks to connect, then pairs, so nobody "
