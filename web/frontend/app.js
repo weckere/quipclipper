@@ -6852,7 +6852,7 @@ function toggleJobs(open, restore) {
   const was = !pop.hidden;
   jobsOpen = show;
   setPopover(pop, $("jobs-pill"), show, restore);
-  if (show && !was) { toggleScopeMenu(false); toggleSettings(false); renderJobsList(); refreshJobs(); focusFirstIn(pop); }
+  if (show && !was) { toggleScopeMenu(false); toggleSettings(false); closePlayOn(); renderJobsList(); refreshJobs(); focusFirstIn(pop); }
   // Only an open or close changes the poll rate: every click on the page closes the
   // popover, and rescheduling then would keep pushing the next poll back.
   if (show !== was) scheduleJobs();
@@ -6873,11 +6873,11 @@ function focusFirstIn(pop) {
 
 /** Show or hide a popover from its button. Hiding it returns focus to the button when focus
  *  was inside (or `restore` asks, as Esc does), not when a click elsewhere closed it. */
-function setPopover(pop, btn, show, restore) {
+function setPopover(pop, btn, show, restore, back = btn) {
   const wasOpen = !pop.hidden;
   pop.hidden = !show;
   btn.setAttribute("aria-expanded", String(show));
-  if (!show && wasOpen && (restore || pop.contains(document.activeElement))) btn.focus();
+  if (!show && wasOpen && (restore || pop.contains(document.activeElement))) back.focus();
 }
 
 function trapTab(pop) {
@@ -6997,13 +6997,17 @@ $("sub-bg").addEventListener("change", () => {
 new ResizeObserver(applyCueStyle).observe($("player"));
 showSubPrefs();
 
+let settingsOpener = null;  // what opened Settings, when not the gear (the footer's "how to update")
+
 function toggleSettings(open, restore) {
   const pop = $("settings-popover");
   const show = open === undefined ? pop.hidden : open;
   const was = !pop.hidden;
-  setPopover(pop, $("settings-btn"), show, restore);
+  const back = settingsOpener && settingsOpener.isConnected ? settingsOpener : $("settings-btn");
+  setPopover(pop, $("settings-btn"), show, restore, back);
+  if (!show) settingsOpener = null;
   if (show && !was) {
-    toggleScopeMenu(false); toggleJobs(false);
+    toggleScopeMenu(false); toggleJobs(false); closePlayOn();
     refreshClients();  // Connected apps: who is let in now
     refreshUpdate();  // Updates: what the last check found
     // Into the appearance choice (its checked option is the group's tab stop).
@@ -7050,6 +7054,7 @@ let pairTimer = null;
 let pairFailures = 0;
 let pairStopped = false;   // a 401/403/404: this page can't see pairing requests
 let pairRequests = [];
+let pairsLoad = 0;  // generation: a poll older than an answer (or a newer poll) is dropped
 let pairEagerUntil = 0;
 let pairNoteTimer = null;
 let pairWanted = new URLSearchParams(location.search).get("pair");  // ?pair=<id>, read once
@@ -7081,10 +7086,14 @@ async function refreshPairs() {
   clearTimeout(pairTimer);
   pairTimer = null;
   if (pairStopped || !appConfig.pairing || document.hidden) return;
+  const gen = ++pairsLoad;
   try {
-    pairRequests = (await getJSON("/api/pair")).requests || [];
+    const got = (await getJSON("/api/pair")).requests || [];
+    if (gen !== pairsLoad) return;  // a newer poll (or an answer) is on its way: it renders
+    pairRequests = got;
     pairFailures = 0;
   } catch (err) {
+    if (gen !== pairsLoad) return;
     if ([401, 403, 404].includes(err.status)) {
       pairStopped = true;
       pairRequests = [];
@@ -7170,12 +7179,14 @@ async function answerPair(r, allow, li) {
   } catch (err) {
     announce(`Couldn't ${allow ? "allow" : "deny"} ${pairWho(r)}: ${err.message}`);
   }
+  pairsLoad++;  // a poll sent before the answer would bring the row back
   pairRequests = pairRequests.filter((x) => x.id !== r.id);
   renderPairs();
   refreshPairs();
 }
 
 let clientsLoad = 0;  // generation: an older listing never replaces a newer one
+let clientsFailed = false;  // apps-status says the last listing failed
 
 function fmtWhen(iso) {
   const d = new Date(iso);
@@ -7189,10 +7200,17 @@ async function refreshClients() {
   try {
     rows = (await getJSON("/api/clients")).clients || [];
   } catch (err) {
-    if (gen === clientsLoad) $("apps-status").textContent = `Couldn't list the connected apps: ${err.message}`;
+    if (gen === clientsLoad) {
+      // Not "No apps connected yet" beside it: we don't know.
+      $("apps-empty").hidden = true;
+      $("apps-status").textContent = `Couldn't list the connected apps: ${err.message}`;
+      clientsFailed = true;
+    }
     return;
   }
   if (gen !== clientsLoad) return;
+  if (clientsFailed) $("apps-status").textContent = "";  // that error is over
+  clientsFailed = false;
   const list = $("apps-list");
   const hadIdx = [...list.querySelectorAll("button")].indexOf(document.activeElement);
   list.innerHTML = "";
@@ -7313,7 +7331,7 @@ function showUpdate(u) {
     const url = u.latest.url ? `<a href="${escapeHtml(u.latest.url)}" target="_blank" rel="noopener noreferrer" title="What's new in quipclipper ${escapeHtml(u.latest.version)}, on GitHub (opens a new tab)">release notes</a>, ` : "";
     note.innerHTML = `<strong>quipclipper ${escapeHtml(u.latest.version)} is available</strong>: ${url}` +
       `<button type="button" class="link-btn update-how" data-action="update.status" aria-haspopup="dialog" title="How to update this install (Settings ▸ Updates)">how to update</button>`;
-    note.querySelector("button").onclick = (e) => { e.stopPropagation(); openUpdates(); };
+    note.querySelector("button").onclick = (e) => { e.stopPropagation(); openUpdates(e.currentTarget); };
     note.hidden = false;
   } else {
     note.hidden = true;
@@ -7322,7 +7340,8 @@ function showUpdate(u) {
 }
 
 /** Settings, at Updates (the footer's "how to update"). */
-function openUpdates() {
+function openUpdates(from) {
+  if ($("settings-popover").hidden) settingsOpener = from || null;  // Esc returns there
   toggleSettings(true);
   $("update-label").focus({ preventScroll: true });
   $("update-label").scrollIntoView({ block: "start" });

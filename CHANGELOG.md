@@ -43,6 +43,12 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 - Starting a transcoded stream no longer runs ffprobe on the server's event loop, and ffprobe
   reading a file's duration gives up after a minute: a stalled disk can't hold every other
   request up.
+- Opening Settings or Jobs closes **Play on…**, so two popovers are never open at once.
+- Settings opened from the footer's "how to update" gives focus back to that link on Esc.
+- Settings ▸ Connected apps: a listing that failed no longer also says "No apps connected
+  yet.", and its error goes away once a listing works.
+- The pairing banner: a request just allowed or denied no longer comes back for a moment, with
+  live buttons, when an older poll answers after it.
 
 ## [0.5.2] - 2026-10-27
 
