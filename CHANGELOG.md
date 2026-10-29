@@ -51,6 +51,8 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   live buttons, when an older poll answers after it.
 - NixOS module: a host name as `listenAddress` (`"box.lan"`) evaluates again; it is left out
   of `forwardedAllowIps`' default instead of failing that option's assertion.
+- Releases: the image tags `X.Y` and `latest` only move forwards. An older release's run that
+  finished last, or was re-run, used to point `latest` back at it.
 
 ## [0.5.2] - 2026-10-27
 

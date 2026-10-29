@@ -112,12 +112,22 @@ jobs:
         run: |
           repo="ghcr.io/${GITHUB_REPOSITORY,,}"
           minor="${VERSION%.*}"
+          # Only forwards: an older release's run finishing last (or re-run later) must not
+          # move X.Y or latest back to it. Compare with the release tags pushed so far.
+          releases=$(git ls-remote --tags --refs "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" 'v*' \
+            | sed 's|.*refs/tags/v||' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' || true)
+          newest() { { printf '%s\n' "$VERSION"; printf '%s\n' "$releases" | grep "$1" || true; } \
+            | sort -V | tail -n 1; }
+          move_minor=$([ "$(newest "^${minor//./\\.}\.")" = "$VERSION" ] && echo 1 || true)
+          move_latest=$([ "$(newest .)" = "$VERSION" ] && echo 1 || true)
           # X.Y for both images first, then latest for both: a failure part-way leaves
           # latest wholly on the previous release.
           for image in app web; do
+            [ -n "$move_minor" ] || { echo "$minor stays on a newer patch"; break; }
             docker buildx imagetools create -t "$repo-$image:$minor" "$repo-$image:$VERSION"
           done
           for image in app web; do
+            [ -n "$move_latest" ] || { echo "latest stays on a newer release"; break; }
             docker buildx imagetools create -t "$repo-$image:latest" "$repo-$image:$VERSION"
           done
 
