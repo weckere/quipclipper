@@ -7504,6 +7504,7 @@ document.addEventListener("keydown", (e) => {
 $("back").onclick = () => browse(currentParent());
 $("home-link").onclick = () => browse(null);
 $("library-link").onclick = () => browse(null);
+$("rail-home").onclick = () => browse(null);  // the rail's LIBRARY heading
 
 // Derive the parent directory of the current item for the Back button.
 function currentParent() {

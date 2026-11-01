@@ -11,6 +11,12 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 
 ## [Unreleased]
 
+### Hover text and accessibility (M16)
+
+- The library column's LIBRARY heading is a button: a click, Enter or Space goes back to the
+  top of the library (the media roots), the same place the home link and the breadcrumb's
+  first crumb go, with hover text and a visible focus ring. It used to do nothing.
+
 ### Batch send to LeadStinger (M25)
 
 - Several lines ticked with the Send to LeadStinger toggle now go straight into LeadStinger
