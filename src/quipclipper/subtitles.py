@@ -576,7 +576,8 @@ def _sidecar_candidates(video_path: Path, siblings: list[Path] | None = None) ->
     as a character class (and ``*``/``?`` as wildcards), silently matching *nothing* and
     dropping every sidecar — bare ``.srt`` and language-suffixed ``.en.srt``/``.hi.en.srt``
     alike. The trailing dot is still required, so a sibling ``movie2.srt`` isn't picked up
-    for ``movie``; yt-dlp's ``*.info.json`` metadata is skipped. ``siblings`` is the
+    for ``movie``; yt-dlp's ``*.info.json`` and Audible downloads' ``*.metadata.json``
+    metadata are skipped. ``siblings`` is the
     folder's listing when the caller already has it (a listing that checks every file)."""
     prefix = (video_path.stem + ".").lower()
     if siblings is None:
@@ -592,7 +593,7 @@ def _sidecar_candidates(video_path: Path, siblings: list[Path] | None = None) ->
         # ``movie.mkv`` on case-preserving filesystems.
         if p.name.lower().startswith(prefix)
         and p.suffix.lower() in SUBTITLE_EXTS
-        and not p.name.lower().endswith(".info.json")
+        and not p.name.lower().endswith((".info.json", ".metadata.json"))
         # A machine transcript copied into the library is not the file's subtitles.
         and not is_machine_sidecar(p, video_path.stem)
     ]

@@ -161,6 +161,14 @@ def test_find_sidecar_skips_ytdlp_info_json(tmp_path):
     assert find_sidecar(audio) is None
 
 
+def test_find_sidecar_skips_audible_metadata_json(tmp_path):
+    """An Audible download's *.metadata.json shares the stem but isn't a transcript."""
+    book = tmp_path / "Book [052562967X].m4b"
+    book.write_bytes(b"")
+    (tmp_path / "Book [052562967X].metadata.json").write_text('{"title":"x"}')
+    assert find_sidecar(book) is None
+
+
 def test_find_sidecar_prefers_srt_over_json(tmp_path):
     audio = tmp_path / "episode.mp3"
     audio.write_bytes(b"")

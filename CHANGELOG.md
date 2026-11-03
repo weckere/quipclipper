@@ -21,6 +21,11 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   excerpt (mono AAC, at most 120 s) that ffmpeg makes from just that range, and the CLI command
   `item.listen PATH --start --end [--out-dir DIR | --play]`.
 
+### Fixed
+
+- An audiobook with an Audible `<name>.metadata.json` beside it is no longer read as having a
+  JSON transcript: indexing failed on every such book instead of noting it has no subtitles.
+
 ## [0.6.0] - 2026-11-01
 
 ### Hover text and accessibility (M16)
