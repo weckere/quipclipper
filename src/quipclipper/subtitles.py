@@ -287,23 +287,76 @@ def _load_json_cues(path: Path) -> list[Cue]:
     return [Cue(i, c.start, c.end, c.text, c.speaker) for i, c in enumerate(cues)]
 
 
-def load_subtitles(path: str | Path) -> list[Cue]:
+# The pysubs2 format a sidecar's extension names, for when autodetection is ambiguous
+# (an SRT whose first lines also fit TMP's "0:00:01:" pattern).
+_SUFFIX_FORMATS = {".srt": "srt", ".vtt": "vtt", ".ass": "ass", ".ssa": "ssa"}
+
+
+def _pysubs2_load(path: Path, encoding: str, fps: float | None):
+    extra = {"fps": fps} if fps else {}
+    try:
+        return pysubs2.load(str(path), encoding=encoding, **extra)
+    except Pysubs2Error as exc:
+        fmt = _SUFFIX_FORMATS.get(path.suffix.lower())
+        if fmt is None or "Multiple suitable formats" not in str(exc):
+            raise
+        return pysubs2.load(str(path), encoding=encoding, format_=fmt, **extra)
+
+
+def _text_encoding(path: Path) -> str:
+    """UTF-16 when the file starts with its byte-order mark (Windows tools still save
+    .srt that way), else UTF-8."""
+    try:
+        with path.open("rb") as f:
+            head = f.read(2)
+    except OSError:
+        return "utf-8"
+    return "utf-16" if head in (b"\xff\xfe", b"\xfe\xff") else "utf-8"
+
+
+def load_subtitles(path: str | Path, video: str | Path | None = None) -> list[Cue]:
     """Parse a subtitle/transcript file into a list of Cue objects (text cleaned
     of markup). ``.json`` is parsed as a transcript (see ``_load_json_cues``);
-    everything else goes through pysubs2 (srt/vtt/ass/ssa/sub)."""
+    everything else goes through pysubs2 (srt/vtt/ass/ssa/sub). ``video``, the file
+    the subtitles belong to, gives a frame-based MicroDVD .sub its frame rate when
+    the .sub doesn't say."""
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"Subtitle file not found: {path}")
     if path.suffix.lower() == ".json":
         return _load_json_cues(path)
+    fps = None
+    for attempt in range(2):
+        try:
+            subs = _load_text_subs(path, fps)
+            break
+        except ValueError as exc:
+            if (attempt or video is None
+                    or "Framerate was not specified" not in str(exc)):
+                raise
+            fps = _video_frame_rate(video)
+            if fps is None:
+                raise
+    return _cues_from(path, subs)
+
+
+def _video_frame_rate(video: str | Path) -> float | None:
     try:
-        subs = pysubs2.load(str(path))
+        return next((s.frame_rate for s in list_streams(video)
+                     if s.kind == "video" and s.frame_rate), None)
+    except (OSError, RuntimeError):
+        return None
+
+
+def _load_text_subs(path: Path, fps: float | None):
+    try:
+        subs = _pysubs2_load(path, _text_encoding(path), fps)
     except UnicodeDecodeError:
         # pysubs2.load assumes UTF-8; a cp1252/latin-1 .srt (still very common)
         # raises here. Retry decoding as latin-1, which maps every byte, so any
         # single-byte legacy encoding at least loads (mojibake beats a crash).
         try:
-            subs = pysubs2.load(str(path), encoding="latin-1")
+            subs = _pysubs2_load(path, "latin-1", fps)
         except (Pysubs2Error, UnicodeDecodeError) as exc:
             raise ValueError(f"Could not parse subtitle file {path.name}: {exc}") from exc
     except Pysubs2Error as exc:
@@ -313,6 +366,10 @@ def load_subtitles(path: str | Path) -> list[Cue]:
         # already handle (folder search skips the file; /api/search → 409) — so
         # one unparseable file doesn't surface as a 500.
         raise ValueError(f"Could not parse subtitle file {path.name}: {exc}") from exc
+    return subs
+
+
+def _cues_from(path: Path, subs) -> list[Cue]:
     # WebVTT voice tags (<v Name>) are stripped by pysubs2 — recover them from
     # the raw file, keyed by cue start time (a list per start, in file order, so
     # two cues sharing a start don't collide).
@@ -567,6 +624,18 @@ def is_machine_sidecar(path: str | Path, stem: str | None = None) -> bool:
 
 
 
+def _is_vobsub(path: Path) -> bool:
+    """True for a VobSub ``.sub``: binary MPEG program stream (pack header
+    ``00 00 01 BA``), unlike a MicroDVD ``.sub``, which is text."""
+    if path.suffix.lower() != ".sub":
+        return False
+    try:
+        with path.open("rb") as f:
+            return f.read(4) == b"\x00\x00\x01\xba"
+    except OSError:
+        return False
+
+
 def _sidecar_candidates(video_path: Path, siblings: list[Path] | None = None) -> list[Path]:
     """All sidecar subtitle/transcript files for a video: ``<stem>.<…>.<ext>``.
 
@@ -594,6 +663,8 @@ def _sidecar_candidates(video_path: Path, siblings: list[Path] | None = None) ->
         if p.name.lower().startswith(prefix)
         and p.suffix.lower() in SUBTITLE_EXTS
         and not p.name.lower().endswith((".info.json", ".metadata.json"))
+        # A DVD VobSub .sub is images (its .idx beside it), not a MicroDVD text file.
+        and not _is_vobsub(p)
         # A machine transcript copied into the library is not the file's subtitles.
         and not is_machine_sidecar(p, video_path.stem)
     ]
@@ -666,8 +737,11 @@ IMAGE_SUBTITLE_CODECS = frozenset({
 
 
 def is_text_subtitle(t) -> bool:
-    """True when a track is a text subtitle (extractable to SRT/VTT)."""
-    return (getattr(t, "codec", "") or "").lower() not in IMAGE_SUBTITLE_CODECS
+    """True when a track is a text subtitle (extractable to SRT/VTT). A track ffprobe
+    can't name (``unknown``: e.g. CEA-608 captions muxed as their own stream) can't be
+    extracted either, so it doesn't count as text."""
+    codec = (getattr(t, "codec", "") or "").lower()
+    return codec not in IMAGE_SUBTITLE_CODECS and codec != "unknown"
 
 
 # Default subtitle-language preference for auto-selection (B14). "en" matches
@@ -784,7 +858,7 @@ def resolve_subtitles(
     if track is None:
         sidecar = find_sidecar(video, langs)
         if sidecar:
-            return ResolvedSubtitles(load_subtitles(sidecar), sidecar)
+            return ResolvedSubtitles(load_subtitles(sidecar, video), sidecar)
 
     tracks = list_embedded_tracks(video)
     if not tracks:

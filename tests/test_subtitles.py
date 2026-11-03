@@ -544,3 +544,56 @@ def test_list_embedded_tracks_garbage_json_is_clean_error(tmp_path):
                       return_value=MagicMock(returncode=0, stdout="not json", stderr="")):
         with pytest.raises(RuntimeError):
             list_embedded_tracks(Path("movie.mkv"))
+
+
+# --- files the library index used to fail on every run -------------------------
+
+def test_unknown_codec_track_is_not_text():
+    """ffprobe names some caption streams "unknown": they can't be extracted as text."""
+    assert not subtitles.is_text_subtitle(_trk(0, codec="unknown"))
+    assert subtitles.is_text_subtitle(_trk(0, codec="mov_text"))
+
+
+def test_find_sidecar_skips_vobsub_sub(tmp_path):
+    """A DVD VobSub .sub (binary, MPEG pack header) is images, not a text sidecar."""
+    video = tmp_path / "movie.avi"
+    video.write_bytes(b"")
+    (tmp_path / "movie.sub").write_bytes(b"\x00\x00\x01\xba" + b"\x00" * 60)
+    assert find_sidecar(video) is None
+
+
+def test_find_sidecar_keeps_microdvd_sub(tmp_path):
+    video = tmp_path / "movie.avi"
+    video.write_bytes(b"")
+    sub = tmp_path / "movie.sub"
+    sub.write_text("{0}{25}Hello there.\n")
+    assert find_sidecar(video) == sub
+
+
+def test_load_utf16_srt(tmp_path):
+    """Windows tools save .srt as UTF-16 with a byte-order mark."""
+    srt = tmp_path / "movie.srt"
+    srt.write_bytes("1\r\n00:00:01,000 --> 00:00:02,000\r\nGod bless us, every one!\r\n"
+                    .encode("utf-16"))
+    assert [c.text for c in load_subtitles(srt)] == ["God bless us, every one!"]
+
+
+def test_load_srt_that_also_looks_like_tmp(tmp_path):
+    """An SRT whose text also matches TMP's "h:mm:ss:" lines is read by its extension."""
+    srt = tmp_path / "x.srt"
+    srt.write_text("1\n00:00:01,000 --> 00:00:02,000\nHi.\n\n"
+                   "2\n00:00:03,000 --> 00:00:04,000\n0:00:05:Oh.\n")
+    assert [c.text for c in load_subtitles(srt)][0] == "Hi."
+
+
+def test_load_microdvd_without_fps_uses_the_videos(tmp_path):
+    sub = tmp_path / "movie.sub"
+    sub.write_text("{25}{50}Hello there.\n")
+    with pytest.raises(ValueError):
+        load_subtitles(sub)
+    rate = [subtitles.StreamInfo(kind="video", type_index=0, codec="h264", language=None,
+                                 title=None, channels=None, channel_layout=None,
+                                 frame_rate=25.0)]
+    with patch.object(subtitles, "list_streams", return_value=rate):
+        cues = load_subtitles(sub, tmp_path / "movie.avi")
+    assert cues[0].start == 1.0 and cues[0].text == "Hello there."

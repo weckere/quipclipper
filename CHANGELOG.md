@@ -25,6 +25,12 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 
 - An audiobook with an Audible `<name>.metadata.json` beside it is no longer read as having a
   JSON transcript: indexing failed on every such book instead of noting it has no subtitles.
+- Indexing no longer fails on every run for files with subtitles it can't use or could not
+  read: an embedded track ffprobe calls `unknown` counts as no text (and leaves the picker), a
+  DVD VobSub `.sub` is no longer taken for a text sidecar, and a file with neither is noted as
+  having no subtitles. A UTF-16 `.srt` is decoded, an `.srt` that also looks like another
+  format is read as SRT, and a MicroDVD `.sub` that doesn't give its frame rate uses the
+  video's.
 
 ## [0.6.0] - 2026-11-01
 

@@ -2885,7 +2885,11 @@ const IMAGE_SUBTITLE_CODECS = new Set([
   "hdmv_pgs_subtitle", "pgssub", "dvd_subtitle", "dvdsub",
   "dvb_subtitle", "dvbsub", "xsub",
 ]);
-const isTextSubtitle = (t) => !IMAGE_SUBTITLE_CODECS.has((t.codec || "").toLowerCase());
+// A track ffprobe can't name ("unknown") can't be extracted either (is_text_subtitle).
+const isTextSubtitle = (t) => {
+  const codec = (t.codec || "").toLowerCase();
+  return !IMAGE_SUBTITLE_CODECS.has(codec) && codec !== "unknown";
+};
 
 const CHAN_LABELS = {
   front: "Front (L/R)", center: "Center", lfe: "LFE",
