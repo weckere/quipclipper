@@ -549,8 +549,9 @@ def test_list_embedded_tracks_garbage_json_is_clean_error(tmp_path):
 # --- files the library index used to fail on every run -------------------------
 
 def test_unknown_codec_track_is_not_text():
-    """ffprobe names some caption streams "unknown": they can't be extracted as text."""
+    """ffprobe can't name some caption streams: they can't be extracted as text."""
     assert not subtitles.is_text_subtitle(_trk(0, codec="unknown"))
+    assert not subtitles.is_text_subtitle(_trk(0, codec="?"))  # no codec_name at all
     assert subtitles.is_text_subtitle(_trk(0, codec="mov_text"))
 
 

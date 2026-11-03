@@ -736,12 +736,15 @@ IMAGE_SUBTITLE_CODECS = frozenset({
 })
 
 
+_UNNAMED_CODECS = frozenset({"?", "unknown"})
+
+
 def is_text_subtitle(t) -> bool:
     """True when a track is a text subtitle (extractable to SRT/VTT). A track ffprobe
-    can't name (``unknown``: e.g. CEA-608 captions muxed as their own stream) can't be
-    extracted either, so it doesn't count as text."""
+    can't name (no ``codec_name``, read as ``?``; ``unknown`` in its plain output: e.g.
+    iTunes closed captions) can't be extracted either, so it doesn't count as text."""
     codec = (getattr(t, "codec", "") or "").lower()
-    return codec not in IMAGE_SUBTITLE_CODECS and codec != "unknown"
+    return codec not in IMAGE_SUBTITLE_CODECS and codec not in _UNNAMED_CODECS
 
 
 # Default subtitle-language preference for auto-selection (B14). "en" matches
