@@ -20,6 +20,13 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   screen readers. Behind it: `GET /api/media/audio?path=&start=&end=`, a small audio-only
   excerpt (mono AAC, at most 120 s) that ffmpeg makes from just that range, and the CLI command
   `item.listen PATH --start --end [--out-dir DIR | --play]`.
+- Every dialogue search result also has a Send to LeadStinger button, beside Play on Jellyfin:
+  one line goes straight to LeadStinger as a tile from the results, without opening the file or
+  ticking it for the batch bar. It is what ticking that line alone and Clip selected with the
+  toggle on does: the line with the workspace's Before/After padding as the tile's handles (the
+  excerpt Listen plays), by link (`leadstinger.quip`), or as a one-tile set file to download
+  when the server can't name its address (`leadstinger.set`). The row's status slot says it was
+  sent, with an "open again" link, or why it failed.
 
 ### Fixed
 

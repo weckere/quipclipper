@@ -46,7 +46,7 @@ def test_in_video_search_and_keyframe_probes_check_the_item():
 
 
 @pytest.mark.parametrize("name", ["pollBatch", "pollHitClip", "pollClipJob",
-                                  "runLeadStingerBatch", "sendLeadStingerLink"])
+                                  "makeLeadStingerSet", "sendLeadStingerLink"])
 def test_job_pollers_stop_when_the_job_is_gone(name):
     assert "404" in _function(name), f"{name} polls a cleared job forever"
 

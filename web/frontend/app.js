@@ -1079,6 +1079,7 @@ async function dialogueSearch(query, folders) {
           `<button type="button" class="mark-icon-btn make-clip-btn hit-clip" data-action="clip.create" title="Cut a clip of this line with the bar's options" aria-label="Clip the line at ${hit.start_ts}"><span class="scissors" aria-hidden="true">✂</span></button>` +
           `<button type="button" class="mark-icon-btn hit-link" data-action="item.link" title="Copy a link to this line: it opens the file here with the line selected" aria-label="Copy a link to the line at ${hit.start_ts}">${iconSvg("link")}</button>` +
           (playOnOffered(hit.path) ? `<button type="button" class="mark-icon-btn hit-play-on" data-action="jellyfin.play" aria-haspopup="dialog" aria-expanded="false" aria-controls="play-on-pop" title="Play on a Jellyfin client (a TV app, Jellyfin in a browser) from a second before this line" aria-label="Play the line at ${hit.start_ts} on a Jellyfin client">${iconSvg("play-on")}</button>` : "") +
+          `<button type="button" class="mark-icon-btn hit-ls" data-action="leadstinger.quip leadstinger.set" title="${HIT_LS_TITLE}" aria-label="Send the line at ${hit.start_ts} to LeadStinger">${iconSvg("leadstinger")}</button>` +
           `<span class="hit-status" data-action="job.get"></span>` +
         `</div>`;
       // Checkbox drives the batch bar (and carries the data the batch bodies need).
@@ -1104,6 +1105,7 @@ async function dialogueSearch(query, folders) {
         e.stopPropagation();
         openPlayOn(e.currentTarget, hit.path, playOnAt(hit.start), hit.text);
       };
+      li.querySelector(".hit-ls").onclick = (e) => { e.stopPropagation(); sendHitToLeadStinger(hit, e.currentTarget, statusEl); };
       const open = () => openItem(hit.path, hit.file, {
         searchQuery: query,
         seekTo: hit.start,
@@ -6336,54 +6338,89 @@ async function runLeadStingerBatch(prefix, onDone) {
   if (items.length === 1 && appConfig.link_server) {
     // One line or clip goes straight into LeadStinger by link; several make a set file.
     await sendLeadStingerLink(items[0], status);
-    btn.disabled = false;
-    if (onDone) onDone();
-    return;
+  } else {
+    await makeLeadStingerSet(items, status);
   }
-  status.textContent = "Making a LeadStinger set…";
-  let job;
-  try {
-    job = await postJSON("/api/leadstinger/set", { items: items.map(({ clip, ...it }) => it) });
-  } catch (err) {
-    status.textContent = `LeadStinger set failed: ${err.message}`;
-    btn.disabled = false;
-    return;
-  }
-  const tick = async () => {
-    let j;
-    try {
-      j = await getJSON(`/api/jobs/${job.job_id}`);
-    } catch (err) {
-      if (err.status === 404) {  // cleared from the Jobs list
-        status.textContent = "LeadStinger set cleared from the Jobs list.";
-        btn.disabled = false;
-        return;
-      }
-      setTimeout(tick, 1500);
-      return;
-    }
-    if (j.status === "done" && j.files && j.files.length) {
-      const file = j.files[0].name;
-      const href = `/api/jobs/${encodeURIComponent(job.job_id)}/download/${encodeURIComponent(file)}`;
-      const link = j.result && j.result.link;
-      if (link) {
-        launchLeadStinger(link, status, lsSetWhat(file));
-        status.insertAdjacentHTML("beforeend", ` · or <a data-action="job.download" href="${escapeHtml(href)}" download title="Download the set file to import it in LeadStinger by hand">download the set file</a>`);
-      } else {
-        status.innerHTML = `LeadStinger set ready: <a data-action="job.download" href="${escapeHtml(href)}" download title="Download the set file again">${escapeHtml(file)}</a>`;
-        status.querySelector("a").click();
-      }
-      btn.disabled = false;
-      if (onDone) onDone();
-    } else if (j.status === "failed" || j.status === "cancelled") {
-      status.textContent = `LeadStinger set failed: ${j.error || j.status}`;
-      btn.disabled = false;
-    } else {
-      status.textContent = `Making a LeadStinger set… ${j.progress || ""}`;
-      setTimeout(tick, 1000);
-    }
+  btn.disabled = false;
+  if (onDone) onDone();
+}
+
+/** One set job for `items`, reported in `status`; settles when the set is sent, downloaded
+ *  or failed. The job's link (M25) opens the set in LeadStinger, the download staying in the
+ *  status for a LeadStinger too old to take a set by link; without a link the download
+ *  starts. This is also the row button's fallback when the server can't name its address. */
+function makeLeadStingerSet(items, status) {
+  return new Promise((resolve) => {
+    status.textContent = "Making a LeadStinger set…";
+    postJSON("/api/leadstinger/set", { items: items.map(({ clip, ...it }) => it) }).then((job) => {
+      const tick = async () => {
+        let j;
+        try {
+          j = await getJSON(`/api/jobs/${job.job_id}`);
+        } catch (err) {
+          if (err.status === 404) {  // cleared from the Jobs list
+            status.textContent = "LeadStinger set cleared from the Jobs list.";
+            resolve();
+            return;
+          }
+          setTimeout(tick, 1500);
+          return;
+        }
+        if (j.status === "done" && j.files && j.files.length) {
+          const file = j.files[0].name;
+          const href = `/api/jobs/${encodeURIComponent(job.job_id)}/download/${encodeURIComponent(file)}`;
+          const link = j.result && j.result.link;
+          if (link) {
+            launchLeadStinger(link, status, lsSetWhat(file));
+            status.insertAdjacentHTML("beforeend", ` · or <a data-action="job.download" href="${escapeHtml(href)}" download title="Download the set file to import it in LeadStinger by hand">download the set file</a>`);
+          } else {
+            status.innerHTML = `LeadStinger set ready: <a data-action="job.download" href="${escapeHtml(href)}" download title="Download the set file again">${escapeHtml(file)}</a>`;
+            status.querySelector("a").click();
+          }
+          resolve();
+        } else if (j.status === "failed" || j.status === "cancelled") {
+          status.textContent = `LeadStinger set failed: ${j.error || j.status}`;
+          resolve();
+        } else {
+          status.textContent = `Making a LeadStinger set… ${j.progress || ""}`;
+          setTimeout(tick, 1000);
+        }
+      };
+      tick();
+    }, (err) => {
+      status.textContent = `LeadStinger set failed: ${err.message}`;
+      resolve();
+    });
+  });
+}
+
+// Send to LeadStinger on a search result row (M26): one line goes as a tile without opening
+// the file or ticking it for the batch bar. It is what ticking that line alone and pressing
+// Clip selected with the toggle on does: the line's range with the workspace's Before/After
+// padding as the tile's handles (the same excerpt Listen plays), by link when the server can
+// name its address, else as a one-tile set file to download. The row's status slot says how
+// it went, with the server's reason when it failed.
+
+const HIT_LS_TITLE = "Send to LeadStinger: this line as a new tile, the Before/After padding " +
+  "becoming its handles";
+
+/** One search hit into LeadStinger, reporting in its row's status slot. */
+async function sendHitToLeadStinger(hit, btn, statusEl) {
+  if (btn.disabled) return;
+  const item = {
+    path: hit.path, start: hit.start, end: hit.end, title: hit.text,
+    before: clipPadBefore(), after: clipPadAfter(),
   };
-  tick();
+  btn.disabled = true;
+  btn.setAttribute("aria-busy", "true");
+  announce(appConfig.link_server ? "Sending to LeadStinger" : "Making a LeadStinger set");
+  try {
+    if (appConfig.link_server) await sendLeadStingerLink(item, statusEl);
+    else await makeLeadStingerSet([item], statusEl);
+  } finally {
+    btn.disabled = false;
+    btn.removeAttribute("aria-busy");
+  }
 }
 
 /** Send to LeadStinger with no public URL: the selection becomes a one-tile LeadStinger set.

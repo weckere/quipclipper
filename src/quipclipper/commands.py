@@ -671,7 +671,8 @@ COMMANDS: tuple[Command, ...] = (
                     *_JOB_FOLLOW, *_OPEN_LINK),
             mode="client", response="job",
             ui="Send to LeadStinger button beside Make clip (when the server can't name "
-               "its own address), or the toggle beside Clip / Export selected"),
+               "its own address), the toggle beside Clip / Export selected, or the Send to "
+               "LeadStinger button on a search result row (no address: a one-tile set)"),
     Command("leadstinger.send", "Put the clips on stdin straight into LeadStinger on this "
             "machine: a new set, or appended to an existing one with --set.", None, None,
             params=(Param("name", "str", "The new set's name (ignored with --set). "
@@ -712,8 +713,8 @@ COMMANDS: tuple[Command, ...] = (
                           "default: its current set).", where=BODY),
                     *_OPEN_LINK),
             mode="client", response="job",
-            ui="Send to LeadStinger button beside Make clip, or the toggle with Clip / "
-               "Export selected on one line"),
+            ui="Send to LeadStinger button beside Make clip, the toggle with Clip / Export "
+               "selected on one line, or the Send to LeadStinger button on a search result row"),
     Command("leadstinger.link", "The leadstinger://quip link for a clip already in the clips "
             "library, opened here so LeadStinger downloads it into a new tile (a set file, "
             ".lsset: its tiles, as a set; no --title, --start, --end or --set). The server it "

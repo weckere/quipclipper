@@ -100,7 +100,8 @@ playhead. Below it, the home's Dialogue index card indexes the whole library.
 Before/After padding and sends it to LeadStinger as a new tile, the padding becoming the
 tile's handles. Tick several lines with the Send to LeadStinger toggle and they go in
 together as a set of tiles; the set file stays there to download, for a LeadStinger that
-can't take a set by link yet.
+can't take a set by link yet. A dialogue search result has the same cart button beside Play
+on Jellyfin, so one line goes straight to LeadStinger from the results.
 
 <img src="docs/screenshots/send-to-leadstinger.png" width="880" alt="The Selection panel with the pointer on the Send to LeadStinger button and its tooltip showing">
 
