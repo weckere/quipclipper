@@ -11,6 +11,16 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 
 ## [Unreleased]
 
+### Audio preview in search results (M26)
+
+- Every dialogue search result has a Listen button (play / stop, mouse and keyboard): it plays
+  the line's audio right there, widened by the workspace's Before/After padding, without
+  opening the file in the workspace. One preview plays at a time (starting another row stops
+  the first), a new search or opening a file stops it, and a failure is said in the row and to
+  screen readers. Behind it: `GET /api/media/audio?path=&start=&end=`, a small audio-only
+  excerpt (mono AAC, at most 120 s) that ffmpeg makes from just that range, and the CLI command
+  `item.listen PATH --start --end [--out-dir DIR | --play]`.
+
 ## [0.6.0] - 2026-11-01
 
 ### Hover text and accessibility (M16)

@@ -2065,6 +2065,31 @@ def _run_client(c: Context, cmd: reg.Command, v: dict) -> Any:
     raise CliError(f"{cmd.id} has no client handler", code="internal")
 
 
+# item.listen --play (M26): what plays an audio file from a terminal, first found wins.
+_PLAYERS: tuple[tuple[str, ...], ...] = (
+    ("afplay",), ("ffplay", "-nodisp", "-autoexit", "-loglevel", "error"), ("mpv", "--no-video"),
+    ("xdg-open",), ("open",),
+)
+
+
+def _client_listen(c: Context, cmd: reg.Command, v: dict) -> Any:
+    """Save the excerpt (``execute`` does), then with ``--play`` hand it to the system
+    player; without ``--out-dir`` a played excerpt goes to a temporary folder."""
+    play = bool(v.get("play"))
+    v = {k: x for k, x in v.items() if k != "play"}
+    if play and not v.get("out_dir"):
+        v["out_dir"] = tempfile.mkdtemp(prefix="quipclipper-listen-")
+    data = execute(c, cmd, v)
+    if not play:
+        return data
+    for player in _PLAYERS:
+        if shutil.which(player[0]):
+            subprocess.run([*player, data["saved"]], check=False)
+            return {**data, "played_with": player[0]}
+    raise CliError("No audio player found (afplay, ffplay, mpv, xdg-open or open); the "
+                   f"excerpt is at {data['saved']}", code="io")
+
+
 def run_command(c: Context, cmd: reg.Command, values: dict) -> Any:
     """Run any registry command from a values dict (used by generic commands and `run`)."""
     if cmd.transcription and not c.remote and not stt_enabled():
@@ -2083,6 +2108,8 @@ def run_command(c: Context, cmd: reg.Command, values: dict) -> Any:
                            code="refused", exit_code=EXIT_REFUSED)
         return _run_client(c, cmd, values)
     _reject_local_only(cmd, values)
+    if cmd.id == "item.listen":
+        return _client_listen(c, cmd, values)
     return execute(c, cmd, values)
 
 

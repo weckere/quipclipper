@@ -261,6 +261,21 @@ COMMANDS: tuple[Command, ...] = (
                           "(spans up to 60 s): where a lossless cut can start.",
                           default=False)),
             ui="Waveform strip (workspace): drawing, zoom and pan"),
+    Command("item.listen", "Hear a moment of a file: a small audio-only excerpt (mono AAC) "
+            "of START..END, saved as a file, or played here with --play. The web app's "
+            "search results play it in place (M26).", "GET", "/api/media/audio",
+            params=(Param("path", "str", "Media file or yt:<id>.", main=True, required=True),
+                    Param("start", "float", "Excerpt start in seconds.", required=True),
+                    Param("end", "float", "Excerpt end in seconds (at most 120 s after "
+                          "START).", required=True),
+                    Param("audio", "int", "Audio stream (a:N). Default: the first."),
+                    Param("out_dir", "str", "Folder to save <name>_<start>-<end>.aac into. "
+                          "Default: the current folder (with --play: a temporary one).",
+                          where=CLIENT),
+                    Param("play", "bool", "Play the excerpt here with the system player "
+                          "(afplay, ffplay, mpv or the desktop's opener) instead of keeping "
+                          "the file.", where=CLIENT, default=False)),
+            response="file", ui="Listen button on each search result row"),
     Command("item.snap", "The nearest zero crossing or quiet point to a time: where to put "
             "a cut so it starts without a click.", "GET", "/api/items/snap",
             params=(Param("path", "str", "Media file, yt:<id> or <epub>#seg=N.", main=True,

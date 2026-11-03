@@ -551,6 +551,12 @@ input[type="checkbox"].switch:disabled { cursor: default; }
 .mark-icon-btn:disabled .star { color: var(--faint); }
 /* Copy link: green for a moment once the link is on the clipboard. */
 .mark-icon-btn.copied, .mark-icon-btn.copied:hover:not(:disabled) { border-color: var(--ok); color: var(--ok); }
+/* Listen (M26): the row's play/stop button; blue while playing (blue means playback, like
+   the playhead), the icon pulsing slowly while the excerpt loads. */
+.hit-listen[data-state="playing"], .hit-listen[data-state="playing"]:hover:not(:disabled) { border-color: var(--playhead); color: var(--playhead); }
+.hit-listen[data-state="loading"] .icon { animation: listen-pulse 1.2s ease-in-out infinite; }
+@keyframes listen-pulse { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .hit-listen[data-state="loading"] .icon { animation: none; opacity: 0.5; } }
 /* Make clip is the primary action — amber. */
 .make-clip-btn { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .make-clip-btn:hover:not(:disabled) { filter: brightness(1.08); background: var(--accent); border-color: var(--accent); }

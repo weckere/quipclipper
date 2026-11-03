@@ -1311,6 +1311,105 @@ def test_transcode_not_found(tmp_path: Path) -> None:
     assert resp.status_code == 404
 
 
+# --- audio excerpt (M26: the search results' Listen button) ---
+
+
+class _FakeAudioProc:
+    """Stands in for ffmpeg writing an ADTS stream: two chunks, then EOF."""
+
+    def __init__(self) -> None:
+        self.returncode = None
+        self.killed = False
+        self.stdout = self
+
+    async def read(self, _n: int) -> bytes:
+        if self.returncode is not None:
+            return b""
+        chunk = b"\xff\xf1aac-bytes"
+        self.returncode = 0
+        return chunk
+
+    def kill(self) -> None:
+        self.killed = True
+
+    async def wait(self) -> int:
+        return self.returncode or 0
+
+
+def _fake_audio_ffmpeg(recorded: list[list[str]], procs: list[_FakeAudioProc]):
+    async def _spawn(*cmd: str, **_kw) -> _FakeAudioProc:
+        recorded.append(list(cmd))
+        proc = _FakeAudioProc()
+        procs.append(proc)
+        return proc
+
+    return _spawn
+
+
+def test_audio_excerpt_forbids_outside(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    resp = client.get("/api/media/audio", params={"path": "/etc/passwd", "start": 1, "end": 2})
+    assert resp.status_code == 403
+
+
+def test_audio_excerpt_not_found(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    resp = client.get("/api/media/audio",
+                      params={"path": str(tmp_path / "nope.mkv"), "start": 1, "end": 2})
+    assert resp.status_code == 404
+
+
+def test_audio_excerpt_rejects_an_empty_or_overlong_range(tmp_path: Path) -> None:
+    video = tmp_path / "movie.mkv"
+    video.write_bytes(b"")
+    client = _client(tmp_path)
+    for start, end in ((5, 5), (5, 4), (0, 121)):
+        resp = client.get("/api/media/audio", params={"path": str(video), "start": start, "end": end})
+        assert resp.status_code == 400, (start, end, resp.text)
+
+
+def test_audio_excerpt_streams_mono_aac_of_the_range_only(tmp_path: Path) -> None:
+    """ffmpeg seeks before opening the input, reads only the range, drops the video and
+    encodes mono AAC as ADTS; the reply streams it with a name item.listen can save."""
+    video = tmp_path / "movie.mkv"
+    video.write_bytes(b"")
+    client = _client(tmp_path)
+    cmds: list[list[str]] = []
+    procs: list[_FakeAudioProc] = []
+
+    with patch("asyncio.create_subprocess_exec", _fake_audio_ffmpeg(cmds, procs)):
+        resp = client.get("/api/media/audio",
+                          params={"path": str(video), "start": 12.5, "end": 15, "audio": 1})
+
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("audio/aac")
+    assert resp.headers["cache-control"] == "no-store"
+    assert "filename*=UTF-8''movie_12.5-15.aac" in resp.headers["content-disposition"]
+    assert resp.content == b"\xff\xf1aac-bytes"
+    cmd = cmds[0]
+    assert cmd[:5] == ["ffmpeg", "-ss", "12.5", "-i", str(video)]
+    assert cmd[cmd.index("-map") + 1] == "0:a:1?"
+    assert cmd[cmd.index("-t") + 1] == "2.5"
+    assert "-vn" in cmd
+    assert cmd[cmd.index("-ac") + 1] == "1"
+    assert cmd[cmd.index("-c:a") + 1] == "aac"
+    assert cmd[-3:] == ["-f", "adts", "-"]
+    assert procs[0].returncode == 0  # ffmpeg finished on its own: nothing to kill
+
+
+def test_audio_excerpt_defaults_to_the_first_audio_stream(tmp_path: Path) -> None:
+    video = tmp_path / "movie.mkv"
+    video.write_bytes(b"")
+    client = _client(tmp_path)
+    cmds: list[list[str]] = []
+
+    with patch("asyncio.create_subprocess_exec", _fake_audio_ffmpeg(cmds, [])):
+        resp = client.get("/api/media/audio", params={"path": str(video), "start": 0, "end": 3})
+
+    assert resp.status_code == 200
+    assert cmds[0][cmds[0].index("-map") + 1] == "0:a:0?"
+
+
 # --- HLS ---
 #
 # Desktop plays through this path too (via hls.js), so the stream-selector

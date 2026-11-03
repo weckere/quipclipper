@@ -361,6 +361,7 @@ drops matches below it; `min_score=100` keeps only verbatim lines.
 | GET | `/api/media/keyframe?path=&time=` | Nearest keyframe at/just before `time`. |
 | GET | `/api/media/transcode?path=&...` | On-the-fly transcode stream (desktop preview). |
 | GET | `/api/media/hls?path=&venc=` | HLS playlist (iOS preview). Segment/init URIs inside it point at `/api/media/hls/{token}/{name}` — clients just follow the playlist. |
+| GET | `/api/media/audio?path=&start=&end=[&audio=]` | A small audio-only excerpt of `start..end` (at most 120 s): mono AAC at 64 kb/s as an ADTS stream (`audio/aac`), video dropped, `audio` the stream (a:N, default the first). What the search results' Listen button plays in place (`item.listen` saves it; the `Content-Disposition` names the file `<stem>_<start>-<end>.aac`). Streamed as ffmpeg makes it, not cached; 400 for an empty or overlong range. |
 
 ### Clipping & jobs
 | Method | Path | Purpose |

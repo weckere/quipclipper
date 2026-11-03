@@ -995,6 +995,7 @@ async function dialogueSearch(query, folders) {
 
   const list = $("entries");
   list.innerHTML = "";
+  stopListening();  // the rows it belonged to are going away
   $("search-batch").hidden = true;
   $("hit-preview").hidden = true;
   $("browser").classList.remove("hits");
@@ -1073,6 +1074,7 @@ async function dialogueSearch(query, folders) {
         `</div>` +
         `<span class="hit-score" title="${SCORE_TITLE}">${hit.score}%</span>` +
         `<div class="hit-actions">` +
+          `<button type="button" class="mark-icon-btn hit-listen" data-action="item.listen" data-at="${hit.start_ts}" data-state="idle" aria-pressed="false" title="${LISTEN_TITLE}" aria-label="Listen to the line at ${hit.start_ts}">${iconSvg("play")}</button>` +
           `<button type="button" class="mark-icon-btn hit-bookmark" data-action="bookmark.add" title="Save this line as a bookmark" aria-label="Bookmark the line at ${hit.start_ts}"><span class="star" aria-hidden="true">★</span></button>` +
           `<button type="button" class="mark-icon-btn make-clip-btn hit-clip" data-action="clip.create" title="Cut a clip of this line with the bar's options" aria-label="Clip the line at ${hit.start_ts}"><span class="scissors" aria-hidden="true">✂</span></button>` +
           `<button type="button" class="mark-icon-btn hit-link" data-action="item.link" title="Copy a link to this line: it opens the file here with the line selected" aria-label="Copy a link to the line at ${hit.start_ts}">${iconSvg("link")}</button>` +
@@ -1090,6 +1092,7 @@ async function dialogueSearch(query, folders) {
       cb.onchange = () => updateBatchState("search");
       li.querySelector(".hit-check").onclick = (e) => e.stopPropagation();
       const statusEl = li.querySelector(".hit-status");
+      li.querySelector(".hit-listen").onclick = (e) => { e.stopPropagation(); listenHit(hit, e.currentTarget, statusEl); };
       li.querySelector(".hit-bookmark").onclick = (e) => { e.stopPropagation(); bookmarkSearchHit(hit, statusEl); };
       li.querySelector(".hit-clip").onclick = (e) => { e.stopPropagation(); clipSearchHit(hit, statusEl); };
       li.querySelector(".hit-link").onclick = (e) => {
@@ -1176,6 +1179,80 @@ async function focusHit(li, hit, open) {
     list.appendChild(row);
   }
 }
+
+// --- Listen (M26): a search result's audio in place ----------------------------------------
+// One shared <audio> (#listen-audio) plays the line's range, widened by the workspace's
+// Before/After padding, as a mono AAC excerpt from /api/media/audio: no video decode, no
+// workspace. Starting a row stops the one playing; the row's button is play and stop.
+const LISTEN_TITLE = "Listen to this line here, without opening the file";
+let listening = null;  // { btn, hit, url, statusEl } while a row's excerpt loads or plays
+
+/** The excerpt's URL: the line plus the clip bar's Before/After, never before 0. */
+function listenUrl(hit) {
+  const start = Math.max(0, hit.start - clipPadBefore());
+  const end = Math.max(start + 0.1, hit.end + clipPadAfter());
+  return `/api/media/audio?path=${encodeURIComponent(hit.path)}&start=${round6(start)}&end=${round6(end)}`;
+}
+
+/** Reflect idle | loading | playing on the row's button: icon, pressed state, names. */
+function setListenState(btn, state) {
+  btn.dataset.state = state;
+  btn.setAttribute("aria-pressed", String(state !== "idle"));
+  btn.setAttribute("aria-busy", String(state === "loading"));
+  btn.title = state === "idle" ? LISTEN_TITLE : "Stop listening";
+  btn.setAttribute("aria-label", state === "idle" ? `Listen to the line at ${btn.dataset.at}`
+    : state === "loading" ? `Loading the line at ${btn.dataset.at}` : `Stop the line at ${btn.dataset.at}`);
+  btn.innerHTML = iconSvg(state === "idle" ? "play" : "stop");
+}
+
+/** Stop the preview that is playing (if any) and put its button back to idle. */
+function stopListening() {
+  const audio = $("listen-audio");
+  audio.pause();
+  if (audio.getAttribute("src")) {
+    audio.removeAttribute("src");
+    audio.load();  // drops the stream, so the server's ffmpeg stops too
+  }
+  if (listening && listening.btn.isConnected) setListenState(listening.btn, "idle");
+  listening = null;
+}
+
+/** Play `hit`'s excerpt through the shared element; pressing the playing row's button stops it. */
+function listenHit(hit, btn, statusEl) {
+  if (listening && listening.btn === btn) { stopListening(); return; }
+  stopListening();
+  const audio = $("listen-audio");
+  const url = listenUrl(hit);
+  listening = { btn, hit, url, statusEl };
+  setListenState(btn, "loading");
+  statusEl.textContent = "";
+  audio.src = url;
+  audio.play().catch((err) => {
+    // A play() the next row's stopListening() cut short rejects with AbortError: not a failure.
+    if (listening && listening.btn === btn && err.name !== "AbortError") listenFailed(err.message);
+  });
+}
+
+/** The excerpt couldn't load or play: say why (the server's reason when it has one) in the
+ *  row's status slot and the live region, and put the button back. */
+async function listenFailed(fallback) {
+  if (!listening) return;
+  const { url, statusEl } = listening;
+  let reason = fallback || "couldn't play this line's audio";
+  try {  // the <audio> only knows it failed; the API says why (403, 404, 400)
+    const resp = await apiFetch(url, { method: "GET" });
+    if (!resp.ok) reason = (await resp.json()).detail || `${resp.status}`;
+    else if (resp.body) resp.body.cancel();
+  } catch {}
+  const msg = `Listen failed: ${reason}`;
+  if (statusEl.isConnected) statusEl.innerHTML = `<span class="job-failed" title="${escapeHtml(msg)}">✗</span>`;
+  announce(msg);
+  stopListening();
+}
+
+$("listen-audio").addEventListener("playing", () => { if (listening) setListenState(listening.btn, "playing"); });
+$("listen-audio").addEventListener("ended", () => stopListening());
+$("listen-audio").addEventListener("error", () => { if (listening) listenFailed(); });
 
 // Clip a single search hit in place; the row's status shows spinner → ⤓ download.
 async function clipSearchHit(hit, statusEl) {
@@ -2210,6 +2287,7 @@ function showItemArtwork(jf) {
 }
 
 async function openItem(path, name, opts) {
+  stopListening();  // a search preview doesn't follow into the workspace
   const { searchQuery, seekTo: seekTarget, selectWholeClip, markRange, track, fromLink } = opts || {};
   const had = document.activeElement;
   // Re-opening the file on screen (a player switch, fresh subtitles) keeps its history entry.

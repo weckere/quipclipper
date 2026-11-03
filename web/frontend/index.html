@@ -35,6 +35,9 @@
       <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71 M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></symbol>
       <!-- Play on… (M22): a screen with a play triangle, for "start this on a Jellyfin client". -->
       <symbol id="i-play-on" viewBox="0 0 24 24"><path d="M3 5 L21 5 L21 16.5 L3 16.5 Z M8 20 L16 20 M10.25 8 L14.75 10.75 L10.25 13.5 Z"/></symbol>
+      <!-- Listen (M26): a search result's audio in place; play and stop. -->
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 5 L19 12 L7 19 Z"/></symbol>
+      <symbol id="i-stop" viewBox="0 0 24 24"><path d="M6 6 L18 6 L18 18 L6 18 Z"/></symbol>
       <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4 L12 15 M7 10.5 L12 15.5 L17 10.5 M5 19.5 L19 19.5"/></symbol>
     </svg>
     <header class="app-header">
@@ -580,6 +583,9 @@
          that lands within 0.1 s of another (its spam filter) and only exempts live
          *sections*, so a count set in the same tick as a list render went unspoken. -->
     <div id="announcer" class="visually-hidden" aria-live="polite" aria-atomic="true"></div>
+    <!-- Listen (M26): the one element that plays a search result's audio excerpt in place,
+         so only one plays at a time. Never shown: the row's button is the control. -->
+    <audio id="listen-audio" preload="none" hidden></audio>
 
     <footer>
       <span id="status" data-action="server.health" class="muted">…</span>

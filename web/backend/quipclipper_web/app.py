@@ -2975,6 +2975,81 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         return await _ffmpeg_stream(cmd)
 
+    # Longest audio excerpt /api/media/audio makes (M26): a line of dialogue with some
+    # padding is seconds; the cap bounds the ffmpeg work one request can ask for.
+    AUDIO_EXCERPT_MAX = 120.0
+
+    @app.get("/api/media/audio")
+    async def audio_excerpt(
+        path: str = Query(...),
+        start: float = Query(..., ge=0),
+        end: float = Query(..., ge=0),
+        audio: int | None = Query(None, ge=0),
+    ) -> StreamingResponse:
+        """A small audio-only excerpt of ``start..end`` (M26): what the search results'
+        Listen button plays in place, without opening the file in the workspace.
+
+        ffmpeg decodes only the range (``-ss`` before ``-i``, then ``-t``), drops the
+        video (``-vn``) and encodes mono AAC at 64 kb/s as an ADTS stream, which every
+        browser's ``<audio>`` plays (Safari doesn't play Ogg/Opus). The reply is streamed
+        as ffmpeg produces it and not cached: a few seconds encode faster than they play.
+        ``audio`` picks the audio stream (a:N, default the first). A ``yt:`` reference
+        that isn't downloaded plays from its resolved audio-only URL. The
+        Content-Disposition names the file ``item.listen`` saves.
+        """
+        if end <= start:
+            raise HTTPException(status_code=400, detail="end must be after start.")
+        if end - start > AUDIO_EXCERPT_MAX:
+            raise HTTPException(status_code=400,
+                                detail=f"An excerpt is at most {AUDIO_EXCERPT_MAX:g} s long.")
+        vid = youtube_items.parse_ref(path)
+        yt_local = yt_store.video_path(vid) if vid is not None else None
+        if vid is not None and yt_local is None:
+            try:
+                meta = yt_store.meta(vid)
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail=str(exc))
+            try:
+                video_url, audio_url = await asyncio.to_thread(
+                    youtube_items.resolve_stream_urls, meta["webpage_url"])
+            except RuntimeError as exc:
+                raise HTTPException(status_code=502, detail=str(exc))
+            src = audio_url or video_url
+            stem = f"yt-{vid}"
+            cmd = ["ffmpeg", "-reconnect", "1", "-reconnect_streamed", "1",
+                   "-reconnect_delay_max", "5", "-ss", str(start), "-i", src]
+        else:
+            p = yt_local if yt_local is not None else _resolve_any(path)
+            if not p.is_file():
+                raise HTTPException(status_code=404, detail=f"Not found: {path}")
+            stem = p.stem
+            cmd = ["ffmpeg", "-ss", str(start), "-i", str(p),
+                   "-map", f"0:a:{audio or 0}?"]
+        cmd += ["-t", str(end - start), "-vn", "-sn", "-dn",
+                "-ac", "1", "-c:a", "aac", "-b:a", "64k", "-f", "adts", "-"]
+
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+
+        async def _stream():
+            assert proc.stdout is not None
+            try:
+                while True:
+                    chunk = await proc.stdout.read(64 * 1024)
+                    if not chunk:
+                        break
+                    yield chunk
+            finally:
+                if proc.returncode is None:
+                    proc.kill()
+                await proc.wait()
+
+        name = f"{stem}_{start:g}-{end:g}.aac"
+        return StreamingResponse(_stream(), media_type="audio/aac", headers={
+            "Accept-Ranges": "none", "Cache-Control": "no-store",
+            "Content-Disposition": f"inline; filename*=UTF-8''{quote(name)}",
+        })
+
     # --- HLS (iOS playback) ---------------------------------------------------
     # iOS Safari can't play progressive Matroska/Opus, raw .mkv, or a chunked
     # MP4 (it needs HTTP range support a live ffmpeg pipe can't give). HLS is its
