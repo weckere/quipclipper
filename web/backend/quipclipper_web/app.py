@@ -1669,6 +1669,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         seen = set() if seen is None else seen
         seen_books = set() if seen_books is None else seen_books
         found: list[tuple[Path, list[Path]]] = []
+        linked: dict[Path, int] = {}  # real path -> its place in `found`, met by a link
         books = bare = walked = 0
         for folder in folders:
             for d, files in _walk_dirs(folder):
@@ -1684,25 +1685,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         continue
                     # Once per real file: a linked file (a "favourites" folder of links)
                     # is the file it points at.
-                    rp = (Path(os.path.realpath(e.path)) if e.is_symlink()
-                          else Path(real_dir, name))
+                    link = e.is_symlink()
+                    rp = Path(os.path.realpath(e.path)) if link else Path(real_dir, name)
                     c = d / name
                     if ext == ".epub":
                         if rp not in seen_books and epub_items.is_epub_book(c):
                             seen_books.add(rp)
                             books += 1
                         continue
-                    if rp in seen:
+                    if rp in seen and (link or rp not in linked):
                         continue
                     # Its own sidecars (``<stem>.…``), the only siblings its lookups read.
                     prefix = os.path.splitext(low)[0] + "."
                     own = [p for n, p in subs if n.startswith(prefix)]
+                    if rp in linked:
+                        # The real file, met after a link to it: keep the real path, the
+                        # one its index entry is keyed by, whichever folder came first.
+                        found[linked.pop(rp)] = (c, own)
+                        continue
                     if ext not in VIDEO_EXTS and find_sidecar(c, siblings=own) is None:
                         if not _has_machine(c, own, stored):
                             seen.add(rp)
                             bare += 1
                             continue
                     seen.add(rp)
+                    if link:
+                        linked[rp] = len(found)
                     found.append((c, own))
         return found, books, bare
 

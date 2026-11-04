@@ -2073,9 +2073,29 @@ def test_a_running_job_that_cannot_stop_is_409_and_finishes_done(tmp_path: Path)
 
 # --- release review 2 (t-m20-review-2) -----------------------------------------------
 
-def test_folder_search_counts_a_linked_file_once(tmp_path: Path) -> None:
+@pytest.mark.parametrize("links_first", [False, True])
+def test_folder_search_counts_a_linked_file_once(tmp_path: Path, monkeypatch,
+                                                 links_first: bool) -> None:
     # SR-2: a "favourites" folder of links to episodes was searched twice (two hits at
-    # 100 for one line); 3cff628 keyed files by their folder's real path only.
+    # 100 for one line); 3cff628 keyed files by their folder's real path only. Which
+    # copy the walk met first followed the file system's listing order, and a link met
+    # first hid the indexed real file (files_scanned 0): both orders are pinned here.
+    import os
+
+    listdir = os.scandir
+
+    class _Ordered:  # os.scandir in a fixed order (the walk visits the last folder first)
+        def __init__(self, d):
+            with listdir(d) as it:
+                self.entries = sorted(it, key=lambda e: (e.name == "favourites") == links_first)
+
+        def __enter__(self):
+            return iter(self.entries)
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(os, "scandir", _Ordered)
     shows, favs = tmp_path / "shows", tmp_path / "favourites"
     shows.mkdir()
     favs.mkdir()

@@ -11,6 +11,10 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 
 ## [Unreleased]
 
+### Fixed
+
+- Folder search over a folder holding both a file and a link to it (a "favourites" folder) counted the file as not indexed when the walk met the link first, as the file system's listing order decided: the real file now always wins, so its index entry is found.
+
 ## [0.7.0] - 2026-11-04
 
 ### Audio preview in search results (M26)
