@@ -2087,13 +2087,22 @@ def test_folder_search_counts_a_linked_file_once(tmp_path: Path, monkeypatch,
     class _Ordered:  # os.scandir in a fixed order (the walk visits the last folder first)
         def __init__(self, d):
             with listdir(d) as it:
-                self.entries = sorted(it, key=lambda e: (e.name == "favourites") == links_first)
+                self.entries = iter(sorted(it, key=lambda e: (e.name == "favourites") == links_first))
+
+        def __iter__(self):  # iterated bare too (pathlib's walk on 3.12)
+            return self
+
+        def __next__(self):
+            return next(self.entries)
 
         def __enter__(self):
-            return iter(self.entries)
+            return self
 
         def __exit__(self, *exc):
             return False
+
+        def close(self):
+            pass
 
     monkeypatch.setattr(os, "scandir", _Ordered)
     shows, favs = tmp_path / "shows", tmp_path / "favourites"
