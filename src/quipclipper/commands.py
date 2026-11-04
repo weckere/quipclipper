@@ -390,6 +390,11 @@ COMMANDS: tuple[Command, ...] = (
             "how far the last run got (kept across restarts).", "GET",
             "/api/search/library/index",
             ui="Dialogue index card (library root)"),
+    Command("index.library-failures", "List every file the last library index run (or "
+            "the one running) failed on, with its reason: grouped by reason and counted, "
+            "the most common first (kept across restarts).", "GET",
+            "/api/search/library/index/failures",
+            ui="Failed files (Dialogue index card, library root)"),
     Command("index.file", "Re-index files whose subtitles changed (what the Bazarr, "
             "Sonarr and Radarr hooks call): media or subtitle files, in the caller's own "
             "paths (the server's QC_PATH_MAP maps them). Queued, each once, and re-indexed "

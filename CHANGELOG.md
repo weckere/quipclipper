@@ -11,6 +11,16 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 
 ## [Unreleased]
 
+### Index failures you can diagnose (M20)
+
+- A library (or large-folder) index run now keeps a record of every file it failed on, with
+  its reason, grouped by reason and counted, beside the last run's summary in the state dir
+  (so it survives a restart; up to 5000 files, every failure still counted). The Dialogue
+  index card on the library's home shows it under **Failed files**; the API serves it at
+  `GET /api/search/library/index/failures` (the status reply links it and adds the ten most
+  common `reasons`), and the CLI lists it with `quipclipper index.library-failures`;
+  `index.library-status` now prints the reasons instead of the first 20 files.
+
 ### Fixed
 
 - Folder search over a folder holding both a file and a link to it (a "favourites" folder) counted the file as not indexed when the walk met the link first, as the file system's listing order decided: the real file now always wins, so its index entry is found.

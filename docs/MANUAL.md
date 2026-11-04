@@ -204,8 +204,10 @@ done, the file in hand, a rough time left; first, while it looks for files, the 
 files found so far); **Cancel** stops it at any point, and the files done so far stay
 indexed. Starting it again picks up where it stopped, after a cancel or a server
 restart alike: files already indexed, or known to have no subtitles, are skipped. The home
-card also says how the last run ended. In the CLI, `quipclipper index.library-status`
-shows the same.
+card also says how the last run ended; when files failed, **Failed files** under it lists
+every one with its reason, grouped by reason, the most common first. In the CLI,
+`quipclipper index.library-status` shows the same, and `quipclipper index.library-failures`
+lists every failed file.
 
 <a id="changed-subtitles"></a>**Subtitles that changed since indexing.** Search reads a
 file's cached subtitles only while they match its subtitle file, so a file whose subtitles

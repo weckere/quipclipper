@@ -142,7 +142,8 @@ def test_it_never_starts_on_its_own(tmp_path, monkeypatch):
         c.get("/api/search/folder/index-status", params={"path": str(media)})
         c.get("/api/search/folder", params={"path": str(media), "query": "make it so"})
         time.sleep(0.2)
-        assert c.get("/api/search/library/index").json() == {"job": None, "last": None}
+        assert c.get("/api/search/library/index").json() == {
+            "job": None, "last": None, "failures": "/api/search/library/index/failures"}
         assert c.get("/api/jobs").json()["jobs"] == []
     src = inspect.getsource(web)
     # Two submits: the library run (its POST), and the re-index hooks' drainer, which
@@ -354,3 +355,128 @@ def test_the_owner_map_is_built_without_holding_up_cache_writes(tmp_path):
         builtins.open = saved
     assert owners["/m/new.mkv"] == {"x.json"}
     assert len(owners) == 4 and reads and max(reads) <= 4096
+
+
+# --- the failure record: every failed file, grouped by reason ------------------------
+
+class _Job:
+    cancel_requested = False
+    progress = result = None
+
+
+def test_a_reason_leaves_out_the_files_own_path_so_failures_group():
+    f = Path("/m/show/ep01.mkv")
+    assert lib_index.reason(f, RuntimeError(f"ffprobe failed on {f}: Invalid data")) == \
+        "ffprobe failed on <file>: Invalid data"
+    assert lib_index.reason(f, ValueError("ep01.mkv: no text track")) == "<file>: no text track"
+    assert lib_index.reason(f, RuntimeError()) == "RuntimeError"
+    # ffprobe's stderr: pointers and offsets differ file by file, and only two lines count.
+    a = RuntimeError(f"ffprobe could not read {f}:\n[matroska,webm @ 0x5985e2deb2c0] Element "
+                     "at 0x4a ending at 0x134e09 exceeds containing master\nmore at 0x99")
+    g = Path("/m/other.mkv")
+    b = RuntimeError(f"ffprobe could not read {g}:\n[matroska,webm @ 0x60482f2be300] Element "
+                     "at 0x10 ending at 0x2 exceeds containing master\nsomething else")
+    assert lib_index.reason(f, a) == lib_index.reason(g, b) == (
+        "ffprobe could not read <file>: [matroska,webm @ 0x…] Element at 0x… ending at 0x… "
+        "exceeds containing master")
+    assert lib_index.detail(f, a).startswith("ffprobe could not read <file>:\n[matroska")
+
+
+def test_failures_are_grouped_counted_and_capped():
+    rec = lib_index.Failures(cap=3)
+    for i in range(4):
+        rec.add(Path(f"/m/{i}.mkv"), RuntimeError(f"/m/{i}.mkv: bad header"))
+    rec.add(Path("/m/z.mkv"), UnicodeDecodeError("utf-8", b"\xff", 0, 1, "bad byte"))
+    groups = rec.ranked()
+    assert [g["count"] for g in groups] == [4, 1]  # the most common first
+    assert groups[0]["reason"] == "<file>: bad header"
+    # Three files kept, all four counted; past the cap a failure is only counted.
+    assert (rec.failed, rec.kept) == (5, 3)
+    assert [e["path"] for e in groups[0]["files"]] == ["/m/0.mkv", "/m/1.mkv", "/m/2.mkv"]
+    assert groups[1]["files"] == []
+    assert rec.reasons(limit=1) == [{"reason": "<file>: bad header", "count": 4}]
+
+
+def test_a_run_keeps_every_failure_on_disk_not_a_sample(tmp_path):
+    files = [(Path(f"/m/{i:03d}.mkv"), "not_indexed") for i in range(60)]
+
+    def index(f):
+        n = int(f.stem)
+        if n % 3 == 0:
+            return "indexed"
+        raise RuntimeError(f"could not read {f}" if n % 3 == 1 else "UTF-16 without a BOM")
+
+    res = lib_index.run(_Job(), paths=["/m"], scan=lambda: files, index=index,
+                        log=lib_index.RunLog(tmp_path), now=lambda: 1.0)
+    assert res["failed"] == 40 and len(res["errors"]) == lib_index.MAX_ERRORS  # older readers
+    assert res["reasons"] == [{"reason": "UTF-16 without a BOM", "count": 20},
+                              {"reason": "could not read <file>", "count": 20}]
+    # A restart reads it back from the state dir: every file, under its reason.
+    rec = lib_index.last_failures(lib_index.RunLog(tmp_path))
+    assert (rec["failed"], rec["kept"], rec["cap"], rec["paths"]) == (40, 40, 5000, ["/m"])
+    assert sum(len(g["files"]) for g in rec["groups"]) == 40
+    assert rec["groups"][1]["files"][0] == {"path": "/m/001.mkv", "error": "could not read <file>"}
+    # A new run starts a new record.
+    lib_index.run(_Job(), paths=["/m"], scan=lambda: files[:1], index=index,
+                  log=lib_index.RunLog(tmp_path), now=lambda: 2.0)
+    assert lib_index.last_failures(lib_index.RunLog(tmp_path))["groups"] == []
+
+
+def test_the_failures_endpoint_lists_them_and_survives_a_restart(tmp_path, monkeypatch):
+    media = _library(tmp_path, subtitled=1, silent=0)
+    for name in ("a.mkv", "b.mkv", "c.mkv"):
+        (media / name).write_bytes(b"")
+    c = _client(tmp_path, media, monkeypatch)
+
+    def tracks(video):
+        raise RuntimeError(f"ffprobe could not read {video}")
+
+    monkeypatch.setattr(sub_cache_mod, "list_embedded_tracks", tracks)
+    monkeypatch.setattr("quipclipper.subtitles.list_embedded_tracks", tracks)
+    _wait(c, c.post("/api/search/library/index").json()["job_id"])
+    status = c.get("/api/search/library/index").json()
+    assert status["failures"] == "/api/search/library/index/failures"
+    assert status["last"]["reasons"] == [{"reason": "ffprobe could not read <file>", "count": 3}]
+    rec = c.get(status["failures"]).json()
+    assert rec["failed"] == 3 and len(rec["groups"]) == 1
+    assert [Path(e["path"]).name for e in rec["groups"][0]["files"]] == ["a.mkv", "b.mkv", "c.mkv"]
+    # Another server on the same state dir (a restart) serves the same record.
+    again = _client(tmp_path, media, monkeypatch)
+    assert again.get("/api/search/library/index/failures").json()["groups"] == rec["groups"]
+
+
+def test_a_run_from_before_the_record_groups_its_sample(tmp_path, monkeypatch):
+    media = _library(tmp_path)
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "library_index.json").write_text(json.dumps(
+        {"paths": [str(media)], "status": "done", "failed": 1128, "errors": [
+            {"path": "/m/a.mkv", "error": "Invalid data in /m/a.mkv"},
+            {"path": "/m/b.mkv", "error": "Invalid data in /m/b.mkv"},
+            # Cut at 300 characters by the old sample: the fragment doesn't split the group.
+            {"path": "/m/c.mkv", "error": "Invalid data in /m/c.mkv\n" + "x" * 280},
+            {"path": "/m/d.mkv", "error": "Invalid data in /m/d.mkv\n" + "y" * 280}]}))
+    c = _client(tmp_path, media, monkeypatch)
+    rec = c.get("/api/search/library/index/failures").json()
+    assert (rec["failed"], rec["kept"]) == (1128, 4)
+    assert [(g["reason"], g["count"]) for g in rec["groups"]] == [("Invalid data in <file>", 4)]
+    # Before any run at all: an empty record.
+    fresh = _client(tmp_path / "other", _library(tmp_path / "other"), monkeypatch)
+    assert fresh.get("/api/search/library/index/failures").json()["groups"] == []
+
+
+def test_the_cli_lists_every_failed_file_by_reason(capsys):
+    from quipclipper import cli
+
+    cli._fmt_lib_failures({"failed": 3, "cap": 1, "paths": ["/m"], "groups": [
+        {"reason": "bad header", "count": 2, "files": [{"path": "/m/a.mkv", "error": "x"}]},
+        {"reason": "UTF-16", "count": 1, "files": []}]})
+    out = capsys.readouterr().out
+    assert "3 failed, 2 reasons, under: /m" in out
+    assert "2 × bad header\n  /m/a.mkv\n  … and 1 more" in out and "1 × UTF-16" in out
+    cli._fmt_lib_index({"job": None, "last": {
+        "status": "done", "failed": 3, "paths": ["/m"],
+        "reasons": [{"reason": "bad header", "count": 2}], "errors": [{"path": "/m/a.mkv"}]}})
+    out = capsys.readouterr().out
+    assert "failed: 2 × bad header" in out and "/m/a.mkv" not in out
+    assert "quipclipper index.library-failures" in out

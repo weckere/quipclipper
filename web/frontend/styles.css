@@ -706,6 +706,11 @@ footer { padding: 2rem 1.25rem; font-size: 0.8rem; }
 .reindex-link:hover { color: var(--accent-text); text-decoration: underline; }
 .reindex-link:disabled { opacity: 0.5; cursor: default; }
 .reindex-status { font-size: 0.8rem; }
+.lib-failures summary { cursor: pointer; color: var(--accent-text); width: max-content; }
+.lib-failures .lib-fail-group { margin: 0.25rem 0 0 0.75rem; }
+.lib-failures .lib-fail-group summary { color: inherit; width: auto; overflow-wrap: anywhere; }
+.lib-failures ul { margin: 0.15rem 0 0.35rem; padding-left: 1.25rem; max-height: 16rem; overflow-y: auto; }
+.lib-failures li { overflow-wrap: anywhere; }
 
 /* ---- subtitle script view ------------------------------------------------------------------- */
 .script-wrap { margin-top: 0.75rem; }

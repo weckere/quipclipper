@@ -180,6 +180,11 @@
               <p id="fetch-folder-status" class="muted reindex-status" hidden></p>
               <p id="stt-folder-status" class="muted reindex-status" role="status" hidden></p>
               <p id="lib-index-status" class="muted reindex-status" data-action="index.library-status" role="status" hidden></p>
+              <!-- Every file the last run failed on, grouped by reason; loaded when opened. -->
+              <details id="lib-index-failures" class="reindex-status lib-failures" data-action="index.library-failures" hidden>
+                <summary id="lib-index-failures-summary">Failed files</summary>
+                <div id="lib-index-failures-list"></div>
+              </details>
               <p id="changes-badge" class="reindex-status" data-action="index.changes" role="status" hidden><span id="changes-badge-chip" class="badge idx-changed"></span> <span id="changes-badge-note" class="muted"></span></p>
               <!-- Not a live region: the count isn't read out on every visit; a delete's result is
                    announced once, by the button. -->

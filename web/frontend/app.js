@@ -1641,6 +1641,9 @@ $("changes-reindex-btn").addEventListener("click", async () => {
 let libIndexTimer = null;
 let libIndexCheckId = 0;
 let libIndexJob = null;  // id of the running job, for Cancel
+const LIB_FAIL_SHOWN = 200;  // files listed per reason; the CLI lists them all
+let libFailuresCount = 0;
+let libFailuresLoaded = -1;  // the count the list was loaded at
 
 function libIndexReset() {
   clearTimeout(libIndexTimer);
@@ -1650,6 +1653,7 @@ function libIndexReset() {
   $("lib-index-btn").hidden = true;
   $("lib-index-cancel").hidden = true;
   $("lib-index-status").hidden = true;
+  libFailuresShow(0);
   $("changes-badge").hidden = true;
   $("changes-reindex-btn").hidden = true;
   sttOrphansCheckId++;
@@ -1734,6 +1738,61 @@ function libRunSummary(r) {
   return `${parts.join(", ")} (${r.already || 0} of ${plural(r.files || 0, "file")} were done already)`;
 }
 
+// The card's "Failed files" disclosure: every file the last run (or the running one)
+// failed on, grouped by reason, the most common first (GET …/library/index/failures).
+// Loaded when it opens, and again when it is open and the count moves.
+
+function libFailuresShow(n) {
+  const box = $("lib-index-failures");
+  libFailuresCount = n;
+  box.hidden = !n;
+  if (!n) { box.open = false; libFailuresLoaded = -1; $("lib-index-failures-list").replaceChildren(); return; }
+  $("lib-index-failures-summary").textContent = `Failed files (${n}): why, file by file`;
+  if (box.open && libFailuresLoaded !== n) loadLibFailures();
+}
+
+async function loadLibFailures() {
+  const list = $("lib-index-failures-list");
+  const want = libFailuresCount;
+  libFailuresLoaded = want;
+  let data;
+  try { data = await getJSON("/api/search/library/index/failures"); } catch (err) {
+    list.textContent = `Couldn't load them: ${err.message}`;
+    libFailuresLoaded = -1;
+    return;
+  }
+  if (want !== libFailuresCount) return;  // a newer count asks for its own load
+  const out = [];
+  for (const g of data.groups || []) {
+    const group = document.createElement("details");
+    group.className = "lib-fail-group";
+    const sum = document.createElement("summary");
+    sum.textContent = `${g.count} × ${g.reason}`;
+    const ul = document.createElement("ul");
+    for (const f of (g.files || []).slice(0, LIB_FAIL_SHOWN)) {
+      const li = document.createElement("li");
+      li.textContent = f.path;
+      if (f.error) li.title = f.error;
+      ul.append(li);
+    }
+    const left = g.count - Math.min((g.files || []).length, LIB_FAIL_SHOWN);
+    if (left > 0) {
+      const li = document.createElement("li");
+      li.className = "muted";
+      li.textContent = `… and ${left} more (quipclipper index.library-failures lists every one kept)`;
+      ul.append(li);
+    }
+    group.append(sum, ul);
+    out.push(group);
+  }
+  if (!out.length) list.textContent = "The failures aren't listed (this run predates the record).";
+  else list.replaceChildren(...out);
+}
+
+$("lib-index-failures").addEventListener("toggle", () => {
+  if ($("lib-index-failures").open && libFailuresLoaded !== libFailuresCount) loadLibFailures();
+});
+
 async function refreshLibIndex() {
   clearTimeout(libIndexTimer);
   const myId = ++libIndexCheckId;
@@ -1755,14 +1814,16 @@ async function refreshLibIndex() {
     btn.hidden = true;
     $("index-btn").disabled = true;  // one index at a time on this server
     if (home && r.todo) setIndexBar((r.done || 0) / r.todo);
+    libFailuresShow(home ? r.failed || 0 : 0);
     libIndexTimer = setTimeout(refreshLibIndex, document.hidden ? 10000 : 3000);
     return;
   }
   cancel.hidden = true;
   $("index-btn").disabled = indexBusy;
-  if (!home) { status.hidden = true; return; }
+  if (!home) { status.hidden = true; libFailuresShow(0); return; }
   setIndexBar(null);  // the run's bar, left at its last fraction
   btn.hidden = false;
+  libFailuresShow(last ? last.failed || 0 : 0);
   if (!last) { status.hidden = true; return; }
   const ended = last.finished || last.updated;
   const when = ended ? new Date(ended * 1000).toLocaleString() : "";

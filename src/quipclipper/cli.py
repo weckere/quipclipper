@@ -436,10 +436,33 @@ def _fmt_lib_index(data: dict) -> None:
     if last:
         typer.echo(("now " if job else "last run ") + _fmt_lib_run(last))
         typer.echo("  under: " + ", ".join(last.get("paths") or []))
-        for e in last.get("errors") or []:
-            typer.secho(f"  failed: {e.get('path')}: {e.get('error')}", fg="red")
+        if last.get("reasons"):
+            for g in last["reasons"]:
+                typer.secho(f"  failed: {g.get('count')} × {g.get('reason')}", fg="red")
+        else:  # a run from before runs grouped their failures
+            for e in last.get("errors") or []:
+                typer.secho(f"  failed: {e.get('path')}: {e.get('error')}", fg="red")
+        if last.get("failed"):
+            typer.echo("  every failed file: `quipclipper index.library-failures`")
     if not job and not last:
         typer.echo("No library index has run yet (start one with `quipclipper index.library`).")
+
+
+def _fmt_lib_failures(data: dict) -> None:
+    groups = data.get("groups") or []
+    if not data.get("failed"):
+        typer.echo("The last library index run failed on no files.")
+        return
+    typer.echo(f"{data['failed']} failed, {len(groups)} "
+               f"{'reason' if len(groups) == 1 else 'reasons'}, under: "
+               + ", ".join(data.get("paths") or []))
+    for g in groups:
+        typer.secho(f"{g.get('count')} × {g.get('reason')}", fg="red")
+        for e in g.get("files") or []:
+            typer.echo(f"  {e.get('path')}")
+        left = (g.get("count") or 0) - len(g.get("files") or [])
+        if left > 0:
+            typer.echo(f"  … and {left} more (past the record's {data.get('cap')} files)")
 
 
 def _fmt_index_file(data: dict) -> None:
@@ -752,6 +775,7 @@ _FORMATTERS = {
     "clip.create": _fmt_job, "clip.nowplaying": _fmt_job, "clips.backfill": _fmt_job, "youtube.add": _fmt_job, "youtube.download": _fmt_job,
     "item.fetch-subs": _fmt_job, "index.fetch-subs": _fmt_job,
     "index.library": _fmt_lib_job, "index.library-status": _fmt_lib_index,
+    "index.library-failures": _fmt_lib_failures,
     "index.file": _fmt_index_file, "index.file-status": _fmt_index_file_status,
     "index.changes": _fmt_index_changes, "index.reindex-changed": _fmt_index_file,
     "bookmark.list": _fmt_bookmarks, "clips.list": _fmt_clips,

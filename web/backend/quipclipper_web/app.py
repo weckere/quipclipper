@@ -2106,10 +2106,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/search/library/index")
     def library_index_status() -> dict:
         """The running library index job (``job``, or null) and the last run's summary
-        (``last``: kept across restarts; "interrupted" if a restart cut it short)."""
+        (``last``: kept across restarts; "interrupted" if a restart cut it short).
+        ``failures`` is where every file it failed on is listed, grouped by reason."""
         job = _lib_job()
         return {"job": _job_dict(job) if job is not None else None,
-                "last": lib_index.last_run(lib_log, live=job is not None)}
+                "last": lib_index.last_run(lib_log, live=job is not None),
+                "failures": "/api/search/library/index/failures"}
+
+    @app.get("/api/search/library/index/failures")
+    def library_index_failures() -> dict:
+        """Every file the last (or running) library index run failed on, with its reason,
+        grouped by reason and counted, the most common first (kept across restarts)."""
+        return lib_index.last_failures(lib_log)
 
     # --- re-index hooks (M20) ---------------------------------------------------------
     # Bazarr, Sonarr, Radarr (or anything) say a file's subtitles changed; the file is
