@@ -11,6 +11,8 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-04
+
 ### Audio preview in search results (M26)
 
 - Every dialogue search result has a Listen button (play / stop, mouse and keyboard): it plays
@@ -880,7 +882,8 @@ The first version, before releases were tagged. Highlights:
   guard, and an optional password gate.
 - **Deployment:** a Nix flake and NixOS module (with a VM test), and Docker images on GHCR.
 
-[Unreleased]: https://github.com/weckere/quipclipper/compare/v0.6.0...dev
+[Unreleased]: https://github.com/weckere/quipclipper/compare/v0.7.0...dev
+[0.7.0]: https://github.com/weckere/quipclipper/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/weckere/quipclipper/compare/v0.5.3...v0.6.0
 [0.5.3]: https://github.com/weckere/quipclipper/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/weckere/quipclipper/compare/v0.5.1...v0.5.2
