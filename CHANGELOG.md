@@ -11,6 +11,14 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 
 ## [Unreleased]
 
+### YouTube metadata like Pinchflat's (M6)
+
+- A YouTube download into the download folder (`QC_YOUTUBE_DIR` / `youtubeDir`) now also
+  writes the metadata files Pinchflat keeps beside a video: the thumbnail as
+  `<Title> [<id>]-thumb.jpg`, yt-dlp's `.info.json`, the `.description`, and an `.nfo` for
+  Jellyfin and Kodi (title, plot, upload date, channel, YouTube id, thumbnail, runtime,
+  categories and tags; `episodedetails` in a folder with a `tvshow.nfo`, `movie` elsewhere).
+  Remove download deletes them with the video.
 ### Index failures you can diagnose (M20)
 
 - A library (or large-folder) index run now keeps a record of every file it failed on, with

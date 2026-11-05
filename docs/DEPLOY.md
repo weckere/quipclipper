@@ -207,7 +207,7 @@ Optional settings (all off/defaulted unless set):
 | `clipsGroup` / `clipsMode` | Share `clipsDir` with other users/services (SMB export, Jellyfin library). See below. |
 | `manageClipsDir` | `false` = `clipsDir` is owned/created elsewhere (e.g. an existing SMB mount); the module won't chown/chmod it. See below. |
 | `writableMediaRoots` | Media roots the app may **write into** (bound read-write, not read-only) — so it can drop subtitle sidecars next to your videos (downloaded transcripts, subtitle backfill, and **Copy to library** of a machine transcript, which says so on a read-only root). Browsed and clipped exactly like `mediaRoots`. Use it for a library you want quipclipper to enrich (e.g. a Pinchflat/yt-dlp folder). |
-| `youtubeDir` | Where downloaded YouTube videos land (default `null` = private in the state dir). Point it at a folder — ideally under a `writableMediaRoots` entry — and each download becomes `<Title> [<id>].mp4` with a `.vtt` sidecar: a browsable, dialogue-searchable library item, visible to Jellyfin/Samba too. |
+| `youtubeDir` | Where downloaded YouTube videos land (default `null` = private in the state dir). Point it at a folder — ideally under a `writableMediaRoots` entry — and each download becomes `<Title> [<id>].mp4` with a `.vtt` sidecar: a browsable, dialogue-searchable library item, visible to Jellyfin/Samba too, with Pinchflat's metadata files beside it (`-thumb.jpg`, `.info.json`, `.description`, and an `.nfo` for Jellyfin). |
 | `subtitleLangs`, `listenAddress`, `listenPort`, `maxConcurrentJobs` | Mirror the Docker env vars `QC_SUBTITLE_LANGS` / `QC_BIND` / `QC_PORT` / `QC_MAX_CONCURRENT_JOBS`. `youtubeDir` mirrors `QC_YOUTUBE_DIR`. |
 
 The module builds the app from quipclipper's own pinned nixpkgs, so you don't

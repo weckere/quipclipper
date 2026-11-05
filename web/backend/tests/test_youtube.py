@@ -44,6 +44,9 @@ INFO = {
     "duration": 212,
     "upload_date": "20091025",
     "webpage_url": WATCH,
+    "description": "The official video.",
+    "categories": ["Music"],
+    "tags": ["rick astley", "1987"],
 }
 
 
@@ -51,6 +54,18 @@ def _outdir(args: list[str]) -> Path:
     """The -o template's directory from a stubbed yt-dlp argv."""
     tpl = args[args.index("-o") + 1]
     return Path(tpl).parent
+
+
+def _write_metadata(args: list[str], out: Path, base: str, meta: dict) -> None:
+    """The metadata files yt-dlp writes for its --write-* flags, named
+    ``<base>.<ext>`` like yt-dlp names them for the -o template."""
+    if "--write-info-json" in args:
+        (out / f"{base}.info.json").write_text(json.dumps(meta), encoding="utf-8")
+    if "--write-description" in args and meta.get("description"):
+        (out / f"{base}.description").write_text(meta["description"], encoding="utf-8")
+    if "--write-thumbnail" in args:
+        ext = args[args.index("--convert-thumbnails") + 1] if "--convert-thumbnails" in args else "webp"
+        (out / f"{base}.{ext}").write_bytes(b"fake-jpeg")
 
 
 def fake_ytdlp(*, subs_on=("--write-subs",), vtt=VTT, info=None, urls=None,
@@ -69,15 +84,16 @@ def fake_ytdlp(*, subs_on=("--write-subs",), vtt=VTT, info=None, urls=None,
         # arg after `--`), so backfilling files with different ids works.
         url = args[-1]
         vid = url.split("v=")[-1] if "v=" in url else VID
+        meta = dict(info or INFO)
+        if info is None:
+            meta["id"] = vid
         if "--merge-output-format" in args:  # full-video download
             tpl = Path(args[args.index("-o") + 1])
-            tpl.with_name(tpl.name.replace("%(ext)s", "mp4")).write_bytes(video_bytes)
+            base = tpl.name.replace(".%(ext)s", "")
+            (out / f"{base}.mp4").write_bytes(video_bytes)
+            _write_metadata(args, out, base, meta)  # the sidecars, under the temp name
             return ""
-        if "--write-info-json" in args:
-            meta = dict(info or INFO)
-            if info is None:
-                meta["id"] = vid
-            (out / f"{vid}.info.json").write_text(json.dumps(meta), encoding="utf-8")
+        _write_metadata(args, out, vid, meta)
         if any(flag in args for flag in subs_on):
             (out / f"{vid}.en.vtt").write_text(vtt, encoding="utf-8")
         return ""
@@ -906,3 +922,150 @@ def test_clip_stream_resolution_failure_502(tmp_path, monkeypatch):
     assert client.post("/api/clip", json={
         "path": REF, "start": 0, "end": 1,
     }).status_code == 502
+
+
+# --- metadata sidecars (M6 stage 3: Pinchflat parity) ------------------------------
+
+from quipclipper_web.youtube_items import build_nfo, fetch_metadata_for_file, missing_metadata
+
+NFO_INFO = {
+    "id": VID, "title": "Rick & <Roll>", "description": "Line one\nline two\x0b",
+    "upload_date": "20091025", "uploader": "Rick Astley", "duration": 212,
+    "categories": ["Music"], "tags": ["rick astley", "1987"],
+}
+
+
+def test_build_nfo_fixed_info():
+    assert build_nfo(NFO_INFO, f"V [{VID}]-thumb.jpg") == (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+        "<movie>\n"
+        "  <title>Rick &amp; &lt;Roll&gt;</title>\n"
+        "  <plot>Line one\nline two</plot>\n"         # the XML-illegal \x0b is dropped
+        "  <premiered>2009-10-25</premiered>\n"
+        "  <dateadded>2009-10-25 00:00:00</dateadded>\n"
+        "  <studio>Rick Astley</studio>\n"            # uploader stands in for a missing channel
+        f'  <uniqueid type="youtube" default="true">{VID}</uniqueid>\n'
+        f"  <thumb>V [{VID}]-thumb.jpg</thumb>\n"
+        "  <runtime>4</runtime>\n"                    # 212 s → 4 minutes
+        "  <genre>Music</genre>\n"
+        "  <tag>rick astley</tag>\n"
+        "  <tag>1987</tag>\n"
+        "</movie>\n")
+
+
+def test_build_nfo_episode_and_sparse_info():
+    nfo = build_nfo({"id": VID, "duration": 20, "upload_date": "bad"}, episode=True)
+    assert nfo.splitlines()[1:] == [
+        "<episodedetails>",
+        f"  <title>{VID}</title>",                     # the id when there's no title
+        f'  <uniqueid type="youtube" default="true">{VID}</uniqueid>',
+        "  <runtime>1</runtime>",                     # a short still runs a minute
+        "</episodedetails>",
+    ]
+
+
+def _external_store(tmp_path, monkeypatch, run=None):
+    monkeypatch.setattr(youtube_items, "_run_ytdlp", run or fake_ytdlp())
+    dl = tmp_path / "media" / "one-offs"
+    store = YouTubeStore(tmp_path / "state", download_dir=dl)
+    store.add(WATCH, ["en"])
+    return store, dl
+
+
+def test_external_download_writes_metadata_sidecars(tmp_path, monkeypatch):
+    store, dl = _external_store(tmp_path, monkeypatch)
+    vp = store.download(VID)
+    stem = vp.stem
+    assert (dl / f"{stem}-thumb.jpg").read_bytes() == b"fake-jpeg"
+    assert json.loads((dl / f"{stem}.info.json").read_text())["id"] == VID
+    assert (dl / f"{stem}.description").read_text() == "The official video."
+    nfo = (dl / f"{stem}.nfo").read_text()
+    assert nfo.splitlines()[1] == "<movie>"
+    assert "<plot>The official video.</plot>" in nfo
+    assert f"<thumb>{stem}-thumb.jpg</thumb>" in nfo
+    assert "<studio>Test Channel</studio>" in nfo
+    # Only complete files under their final names: no temps left over.
+    assert sorted(p.name for p in dl.iterdir()) == sorted(
+        f"{stem}{s}" for s in (".mp4", ".vtt", "-thumb.jpg", ".info.json", ".description", ".nfo"))
+
+
+def test_download_into_show_folder_writes_episode_nfo(tmp_path, monkeypatch):
+    store, dl = _external_store(tmp_path, monkeypatch)
+    dl.mkdir(parents=True)
+    (dl / "tvshow.nfo").write_text("<tvshow/>", encoding="utf-8")
+    vp = store.download(VID)
+    nfo = vp.with_suffix(".nfo").read_text()
+    assert "<episodedetails>" in nfo and "<aired>2009-10-25</aired>" in nfo
+
+
+def test_private_download_writes_no_metadata(store, monkeypatch):
+    run = fake_ytdlp()
+    monkeypatch.setattr(youtube_items, "_run_ytdlp", run)
+    store.add(WATCH, ["en"])
+    store.download(VID)
+    assert "--write-thumbnail" not in run.calls[-1]
+    assert sorted(p.name for p in store._item_dir(VID).iterdir()) == [
+        "info.json", "subs.vtt", "video.mp4"]
+
+
+def test_remove_download_deletes_metadata_sidecars(tmp_path, monkeypatch):
+    store, dl = _external_store(tmp_path, monkeypatch)
+    store.download(VID)
+    (dl / "unrelated.nfo").write_text("x", encoding="utf-8")
+    assert store.remove_download(VID) is True
+    assert [p.name for p in dl.iterdir()] == ["unrelated.nfo"]
+
+
+def test_fetch_metadata_for_file_writes_all_missing(tmp_path, monkeypatch):
+    run = fake_ytdlp()
+    monkeypatch.setattr(youtube_items, "_run_ytdlp", run)
+    v = tmp_path / f"My Vid [{VID}].mp4"; v.write_bytes(b"")
+    res = fetch_metadata_for_file(v)
+    assert res["status"] == "ok" and res["id"] == VID
+    assert sorted(res["written"]) == sorted(
+        f"My Vid [{VID}]{s}" for s in ("-thumb.jpg", ".info.json", ".description", ".nfo"))
+    assert "--skip-download" in run.calls[0]
+    assert missing_metadata(v) == []
+    assert v.read_bytes() == b""  # the video itself is untouched
+    # Everything there now: a second run is skipped without touching the network.
+    assert fetch_metadata_for_file(v)["status"] == "skipped"
+    assert len(run.calls) == 1
+
+
+def test_fetch_metadata_for_file_leaves_existing_sidecars(tmp_path, monkeypatch):
+    """A Pinchflat folder's own sidecars stay as they are; its -thumb.jpg
+    counts as the thumbnail and its NFO is never rewritten."""
+    monkeypatch.setattr(youtube_items, "_run_ytdlp", fake_ytdlp())
+    stem = f"s2025e010998 Pull up [{VID}]"
+    v = tmp_path / f"{stem}.mp4"; v.write_bytes(b"")
+    (tmp_path / f"{stem}-thumb.jpg").write_bytes(b"pinchflat-thumb")
+    (tmp_path / f"{stem}.nfo").write_text("<episodedetails>pinchflat</episodedetails>")
+    res = fetch_metadata_for_file(v)
+    assert sorted(res["written"]) == [f"{stem}.description", f"{stem}.info.json"]
+    assert (tmp_path / f"{stem}-thumb.jpg").read_bytes() == b"pinchflat-thumb"
+    assert (tmp_path / f"{stem}.nfo").read_text() == "<episodedetails>pinchflat</episodedetails>"
+    assert not (tmp_path / f"{stem}.jpg").exists()
+
+
+def test_fetch_metadata_from_existing_info_json_needs_no_network(tmp_path, monkeypatch):
+    def no_network(args, timeout=120):
+        raise AssertionError("yt-dlp must not run")
+    monkeypatch.setattr(youtube_items, "_run_ytdlp", no_network)
+    v = tmp_path / f"V [{VID}].mp4"; v.write_bytes(b"")
+    (tmp_path / f"V [{VID}].jpg").write_bytes(b"plain-jpg")  # a plain <stem>.jpg counts too
+    (tmp_path / f"V [{VID}].info.json").write_text(json.dumps({**NFO_INFO, "description": ""}))
+    res = fetch_metadata_for_file(v)
+    assert sorted(res["written"]) == [f"V [{VID}].description", f"V [{VID}].nfo"]
+    assert (tmp_path / f"V [{VID}].description").read_text() == ""  # marks it complete
+    assert f"<thumb>V [{VID}].jpg</thumb>" in (tmp_path / f"V [{VID}].nfo").read_text()
+
+
+def test_fetch_metadata_for_file_errors(tmp_path, monkeypatch):
+    with pytest.raises(ValueError):
+        fetch_metadata_for_file(tmp_path / "no-id.mp4")
+    v = tmp_path / f"V [{VID}].mp4"; v.write_bytes(b"")
+    monkeypatch.setattr(youtube_items.os, "access", lambda p, mode: False)
+    with pytest.raises(PermissionError):
+        fetch_metadata_for_file(v)
+
+

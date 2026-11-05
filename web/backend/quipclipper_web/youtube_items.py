@@ -25,6 +25,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from quipclipper.models import Cue
@@ -310,6 +311,171 @@ def fetch_subs_for_file(video_path: Path, langs: list[str], force: bool = False)
     return {"status": "ok", "id": vid, "lang": lang, "source": source, "sidecar": sidecar.name}
 
 
+# --- metadata sidecars (Pinchflat parity) ---------------------------------------
+
+# yt-dlp flags that write the metadata sidecars Pinchflat keeps next to a video:
+# the thumbnail (converted to jpg), the full info.json and the description.
+_METADATA_FLAGS = [
+    "--write-thumbnail", "--convert-thumbnails", "jpg",
+    "--write-info-json", "--write-description",
+]
+
+# The sidecars a video gets, as suffixes after its stem. The thumbnail is named
+# like Pinchflat's (``<stem>-thumb.jpg``, which Jellyfin and Kodi read); the .nfo
+# is generated from the info.json. yt-dlp writes the thumbnail, info.json and
+# description as ``<name>.jpg`` / ``.info.json`` / ``.description``.
+THUMB, INFO_JSON, DESCRIPTION, NFO = "-thumb.jpg", ".info.json", ".description", ".nfo"
+METADATA_SUFFIXES = (THUMB, INFO_JSON, DESCRIPTION, NFO)
+_YTDLP_SUFFIX = {THUMB: ".jpg", INFO_JSON: ".info.json", DESCRIPTION: ".description"}
+
+
+def _sidecar_path(video_path: Path, suffix: str) -> Path:
+    return video_path.with_name(video_path.stem + suffix)
+
+
+def _thumb_present(video_path: Path) -> Path | None:
+    """The video's thumbnail: ``<stem>-thumb.jpg`` or a plain ``<stem>.jpg``."""
+    for suffix in (THUMB, ".jpg"):
+        p = _sidecar_path(video_path, suffix)
+        if p.is_file():
+            return p
+    return None
+
+
+def missing_metadata(video_path: Path) -> list[str]:
+    """The metadata sidecar suffixes a video doesn't have yet."""
+    return [s for s in METADATA_SUFFIXES
+            if not (_thumb_present(video_path) if s == THUMB
+                    else _sidecar_path(video_path, s).exists())]
+
+
+def _iso_date(upload_date: object) -> str | None:
+    """yt-dlp's ``YYYYMMDD`` upload_date → ``YYYY-MM-DD`` (None if malformed)."""
+    if isinstance(upload_date, str) and re.fullmatch(r"\d{8}", upload_date):
+        return f"{upload_date[:4]}-{upload_date[4:6]}-{upload_date[6:]}"
+    return None
+
+
+def _in_show(video_path: Path) -> bool:
+    """Whether Jellyfin will read this folder as a show: a ``tvshow.nfo`` in
+    the video's folder or the one above it (a ``Season N`` folder)."""
+    return any((d / "tvshow.nfo").is_file()
+               for d in (video_path.parent, video_path.parent.parent))
+
+
+# Control characters XML 1.0 can't hold (a description may carry them).
+_XML_ILLEGAL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+
+def build_nfo(info: dict, thumb: str | None = None, episode: bool = False) -> str:
+    """A Jellyfin/Kodi NFO for a YouTube video from its yt-dlp info dict: title,
+    plot, the upload date, studio, the YouTube uniqueid, the thumbnail file
+    name, runtime in minutes, genres and tags. A ``movie`` by default; an
+    ``episodedetails`` (with ``aired`` for the date, like Pinchflat's) for a
+    video in a show folder."""
+    root = ET.Element("episodedetails" if episode else "movie")
+
+    def add(tag: str, text: object, **attrs: str) -> None:
+        if text is None or text == "":
+            return
+        el = ET.SubElement(root, tag, attrs)
+        el.text = _XML_ILLEGAL.sub("", str(text))
+
+    add("title", info.get("title") or info.get("id"))
+    add("plot", info.get("description"))
+    date = _iso_date(info.get("upload_date"))
+    add("aired" if episode else "premiered", date)
+    add("dateadded", f"{date} 00:00:00" if date else None)
+    add("studio", info.get("channel") or info.get("uploader"))
+    add("uniqueid", info.get("id"), type="youtube", default="true")
+    add("thumb", thumb)
+    duration = info.get("duration")
+    if isinstance(duration, (int, float)) and duration > 0:
+        add("runtime", max(1, round(duration / 60)))
+    for genre in info.get("categories") or []:
+        add("genre", genre)
+    for tag in info.get("tags") or []:
+        add("tag", tag)
+    ET.indent(root, space="  ")
+    return ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+            + ET.tostring(root, encoding="unicode") + "\n")
+
+
+def _write_atomic(dest: Path, text: str) -> None:
+    """Write under a hidden temp name, then rename: readers only see a whole file."""
+    tmp = dest.with_name(f".qc-tmp-{dest.name}")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(dest)
+
+
+def _install_metadata(video_path: Path, fetched: dict[str, Path],
+                      overwrite: bool = False) -> list[str]:
+    """Move fetched sidecars (suffix → temp file) into place next to
+    *video_path*, then derive what the info.json gives: the .description (when
+    yt-dlp wrote none) and the .nfo. Without *overwrite* a sidecar that already
+    exists is left alone. Returns the suffixes written."""
+    written: list[str] = []
+    for suffix in (THUMB, INFO_JSON, DESCRIPTION):
+        src = fetched.get(suffix)
+        present = _thumb_present(video_path) if suffix == THUMB else (
+            _sidecar_path(video_path, suffix) if _sidecar_path(video_path, suffix).exists()
+            else None)
+        if src is None or not src.is_file() or (present is not None and not overwrite):
+            continue
+        shutil.move(str(src), str(_sidecar_path(video_path, suffix)))
+        written.append(suffix)
+    try:
+        info = json.loads(_sidecar_path(video_path, INFO_JSON).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return written
+    desc = _sidecar_path(video_path, DESCRIPTION)
+    if not desc.exists() and isinstance(info.get("description"), str):
+        # yt-dlp skips an empty description; write it anyway, so the video
+        # counts as complete and a re-run doesn't fetch it again.
+        _write_atomic(desc, info["description"])
+        written.append(DESCRIPTION)
+    nfo = _sidecar_path(video_path, NFO)
+    if overwrite or not nfo.exists():
+        thumb = _thumb_present(video_path)
+        _write_atomic(nfo, build_nfo(info, thumb.name if thumb else None,
+                                     episode=_in_show(video_path)))
+        written.append(NFO)
+    return written
+
+
+def fetch_metadata_for_file(video_path: Path) -> dict:
+    """Backfill the metadata sidecars (thumbnail, info.json, description, NFO)
+    for a *library* video from YouTube without re-downloading the video. Only
+    sidecars that don't exist yet are written; when only the description or
+    NFO is missing they come from the existing info.json, with no network.
+    Returns ``{status: skipped|ok|none, id, written: [file names]}``.
+
+    - ``skipped`` — every sidecar is already there.
+    - ``none`` — nothing could be written (YouTube gave nothing new).
+    Raises ValueError (no id) / PermissionError (read-only folder) / RuntimeError
+    (yt-dlp failure)."""
+    vid = youtube_id_for_file(video_path)
+    if vid is None:
+        raise ValueError("No YouTube id in the file name or a sibling .info.json.")
+    missing = missing_metadata(video_path)
+    if not missing:
+        return {"status": "skipped", "id": vid, "written": []}
+    if not os.access(video_path.parent, os.W_OK):
+        raise PermissionError(
+            "That folder is read-only — add it to writableMediaRoots to backfill metadata.")
+    if set(missing) <= {DESCRIPTION, NFO} and INFO_JSON not in missing:
+        written = _install_metadata(video_path, {})  # the info.json has it all
+    else:
+        url = f"https://www.youtube.com/watch?v={vid}"
+        with tempfile.TemporaryDirectory() as td:
+            _run_ytdlp(["--no-playlist", "--skip-download", *_METADATA_FLAGS,
+                        "-o", str(Path(td) / "%(id)s"), "--", url])
+            written = _install_metadata(
+                video_path, {s: Path(td) / f"{vid}{y}" for s, y in _YTDLP_SUFFIX.items()})
+    return {"status": "ok" if written else "none", "id": vid,
+            "written": [_sidecar_path(video_path, s).name for s in written]}
+
+
 def _fs_safe(name: str) -> str:
     """A path-component-safe rendition of a title/channel for the naming template."""
     return re.sub(r"[/\\\0]", "_", name).strip() or "YouTube"
@@ -562,7 +728,8 @@ class YouTubeStore:
 
         With no configured download dir the file stays private in the item dir
         (``video.mp4``). With one, it lands as ``<Title> [<id>].mp4`` there,
-        with a ``.vtt`` transcript sidecar, and its path is recorded in
+        with a ``.vtt`` transcript sidecar and the metadata sidecars
+        (``-thumb.jpg``, ``.info.json``, ``.description``, ``.nfo``), and its path is recorded in
         info.json — so it's a browsable, dialogue-searchable library item."""
         meta = self.meta(video_id)  # KeyError for unknown ids
         with self._dl_lock(video_id):
@@ -587,6 +754,8 @@ class YouTubeStore:
             try:
                 _run_ytdlp([
                     "--no-playlist", "-f", FORMAT_EXPR, "--merge-output-format", "mp4",
+                    # Pinchflat's sidecars too, for a download Jellyfin will list.
+                    *(_METADATA_FLAGS if external else []),
                     "-o", str(tmp_tpl), "--", meta["webpage_url"],
                 ], timeout=_DOWNLOAD_TIMEOUT)
                 # --merge-output-format mp4 pins the merged output's name; the
@@ -602,6 +771,14 @@ class YouTubeStore:
                     if subs.is_file():
                         with contextlib.suppress(OSError):
                             shutil.copyfile(subs, final.with_suffix(".vtt"))
+                    # The thumbnail/info.json/description yt-dlp wrote under the
+                    # temp name, and an NFO from the info, under the final stem.
+                    # A fresh download replaces stale sidecars of an old one.
+                    with contextlib.suppress(OSError):
+                        _install_metadata(final, {
+                            s: self._download_dir / f".qc-dl-{video_id}{y}"
+                            for s, y in _YTDLP_SUFFIX.items()
+                        }, overwrite=True)
                     raw = self._raw(video_id)
                     raw["download_path"] = str(final)
                     (item_dir / "info.json").write_text(json.dumps(raw, indent=2), encoding="utf-8")
@@ -610,12 +787,15 @@ class YouTubeStore:
             return final
 
     def remove_download(self, video_id: str) -> bool:
-        """Delete the local video file + its sidecar (transcript/metadata stay)."""
+        """Delete the local video file + the sidecars written next to it (the
+        stored transcript/metadata stay)."""
         vp = self.video_path(video_id)
         if vp is None:
             return False
         vp.unlink(missing_ok=True)
-        vp.with_suffix(".vtt").unlink(missing_ok=True)  # the sidecar we wrote (external only)
+        # The sidecars we wrote (external only): transcript + metadata.
+        for suffix in (".vtt", *METADATA_SUFFIXES):
+            _sidecar_path(vp, suffix).unlink(missing_ok=True)
         raw = self._raw(video_id)
         if raw.pop("download_path", None) is not None:
             with contextlib.suppress(OSError):
