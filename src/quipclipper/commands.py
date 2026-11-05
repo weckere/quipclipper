@@ -239,6 +239,12 @@ COMMANDS: tuple[Command, ...] = (
             params=(Param("path", "str", "Media file.", main=True, required=True),)
             + _JOB_FOLLOW,
             response="job", ui="⬇ Fetch subtitles from YouTube (item)"),
+    Command("item.fetch-metadata", "Fetch a library video's missing YouTube metadata: "
+            "thumbnail, .info.json, description and .nfo (the video isn't downloaded "
+            "again; existing files stay).", "POST", "/api/media/fetch-metadata",
+            params=(Param("path", "str", "Media file.", main=True, required=True),)
+            + _JOB_FOLLOW,
+            response="job", ui="⬇ Fetch metadata from YouTube (item)"),
     Command("item.link", "A link that opens a file in the web app at a moment, with a range "
             "selected (needs QC_PUBLIC_URL on the server).", "GET", "/api/items/link",
             params=(Param("path", "str", "Media file (or yt:<id>).", main=True, required=True),
@@ -424,6 +430,12 @@ COMMANDS: tuple[Command, ...] = (
             params=(Param("path", "str", "Folder.", main=True, required=True),)
             + _JOB_FOLLOW,
             response="job", ui="⬇ Fetch missing YouTube subtitles; ✕ Cancel"),
+    Command("index.fetch-metadata", "Fetch missing YouTube metadata (thumbnail, .info.json, "
+            "description, .nfo) for every video in a folder.", "POST",
+            "/api/search/folder/fetch-metadata",
+            params=(Param("path", "str", "Folder.", main=True, required=True),)
+            + _JOB_FOLLOW,
+            response="job", ui="⬇ Fetch missing YouTube metadata; ✕ Cancel"),
     Command("index.transcribe", "Transcribe a folder's files with whisper.cpp, one after "
             "another at idle priority: whole files that have no subtitles (audio without a "
             "transcript included), or the gaps between every file's subtitle lines. Only ever "

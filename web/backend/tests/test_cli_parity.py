@@ -459,3 +459,29 @@ def test_round_trip_leadstinger_connect(served, capsys):
     assert result["opened"] is False
     assert cli.main(["leadstinger.connect", "--no-open"], transport=transport) == 0
     assert capsys.readouterr().out.strip() == result["link"]
+
+
+def test_round_trip_fetch_metadata(served, capsys, monkeypatch):
+    """item.fetch-metadata and index.fetch-metadata drive the metadata backfill (M6)."""
+    from quipclipper_web import youtube_items
+
+    vid = "dQw4w9WgXcQ"
+
+    def fake_ytdlp(args, timeout=120):
+        out = Path(args[args.index("-o") + 1]).parent
+        (out / f"{vid}.info.json").write_text(json.dumps({"id": vid, "title": "T", "description": ""}))
+        (out / f"{vid}.jpg").write_bytes(b"jpg")
+        return ""
+
+    monkeypatch.setattr(youtube_items, "_run_ytdlp", fake_ytdlp)
+    transport, media, clips, video = served
+    yt = media / f"Song [{vid}].mp4"
+    yt.write_bytes(b"")
+    code, out = _run(transport, ["item.fetch-metadata", str(yt), "--wait"], capsys)
+    assert code == 0, out
+    job = _last_json(out)
+    assert job["status"] == "done" and f"Song [{vid}].nfo" in job["result"]["written"]
+    assert (media / f"Song [{vid}]-thumb.jpg").is_file()
+
+    code, out = _run(transport, ["index.fetch-metadata", str(media)], capsys)
+    assert code == 0 and _last_json(out)["candidates"] == 0  # nothing left to fetch

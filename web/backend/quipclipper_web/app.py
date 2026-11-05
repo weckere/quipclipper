@@ -1372,11 +1372,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # A library video with a detectable YouTube id but no subtitles can have
         # its transcript backfilled from YouTube (writable roots only). The UI
         # shows the "Fetch subtitles" action off this hint.
-        if not info.get("has_sidecar") and not info.get("subtitle_tracks"):
-            yid = youtube_items.youtube_id_for_file(p)
-            if yid is not None:
+        # The same hint offers "Fetch metadata" when its thumbnail/info.json/
+        # description/NFO sidecars aren't all there (metadata_missing).
+        yid = youtube_items.youtube_id_for_file(p)
+        if yid is not None:
+            if not info.get("has_sidecar") and not info.get("subtitle_tracks"):
                 info["youtube_id"] = yid
-                info["backfill_writable"] = os.access(p.parent, os.W_OK)
+            info["backfill_writable"] = os.access(p.parent, os.W_OK)
+            info["metadata_missing"] = [
+                p.stem + s for s in youtube_items.missing_metadata(p)]
         known = _jf_known(p, False)
         if known:
             info["jellyfin"] = known  # title, series, poster (M18)
@@ -2795,6 +2799,73 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return []
 
         job = yt_jobs.submit(_do, label=f"backfill subtitles: {folder.name}",
+                             cancellable=True)
+        return {"job_id": job.id, "status": job.status.value, "candidates": len(candidates)}
+
+    # Metadata backfill (M6): thumbnail, info.json, description and NFO sidecars
+    # for id'd library videos, like the subtitle backfill above but its own
+    # endpoints: a different "needs it" test, its own job labels and results.
+    @app.post("/api/media/fetch-metadata")
+    def fetch_metadata_file(path: str = Query(...)) -> dict:
+        """Backfill one library video's missing metadata sidecars (async job)."""
+        p = _resolve(path)
+        if not p.is_file():
+            raise HTTPException(status_code=404, detail=f"Not found: {path}")
+        if youtube_items.youtube_id_for_file(p) is None:
+            raise HTTPException(
+                status_code=400, detail="No YouTube id in the file name or a sibling .info.json.")
+        if not os.access(p.parent, os.W_OK):
+            raise HTTPException(
+                status_code=400,
+                detail="That folder is read-only — add it to writableMediaRoots to backfill.")
+
+        def _do(job) -> list:
+            res = youtube_items.fetch_metadata_for_file(p)
+            job.progress = res["status"]
+            job.result = res
+            return []
+
+        job = yt_jobs.submit(_do, label=f"metadata: {p.name}")
+        return {"job_id": job.id, "status": job.status.value}
+
+    @app.post("/api/search/folder/fetch-metadata")
+    def fetch_metadata_folder(path: str = Query(...)) -> dict:
+        """Backfill the missing metadata sidecars of every YouTube-sourced video
+        in a folder (async job with progress; cancellable). Sidecars that exist
+        are never touched, so it's safe to re-run."""
+        folder = _resolve(path)
+        if not folder.is_dir():
+            raise HTTPException(status_code=400, detail=f"Not a directory: {path}")
+        if not os.access(folder, os.W_OK):
+            raise HTTPException(
+                status_code=400,
+                detail="That folder is read-only — add it to writableMediaRoots to backfill.")
+        videos, _ = _folder_videos(path)
+        candidates = [
+            v for v in videos
+            if youtube_items.youtube_id_for_file(v) is not None
+            and youtube_items.missing_metadata(v)
+        ]
+        if not candidates:
+            return {"job_id": None, "status": "done", "candidates": 0}
+
+        def _do(job) -> list:
+            fetched = failed = 0
+            total = len(candidates)
+            for i, v in enumerate(candidates):
+                if job.cancel_requested:
+                    break
+                job.progress = f"{i}/{total} · {fetched} fetched"
+                try:
+                    if youtube_items.fetch_metadata_for_file(v)["status"] == "ok":
+                        fetched += 1
+                except Exception:  # one bad video shouldn't abort the run
+                    failed += 1
+            done = "cancelled" if job.cancel_requested else "done"
+            job.progress = f"{done} · {fetched} fetched, {failed} failed of {total}"
+            return []
+
+        job = yt_jobs.submit(_do, label=f"backfill metadata: {folder.name}",
                              cancellable=True)
         return {"job_id": job.id, "status": job.status.value, "candidates": len(candidates)}
 

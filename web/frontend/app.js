@@ -32,7 +32,7 @@ async function postJSON(url, body) {
     try { detail = (await resp.json()).detail || detail; } catch {}
     throw new Error(detail);
   }
-  if (/^\/api\/(clip|youtube|media|items\/transcribe|search\/folder\/(index|fetch-subs|transcribe)|search\/library\/index|index\/(file|changes))/.test(url)) nudgeJobs();
+  if (/^\/api\/(clip|youtube|media|items\/transcribe|search\/folder\/(index|fetch-subs|fetch-metadata|transcribe)|search\/library\/index|index\/(file|changes))/.test(url)) nudgeJobs();
   return resp.json();
 }
 
@@ -564,8 +564,10 @@ async function browse(path, { fromLink = false } = {}) {
   // Reset the folder subtitle-backfill controls when entering a folder. A job
   // already running keeps going server-side; we just stop mirroring it here.
   if (fetchFolderPoll) { clearInterval(fetchFolderPoll); fetchFolderPoll = null; }
+  fetchFolderJob = null;
   sttFolderReset();
   $("fetch-folder-subs-btn").disabled = false;
+  $("fetch-folder-meta-btn").disabled = false;
   $("fetch-folder-cancel").hidden = true;
   $("fetch-folder-status").hidden = true;
   let data;
@@ -1343,6 +1345,7 @@ function showIndexScope(n) {
   $("lib-index-btn").hidden = true;
   $("reindex-folder-btn").hidden = false;
   $("fetch-folder-subs-btn").hidden = false;
+  $("fetch-folder-meta-btn").hidden = false;
   // The library home's own lines (the out-of-date badge, the last run) aren't these
   // folders': refreshLibIndex hides its status here unless a run is going.
   $("changes-badge").hidden = $("changes-reindex-btn").hidden = true;
@@ -1666,7 +1669,7 @@ function libIndexHome() {
   $("index-card").hidden = false;
   $("index-card-text").textContent = "Dialogue search reads only indexed files. Index the whole library to search all of it.";
   setIndexBar(null);
-  for (const id of ["index-btn", "reindex-folder-btn", "fetch-folder-subs-btn", "stt-folder-nosubs", "stt-folder-gaps"]) $(id).hidden = true;
+  for (const id of ["index-btn", "reindex-folder-btn", "fetch-folder-subs-btn", "fetch-folder-meta-btn", "stt-folder-nosubs", "stt-folder-gaps"]) $(id).hidden = true;
   $("lib-index-btn").hidden = false;
   refreshLibIndex();
   refreshChanges();
@@ -1969,33 +1972,41 @@ function followFolderTranscribe(id, folder) {
 $("stt-folder-nosubs").onclick = () => startFolderTranscribe("nosubs");
 $("stt-folder-gaps").onclick = () => startFolderTranscribe("gaps");
 
-// Backfill YouTube subtitles for every id'd, subtitle-less video in the folder.
+// Backfill from YouTube for every id'd video in the folder that lacks it:
+// subtitles, or the metadata sidecars (thumbnail, .info.json, description, .nfo).
+// The two share the Cancel button and status line; one runs at a time here.
 let fetchFolderJob = null;   // in-flight job id, for cancel
 let fetchFolderPoll = null;  // its poll interval (cleared when leaving the folder)
-$("fetch-folder-subs-btn").addEventListener("click", async () => {
-  if (!currentBrowsePath) return;
-  const btn = $("fetch-folder-subs-btn");
+const FOLDER_FETCH = {
+  subs: { url: "/api/search/folder/fetch-subs", none: "No YouTube videos here need subtitles.", what: "subtitles" },
+  metadata: { url: "/api/search/folder/fetch-metadata", none: "No YouTube videos here miss metadata.", what: "metadata" },
+};
+async function startFolderFetch(kind) {
+  if (!currentBrowsePath || fetchFolderJob) return;
+  const spec = FOLDER_FETCH[kind];
+  const btns = [$("fetch-folder-subs-btn"), $("fetch-folder-meta-btn")];
   const cancel = $("fetch-folder-cancel");
   const status = $("fetch-folder-status");
-  btn.disabled = true;
+  const enable = (on) => { for (const b of btns) b.disabled = !on; };
+  enable(false);
   status.hidden = false;
   status.textContent = "Scanning folder…";
   let resp;
   try {
-    resp = await postJSON(`/api/search/folder/fetch-subs?path=${encodeURIComponent(currentBrowsePath)}`, {});
+    resp = await postJSON(`${spec.url}?path=${encodeURIComponent(currentBrowsePath)}`, {});
   } catch (err) {
     status.textContent = `Failed: ${err.message}`;
-    btn.disabled = false;
+    enable(true);
     return;
   }
   if (!resp.job_id) {  // nothing to do
-    status.textContent = "No YouTube videos here need subtitles.";
-    btn.disabled = false;
+    status.textContent = spec.none;
+    enable(true);
     return;
   }
   fetchFolderJob = resp.job_id;
   cancel.hidden = false;
-  status.textContent = `Fetching subtitles for ${resp.candidates} video(s)…`;
+  status.textContent = `Fetching ${spec.what} for ${resp.candidates} video(s)…`;
   fetchFolderPoll = setInterval(async () => {
     const r = await apiFetch(`/api/jobs/${encodeURIComponent(resp.job_id)}`);
     if (!r.ok) { if (r.status === 404) { clearInterval(fetchFolderPoll); fetchFolderPoll = null; fetchFolderJob = null; } return; }
@@ -2006,12 +2017,14 @@ $("fetch-folder-subs-btn").addEventListener("click", async () => {
       fetchFolderPoll = null;
       fetchFolderJob = null;
       cancel.hidden = true;
-      btn.disabled = false;
+      enable(true);
       if (j.status === "failed") status.textContent = `Failed: ${j.error || "see server logs"}`;
       else if (j.status === "cancelled") status.textContent = "Cancelled.";
     }
   }, 2000);
-});
+}
+$("fetch-folder-subs-btn").addEventListener("click", () => startFolderFetch("subs"));
+$("fetch-folder-meta-btn").addEventListener("click", () => startFolderFetch("metadata"));
 $("fetch-folder-cancel").addEventListener("click", async () => {
   if (!fetchFolderJob) return;
   $("fetch-folder-status").textContent = "Cancelling…";
@@ -2080,6 +2093,57 @@ function wireFetchSubs(path) {
           btn.disabled = false;
         } else if (currentItem && currentItem.path === path) {
           openItem(currentItem.path, currentItem.name, {});  // reload so the script/search light up
+        }
+      } else if (j.status === "failed" || j.status === "cancelled") {
+        clearInterval(poll);
+        status.textContent = j.status === "cancelled" ? "Cancelled." : `Failed: ${j.error || "see server logs"}`;
+        btn.disabled = false;
+      }
+    }, 1500);
+  };
+}
+
+/** Wire the per-item "Fetch metadata from YouTube" action: a server job that
+ *  writes the missing thumbnail/.info.json/description/.nfo next to the video. */
+function wireFetchMeta(path, missing) {
+  const btn = $("ss-fetch-meta");
+  const status = $("ss-fetch-meta-status");
+  btn.title = `Fetch from YouTube what this video lacks: ${missing.join(", ")} (files already there are kept)`;
+  btn.disabled = false;
+  btn.onclick = async () => {
+    if (!currentItem || currentItem.path !== path || btn.disabled) return;
+    btn.disabled = true;
+    status.hidden = false;
+    status.textContent = "Fetching metadata from YouTube…";
+    let job;
+    try {
+      job = await postJSON(`/api/media/fetch-metadata?path=${encodeURIComponent(path)}`, {});
+    } catch (err) {
+      status.textContent = `Failed: ${err.message}`;
+      btn.disabled = false;
+      return;
+    }
+    const poll = setInterval(async () => {
+      const resp = await apiFetch(`/api/jobs/${encodeURIComponent(job.job_id)}`).catch(() => null);
+      if (!resp) return;  // offline for a moment: try again
+      if (!resp.ok) {
+        if (resp.status === 404) {  // cleared from the Jobs list
+          clearInterval(poll);
+          status.textContent = "";
+          btn.disabled = false;
+        }
+        return;
+      }
+      const j = await resp.json();
+      if (j.status === "done") {
+        clearInterval(poll);
+        const written = (j.result && j.result.written) || [];
+        if (written.length) {
+          status.textContent = `Wrote ${written.length} file${written.length === 1 ? "" : "s"}.`;
+          btn.hidden = true;
+        } else {
+          status.textContent = "YouTube had nothing new for this video.";
+          btn.disabled = false;
         }
       } else if (j.status === "failed" || j.status === "cancelled") {
         clearInterval(poll);
@@ -2987,6 +3051,11 @@ function renderStreamSelector(info, path, onStreamChange) {
   $("ss-fetch-subs").hidden = !canBackfill;
   $("ss-fetch-subs-status").hidden = true;
   if (canBackfill) wireFetchSubs(path);
+  // Its thumbnail/.info.json/description/.nfo can be backfilled the same way.
+  const canFetchMeta = info.backfill_writable && (info.metadata_missing || []).length > 0;
+  $("ss-fetch-meta").hidden = !canFetchMeta;
+  $("ss-fetch-meta-status").hidden = true;
+  if (canFetchMeta) wireFetchMeta(path, info.metadata_missing);
 
   let initialTrack;  // undefined => nothing to load
   if (hasSubs) {

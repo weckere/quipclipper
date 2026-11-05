@@ -19,6 +19,14 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   Jellyfin and Kodi (title, plot, upload date, channel, YouTube id, thumbnail, runtime,
   categories and tags; `episodedetails` in a folder with a `tvshow.nfo`, `movie` elsewhere).
   Remove download deletes them with the video.
+- **Fetch missing YouTube metadata** backfills those files for videos already in the library
+  that came from YouTube (an `[<id>]` in the name or a sibling `.info.json`), without
+  downloading the video again and without touching the files already there (a Pinchflat
+  folder's own thumbnails and `.nfo` stay): **⬇ Fetch metadata from YouTube** on one video,
+  or on a folder's Dialogue index card as a cancellable job. Writable folders only, like the
+  subtitle backfill. API: `POST /api/media/fetch-metadata` and
+  `POST /api/search/folder/fetch-metadata`; CLI: `item.fetch-metadata`,
+  `index.fetch-metadata`; `/api/items` lists a video's `metadata_missing`.
 ### Index failures you can diagnose (M20)
 
 - A library (or large-folder) index run now keeps a record of every file it failed on, with

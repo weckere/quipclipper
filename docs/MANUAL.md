@@ -185,7 +185,9 @@ subtitles at all are counted separately and left out. A folder of more than 500 
 indexed in the background instead (**Index N files in the background**, as the library
 index below). **Fetch missing YouTube
 subtitles** backfills transcripts for videos that came from YouTube (see
-[below](#backfilling-subtitles-for-existing-videos)). When the server has whisper.cpp,
+[below](#backfilling-subtitles-for-existing-videos)), and **Fetch missing YouTube
+metadata** their thumbnails and `.nfo` files (see
+[below](#backfilling-metadata-for-existing-videos)). When the server has whisper.cpp,
 the card also counts the files with a machine transcript and the audio files with no
 transcript yet, and offers **Transcribe files without subtitles** (whole files, audio
 included) and **Fill gaps in every file**: after you confirm, they run file after file in
@@ -483,7 +485,12 @@ From there it works like any library item:
   the app; set **`QC_YOUTUBE_DIR`** (Docker) / **`youtubeDir`** (NixOS) to a
   real folder and each download lands as `<Title> [<id>].mp4` with a `.vtt`
   sidecar — a browsable, dialogue-searchable library item, visible to Jellyfin
-  and Samba too.
+  and Samba too — and the metadata files Pinchflat keeps beside its videos:
+  the thumbnail (`<Title> [<id>]-thumb.jpg`), yt-dlp's `.info.json`, the
+  `.description`, and an `.nfo` that Jellyfin and Kodi read (title, plot,
+  upload date, channel, YouTube id, thumbnail, runtime, categories and tags;
+  an `episodedetails` NFO when the folder holds a `tvshow.nfo`, a `movie` one
+  otherwise). **Remove download** deletes all of them with the video.
 
 #### Backfilling subtitles for existing videos
 
@@ -501,6 +508,23 @@ fetched automatically across your library:
   Dialogue index card backfills every id'd, subtitle-less video in that folder as a
   background job (with progress and a Cancel button), skipping any that already
   have subtitles, so it's safe to re-run.
+
+#### Backfilling metadata for existing videos
+
+The same way, a YouTube-sourced library video can get the metadata files a
+download writes (the `-thumb.jpg` thumbnail, `.info.json`, `.description` and
+`.nfo`; see *Optional full download* above) without the video being fetched
+again. Only the files that are missing are written: a Pinchflat folder's own
+thumbnails (`-thumb.jpg` or a plain `.jpg`) and `.nfo` files are left as they
+are. When the `.info.json` is already there, a missing description and `.nfo`
+are made from it without asking YouTube.
+
+- **One video** — open it; if it's YouTube-sourced and lacks some of them, a
+  **⬇ Fetch metadata from YouTube** button appears beside the Subtitles picker
+  (its tooltip names the missing files).
+- **A whole folder** — **Fetch missing YouTube metadata** on the folder's
+  Dialogue index card does every id'd video there that lacks one, as a
+  background job with progress and **Cancel**; safe to re-run.
 
 Backfill writes sidecars *next to the videos*, so the folder must be
 writable by the app — a `writableMediaRoots` entry (NixOS) or a read-write

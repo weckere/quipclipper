@@ -1069,3 +1069,51 @@ def test_fetch_metadata_for_file_errors(tmp_path, monkeypatch):
         fetch_metadata_for_file(v)
 
 
+def test_fetch_metadata_file_endpoint(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    v = tmp_path / "media" / f"My Vid [{VID}].mp4"; v.write_bytes(b"")
+    job = client.post("/api/media/fetch-metadata", params={"path": str(v)}).json()
+    done = _wait(client, job["job_id"])
+    assert done["status"] == "done" and done["progress"] == "ok"
+    assert len(done["result"]["written"]) == 4
+    assert (tmp_path / "media" / f"My Vid [{VID}].nfo").is_file()
+    no_id = tmp_path / "media" / "no-id.mp4"; no_id.write_bytes(b"")
+    assert client.post("/api/media/fetch-metadata",
+                       params={"path": str(no_id)}).status_code == 400
+
+
+def test_fetch_metadata_folder_endpoint(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    d = tmp_path / "media" / "chan"; d.mkdir()
+    (d / f"a [{VID}].mp4").write_bytes(b"")
+    (d / f"b [{AAA}].mp4").write_bytes(b"")
+    (d / "no-id.mp4").write_bytes(b"")                       # not a candidate
+    full = f"full [{'B' * 11}]"
+    (d / f"{full}.mp4").write_bytes(b"")
+    for s in ("-thumb.jpg", ".info.json", ".description", ".nfo"):
+        (d / f"{full}{s}").write_text("keep")                # complete → skipped
+    resp = client.post("/api/search/folder/fetch-metadata", params={"path": str(d)}).json()
+    assert resp["candidates"] == 2
+    done = _wait(client, resp["job_id"])
+    assert done["status"] == "done" and done["progress"] == "done · 2 fetched, 0 failed of 2"
+    assert (d / f"a [{VID}].nfo").is_file() and (d / f"b [{AAA}]-thumb.jpg").is_file()
+    assert (d / f"{full}.nfo").read_text() == "keep"
+    again = client.post("/api/search/folder/fetch-metadata", params={"path": str(d)}).json()
+    assert again == {"job_id": None, "status": "done", "candidates": 0}
+
+
+def test_items_lists_missing_metadata(tmp_path, monkeypatch):
+    import quipclipper_web.media as media_mod
+    monkeypatch.setattr(media_mod, "item_info", lambda p, langs=None: {
+        "name": p.name, "path": str(p), "size": 0, "duration": 5.0,
+        "streams": [{"kind": "video", "index": 0}], "subtitle_tracks": [],
+        "best_track": None, "has_sidecar": True,
+    })
+    client = _client(tmp_path, monkeypatch)
+    v = tmp_path / "media" / f"Vid [{VID}].mp4"; v.write_bytes(b"")
+    (tmp_path / "media" / f"Vid [{VID}].nfo").write_text("x")
+    info = client.get("/api/items", params={"path": str(v)}).json()
+    assert "youtube_id" not in info  # it has subtitles: no subtitle backfill
+    assert info["backfill_writable"] is True
+    assert info["metadata_missing"] == [
+        f"Vid [{VID}]-thumb.jpg", f"Vid [{VID}].info.json", f"Vid [{VID}].description"]

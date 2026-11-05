@@ -479,3 +479,12 @@ def test_folder_search_says_when_it_shows_only_the_best(capsys):
     cli._fmt_matches({"matches": [{"index": 0, "text": "x", "score": 100}],
                       "count": 900, "truncated": True})
     assert "the best 1 of 900 matches" in capsys.readouterr().err
+
+
+def test_fmt_job_lists_the_metadata_files_written(capsys):
+    """item.fetch-metadata's job result prints one line per sidecar written (M6)."""
+    from quipclipper.cli import _fmt_job
+    _fmt_job({"id": "j1", "status": "done", "label": "metadata: V.mp4", "progress": "ok",
+              "result": {"status": "ok", "id": "dQw4w9WgXcQ", "written": ["V.nfo", "V-thumb.jpg"]}})
+    out = capsys.readouterr().out.splitlines()
+    assert out == ["j1  done  metadata: V.mp4", "  progress: ok", "  wrote V.nfo", "  wrote V-thumb.jpg"]

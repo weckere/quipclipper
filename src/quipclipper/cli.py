@@ -391,7 +391,10 @@ def _fmt_job(job: dict) -> None:
     for s in job.get("saved") or []:
         typer.secho(f"  saved {s}", fg="green")
     result = job.get("result")
-    if isinstance(result, dict) and "link" not in result:  # e.g. clips.backfill's counts
+    if isinstance(result, dict) and "written" in result:  # item.fetch-metadata's sidecars
+        for name in result["written"]:
+            typer.secho(f"  wrote {name}", fg="green")
+    elif isinstance(result, dict) and "link" not in result:  # e.g. clips.backfill's counts
         typer.echo("  " + ", ".join(f"{k} {v}" for k, v in result.items()))
     elif isinstance(result, dict):  # a Send to LeadStinger link (leadstinger.set, M25)
         typer.echo(f"  link: {result['link']}")
@@ -774,6 +777,7 @@ _FORMATTERS = {
     "job.get": _fmt_job, "job.wait": _fmt_job, "job.list": _fmt_jobs,
     "clip.create": _fmt_job, "clip.nowplaying": _fmt_job, "clips.backfill": _fmt_job, "youtube.add": _fmt_job, "youtube.download": _fmt_job,
     "item.fetch-subs": _fmt_job, "index.fetch-subs": _fmt_job,
+    "item.fetch-metadata": _fmt_job, "index.fetch-metadata": _fmt_job,
     "index.library": _fmt_lib_job, "index.library-status": _fmt_lib_index,
     "index.library-failures": _fmt_lib_failures,
     "index.file": _fmt_index_file, "index.file-status": _fmt_index_file_status,

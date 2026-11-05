@@ -95,7 +95,7 @@ FastAPI publishes the live schema, served behind the same gate:
 | GET | `/api/library/roots` | List configured media roots. |
 | GET | `/api/library/browse?path=` | List a folder (or an EPUB book's segments). Omit `path` for the roots. |
 | GET | `/api/library/search?query=&path=` | Filename search across the library (or under `path`). |
-| GET | `/api/items?path=&langs=` | Probe one media item: streams, duration, subtitle tracks. |
+| GET | `/api/items?path=&langs=` | Probe one media item: streams, duration, subtitle tracks. A library video with a YouTube id also carries `backfill_writable`, `metadata_missing` (the metadata sidecar names it lacks) and, when it has no subtitles, `youtube_id`. |
 | GET | `/api/items/link?path=&at=&sel=&track=` | A [deep link](#deep-links) that opens the file in the web app at `at` seconds with `sel` (`START-END`) selected: `{path, at, sel, track, link}`. 503 without `QC_PUBLIC_URL`; the path is checked like `/api/items` (403 outside the roots, 404 missing). |
 | GET | `/api/items/peaks?path=&start=&end=&bins=&audio=&keyframes=` | [Waveform](#waveform-peaks-and-snap) peaks of `start..end` on audio stream `a:audio`, mixed to mono. 202 while the overview of a long span is still being built. |
 | GET | `/api/items/snap?path=&t=&mode=&radius=&db=&audio=` | The nearest zero crossing (`mode=zero`) or quiet point (`mode=silence`) to `t`: where a cut starts cleanly. |
@@ -103,6 +103,8 @@ FastAPI publishes the live schema, served behind the same gate:
 | POST | `/api/items/subtitles/reindex?path=` | Rebuild the subtitle cache for one file. |
 | POST | `/api/media/fetch-subs?path=` | Backfill one YouTube-sourced library video's subtitles (async job — poll `job_id`). The video's id is read from its `[<id>]` filename or a sibling `.info.json`; a `.vtt` sidecar is written next to it. 400 = no id found or the folder is read-only (needs `writableMediaRoots`). Job `progress` ends `ok`/`skipped`/`none`. |
 | POST | `/api/search/folder/fetch-subs?path=` | Backfill every id'd, subtitle-less YouTube video in a folder (async job with `progress`; cancellable via `DELETE /api/jobs/{id}`). Skips videos that already have subtitles. `{job_id: null, candidates: 0}` = nothing to do. 400 = read-only folder. |
+| POST | `/api/media/fetch-metadata?path=` | Backfill one YouTube-sourced library video's missing metadata sidecars without downloading the video again (async job — poll `job_id`): `<stem>-thumb.jpg`, `<stem>.info.json`, `<stem>.description`, `<stem>.nfo`. Existing sidecars (a plain `<stem>.jpg` counts as the thumbnail) are never overwritten. Same id rule and 400s as `fetch-subs`. Job `progress` ends `ok`/`skipped`/`none`; `result.written` lists the files written. |
+| POST | `/api/search/folder/fetch-metadata?path=` | The same for every id'd video in a folder that lacks any of them (async job with `progress`; cancellable via `DELETE /api/jobs/{id}`). `{job_id: null, candidates: 0}` = nothing to do. 400 = read-only folder. |
 
 `/api/library/browse` entries are `{name, path, is_dir, is_video, is_audio, is_book,
 has_sidecar, has_transcript, index_state}` (plus `jellyfin` when Jellyfin knows the file).
