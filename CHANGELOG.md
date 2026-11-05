@@ -27,6 +27,7 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   subtitle backfill. API: `POST /api/media/fetch-metadata` and
   `POST /api/search/folder/fetch-metadata`; CLI: `item.fetch-metadata`,
   `index.fetch-metadata`; `/api/items` lists a video's `metadata_missing`.
+
 ### Index failures you can diagnose (M20)
 
 - A library (or large-folder) index run now keeps a record of every file it failed on, with
@@ -39,6 +40,7 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 
 ### Fixed
 
+- A folder's **Fetch missing YouTube subtitles** button stayed hidden after a visit to the library's home page (only a name search brought it back): the Dialogue index card now shows it, and **Fetch missing YouTube metadata**, for every folder with files.
 - Folder search over a folder holding both a file and a link to it (a "favourites" folder) counted the file as not indexed when the walk met the link first, as the file system's listing order decided: the real file now always wins, so its index entry is found.
 
 ## [0.7.0] - 2026-11-04

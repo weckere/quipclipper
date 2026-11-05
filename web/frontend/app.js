@@ -1362,6 +1362,10 @@ function renderIndexStatus(data) {
   const index = $("index-btn");
   index.hidden = true;
   indexInBackground = !!data.cap && data.total > data.cap;
+  // The YouTube backfills, for any folder with files (the library home hides them).
+  for (const id of ["fetch-folder-subs-btn", "fetch-folder-meta-btn"]) {
+    $(id).hidden = !data.skipped && data.total === 0;
+  }
   if (data.skipped) {
     text.textContent = `Too many files here to index at once (over ${data.total}). Open a subfolder to index it.`;
     setIndexBar(null);
