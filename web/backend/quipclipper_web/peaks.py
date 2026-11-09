@@ -62,10 +62,16 @@ class AudioSource:
     has_video: bool = False
     video_input: str | None = None  # where keyframes are read (None: no video)
     make_input: Callable[[], tuple[str, Callable[[], None] | None]] | None = None
+    # The channels the waveform keeps before its mono mix (one, or a pair; the Channels
+    # picker). Empty: every channel. Each selection has its own overview and pyramid.
+    channels: tuple[str, ...] = ()
 
     @property
     def key(self) -> str:
-        return hashlib.sha1(f"{self.basis}|a:{self.audio}".encode()).hexdigest()[:24]
+        ident = f"{self.basis}|a:{self.audio}"
+        if self.channels:
+            ident += "|ch:" + "+".join(self.channels)
+        return hashlib.sha1(ident.encode()).hexdigest()[:24]
 
     def open(self) -> tuple[str, Callable[[], None] | None]:
         """The ffmpeg input to read now, and what to call once done with it."""
@@ -226,7 +232,7 @@ class PeakStore:
         inp, cleanup = src.open()
         try:
             cmd = waveform.decode_args(inp, audio=src.audio, rate=OVERVIEW_RATE,
-                                       input_flags=src.input_flags)
+                                       input_flags=src.input_flags, channels=src.channels)
             kw = {}
             if hasattr(os, "nice"):
                 kw["preexec_fn"] = lambda: os.nice(10)  # behind playback and clip jobs
@@ -331,7 +337,7 @@ class PeakStore:
         try:
             return waveform.decode(inp, audio=src.audio, rate=rate, start=t0,
                                    duration=duration, input_flags=src.input_flags,
-                                   src_rate=sr), t0
+                                   src_rate=sr, channels=src.channels), t0
         finally:
             if cleanup:
                 cleanup()

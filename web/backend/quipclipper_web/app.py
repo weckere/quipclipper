@@ -42,10 +42,10 @@ from pydantic import BaseModel, Field, field_validator
 
 from quipclipper.clip import (
     ClipRange,
+    channel_pan_filter,
     compute_range,
     cut_clip,
-    group_category,
-    group_channels,
+    select_channels,
     output_extension,
     probe_audio_streams,
     probe_channel_layout,
@@ -193,18 +193,14 @@ def _vaapi_h264_available() -> bool:
 
 
 def _live_pan_filter(p: Path, audio_index: int, chan: str) -> str | None:
-    """A `pan` filter that downmixes one channel group of an audio stream to
-    stereo/mono for live preview (B17). ``chan`` is a group label
-    (front/center/lfe/side/back) or category (surround). None if unresolved."""
+    """A `pan` filter that keeps one channel group or one channel of an audio stream
+    for live preview (B17). ``chan`` is a Channels-picker value (see
+    :func:`quipclipper.clip.select_channels`: front/center/lfe/side/back, surround,
+    or a channel such as FL). None if unresolved."""
     channels = probe_channel_layout(p, audio_index)
     if not channels:
         return None
-    for label, chans in group_channels(channels):
-        if label == chan or group_category(label) == chan:
-            if len(chans) == 2:
-                return f"pan=stereo|c0={chans[0]}|c1={chans[1]}"
-            return f"pan=mono|c0={chans[0]}"
-    return None
+    return channel_pan_filter(channels, chan)
 
 
 # Containers/extensions a browser can usually play in a <video>/<audio> element.
@@ -357,6 +353,10 @@ class ClipRequest(BaseModel):
     # Which channel groups to export when splitting (subset of
     # center|front|surround|lfe). None = all groups (honours include_lfe).
     split_groups: list[str] | None = None
+    # One Channels-picker value (a group such as front/back/center/lfe/surround, or one
+    # channel such as FL): export just that, as one file. Implies split_channels and
+    # overrides split_groups. None/"whole" = no channel selection.
+    channel_subset: str | None = Field(None, max_length=32)
     # Output naming: a path template (see _render_clip_template). "/" makes
     # subfolders; absent tokens are dropped. None/blank = DEFAULT_CLIP_TEMPLATE.
     template: str | None = None
@@ -1430,10 +1430,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # --- waveform (M18) ------------------------------------------------------
 
     _durations: dict[str, float | None] = {}
+    _layouts: dict[tuple[str, int], list[str] | None] = {}
 
-    def _audio_source(path: str, audio: int) -> peaks.AudioSource:
-        """Where ffmpeg reads ``path``'s audio stream ``a:audio``, with the same source
-        resolution and path checks as the other item endpoints."""
+    def _wave_channels(p: Path, basis: str, audio: int, chan: str | None) -> tuple[str, ...]:
+        """The channels a waveform of ``a:audio`` keeps for the Channels picker's ``chan``
+        (empty: all of them), resolved as playback and clips resolve it; 400 when the
+        stream has no such channel or group."""
+        if not chan or chan == "whole":
+            return ()
+        key = (basis, audio)
+        if key not in _layouts:
+            _layouts[key] = probe_channel_layout(p, audio)
+        channels = _layouts[key]
+        chans = select_channels(channels, chan) if channels else None
+        if not chans:
+            have = ", ".join(channels) if channels else "an unknown layout"
+            raise HTTPException(status_code=400, detail=(
+                f"Audio stream a:{audio} has no channel or group {chan!r} (it has {have})."))
+        return tuple(chans)
+
+    def _audio_source(path: str, audio: int, chan: str | None = None) -> peaks.AudioSource:
+        """Where ffmpeg reads ``path``'s audio stream ``a:audio`` (just the channels
+        ``chan`` picks), with the same source resolution and path checks as the other
+        item endpoints."""
+        whole = not chan or chan == "whole"
         vid = youtube_items.parse_ref(path)
         if vid is not None:
             try:
@@ -1449,6 +1469,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     video_url, audio_url = youtube_items.resolve_stream_urls(meta["webpage_url"])
                 except RuntimeError as exc:
                     raise HTTPException(status_code=502, detail=str(exc))
+                if not whole:
+                    raise HTTPException(status_code=400, detail=(
+                        "Picking a channel needs the video downloaded first."))
                 return peaks.AudioSource(
                     input=audio_url or video_url, basis=f"yt:{vid}", audio=0,
                     input_flags=("-reconnect", "1", "-reconnect_streamed", "1",
@@ -1465,6 +1488,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     epub_items.segment_cues(ep, seg)  # the segment exists
                 except (IndexError, ValueError) as exc:
                     raise HTTPException(status_code=404, detail=str(exc))
+                if not whole:
+                    raise HTTPException(status_code=400, detail=(
+                        "An audiobook segment has no channels to pick from."))
                 return peaks.AudioSource(
                     input="", basis=f"{peaks.file_basis(ep)}#seg={seg}", audio=0,
                     make_input=lambda: epub_items.segment_audio_input(ep, seg))
@@ -1475,7 +1501,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if basis not in _durations:
             _durations[basis] = media.probe_duration(p)
         return peaks.AudioSource(input=str(p), basis=basis, audio=audio,
-                                 duration=_durations[basis], video_input=str(p))
+                                 duration=_durations[basis], video_input=str(p),
+                                 channels=_wave_channels(p, basis, audio, chan))
 
     @app.get("/api/items/peaks")
     def item_peaks(
@@ -1484,12 +1511,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         end: float | None = Query(None, gt=0, allow_inf_nan=False),
         bins: int = Query(1000, ge=1, le=peaks.MAX_BINS),
         audio: int = Query(0, ge=0),
+        chan: str | None = Query(None, max_length=32),
         keyframes: bool = Query(False),
     ) -> JSONResponse:
         """Waveform peaks of ``start..end`` in ``bins`` (min, max) pairs, as base64
         int16. Long windows come from the cached overview (202 while it builds), short
-        ones from a decode of just that window, down to raw samples."""
-        src = _audio_source(path, audio)
+        ones from a decode of just that window, down to raw samples. ``chan`` (a
+        Channels-picker value: a group such as front, or a channel such as FL) draws just
+        those channels; each selection has its own overview."""
+        src = _audio_source(path, audio, chan)
         try:
             status, body = peaks.peaks_response(peak_store, src, start, end, bins, keyframes)
         except ValueError as exc:
@@ -1507,10 +1537,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         radius: float | None = Query(None, gt=0, le=10),
         db: float = Query(-45.0, ge=-120, le=0),
         audio: int = Query(0, ge=0),
+        chan: str | None = Query(None, max_length=32),
     ) -> dict:
         """The nearest zero crossing (``mode=zero``) or quiet point (RMS below ``db``
-        dBFS, ``mode=silence``) to ``t`` within ``radius`` seconds."""
-        src = _audio_source(path, audio)
+        dBFS, ``mode=silence``) to ``t`` within ``radius`` seconds, in the mono mix of
+        the channels ``chan`` picks (default: all of them)."""
+        src = _audio_source(path, audio, chan)
         try:
             body = peaks.snap(peak_store, src, t, mode, radius, db)
         except RuntimeError as exc:
@@ -2952,8 +2984,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         HLS path instead; Safari can't demux Matroska/Opus.)
 
         ``audio`` selects a specific audio stream (a:N); ``chan`` plays only one
-        channel group (front/center/lfe/side/back/surround) via a ``pan`` filter
-        — both for the stream selector (B17).
+        channel group (front/center/lfe/side/back/surround) or one channel (FL,
+        FR, BL, …) via a ``pan`` filter — both for the stream selector (B17).
         """
         async def _ffmpeg_stream(cmd: list[str]) -> StreamingResponse:
             proc = await asyncio.create_subprocess_exec(
@@ -3413,6 +3445,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         A clip written into the clips library gets its metadata sidecar (clipmeta);
         ``meta_extra`` overrides its fields (Send to LeadStinger knows the real line).
         """
+        # One channel or group from the Channels picker is a split into one file.
+        chan_subset = req.channel_subset if req.channel_subset not in (None, "", "whole") else None
+        if chan_subset:
+            req = req.model_copy(update={"split_channels": True})
         # An EPUB segment clips from the extracted chapter audio (always audio);
         # `name_source` drives the naming template (book/chapter, not the cache
         # file), while `video` is the actual media handed to ffmpeg.
@@ -3543,6 +3579,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # Validation
             if req.split_channels and req.kind != "audio":
                 raise HTTPException(status_code=400, detail="split_channels only applies to audio.")
+            if chan_subset and isinstance(video, Path) and video.is_file():
+                # Refuse a channel the stream doesn't have now, not as a failed job later.
+                aidx = req.audio_tracks[0] if req.audio_tracks else 0
+                layout = probe_channel_layout(video, aidx)
+                if not layout or not select_channels(layout, chan_subset):
+                    have = ", ".join(layout) if layout else "an unknown layout"
+                    raise HTTPException(status_code=400, detail=(
+                        f"Audio stream a:{aidx} has no channel or group {chan_subset!r} "
+                        f"(it has {have})."))
 
             # Full-mix lossless audio (one WAV/FLAC keeping every channel, e.g. 5.1).
             # This is an ffmpeg re-encode, so it bypasses the mkvmerge/passthrough path.
@@ -3671,6 +3716,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             _split_format = req.split_format
             _include_lfe = req.include_lfe
             _split_groups = req.split_groups
+            _channel = chan_subset
             _audio_codec = req.audio_format if fullmix else None
             _default_sub_track = req.default_sub_track
             _out_path = out_path
@@ -3724,7 +3770,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                             _video, _rng,
                             audio_index=(_audio_indices[0] if _audio_indices else 0),
                             fmt=_split_format, include_lfe=_include_lfe,
-                            categories=_split_groups, out=_out_path,
+                            categories=_split_groups, channel=_channel, out=_out_path,
                         )
                     if _use_mkvmerge:
                         try:

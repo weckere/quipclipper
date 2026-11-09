@@ -119,6 +119,11 @@ _CLIP_OPTIONS = (
     Param("split_groups", "list[str]", "Channel groups to export when splitting, "
           "comma-separated subset of front,center,surround,lfe. Default: all.",
           where=BODY),
+    Param("channel_subset", "str", "Export just one channel group or channel of the "
+          "audio stream, as one audio file: a group (front, back, side, center, lfe, "
+          "surround) or a channel (FL, FR, FC, LFE, BL, BR, SL, SR, ...). Implies "
+          "--split-channels and overrides --split-groups. Default: whole (every channel).",
+          where=BODY, flags=("--channel",)),
     Param("include_lfe", "bool", "Include the LFE channel when splitting.", where=BODY,
           default=True, negative="--no-lfe"),
     Param("template", "str", "Output name template, e.g. "
@@ -128,6 +133,11 @@ _CLIP_OPTIONS = (
     Param("default_sub_track", "int", "Subtitle track (s:N) to mark as the default "
           "in the saved video clip.", where=BODY),
 )
+
+# The waveform's Channels picker value (M18): item.peaks and item.snap.
+_WAVE_CHAN = Param("chan", "str", "Just these channels, mixed to mono: a group (front, "
+                   "back, side, center, lfe, surround) or one channel (FL, FR, FC, LFE, BL, "
+                   "...). Default: whole (every channel).", flags=("--channel",))
 
 # Orphaned machine transcripts (M21): also those of a media file replaced since.
 _STALE = Param("stale", "bool", "Also transcripts of media files replaced since they were "
@@ -263,6 +273,7 @@ COMMANDS: tuple[Command, ...] = (
                     Param("end", "float", "Span end in seconds. Default: the end of the file."),
                     Param("bins", "int", "How many min/max pairs (1-8192).", default=1000),
                     Param("audio", "int", "Audio stream (a:N).", default=0),
+                    _WAVE_CHAN,
                     Param("keyframes", "bool", "Also list the video keyframes in the span "
                           "(spans up to 60 s): where a lossless cut can start.",
                           default=False)),
@@ -294,7 +305,8 @@ COMMANDS: tuple[Command, ...] = (
                           "zero, 1 for silence."),
                     Param("db", "float", "Quiet threshold in dBFS (silence mode).",
                           default=-45.0),
-                    Param("audio", "int", "Audio stream (a:N).", default=0)),
+                    Param("audio", "int", "Audio stream (a:N).", default=0),
+                    _WAVE_CHAN),
             ui="Waveform strip: Snap to zero crossing / silence while dragging a handle"),
     # Machine transcription (M21, D-037): only ever on request, at idle priority.
     Command("item.transcribe", "Transcribe a file's audio with whisper.cpp, for lines the "
@@ -613,7 +625,7 @@ COMMANDS: tuple[Command, ...] = (
                           where=BODY),
                     Param("audio_track", "int", "Audio track (a:N) to remember.",
                           where=BODY),
-                    Param("channel_subset", "str", "Channel group to remember.",
+                    Param("channel_subset", "str", "Channel group or channel to remember.",
                           where=BODY),
                     Param("cue", "str", "The dialogue, for the {cue} name token.",
                           where=BODY, default="")),

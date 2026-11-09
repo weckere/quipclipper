@@ -336,3 +336,39 @@ def test_keyframes_count_from_the_file_start(tmp_path):
                     "-g", "250", "-output_ts_offset", "1.4", str(src)], check=True)
     assert waveform.start_time(src) > 1
     assert waveform.keyframes(src, 5, 25) == pytest.approx([10.0, 20.0], abs=0.05)
+
+
+def test_decode_args_keep_one_channel_before_the_mono_mix():
+    """The Channels picker (M18): the waveform decode keeps just the picked channels with
+    the pan filter playback and clips use, ahead of the anchor chain and the -ac 1 mix."""
+    cmd = waveform.decode_args("/m/a.mkv", rate=8000, channels=["FL"])
+    assert cmd[cmd.index("-af") + 1] == "pan=mono|c0=FL,aresample=first_pts=0"
+    assert cmd[cmd.index("-ac") + 1] == "1"
+    cmd = waveform.decode_args("/m/a.mkv", start=13.0, duration=1, src_rate=48000,
+                               channels=("BL", "BR"))
+    assert cmd[cmd.index("-af") + 1] == (
+        "pan=stereo|c0=BL|c1=BR,aresample=48000:first_pts=0,"
+        "atrim=start_sample=192000,asetpts=PTS-STARTPTS")
+    # No channels: every channel, as before.
+    assert "pan=" not in " ".join(waveform.decode_args("/m/a.mkv"))
+
+
+def test_pan_filter_takes_one_channel_or_a_pair():
+    assert waveform.pan_filter(["FC"]) == "pan=mono|c0=FC"
+    assert waveform.pan_filter(["FL", "FR"]) == "pan=stereo|c0=FL|c1=FR"
+    with pytest.raises(ValueError):
+        waveform.pan_filter(["FL", "FR", "FC"])
+
+
+@needs_ffmpeg
+def test_decode_one_channel_of_a_stereo_file(tmp_path):
+    """Left is a tone, right is silence: Left draws the tone, Right draws nothing."""
+    src = tmp_path / "lr.wav"
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i",
+                    "sine=frequency=1000:sample_rate=8000:duration=1", "-f", "lavfi", "-i",
+                    "anullsrc=r=8000:cl=mono:d=1", "-filter_complex",
+                    "[0][1]join=inputs=2:channel_layout=stereo", str(src)], check=True)
+    left = waveform.decode(src, channels=["FL"])
+    right = waveform.decode(src, channels=["FR"])
+    assert max(left) == pytest.approx(4096, abs=30)
+    assert max(abs(x) for x in right) == 0

@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from quipclipper import waveform
+from quipclipper.waveform import pan_filter
 from quipclipper.models import Cue, Match, format_timestamp
 
 # The render node used for VAAPI / Intel Quick Sync hardware H.264 encoding.
@@ -332,6 +333,82 @@ _SPLIT_CATEGORY = {
 def group_category(label: str) -> str:
     """Bucket a channel-group label into center | front | surround | lfe."""
     return _SPLIT_CATEGORY.get(label, "surround")
+
+
+# --- one channel selection (the web app's Channels picker) ----------------------
+
+# The value that means "every channel, as the stream has them" (no pan filter).
+WHOLE = "whole"
+# Names for single channels, as the Channels picker shows them.
+CHANNEL_LABELS = {
+    "FL": "Left", "FR": "Right", "FC": "Center", "LFE": "LFE",
+    "BL": "Back left", "BR": "Back right", "SL": "Side left", "SR": "Side right",
+    "BC": "Back center", "FLC": "Left of center", "FRC": "Right of center",
+}
+# Names for channel groups (group_channels labels, plus the "surround" category).
+GROUP_LABELS = {
+    "front": "Front (L/R)", "front_center": "Front center (L/R)",
+    "side": "Surround (side)", "back": "Surround (back)", "surround": "Surround",
+    "center": "Center", "lfe": "LFE", "back_center": "Back center",
+}
+
+
+def select_channels(channels: list[str], chan: str | None) -> list[str] | None:
+    """The channels one Channels-picker value stands for, in ``channels`` (a stream's
+    channel names, e.g. from :func:`probe_channel_layout`).
+
+    ``chan`` is ``whole`` (every channel), a group label from :func:`group_channels`
+    (front, back, center, …), a category from :func:`group_category` (surround: the
+    first surround pair) or one channel's name (FL, FR, FC, LFE, BL, …, any case).
+    None when the stream has no such channel or group, so nothing is ever guessed."""
+    if not chan or chan == WHOLE:
+        return list(channels)
+    for label, chans in group_channels(channels):
+        if label == chan or group_category(label) == chan:
+            return chans
+    name = chan.upper()
+    return [name] if name in channels else None
+
+
+def channel_pan_filter(channels: list[str], chan: str | None) -> str | None:
+    """:func:`pan_filter` for a picker value, or None for ``whole`` and for a value the
+    stream doesn't have (callers decide whether that is an error)."""
+    if not chan or chan == WHOLE:
+        return None
+    chans = select_channels(channels, chan)
+    return pan_filter(chans) if chans else None
+
+
+def channel_choices(channels: list[str] | None) -> list[dict[str, str]]:
+    """What the Channels picker offers for a stream: ``whole`` first, then each group of
+    group from :func:`group_channels` that isn't the whole stream (front, back,
+    center, lfe, …), then each channel of a pair on its own (Left, Right, Back left,
+    …). Stereo gives Both, Left, Right; a mono stream or an unknown layout gives nothing (the picker stays hidden)."""
+    if not channels or len(channels) < 2:
+        return []
+    out = [{"value": WHOLE, "label": "Both" if len(channels) == 2 else "All channels"}]
+    paired: list[str] = []
+    for label, chans in group_channels(channels):
+        if len(chans) == len(channels):
+            paired += chans  # stereo: the pair is the whole stream
+            continue
+        out.append({"value": label, "label": GROUP_LABELS.get(label, label)})
+        if len(chans) > 1:
+            paired += chans
+    # Channels already offered on their own as a group (center, lfe) aren't repeated.
+    for ch in channels:
+        if ch in paired:
+            out.append({"value": ch, "label": CHANNEL_LABELS.get(ch, ch)})
+    return out
+
+
+def channel_slug(chan: str) -> str:
+    """A filename part for a picker value: the group label, or the channel's name
+    (``FL`` -> ``left``, ``BL`` -> ``back_left``)."""
+    name = CHANNEL_LABELS.get(chan.upper())
+    if name and chan.upper() == chan:
+        return name.lower().replace(" ", "_")
+    return chan.lower()
 
 
 def _audio_map_args(audio_indices: list[int] | None, *, optional: bool) -> list[str]:
@@ -658,6 +735,7 @@ def split_audio_channels(
     fmt: str = "wav",
     include_lfe: bool = True,
     categories: list[str] | None = None,
+    channel: str | None = None,
     out: str | Path | None = None,
 ) -> list[Path]:
     """Split one surround audio stream into per-group files for the clip range.
@@ -666,7 +744,9 @@ def split_audio_channels(
     file for each standalone channel (centre, LFE — drop LFE with
     `include_lfe=False`). `categories` (a subset of center | front | surround |
     lfe) selects which groups to export; None exports them all (honouring
-    `include_lfe`). This decodes the surround mix (it cannot be a stream copy);
+    `include_lfe`). `channel` (a Channels-picker value, see :func:`select_channels`:
+    a group label or one channel such as FL) exports just that selection, as one file
+    named after it, and overrides `categories`. This decodes the surround mix (it cannot be a stream copy);
     `fmt` is "wav"/"flac" (lossless, no re-encode of the decoded audio) or
     "original" (re-encode to the source codec). Returns the list of files written.
     """
@@ -682,7 +762,15 @@ def split_audio_channels(
             f"Could not determine the channel layout of audio stream a:{audio_index}."
         )
     encoder, ext = _split_codec(fmt, source, audio_index)
-    if categories is not None:
+    if channel and channel != WHOLE:
+        chans = select_channels(channels, channel)
+        if not chans:
+            raise RuntimeError(
+                f"Audio stream a:{audio_index} has no channel or group {channel!r} "
+                f"(it has {', '.join(channels)})."
+            )
+        groups = [(channel_slug(channel), chans)]
+    elif categories is not None:
         wanted = set(categories)
         groups = [
             g for g in group_channels(channels, include_lfe=True)
@@ -714,11 +802,7 @@ def split_audio_channels(
     written: list[Path] = []
     for label, chans in groups:
         target = Path(f"{base}_{rename.get(label, label)}.{ext}")
-        pan = (
-            f"pan=stereo|c0={chans[0]}|c1={chans[1]}"
-            if len(chans) == 2
-            else f"pan=mono|c0={chans[0]}"
-        )
+        pan = pan_filter(chans)
         args = [
             "ffmpeg", "-nostdin", "-y", "-v", "error",
             "-ss", f"{rng.start - preroll:.6f}", "-i", _argv_path(source),

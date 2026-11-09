@@ -998,6 +998,12 @@ def clip(
         "--split-groups",
         help="Which channel groups to export with --split-channels: comma-separated subset of front,center,surround,lfe (default: all). E.g. --split-groups center exports only the centre channel.",
     ),
+    channel_subset: Optional[str] = typer.Option(
+        None,
+        "--channel",
+        "--channel-subset",
+        help="Export just one channel group or channel, as one audio file: a group (front, back, side, center, lfe, surround) or a channel (FL, FR, FC, LFE, BL, BR, SL, SR, ...). Implies --split-channels and overrides --split-groups. Default: whole.",
+    ),
     include_lfe: bool = typer.Option(
         True,
         "--include-lfe/--no-lfe",
@@ -1078,8 +1084,8 @@ def clip(
             "audio_tracks": audio_track, "backend": backend, "chapters": chapters,
             "remux_first": remux_first, "embed_subs": embed_subs,
             "split_channels": split_channels, "split_format": split_format,
-            "split_groups": split_groups, "include_lfe": include_lfe,
-            "template": template, "default_sub_track": default_sub_track,
+            "split_groups": split_groups, "channel_subset": channel_subset,
+            "include_lfe": include_lfe, "template": template, "default_sub_track": default_sub_track,
             "wait": wait, "out_dir": str(out_dir) if out_dir else None,
             "subs": subs, "langs": langs, "pick": pick, "out": out,
             "hwaccel": hwaccel, "yes": False, "limit": limit, "min_score": min_score,
@@ -1129,8 +1135,12 @@ def clip(
     if split_format not in ("wav", "flac", "original"):
         typer.secho("--split-format must be wav, flac, or original.", fg="red", err=True)
         raise typer.Exit(code=2)
+    if channel_subset in ("", "whole"):
+        channel_subset = None
+    if channel_subset is not None:
+        split_channels = True  # one channel or group is a split into one file
     split_categories: Optional[list[str]] = None
-    if split_groups is not None:
+    if split_groups is not None and channel_subset is None:
         if not split_channels:
             typer.secho("--split-groups only applies with --split-channels.", fg="red", err=True)
             raise typer.Exit(code=2)
@@ -1322,7 +1332,7 @@ def clip(
                 video, rng,
                 audio_index=(audio_indices[0] if audio_indices else 0),
                 fmt=split_format, include_lfe=include_lfe,
-                categories=split_categories, out=out_path,
+                categories=split_categories, channel=channel_subset, out=out_path,
             )
         sub_path = resolved.path if resolved else None
         if use_mkvmerge:

@@ -524,3 +524,89 @@ def test_render_clip_srt_clamps_overlapping_cue():
 def test_render_clip_srt_empty_when_nothing_in_window():
     cues = [_cue(0, 1.0, 2.0, "x")]
     assert render_clip_srt(cues, window_start=5.0, window_end=7.7) == ""
+
+
+# --- the Channels picker (M18): one helper for playback, clips and the waveform ---------
+
+from quipclipper.clip import (  # noqa: E402
+    LAYOUT_CHANNELS,
+    channel_choices,
+    channel_pan_filter,
+    channel_slug,
+    select_channels,
+    split_audio_channels,
+)
+
+
+def _choices(layout):
+    return [(c["value"], c["label"]) for c in channel_choices(LAYOUT_CHANNELS[layout])]
+
+
+def test_channel_choices_for_stereo_are_both_left_right():
+    assert _choices("stereo") == [("whole", "Both"), ("FL", "Left"), ("FR", "Right")]
+
+
+def test_channel_choices_for_5_1_list_groups_then_single_channels():
+    assert _choices("5.1") == [
+        ("whole", "All channels"), ("front", "Front (L/R)"), ("back", "Surround (back)"),
+        ("center", "Center"), ("lfe", "LFE"),
+        ("FL", "Left"), ("FR", "Right"), ("BL", "Back left"), ("BR", "Back right"),
+    ]
+
+
+def test_channel_choices_hide_the_picker_for_mono_and_unknown_layouts():
+    assert channel_choices(["FC"]) == []
+    assert channel_choices(None) == []
+
+
+def test_select_channels_resolves_groups_categories_and_single_channels():
+    ch51 = LAYOUT_CHANNELS["5.1"]
+    assert select_channels(ch51, "whole") == ch51
+    assert select_channels(ch51, "front") == ["FL", "FR"]
+    assert select_channels(ch51, "surround") == ["BL", "BR"]
+    assert select_channels(ch51, "center") == ["FC"]
+    assert select_channels(ch51, "BL") == ["BL"]
+    assert select_channels(ch51, "bl") == ["BL"]
+    # Never a channel the stream doesn't have.
+    assert select_channels(LAYOUT_CHANNELS["stereo"], "FC") is None
+    assert select_channels(ch51, "side") is None
+    assert select_channels(ch51, "nonsense") is None
+
+
+def test_channel_pan_filter_is_the_same_for_a_group_and_a_channel():
+    ch51 = LAYOUT_CHANNELS["5.1"]
+    assert channel_pan_filter(ch51, "front") == "pan=stereo|c0=FL|c1=FR"
+    assert channel_pan_filter(ch51, "FL") == "pan=mono|c0=FL"
+    assert channel_pan_filter(ch51, "center") == "pan=mono|c0=FC"
+    assert channel_pan_filter(ch51, "whole") is None
+    assert channel_pan_filter(ch51, "SL") is None
+
+
+def test_channel_slug_names_the_file():
+    assert [channel_slug(c) for c in ("FL", "BR", "LFE", "center", "back")] == [
+        "left", "back_right", "lfe", "center", "back"]
+
+
+def test_split_one_channel_writes_one_file_named_after_it(tmp_path):
+    src = tmp_path / "movie.mkv"
+    src.write_bytes(b"x")
+    with patch("quipclipper.clip.shutil.which", return_value="/usr/bin/ffmpeg"), \
+         patch("quipclipper.clip.probe_channel_layout", return_value=LAYOUT_CHANNELS["5.1"]), \
+         patch("quipclipper.clip._split_codec", return_value=("pcm_s24le", "wav")), \
+         patch("quipclipper.clip.subprocess.run") as run:
+        run.return_value = MagicMock(returncode=0, stderr="")
+        out = split_audio_channels(src, ClipRange(10.0, 12.0), channel="FL",
+                                   categories=["center"], out=tmp_path / "clip")
+    assert out == [tmp_path / "clip_left.wav"]
+    args = run.call_args.args[0]
+    assert args[args.index("-filter:a") + 1] == "pan=mono|c0=FL"
+
+
+def test_split_a_channel_the_stream_lacks_is_an_error(tmp_path):
+    src = tmp_path / "movie.mkv"
+    src.write_bytes(b"x")
+    with patch("quipclipper.clip.shutil.which", return_value="/usr/bin/ffmpeg"), \
+         patch("quipclipper.clip.probe_channel_layout", return_value=LAYOUT_CHANNELS["stereo"]), \
+         patch("quipclipper.clip._split_codec", return_value=("pcm_s24le", "wav")):
+        with pytest.raises(RuntimeError, match="no channel or group 'FC'"):
+            split_audio_channels(src, ClipRange(0, 1), channel="FC")

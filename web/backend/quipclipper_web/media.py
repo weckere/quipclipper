@@ -11,7 +11,7 @@ import subprocess
 from pathlib import Path
 
 from quipclipper.models import Cue, format_timestamp
-from quipclipper.clip import channels_for_layout, group_channels
+from quipclipper.clip import channel_choices, channels_for_layout, group_channels
 from quipclipper.subtitles import StreamInfo, best_track, find_sidecar, list_streams
 
 
@@ -103,6 +103,9 @@ def stream_dict(s: StreamInfo) -> dict:
     if s.kind == "audio":
         chans = channels_for_layout(s.channel_layout, None)
         d["groups"] = [lbl for lbl, _ in group_channels(chans)] if chans else []
+        # What the Channels picker offers: "whole", the groups, then single channels
+        # (stereo: Both, Left, Right), each {value, label}; empty hides the picker.
+        d["channel_choices"] = channel_choices(chans)
     return d
 
 

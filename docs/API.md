@@ -95,10 +95,10 @@ FastAPI publishes the live schema, served behind the same gate:
 | GET | `/api/library/roots` | List configured media roots. |
 | GET | `/api/library/browse?path=` | List a folder (or an EPUB book's segments). Omit `path` for the roots. |
 | GET | `/api/library/search?query=&path=` | Filename search across the library (or under `path`). |
-| GET | `/api/items?path=&langs=` | Probe one media item: streams, duration, subtitle tracks. A library video with a YouTube id also carries `backfill_writable`, `metadata_missing` (the metadata sidecar names it lacks) and, when it has no subtitles, `youtube_id`. |
+| GET | `/api/items?path=&langs=` | Probe one media item: streams, duration, subtitle tracks. Each audio stream with a recognised layout lists its `groups` and `channel_choices` (`[{value, label}]`: `whole`, the groups, then single channels; stereo gives Both, Left, Right). A library video with a YouTube id also carries `backfill_writable`, `metadata_missing` (the metadata sidecar names it lacks) and, when it has no subtitles, `youtube_id`. |
 | GET | `/api/items/link?path=&at=&sel=&track=` | A [deep link](#deep-links) that opens the file in the web app at `at` seconds with `sel` (`START-END`) selected: `{path, at, sel, track, link}`. 503 without `QC_PUBLIC_URL`; the path is checked like `/api/items` (403 outside the roots, 404 missing). |
-| GET | `/api/items/peaks?path=&start=&end=&bins=&audio=&keyframes=` | [Waveform](#waveform-peaks-and-snap) peaks of `start..end` on audio stream `a:audio`, mixed to mono. 202 while the overview of a long span is still being built. |
-| GET | `/api/items/snap?path=&t=&mode=&radius=&db=&audio=` | The nearest zero crossing (`mode=zero`) or quiet point (`mode=silence`) to `t`: where a cut starts cleanly. |
+| GET | `/api/items/peaks?path=&start=&end=&bins=&audio=&chan=&keyframes=` | [Waveform](#waveform-peaks-and-snap) peaks of `start..end` on audio stream `a:audio` (just the channels `chan` picks), mixed to mono. 202 while the overview of a long span is still being built. |
+| GET | `/api/items/snap?path=&t=&mode=&radius=&db=&audio=&chan=` | The nearest zero crossing (`mode=zero`) or quiet point (`mode=silence`) to `t` in the channels `chan` picks: where a cut starts cleanly. |
 | GET | `/api/items/subtitles?path=&track=&offset=&fmt=&machine=` | Subtitles as WebVTT (`fmt=vtt`, default — the player's captions) or JSON cues `{start, end, text, speaker, source}` (`fmt=json` — what the script view uses). `source` is `"machine"` for a [machine transcript](#machine-transcription) line, else null. `machine=include` (default) mixes them in, `exclude` leaves them out, `only` gives them alone. The captions carry only machine lines copied into the library, as `<c.machine>≈ …</c>`. |
 | POST | `/api/items/subtitles/reindex?path=` | Rebuild the subtitle cache for one file. |
 | POST | `/api/media/fetch-subs?path=` | Backfill one YouTube-sourced library video's subtitles (async job — poll `job_id`). The video's id is read from its `[<id>]` filename or a sibling `.info.json`; a `.vtt` sidecar is written next to it. 400 = no id found or the folder is read-only (needs `writableMediaRoots`). Job `progress` ends `ok`/`skipped`/`none`. |
@@ -127,10 +127,18 @@ path checks as `/api/items` (403 outside the roots, 404 missing, 422 with no suc
 stream). Both decode with ffmpeg, seeking the way a clip cut does, so a time here is a time
 in the clip.
 
+`chan` is the Channels picker's value (an audio stream's `channel_choices` in
+`GET /api/items`): `whole` (the default: every channel), a group (`front`, `back`, `side`,
+`center`, `lfe`, `surround`) or one channel (`FL`, `FR`, `FC`, `LFE`, `BL`, …). The decode
+keeps just those channels with the `pan` filter playback and clips use, then mixes them to
+mono, so the drawing and a snap are of what you hear. Each selection has its own overview
+(built on demand, 202 while it builds). A channel the stream doesn't have, or one asked of
+a `yt:` stream or an EPUB segment, is **400**.
+
 **Peaks** (`bins` 1–8192, default 1000; `end` defaults to the end of the file) returns
 `{path, start, end, bins, audio, duration, rate, source, kind, data, peak, overview}`:
 
-- `source: "overview"`: from a peak pyramid built once per file, audio stream and mtime in the
+- `source: "overview"`: from a peak pyramid built once per file, audio stream, `chan` and mtime in the
   background (8 kHz mono, 20 ms buckets of min/max, cached in the state dir as
   `peaks/*.qcpk`, about 1.4 MB per 2-hour film, 512 MB kept in all). It serves spans over 2
   minutes, and, once built, shorter ones zoomed out to 40 ms or more per bin (`rate` is
@@ -151,9 +159,9 @@ in the clip.
   can start at.
 
 **Snap** returns `{path, t, mode, radius, rate, found, snapped, delta}`. `mode=zero` (default
-radius 0.01 s, at most 0.5) finds the nearest sign change of the mono mix and returns the
-sample of the pair nearer zero (`value`; on a stereo or surround stream the mix crosses
-zero where each channel need not, so a multichannel WAV/FLAC cut there can still click:
+radius 0.01 s, at most 0.5) finds the nearest sign change of the mono mix (of `chan`) and
+returns the sample of the pair nearer zero (`value`; with more than one channel the mix
+crosses zero where each channel need not, so a multichannel WAV/FLAC cut there can still click:
 `mode=silence` is the safer snap for those); `mode=silence` (default radius 1 s, at most 10)
 finds the nearest 20 ms window whose RMS is below `db` dBFS (default −45) and returns its
 centre (`level_db`); with none, `found` is false and `snapped` is the quietest point.
@@ -921,6 +929,7 @@ CLI).
 | `split_channels` | `false` | Split surround into per-group files (audio). |
 | `split_format` | `"wav"` | `wav`\|`flac`\|`original` with `split_channels`. |
 | `split_groups` | all | Subset of `center,front,surround,lfe`. |
+| `channel_subset` | — | One Channels-picker value as one audio file: a group (`front`, `back`, `side`, `center`, `lfe`, `surround`) or a channel (`FL`, `FR`, `FC`, `BL`, …). Implies `split_channels`, overrides `split_groups`; a channel the stream doesn't have is 400. |
 | `include_lfe` | `true` | Emit the LFE channel as its own file with `split_channels`. |
 | `backend` | `"auto"` | `auto`\|`ffmpeg`\|`mkvmerge`. |
 | `remux_first` | `false` | Remux a non-MKV source to a temp MKV first (mkvmerge backend). |

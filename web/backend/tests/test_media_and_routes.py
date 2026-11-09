@@ -71,6 +71,20 @@ def test_stream_dict_groups_only_from_recognized_layout():
     assert stream_dict(_audio(6, "weird(layout)"))["groups"] == []
 
 
+def test_stream_dict_channel_choices_for_the_picker():
+    """M18: the Channels picker offers stereo too (Both, Left, Right) and single
+    channels of surround; still only from a known layout tag (B18)."""
+    labels = lambda s: [(c["value"], c["label"]) for c in stream_dict(s)["channel_choices"]]
+    assert labels(_audio(2, "stereo")) == [("whole", "Both"), ("FL", "Left"), ("FR", "Right")]
+    five = labels(_audio(6, "5.1(side)"))
+    assert five[:5] == [("whole", "All channels"), ("front", "Front (L/R)"),
+                        ("side", "Surround (side)"), ("center", "Center"), ("lfe", "LFE")]
+    assert five[5:] == [("FL", "Left"), ("FR", "Right"), ("SL", "Side left"),
+                        ("SR", "Side right")]
+    assert stream_dict(_audio(1, "mono"))["channel_choices"] == []
+    assert stream_dict(_audio(6, None))["channel_choices"] == []
+
+
 def test_stream_dict_surfaces_attached_pic():
     """Cover-art video (mp3/m4a) is flagged so the frontend doesn't mistake it for
     real video (treats the file as audio-only, no video clip/re-encode)."""
@@ -500,6 +514,58 @@ def test_clip_split_groups_reach_splitter(tmp_path: Path) -> None:
         job = _wait_done(client, resp.json()["job_id"])
         assert job["status"] == "done"
         assert mock_split.call_args.kwargs["categories"] == ["center", "surround"]
+
+
+def test_clip_channel_subset_is_one_split_file(tmp_path: Path) -> None:
+    """M18: a Channels-picker value (a group or one channel) reaches the splitter as
+    `channel`, and implies split_channels."""
+    video = tmp_path / "movie.mkv"
+    video.write_bytes(b"")
+    out = tmp_path / "movie_left.wav"
+    out.write_bytes(b"x")
+
+    client = _client(tmp_path)
+    with (
+        patch("quipclipper_web.app.probe_channel_layout", return_value=["FL", "FR"]),
+        patch("quipclipper_web.app.split_audio_channels", return_value=[out]) as mock_split,
+    ):
+        resp = client.post("/api/clip", json={
+            "path": str(video), "start": 10, "end": 12,
+            "kind": "audio", "split_format": "wav", "channel_subset": "FL",
+        })
+        assert resp.status_code == 200, resp.text
+        job = _wait_done(client, resp.json()["job_id"])
+        assert job["status"] == "done"
+        assert mock_split.call_args.kwargs["channel"] == "FL"
+
+
+def test_clip_channel_the_stream_lacks_is_400(tmp_path: Path) -> None:
+    video = tmp_path / "movie.mkv"
+    video.write_bytes(b"")
+    client = _client(tmp_path)
+    with patch("quipclipper_web.app.probe_channel_layout", return_value=["FL", "FR"]):
+        resp = client.post("/api/clip", json={
+            "path": str(video), "start": 10, "end": 12, "kind": "audio",
+            "channel_subset": "FC",
+        })
+    assert resp.status_code == 400
+    assert "no channel or group 'FC'" in resp.json()["detail"]
+    # A video clip can't be one channel.
+    with patch("quipclipper_web.app.probe_channel_layout", return_value=["FL", "FR"]):
+        resp = client.post("/api/clip", json={
+            "path": str(video), "start": 10, "end": 12, "kind": "video",
+            "channel_subset": "FL",
+        })
+    assert resp.status_code == 400
+
+
+def test_live_pan_filter_takes_a_single_channel(tmp_path: Path) -> None:
+    from quipclipper_web.app import _live_pan_filter
+    with patch("quipclipper_web.app.probe_channel_layout",
+               return_value=["FL", "FR", "FC", "LFE", "BL", "BR"]):
+        assert _live_pan_filter(tmp_path / "m.mkv", 0, "BL") == "pan=mono|c0=BL"
+        assert _live_pan_filter(tmp_path / "m.mkv", 0, "back") == "pan=stereo|c0=BL|c1=BR"
+        assert _live_pan_filter(tmp_path / "m.mkv", 0, "SL") is None
 
 
 def test_clip_whole_file_when_end_omitted(tmp_path: Path) -> None:

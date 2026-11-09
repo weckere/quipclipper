@@ -11,6 +11,17 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 
 ## [Unreleased]
 
+### Channels picker: single channels, stereo, and the waveform (M18)
+
+- Playback, clips and bookmarks take a single channel as well as a channel group: `FL`,
+  `FR`, `FC`, `LFE`, `BL`, … (one `pan` selection shared by playback, clips and the waveform,
+  resolved only from the stream's own channel layout). The waveform follows it:
+  `GET /api/items/peaks` and `/api/items/snap` take `chan=` (a group or a channel) and draw
+  and snap on just those channels, mixed to mono, each with its own overview; a channel the
+  stream lacks is 400. A clip takes `channel_subset` (one audio file of that group or
+  channel). CLI: `--channel` on `clip`, `item.peaks` and `item.snap`; `GET /api/items` lists
+  each audio stream's `channel_choices`.
+
 ## [0.8.0] - 2026-11-05
 
 ### YouTube metadata like Pinchflat's (M6)

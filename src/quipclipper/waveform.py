@@ -270,6 +270,16 @@ ANCHOR_GRID = 10
 ANCHOR_PAD = "aresample=first_pts=0"
 
 
+def pan_filter(chans: Sequence[str]) -> str:
+    """The ffmpeg ``pan`` filter that keeps just ``chans``: a pair as stereo, one channel
+    as mono (``pan=mono|c0=FL``)."""
+    if len(chans) == 2:
+        return f"pan=stereo|c0={chans[0]}|c1={chans[1]}"
+    if len(chans) == 1:
+        return f"pan=mono|c0={chans[0]}"
+    raise ValueError(f"pan_filter takes one channel or a pair, not {list(chans)!r}")
+
+
 def anchor_filter(trim: int | None, src_rate: int | None) -> str:
     """The audio filter chain of an anchored decode: pad to the anchor, then skip ``trim``
     samples. With ``src_rate`` the pad holds the stream's own rate, because atrim counts
@@ -305,8 +315,13 @@ def anchored_start(t: float, src_rate: int) -> float:
 
 def decode_args(source: str | Path, *, audio: int = 0, rate: int | None = None,
                 start: float | None = None, duration: float | None = None,
-                input_flags: Sequence[str] = (), src_rate: int | None = None) -> list[str]:
+                input_flags: Sequence[str] = (), src_rate: int | None = None,
+                channels: Sequence[str] = ()) -> list[str]:
     """ffmpeg arguments that write one audio stream as s16le mono to stdout.
+
+    ``channels`` (one channel name such as ``FL``, or a pair) keeps just those channels
+    before the mono mix, with the same ``pan`` filter playback and clips use; empty
+    mixes every channel.
 
     With ``src_rate`` (the stream's own sample rate) the decode is anchored (see
     :func:`anchor`), the way an exact clip cut decodes, so a sample here is that
@@ -324,7 +339,10 @@ def decode_args(source: str | Path, *, audio: int = 0, rate: int | None = None,
     if duration is not None:
         cmd += ["-t", f"{duration:.6f}"]
     cmd += ["-map", f"0:a:{audio}", "-vn", "-sn", "-dn"]
-    cmd += ["-af", anchor_filter(trim, src_rate)]
+    af = anchor_filter(trim, src_rate)
+    if channels:
+        af = f"{pan_filter(list(channels))},{af}"
+    cmd += ["-af", af]
     cmd += ["-ac", "1"]
     if rate:
         cmd += ["-ar", str(rate)]
@@ -344,12 +362,12 @@ def _to_array(raw: bytes) -> array:
 def decode(source: str | Path, *, audio: int = 0, rate: int | None = None,
            start: float | None = None, duration: float | None = None,
            input_flags: Sequence[str] = (), src_rate: int | None = None,
-           timeout: float = 120) -> array:
+           channels: Sequence[str] = (), timeout: float = 120) -> array:
     """Decode a span of one audio stream to mono s16 samples (anchored with ``src_rate``)."""
     try:
         r = subprocess.run(decode_args(source, audio=audio, rate=rate, start=start,
                                        duration=duration, input_flags=input_flags,
-                                       src_rate=src_rate),
+                                       src_rate=src_rate, channels=channels),
                            capture_output=True, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(f"ffmpeg took over {timeout:.0f} s to decode the audio") from exc

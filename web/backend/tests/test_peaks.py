@@ -378,3 +378,79 @@ def test_detail_peaks_put_short_audio_where_it_is(client, tmp_path, media):
     maxima = pairs[1::2]
     assert min(maxima[:18]) > 1000      # 4.0-5.8 s: tone
     assert max(maxima[22:]) == 0        # 6.2-10 s: no audio
+
+
+# --- the Channels picker (M18): the waveform draws the picked channel -----------------
+
+
+@pytest.fixture(scope="module")
+def stereo(tmp_path_factory) -> Path:
+    """A media root with one stereo file: a tone on the left, silence on the right."""
+    root = tmp_path_factory.mktemp("stereo")
+    _ff("-f", "lavfi", "-i", "sine=frequency=1000:sample_rate=48000:duration=3",
+        "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono:d=3", "-filter_complex",
+        "[0][1]join=inputs=2:channel_layout=stereo", str(root / "lr.wav"))
+    return root
+
+
+@pytest.fixture
+def stereo_client(stereo, tmp_path):
+    clips = tmp_path / "clips"
+    clips.mkdir()
+    app = create_app(Settings.from_env({
+        "QC_MEDIA_ROOTS": str(stereo), "QC_CLIPS_DIR": str(clips),
+        "QC_STATE_DIR": str(tmp_path / "state"),
+    }))
+    with TestClient(app) as c:
+        yield c
+
+
+def test_peaks_follow_the_channel(stereo_client, stereo):
+    path = str(stereo / "lr.wav")
+
+    def top(chan):
+        params = {"path": path, "bins": 100}  # 30 ms a bin: always a detail decode
+        if chan:
+            params["chan"] = chan
+        r = stereo_client.get("/api/items/peaks", params=params)
+        assert r.status_code == 200, r.text
+        assert r.json()["source"] == "detail"
+        return max(_ints(r.json()["data"])[1::2])
+
+    left, right, both = top("FL"), top("FR"), top(None)
+    assert left == pytest.approx(4096, abs=30)
+    assert right == 0
+    # Every channel mixed to mono: the tone at half the level.
+    assert 0 < both < left
+    assert top("whole") == both
+    assert top("front") == both  # the pair is the whole stereo stream
+
+
+def test_snap_follows_the_channel(stereo_client, stereo):
+    path = str(stereo / "lr.wav")
+    r = stereo_client.get("/api/items/snap", params={
+        "path": path, "t": 1.0, "mode": "silence", "radius": 0.5, "chan": "FR"})
+    assert r.status_code == 200 and r.json()["found"]  # the right channel is all silence
+    r = stereo_client.get("/api/items/snap", params={
+        "path": path, "t": 1.0, "mode": "silence", "radius": 0.5, "chan": "FL"})
+    assert r.json()["found"] is False
+
+
+def test_a_channel_the_stream_lacks_is_400(stereo_client, stereo):
+    path = str(stereo / "lr.wav")
+    for chan in ("FC", "back", "nonsense"):
+        r = stereo_client.get("/api/items/peaks", params={"path": path, "chan": chan})
+        assert r.status_code == 400, (chan, r.text)
+        assert "no channel or group" in r.json()["detail"]
+    r = stereo_client.get("/api/items/snap", params={"path": path, "t": 1, "chan": "LFE"})
+    assert r.status_code == 400
+
+
+def test_each_channel_has_its_own_overview_key(tmp_path):
+    whole = peaks.AudioSource(input="a.wav", basis="b", audio=0)
+    left = peaks.AudioSource(input="a.wav", basis="b", audio=0, channels=("FL",))
+    front = peaks.AudioSource(input="a.wav", basis="b", audio=0, channels=("FL", "FR"))
+    assert len({whole.key, left.key, front.key}) == 3
+    # Whole-file overviews built before channels existed keep their cache key.
+    import hashlib
+    assert whole.key == hashlib.sha1(b"b|a:0").hexdigest()[:24]

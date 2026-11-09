@@ -271,9 +271,12 @@ Opening a file opens its workspace.
   or video (HEVC in Firefox, XviD, MPEG-2…), the server converts it on the fly (with
   Intel Quick Sync when there is one) and a note says seeking may be slower; iOS plays an
   HLS stream instead. The seek bar spans the whole file while the conversion runs: a point
-  past what it has reached waits, paused, with a note, and plays once it gets there. The header has the **Subtitles**, audio and channel pickers: they
+  past what it has reached waits, paused, with a note, and plays once it gets there. The header has the **Subtitles**, audio and **Channels** pickers: they
   change playback and what the clip contains (the subtitle you pick becomes the clip's
-  default track).
+  default track). Channels, for stereo and surround tracks, picks a group (Front, Surround,
+  Center, LFE) or one channel (Left, Right, Back left, …; Both / Left / Right on stereo):
+  you hear only that, the waveform draws only that, and Make clip cuts it to one audio
+  file. It is hidden on iOS, whose player can't switch it.
 - **The dialogue map** under the player shows where the talking is over the whole file:
   the selection in amber (the range ▶ plays: selected lines, or a waveform range, I / O, a
   bookmark or a link's span, with Before / After), the playhead in blue, and the waveform's
@@ -310,8 +313,9 @@ Opening a file opens its workspace.
   focus it and use the arrow keys) and the fields follow; a negative value trims into the
   line. **Snap** pulls a dropped handle to the nearest **zero crossing** (on by default,
   once zoomed in to 10 s or closer, so the cut starts without a click), a **silence**, or a
-  **cue edge**. The zero crossing is the waveform's, which mixes every channel into one:
-  on a stereo or 5.1 track each channel can still be mid-swing there, so for a
+  **cue edge**. The zero crossing is the waveform's, which mixes the channels the
+  **Channels** picker selects into one: with one channel picked it is that channel's, but
+  with all of a stereo or 5.1 track each channel can still be mid-swing there, so for a
   multichannel FLAC/WAV cut, **silence** is the snap that avoids a click. **▶ Selection**, **▶ 1 s from in** and **▶ 1 s to out** audition the cut.
   A note says how the in point will be cut: on the sample with **Exact** on (or FLAC/WAV
   audio); on the keyframe before it for a lossless video copy; on a codec frame (20–30 ms)
@@ -626,6 +630,7 @@ quipclipper clip QUERY --video FILE [OPTIONS]
 | `--split-channels` | off | Split a surround track into per-group files (audio only). |
 | `--split-groups` | all | With `--split-channels`, which channel groups to export: comma-separated subset of `front,center,surround,lfe` (e.g. `center` for just the centre channel). |
 | `--split-format` | `wav` | `wav` / `flac` (lossless, no re-encode) or `original` (re-encode to source codec). |
+| `--channel` | whole | One channel group (`front`, `back`, `side`, `center`, `lfe`, `surround`) or channel (`FL`, `FR`, `FC`, `BL`, …) as one audio file; implies `--split-channels`, overrides `--split-groups`. |
 | `--include-lfe / --no-lfe` | include | Whether to emit the LFE channel as its own file when splitting. |
 
 **Subtitles** (see [Subtitles in clips](#subtitles-in-clips))
@@ -747,6 +752,22 @@ streams, use `--audio-track` with the `a:N` indices shown by `quipclipper tracks
 quipclipper clip "i'll be back" -v movie.mkv --audio-track 0      # first audio track only
 quipclipper clip "i'll be back" -v movie.mkv --audio-track 0,2    # tracks 0 and 2
 ```
+
+To cut just one channel group or one channel of a stereo or surround track, as one
+audio file, use `--channel` (the web app's **Channels** picker): a group (`front`,
+`back`, `side`, `center`, `lfe`, `surround`) or a channel by its ffmpeg name (`FL`,
+`FR`, `FC`, `LFE`, `BL`, `BR`, `SL`, `SR`, …). It implies `--split-channels`, so it
+writes WAV, FLAC or `original` per `--split-format`, named after the selection
+(`…_left.wav`, `…_center.wav`). The track must have a recognised channel layout; a
+channel it doesn't have is an error, never a guess.
+
+```bash
+quipclipper clip "i'll be back" -v movie.mkv -t audio --channel FC   # the centre channel
+quipclipper clip "i'll be back" -v podcast.mp3 -t audio --channel FL # the left of a stereo track
+```
+
+The waveform follows the same value: `quipclipper item.peaks` and `item.snap` take
+`--channel` to draw (and snap on) just those channels.
 
 ### Full-mix lossless WAV/FLAC
 
