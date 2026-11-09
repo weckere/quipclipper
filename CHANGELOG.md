@@ -21,6 +21,9 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   stream lacks is 400. A clip takes `channel_subset` (one audio file of that group or
   channel). CLI: `--channel` on `clip`, `item.peaks` and `item.snap`; `GET /api/items` lists
   each audio stream's `channel_choices`.
+- The workspace's **Channels** picker lists the groups and then each single channel (Left,
+  Right, Back left, …), and shows for stereo tracks too (Both, Left, Right); the waveform
+  and its snaps follow it, redrawing when it changes. Still hidden on iOS.
 
 ## [0.8.0] - 2026-11-05
 

@@ -3023,11 +3023,10 @@ const isTextSubtitle = (t) => {
   return !IMAGE_SUBTITLE_CODECS.has(codec) && codec !== "?" && codec !== "unknown";
 };
 
-const CHAN_LABELS = {
-  front: "Front (L/R)", center: "Center", lfe: "LFE",
-  side: "Surround (side)", back: "Surround (back)", surround: "Surround",
-};
-const chanLabel = (g) => CHAN_LABELS[g] || g;
+/** What the Channels picker offers for one audio stream: the server's `channel_choices`
+ *  ({value, label}: "whole", the groups, then single channels; Both/Left/Right for
+ *  stereo). Empty (mono, or a layout the server doesn't recognise) hides the picker. */
+const chanChoices = (aud) => (aud && aud.channel_choices) || [];
 
 // The unified stream selector under the seek bar (B17): pick the subtitle
 // track, the audio stream, and — for multichannel audio — a channel subset.
@@ -3116,14 +3115,13 @@ function renderStreamSelector(info, path, onStreamChange) {
   function buildChan() {
     const aidx = audSel.value;
     const aud = audios.find((s) => String(s.index) === String(aidx)) || audios[0];
-    const groups = (aud && aud.groups) || [];
-    $("ss-chan-field").hidden = groups.length <= 1 || IS_IOS;  // multichannel only
+    const choices = chanChoices(aud);
+    // Stereo and up; not on iOS, whose native HLS player can't switch the selection.
+    $("ss-chan-field").hidden = choices.length <= 1 || IS_IOS;
     chanSel.innerHTML = "";
-    const all = document.createElement("option");
-    all.value = "whole"; all.textContent = "All channels"; chanSel.appendChild(all);
-    groups.forEach((g) => {
+    choices.forEach((c) => {
       const o = document.createElement("option");
-      o.value = g; o.textContent = chanLabel(g); chanSel.appendChild(o);
+      o.value = c.value; o.textContent = c.label; chanSel.appendChild(o);
     });
     chanSel.value = "whole";
   }
@@ -4364,7 +4362,7 @@ const WF_HOLD_MS = 450;       // a touch held this long without moving drags out
 const WF_POINT_SPAN = 2;      // s: I or O with nothing selected selects this much from the playhead
 
 const wf = {
-  path: null, audio: 0, dur: 0, fps: 0, hasVideo: false,
+  path: null, audio: 0, chan: "whole", dur: 0, fps: 0, hasVideo: false,
   view: [0, 0],      // seconds shown
   data: null,        // the last peaks response for (roughly) this view
   base: null,        // the whole-file response: drawn again when the view goes back to it
@@ -4461,7 +4459,7 @@ function wfReset(path, info, primaryVideo) {
   ["clip-before", "clip-after"].forEach((id) => { if (parseFloat($(id).value) < 0) $(id).value = "0"; });
   Object.assign(wf, {
     path, dur, view: [0, dur], data: null, base: null, filePeak: 0, keyframes: null, failed: false,
-    audio: getSelectedAudio() ?? 0, hasVideo: !!primaryVideo,
+    audio: getSelectedAudio() ?? 0, chan: getSelectedChan(), hasVideo: !!primaryVideo,
     fps: (primaryVideo && primaryVideo.frame_rate) || 0, lastHead: null, cue: -1, hover: -1,
   });
   $("waveform").hidden = false;
@@ -4556,11 +4554,19 @@ function wfBins(span) {
     : Math.max(16, Math.min(8192, Math.round(wfWidth() * Math.min(2, window.devicePixelRatio || 1))));
 }
 
+/** The Channels picker's selection as a peaks/snap query param ("" for every channel). */
+const wfChanParam = () =>
+  wf.chan && wf.chan !== "whole" ? `&chan=${encodeURIComponent(wf.chan)}` : "";
+
 async function wfLoad() {
   clearTimeout(wf.pollTimer);
   if (!wf.path) return;
   const audio = getSelectedAudio() ?? 0;
-  if (audio !== wf.audio) Object.assign(wf, { audio, base: null, data: null, filePeak: 0 });
+  const chan = getSelectedChan();
+  // Another stream or channel is another waveform (and its own overview on the server).
+  if (audio !== wf.audio || chan !== wf.chan) {
+    Object.assign(wf, { audio, chan, base: null, data: null, filePeak: 0 });
+  }
   const [a, b] = wf.view;
   const bins = wfBins(b - a);
   const kf = wf.hasVideo && b - a <= 60;
@@ -4569,7 +4575,7 @@ async function wfLoad() {
   const ctl = wf.abort = new AbortController();
   wf.failed = false;
   const url = `/api/items/peaks${qp(wf.path)}&start=${a.toFixed(6)}&end=${b.toFixed(6)}` +
-    `&bins=${bins}&audio=${audio}${kf ? "&keyframes=true" : ""}`;
+    `&bins=${bins}&audio=${audio}${wfChanParam()}${kf ? "&keyframes=true" : ""}`;
   let resp, body;
   try {
     resp = await apiFetch(url, { signal: ctl.signal });
@@ -4977,7 +4983,7 @@ const wfZeroOn = () => $("wf-snap-zero").checked && wfSpan() <= WF_ZERO_SPAN;
 /** Snap `t` on the server: to the nearest quiet point (Silence), then zero crossing. */
 async function wfServerSnap(t, { zeroRadius, silence = $("wf-snap-silence").checked } = {}) {
   let out = t;
-  const base = `/api/items/snap${qp(wf.path)}&audio=${wf.audio}`;
+  const base = `/api/items/snap${qp(wf.path)}&audio=${wf.audio}${wfChanParam()}`;
   if (silence) {
     const radius = Math.max(0.05, Math.min(1, (24 / wfWidth()) * wfSpan()));
     try {
@@ -5290,6 +5296,8 @@ $("wf-go-head").onclick = wfGoToHead;
 ["wf-snap-zero", "wf-snap-silence", "wf-snap-cue"].forEach((id) => $(id).addEventListener("change", wfDraw));
 ["clip-exact", "clip-format", "clip-audio-only"].forEach((id) => $(id).addEventListener("change", wfCutNote));
 $("ss-audio").addEventListener("change", () => { wf.base = null; wfLoad(); });
+// The waveform (and its snaps) follow the Channels picker: draw just that channel or group.
+$("ss-chan").addEventListener("change", () => { wf.base = null; wfLoad(); });
 
 $("wf-stage").addEventListener("wheel", (e) => {
   if (!wf.path) return;
@@ -5628,13 +5636,6 @@ function showClipTarget(on) {
   wfOnSelection();
 }
 
-// Map a channel-group label from the stream selector to a clip split category.
-const CHAN_CATEGORY = {
-  front: "front", center: "center", lfe: "lfe",
-  side: "surround", back: "surround", surround: "surround",
-};
-const chanCategory = (g) => CHAN_CATEGORY[g] || g;
-
 // Compact clip status next to the ★/✂ buttons: spinner while cutting, then a
 // download button (or ✕ on failure). The detailed bottom panel still shows too.
 function setClipIndicator(state, opts = {}) {
@@ -5659,8 +5660,8 @@ async function makeClip() {
   setClipIndicator("processing");
 
   const fmt = $("clip-format").value;
-  // The stream selector drives the output (B17): a channel subset extracts one
-  // group (split → audio-only re-encode); the audio stream picks the track.
+  // The stream selector drives the output (B17): a channel subset extracts that group
+  // or channel (split → one audio-only file); the audio stream picks the track.
   const chan = getSelectedChan();
   const chanSubset = chan && chan !== "whole";
   const splitCh = chanSubset;
@@ -5681,7 +5682,7 @@ async function makeClip() {
     embed_subs: kind === "video",  // implicit (B17): always embed for video
     split_channels: splitCh,
     split_format: fmt === "lossless" ? "wav" : fmt,
-    split_groups: splitCh ? [chanCategory(chan)] : undefined,
+    channel_subset: splitCh ? chan : undefined,
     // Audio + WAV/FLAC without splitting = full-mix lossless (keeps 5.1, etc.).
     audio_format: (audioOnly && !splitCh && (fmt === "wav" || fmt === "flac")) ? fmt : undefined,
     // Selected audio stream from the stream selector.
