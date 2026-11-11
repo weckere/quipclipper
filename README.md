@@ -96,11 +96,11 @@ playhead. Below it, the home's Dialogue index card indexes the whole library.
 
 ![The library home: Now playing from Jellyfin with each item's poster, and the Dialogue index card with Index the whole library](docs/screenshots/now-playing.png)
 
-**Send to LeadStinger:** the cart button (a broadcast tape cart) beside Make clip cuts the selection with its
+**Send to LeadStinger:** the cassette button (LeadStinger's icon, an audio cassette) beside Make clip cuts the selection with its
 Before/After padding and sends it to LeadStinger as a new tile, the padding becoming the
 tile's handles. Tick several lines with the Send to LeadStinger toggle and they go in
 together as a set of tiles; the set file stays there to download, for a LeadStinger that
-can't take a set by link yet. A dialogue search result has the same cart button beside Play
+can't take a set by link yet. A dialogue search result has the same cassette button beside Play
 on Jellyfin, so one line goes straight to LeadStinger from the results.
 
 <img src="docs/screenshots/send-to-leadstinger.png" width="880" alt="The Selection panel with the pointer on the Send to LeadStinger button and its tooltip showing">
@@ -203,7 +203,7 @@ example.
 ### LeadStinger
 
 [LeadStinger](https://github.com/weckere/leadstinger) is a soundboard for live shows.
-Click the **Send to LeadStinger** button (the broadcast-cart icon) beside Make clip, or tick the toggle beside
+Click the **Send to LeadStinger** button (the cassette icon) beside Make clip, or tick the toggle beside
 Clip / Export selected, and the line goes straight into LeadStinger as a new tile: quipclipper cuts it
 as a full-mix FLAC with its padding kept as handles, and the tile's trim sits exactly on
 the line, so it can still be nudged there. Several lines at once make a LeadStinger set

@@ -39,7 +39,7 @@ def test_every_hit_row_has_the_button_right_after_play_on_jellyfin():
     assert 'title="${HIT_LS_TITLE}"' in btn.group(0)
     assert 'aria-label="Send the line at ${hit.start_ts} to LeadStinger"' in btn.group(0)
     element = row[btn.start():row.index("</button>", btn.start())]
-    assert 'iconSvg("leadstinger")' in element  # the cart every Send to LeadStinger control draws
+    assert 'iconSvg("leadstinger")' in element  # the cassette every Send to LeadStinger control draws
     # Beside Play on Jellyfin: after it (when it is offered), before the row's status slot.
     assert row.index("hit-play-on") < row.index("hit-ls") < row.index("hit-status")
     # Not conditional on Jellyfin: the Play on button's ternary closes before it.

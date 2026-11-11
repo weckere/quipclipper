@@ -11,6 +11,13 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 
 ## [Unreleased]
 
+### LeadStinger cassette icon
+
+- **Send to LeadStinger draws a cassette**, to match LeadStinger's new app icon: a compact
+  audio cassette (the shell, two reel hubs with the tape between them, the trapezoid along
+  the bottom edge) instead of the broadcast cart, on every LeadStinger control. Tooltips,
+  names and behaviour are unchanged.
+
 ## [0.9.0] - 2026-11-10
 
 ### Channels picker: single channels, stereo, and the waveform (M18)
