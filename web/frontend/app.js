@@ -3494,6 +3494,12 @@ $("stt-default-model").addEventListener("change", () => {
 
 // The selected subtitle track index from the stream selector; null = sidecar/
 // auto (empty option) or no subtitles, matching the backend's auto-resolve.
+/** The chosen embedded subtitle track as a number, or undefined (a sidecar / the best one). */
+function selectedSubTrack() {
+  const t = getSelectedTrack();
+  return t != null && /^\d+$/.test(t) ? parseInt(t) : undefined;
+}
+
 function getSelectedTrack() {
   const sel = $("ss-subs");
   if (!sel || $("ss-subs-field").hidden || sel.value === "") return null;
@@ -5690,6 +5696,8 @@ async function makeClip() {
     // For a video clip, make the selected embedded subtitle the default track.
     default_sub_track: (kind === "video" && getSelectedTrack() != null)
       ? parseInt(getSelectedTrack()) : undefined,
+    // The subtitles whose lines go into the clip's metadata (cues).
+    track: selectedSubTrack(),
     template: clipTemplate(),
   };
 
@@ -6564,7 +6572,7 @@ async function makeLeadStingerClip() {
   const cue = (selectedCueText() || (clipFirst < 0 ? loadedBookmarkCue : "") || "").trim();
   const item = {
     path: currentItem.path, ...wireRange(clipRangeStart, clipRangeEnd),
-    title: cue || undefined,
+    title: cue || undefined, track: selectedSubTrack(),
   };
   const what = cue
     ? `"${cue.length > 60 ? cue.slice(0, 57) + "…" : cue}"`
@@ -6625,7 +6633,7 @@ async function sendLeadStingerLink(it, status) {
     status.textContent = "Sending to LeadStinger…";
     const job = await postJSON("/api/leadstinger/quip", {
       path: it.path, start: it.start, end: it.end, title: it.title,
-      before: it.before || 0, after: it.after || 0,
+      before: it.before || 0, after: it.after || 0, track: it.track,
     });
     for (;;) {
       await new Promise((r) => setTimeout(r, 1000));
@@ -6663,7 +6671,7 @@ async function sendLeadStingerClip() {
   try {
     const data = await postJSON("/api/leadstinger/quip", {
       path: currentItem.path, ...wireRange(clipRangeStart, clipRangeEnd),
-      title: cue || undefined,
+      title: cue || undefined, track: selectedSubTrack(),
     });
     activeJobId = data.job_id;
     pollClipJob(data.job_id, addClipRow(data.job_id, label));

@@ -693,6 +693,11 @@ def _sidecar_tags(stem: str, sidecar: Path) -> tuple[str | None, bool, bool, str
     return lang, forced, hi, " ".join(tokens)
 
 
+def sidecar_language(video_path: str | Path, sidecar: str | Path) -> str | None:
+    """The language a sidecar's name gives (``movie.hi.en.srt`` → ``en``), or None."""
+    return _sidecar_tags(Path(video_path).stem, Path(sidecar))[0]
+
+
 def find_sidecar(video_path: str | Path, langs=None, siblings: list[Path] | None = None) -> Path | None:
     """Find the best sidecar subtitle/transcript next to a video (same stem).
 

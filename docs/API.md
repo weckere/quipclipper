@@ -408,7 +408,11 @@ the whole file, no padding). `before`/`after` are the clip's padding as for `/ap
 (every channel kept) and writes `LeadStinger/<name>.lsset` in the clips library:
 `manifest.json` (LeadStinger's starter-pack format) plus one folder for the set. Each
 tile's `trim_start`/`trim_end` sit on the line, so the padding is handle audio and the cut
-points can still be moved in LeadStinger. Without `name`, the set is named after the
+points can still be moved in LeadStinger. A tile whose source has subtitles also carries
+`cues`: the subtitle lines inside its file, in the tile file's own seconds, exactly as the
+sidecar's [`cues`](#subtitle-cues) (an item's `track` picks the subtitles; a clips-library
+file brings the cues of its own sidecar). A tile without subtitles has no `cues`; a reader
+that doesn't know the field ignores it. Without `name`, the set is named after the
 movie or show when every clip comes from it, else `quipclipper <date>`; LeadStinger
 numbers a name that's already taken. Download it with
 `GET /api/jobs/{id}/download/<name>.lsset`; import it with LeadStinger's File ▸ Import
@@ -457,11 +461,12 @@ Every value is percent-encoded as `encodeURIComponent` does (a `+` goes out as `
 `title`, `start`, `end` and `set` are left out when empty. `title` is cut to one line of
 200 characters and `set` to 100. `start`/`end` are plain decimals (at most 3 places).
 
-`POST /api/leadstinger/quip` takes `{path, start, end, title?, before?, after?, set?}`: the
-line's span in the source, the tile's title (usually the line), the padding kept either
+`POST /api/leadstinger/quip` takes `{path, start, end, title?, before?, after?, set?, track?}`:
+the line's span in the source, the tile's title (usually the line), the padding kept either
 side as handle audio around the tile's trim (`before`/`after`, default 2 s each, at most
-60; 0 = none) and the LeadStinger set to put the tile in (made there if missing; default
-its current set). The job cuts `[start − before, end + after]`, clamped to the file (a
+60; 0 = none), the LeadStinger set to put the tile in (made there if missing; default
+its current set) and the subtitle track (`s:N`) whose lines go into the clip's sidecar as
+[`cues`](#subtitle-cues) (default: the best one, as search picks it). The job cuts `[start − before, end + after]`, clamped to the file (a
 line near either end gets a shorter handle), as a full-mix FLAC
 into `LeadStinger/` in the clips library. The finished job carries
 `result: {link, clip, start, end}`, where `start`/`end` are the line *inside* the clip:
@@ -845,11 +850,49 @@ sidecars existed get one from `POST /api/clips/backfill` (`clips.backfill`), mar
 | `padding` | `{before, after}`: seconds of handle audio either side of the line. |
 | `trim` | `{start, end}`: where the line sits inside the clip file, in seconds. Use it as `quip.import`'s `start`/`end`. (A lossless video cut starts on the keyframe before, so for those it is approximate.) |
 | `cue` | The line's text. |
+| `cues` | The subtitle lines inside the clip file, in order: see [Subtitle cues](#subtitle-cues). Missing when the source has no subtitles, and on backfilled clips. |
+| `cues_source` | Which subtitles `cues` came from: see [Subtitle cues](#subtitle-cues). Present exactly when `cues` is. |
 | `codec`, `channels`, `sample_rate`, `video_codec`, `duration` | From ffprobe after the cut (the first audio stream). |
 | `jellyfin` | `{id, type, show, season, episode, title, year}` when Jellyfin knows the source, else `null`. |
 | `lossless`, `audio_format`, `set`, `split`, `size` | The cut's options, the LeadStinger set a sent line went to, whether a channel split wrote it, its size in bytes. |
-| `name`, `items` | Sets only: the set's name and its tiles (`title`, `notes`, `source`, `line`, `padding`, `trim_start`, `trim_end`). |
+| `name`, `items` | Sets only: the set's name and its tiles (`title`, `notes`, `source`, `line`, `padding`, `trim_start`, `trim_end`, and `cues` + `cues_source` when the tile has subtitles). |
 | `parsed` | Backfill only: `{season, episode, year}` read from the names. |
+
+### Subtitle cues
+
+A clip cut from a source with subtitles carries them: `cues` holds every subtitle line that
+overlaps the span cut (the line and its padding), and `cues_source` says which subtitles
+those are. They are the lines search reads for that source: the subtitle track chosen in the
+workspace (the request's `track`), else the best one (a sidecar file first, then the best
+embedded track), with machine-transcript lines mixed in where transcription is on.
+LeadStinger stores them with the tile, searches them and lets you move the words onto their
+audio; quipclipper does no word alignment.
+
+Each cue is `{start, end, text}`, plus `machine: true` for a line a speech-to-text model
+heard:
+
+| Field | Meaning |
+|---|---|
+| `start`, `end` | Seconds **inside the clip file**: the same frame as `trim` (0 is the clip's first sample; a lossless video cut that starts on an earlier keyframe is off by the same amount `trim` is). A line that starts before the cut or ends after it is clamped to the file, `[0, duration]`. |
+| `text` | The line as search reads it: one line of text (a caption's lines joined by a space, formatting tags removed). |
+| `machine` | `true` for a machine-transcript line; missing otherwise. |
+| `words` | Reserved: `[{start, end, text}]` word timings, only ever written from a source that really has them. No source has them today, so no cue carries it; treat it as optional. |
+
+`cues_source` is `{kind, lang, …}`; `lang` is the language code the source gives, or `null`:
+
+| `kind` | Also | The subtitles |
+|---|---|---|
+| `sidecar` | `path`: the subtitle file's name | A subtitle file next to the source (`movie.en.srt`). |
+| `embedded` | `track`: the subtitle track (`s:N`) | A text subtitle track inside the source. |
+| `machine` | `path` for a machine sidecar file | A machine transcript (stored, or a `*.whisper.*` file next to the source) when the source has no subtitles of its own. |
+| `youtube` | `auto`: `true` for YouTube's automatic captions | A YouTube video's stored transcript. |
+| `epub` | `segment`: the chapter segment | An EPUB 3 audiobook's synced text. |
+
+A source with **no subtitles** gives no `cues` and no `cues_source` (the fields are missing);
+a source with subtitles but no line inside the cut gives `cues: []`. Each file of a channel
+split carries the same cues (cut to that file's length). A clips-library file sent on (into
+a set) keeps the cues of its own sidecar. `GET /api/clips` passes both fields on in `meta`
+unchanged.
 
 ### `GET /api/clips/download/{path}?as=flac`
 

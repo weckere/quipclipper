@@ -740,6 +740,8 @@ COMMANDS: tuple[Command, ...] = (
                           default=2.0),
                     Param("set", "str", "LeadStinger set to put the tile in (made if missing; "
                           "default: its current set).", where=BODY),
+                    Param("track", "int", "Subtitle track (s:N) whose lines ride along as "
+                          "the clip's cues. Default: the best one.", where=BODY),
                     *_OPEN_LINK),
             mode="client", response="job",
             ui="Send to LeadStinger button beside Make clip, the toggle with Clip / Export "

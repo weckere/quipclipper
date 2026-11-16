@@ -188,6 +188,44 @@ def probe(path: Path) -> dict:
     return out
 
 
+def window_cues(cues, start: float, end: float) -> list[dict]:
+    """The subtitle lines a clip cut from ``start`` to ``end`` (source seconds) holds, in
+    the clip file's own frame: every line that overlaps the span, shifted by ``start`` and
+    clamped to ``[0, end - start]``, in order (D-109).
+
+    ``cues`` are engine Cues (or anything with ``start``, ``end``, ``text`` and an optional
+    ``source``). A machine-transcript line carries ``"machine": true``. No source has word
+    timings today, so no cue carries ``words``."""
+    length = max(0.0, end - start)
+    out: list[dict] = []
+    for c in sorted(cues, key=lambda c: (c.start, c.end)):
+        text = (c.text or "").strip()
+        if not text or c.end <= start or c.start >= end:
+            continue
+        s = round(min(max(c.start - start, 0.0), length), 3)
+        e = round(min(max(c.end - start, 0.0), length), 3)
+        if e <= s:
+            continue
+        cue: dict = {"start": s, "end": e, "text": text}
+        if getattr(c, "source", None) == "machine":
+            cue["machine"] = True
+        out.append(cue)
+    return out
+
+
+def clamp_cues(cues: list[dict], duration: float | None) -> list[dict]:
+    """``cues`` cut to a file of ``duration`` seconds (a file shorter than its span: a
+    clip that ran into the source's end); lines that no longer fit are dropped."""
+    if duration is None:
+        return cues
+    out = []
+    for c in cues:
+        s, e = min(c["start"], duration), min(c["end"], duration)
+        if e > s:
+            out.append({**c, "start": round(s, 3), "end": round(e, 3)})
+    return out
+
+
 def jellyfin_fields(entry: dict | None) -> dict | None:
     """What the sidecar keeps of a Jellyfin index entry."""
     if not entry:

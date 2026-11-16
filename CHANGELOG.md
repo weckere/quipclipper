@@ -11,6 +11,19 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 
 ## [Unreleased]
 
+### Clips carry their subtitles (M20)
+
+- **A clip's subtitles go with it.** Every clip cut from a source with subtitles (a clip
+  job, batch export, clip.nowplaying, Send to LeadStinger, each file of a channel split)
+  gets `cues` in its metadata sidecar: every subtitle line that overlaps the cut, handles
+  included, as `{start, end, text}` in seconds inside the clip file (the frame of `trim`),
+  clamped to the file; and `cues_source`, which subtitles they came from (`sidecar`,
+  `embedded`, `machine`, `youtube` or `epub`, with the language). Each tile of a LeadStinger
+  set file carries the same `cues`, so LeadStinger can store, search and re-align them. A
+  source with no subtitles gets neither field; backfilled clips get none. The sidecar stays
+  version 1 (fields only added). The workspace now sends its chosen subtitle track with a
+  clip, a set and Send to LeadStinger, and `leadstinger.quip` takes `--track`.
+
 ## [0.9.1] - 2026-11-10
 
 ### LeadStinger cassette icon

@@ -66,8 +66,12 @@ def auto_set_name(source_titles: list[str], today: date | None = None) -> str:
     return f"quipclipper {(today or date.today()).isoformat()}"
 
 
-def tile_entry(file: str, *, title: str, trim: Trim, notes: str = "") -> dict:
-    """One manifest tile. ``file`` is relative to the pack folder (``<Set>/<name>.flac``)."""
+def tile_entry(file: str, *, title: str, trim: Trim, notes: str = "",
+               cues: list[dict] | None = None) -> dict:
+    """One manifest tile. ``file`` is relative to the pack folder (``<Set>/<name>.flac``).
+
+    ``cues`` are the subtitle lines inside the tile's file, in its own seconds (the clip
+    sidecar's ``cues``, D-109); left out when the source has no subtitles."""
     tile: dict = {"file": file, "title": title}
     if trim.start:
         tile["trim_start"] = trim.start
@@ -75,6 +79,8 @@ def tile_entry(file: str, *, title: str, trim: Trim, notes: str = "") -> dict:
         tile["trim_end"] = trim.end
     if notes:
         tile["notes"] = notes
+    if cues is not None:
+        tile["cues"] = cues
     return tile
 
 

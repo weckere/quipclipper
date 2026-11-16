@@ -1006,6 +1006,12 @@ The clip is a **full-mix FLAC**, the same choice as LeadStinger set files:
 - **LeadStinger reads it natively.** FLAC needs no ffmpeg on the LeadStinger machine,
   where AC-3, DTS and video containers do.
 
+**Subtitles go along.** When the source has subtitles, the clip carries the lines it holds
+(the handles included), timed inside the clip: the subtitle track chosen in the workspace,
+else the one search uses. They are in the clip's metadata and in each tile of a set file,
+so LeadStinger can keep, search and show them. A source without subtitles sends the audio
+alone. The fields are in the [API reference](API.md#subtitle-cues).
+
 Clips land in `LeadStinger/` in the clips library, named
 `<source>_<HH-MM-SS>_<line>.flac` (the time is where the clip, handles included, starts).
 A clip that is already in the library is sent as it is, untrimmed (with ffmpeg,

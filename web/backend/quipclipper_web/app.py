@@ -54,7 +54,7 @@ from quipclipper.clip import (
 )
 from quipclipper import transcribe as stt
 from quipclipper import updates as updates_mod
-from quipclipper.models import Match, format_timestamp
+from quipclipper.models import Cue, Match, format_timestamp
 from quipclipper.naming import (
     DEFAULT_CLIP_TEMPLATE,
     clean_title,
@@ -75,10 +75,13 @@ from quipclipper.subtitles import (
     VIDEO_EXTS,
     Cancelled,
     at_idle_priority,
+    best_track,
     find_sidecar,
+    is_machine_sidecar,
     is_text_subtitle,
     list_embedded_tracks,
     load_subtitles,
+    sidecar_language,
 )
 from quipclipper_web import (
     __version__, clipmeta, deeplinks, epub_items, file_index, jellyfin, jellyfin_index, lib_index,
@@ -292,6 +295,8 @@ class LeadStingerQuipRequest(BaseModel):
     after: float = Field(2.0, ge=0, le=60)
     # The LeadStinger set to put the tile in (created there if missing); else its current set.
     set: str | None = Field(None, max_length=100)
+    # The subtitle track whose lines ride along as the clip's cues (D-109); default: the best.
+    track: int | None = Field(None, ge=0)
 
 
 class UpdateSettings(BaseModel):
@@ -3426,10 +3431,60 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     continue
                 info = clipmeta.probe(Path(p))
                 split = {"split": True} if len(paths) > 1 else {}
-                clipmeta.write(Path(p), {**meta, **info, **split,
+                extra = {}
+                if meta.get("cues"):
+                    extra["cues"] = clipmeta.clamp_cues(meta["cues"], info.get("duration"))
+                clipmeta.write(Path(p), {**meta, **info, **split, **extra,
                                          "size": Path(p).stat().st_size})
             except Exception as exc:  # noqa: BLE001
                 clipmeta.log.warning("clip metadata for %s: %s", p, exc)
+
+    def _cue_lines(path: str, video, yt_vid: str | None, track: int | None):
+        """The subtitle lines a clip of ``path`` is cut against and where they came from
+        (D-109): the lines the search reads (the chosen track, machine lines mixed in),
+        as ``(cues, cues_source)``; ``(None, None)`` when it has none. ``video`` is the
+        file ffmpeg reads (an EPUB segment's extracted audio, a stream URL)."""
+        if yt_vid is not None:
+            meta = yt_store.meta(yt_vid)
+            cues = yt_store.cues(yt_vid)
+            src = {"kind": "youtube", "lang": meta.get("sub_lang"),
+                   "auto": meta.get("sub_source") == "auto"}
+            return (cues, src) if cues else (None, None)
+        epub_ref, seg = epub_items.parse_ref(path)
+        if seg is not None:
+            cues = epub_items.segment_cues(_resolve(epub_ref), seg)
+            return (cues, {"kind": "epub", "lang": None, "segment": seg}) if cues else (None, None)
+        if not isinstance(video, Path):
+            return None, None
+        clips_root = settings.clips_dir.resolve()
+        if video.resolve().is_relative_to(clips_root):
+            # A clip cut again (a clips-library file into a set): its own cues, which
+            # are already in its frame.
+            meta = clipmeta.read(video) or {}
+            if not meta.get("cues_source") or not isinstance(meta.get("cues"), list):
+                return None, None
+            cues = [Cue(i, float(c["start"]), float(c["end"]), str(c.get("text") or ""),
+                        source="machine" if c.get("machine") else None)
+                    for i, c in enumerate(meta["cues"]) if isinstance(c, dict)]
+            return cues, meta["cues_source"]
+        cues = _file_cues(video, track, _machine_mode("include"))
+        if not cues:
+            return None, None
+        if all(c.machine for c in cues):
+            t = transcripts.load(video)
+            return cues, {"kind": "machine", "lang": t.language if t else None}
+        if track is None:
+            side = find_sidecar(video, settings.subtitle_langs)
+            if side is not None:
+                kind = "machine" if is_machine_sidecar(side, video.stem) else "sidecar"
+                return cues, {"kind": kind, "lang": sidecar_language(video, side),
+                              "path": side.name}
+            tracks = list_embedded_tracks(video)
+            track = best_track(tracks, settings.subtitle_langs).index if tracks else None
+        else:
+            tracks = list_embedded_tracks(video)
+        t = next((x for x in tracks if x.index == track), None)
+        return cues, {"kind": "embedded", "lang": t.language if t else None, "track": track}
 
     def _plan_clip(req: ClipRequest, out_dir: Path | None = None,
                    meta_extra: dict | None = None):
@@ -3754,14 +3809,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 **(meta_extra or {}),
             }
 
+            _cue_args = (req.path, video, yt_vid, req.track)
+
+            def _add_cues() -> None:
+                """The subtitle lines inside the clip (D-109); a clip with no subtitles
+                gets neither field. Never fails the cut."""
+                try:
+                    cues, source = _cue_lines(*_cue_args)
+                except Exception as exc:  # noqa: BLE001 - the clip stands without them
+                    clipmeta.log.info("clip cues for %s: %s", _cue_args[0], exc)
+                    return
+                if source is not None:
+                    _meta["cues"] = clipmeta.window_cues(cues, _rng.start, _rng.end)
+                    _meta["cues_source"] = source
+
             def do_cut(job) -> list[Path]:
                 # Listed (and so seen by a `since` poll) only once the clip and its
                 # sidecar are both there; stamped then, so it's newer than any cursor.
                 with clipmeta.writing(_out_path):
                     written = _cut(job)
+                    if written:
+                        _add_cues()
                     _write_sidecars(written, _meta)
                     clipmeta.publish(written)
                 return written
+
+            do_cut.meta = _meta  # what the sidecar says, cues included once cut
 
             def _cut(_job) -> list[Path]:
                 try:
@@ -3877,7 +3950,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     where = "" if whole else f" · {format_timestamp(item.start)}"
                     notes = (item.notes or "").strip() or (
                         f"{Path(item.path).stem}{where} · quipclipper")
-                    tiles.append((arcname, title, trim, notes))
+                    cues = do_cut.meta.get("cues")
+                    tiles.append((arcname, title, trim, notes, cues))
                     files.append((arcname, written[0]))
                     items_meta.append({
                         "title": title, "notes": notes,
@@ -3885,13 +3959,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         "line": (None if whole else {"start": item.start, "end": item.end}),
                         "padding": {"before": before, "after": 0.0 if whole else item.after},
                         "trim_start": trim.start, "trim_end": trim.end,
+                        **({"cues": cues, "cues_source": do_cut.meta["cues_source"]}
+                           if cues is not None else {}),
                     })
                 set_name = lsset.safe_name(req.name or lsset.auto_set_name(sources),
                                            fallback="quipclipper")
                 # Clips live in a folder named after the set inside the zip.
                 files = [(f"{set_name}/{a}", src) for a, src in files]
-                tiles = [lsset.tile_entry(f"{set_name}/{a}", title=t, trim=tr, notes=no)
-                         for a, t, tr, no in tiles]
+                tiles = [lsset.tile_entry(f"{set_name}/{a}", title=t, trim=tr, notes=no,
+                                          cues=cu)
+                         for a, t, tr, no, cu in tiles]
                 job.progress = f"{n}/{n} zipping"
                 out_dir = settings.clips_dir / "LeadStinger"
                 out_dir.mkdir(parents=True, exist_ok=True)
@@ -3969,7 +4046,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         clip_req = ClipRequest(
             path=req.path, kind="audio", audio_format="flac", lossless=False,
             start=cut.start, end=cut.end, before=0.0, after=0.0, cue_text=title or "",
-            template="{source}_{timestamp}_{cue}", embed_subs=False,
+            template="{source}_{timestamp}_{cue}", embed_subs=False, track=req.track,
         )
         line_meta = {
             "origin": "leadstinger.quip", "cue": title or None, "set": set_name,
