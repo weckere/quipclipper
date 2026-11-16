@@ -129,8 +129,10 @@ class PeakStore:
         self._wake = threading.Condition(self._lock)
         self._proc: subprocess.Popen | None = None
         self._closed = False
-        self._worker = threading.Thread(target=self._work, name="qc-peaks", daemon=True)
-        self._worker.start()
+        # Started by the first build (``ensure``), not here: an app that never draws a
+        # waveform never owns the thread, so app instances that are made and dropped
+        # without a shutdown (the test suite makes hundreds) don't each leave one idle.
+        self._worker: threading.Thread | None = None
 
     def shutdown(self) -> None:
         with self._lock:
@@ -196,6 +198,12 @@ class PeakStore:
             b = self._builds.get(key)
             if b is not None and (b.state != "error" or time.monotonic() - b.started < 60):
                 return _status(b)
+            if self._closed:
+                return {"state": "none", "progress": 0.0}
+            if self._worker is None:
+                self._worker = threading.Thread(target=self._work, name="qc-peaks",
+                                                daemon=True)
+                self._worker.start()
             b = self._builds[key] = _Build()
             self._queue.append((src, b))
             while len(self._queue) > MAX_QUEUED:

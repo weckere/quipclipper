@@ -454,3 +454,28 @@ def test_each_channel_has_its_own_overview_key(tmp_path):
     # Whole-file overviews built before channels existed keep their cache key.
     import hashlib
     assert whole.key == hashlib.sha1(b"b|a:0").hexdigest()[:24]
+
+
+def _peak_threads() -> int:
+    import threading
+
+    return sum(1 for t in threading.enumerate() if t.name == "qc-peaks")
+
+
+def test_the_overview_worker_starts_with_the_first_build_not_with_the_app(tmp_path):
+    """An app that never draws a waveform owns no worker thread, so apps dropped without
+    a shutdown (as most tests do) don't each leave one behind: hundreds of idle threads
+    made the peaks tests' fork fail with ENOMEM on a CI runner."""
+    before = _peak_threads()
+    for i in range(3):
+        create_app(Settings.from_env({
+            "QC_MEDIA_ROOTS": str(tmp_path), "QC_CLIPS_DIR": str(tmp_path / f"c{i}"),
+            "QC_STATE_DIR": str(tmp_path / f"s{i}"),
+        }))
+    assert _peak_threads() == before
+    store = peaks.PeakStore(tmp_path / "state")
+    assert store._worker is None
+    store.shutdown()
+    # Shut down before any build: nothing starts afterwards either.
+    assert store.ensure(_fake_src(tmp_path, "a.wav"))["state"] == "none"
+    assert store._worker is None
