@@ -11,6 +11,8 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-16
+
 ### Clips carry their subtitles (M20)
 
 - **A clip's subtitles go with it.** Every clip cut from a source with subtitles (a clip
@@ -954,7 +956,8 @@ The first version, before releases were tagged. Highlights:
   guard, and an optional password gate.
 - **Deployment:** a Nix flake and NixOS module (with a VM test), and Docker images on GHCR.
 
-[Unreleased]: https://github.com/weckere/quipclipper/compare/v0.9.1...dev
+[Unreleased]: https://github.com/weckere/quipclipper/compare/v0.10.0...dev
+[0.10.0]: https://github.com/weckere/quipclipper/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/weckere/quipclipper/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/weckere/quipclipper/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/weckere/quipclipper/compare/v0.7.0...v0.8.0
