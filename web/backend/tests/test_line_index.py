@@ -24,7 +24,9 @@ from quipclipper_web import folder_cache
 from quipclipper_web import sub_cache as sub_cache_mod
 from quipclipper_web.app import create_app
 from quipclipper_web.config import Settings
-from quipclipper_web.line_index import FILE_NAME, LineIndex, _decode, _encode
+from quipclipper_web.line_index import (
+    FILE_NAME, LineIndex, _decode, _decode_place, _encode, _encode_place,
+)
 from quipclipper_web.sub_cache import SubtitleCache
 
 LINES = [
@@ -98,23 +100,49 @@ def test_recall_same_as_scoring_every_cue(tmp_path, lib, monkeypatch):
     tunings = [{}, {"min_score": 40, "max_span": 2}, {"min_score": 90, "limit": 20},
                {"min_score": 0, "max_span": 1}]
     narrowed = []
-    real = LineIndex.candidates
+    real = LineIndex.search
 
     def spy(self, *a, **k):
         got = real(self, *a, **k)
         narrowed.append(got)
         return got
 
-    monkeypatch.setattr(LineIndex, "candidates", spy)
+    monkeypatch.setattr(LineIndex, "search", spy)
     with_index = {(q, i): _search(c, lib, q, **t) for q in QUERIES for i, t in enumerate(tunings)}
     assert any(r["count"] for r in with_index.values())
     # The index answered (all but the unspaced query) and left files out.
     assert sum(g is not None for g in narrowed) == (len(QUERIES) - 1) * len(tunings)
     assert any(g is not None and 0 < len(g) < 24 for g in narrowed)
     # The old path: the index can't answer, so every cue is scored.
-    monkeypatch.setattr(LineIndex, "candidates", lambda *a, **k: None)
+    monkeypatch.setattr(LineIndex, "search", lambda *a, **k: None)
     for (q, i), got in with_index.items():
         assert got == _search(c, lib, q, **tunings[i]), q
+
+
+def test_worker_processes_give_the_same_results(tmp_path, lib, monkeypatch):
+    """A big library is searched in worker processes, each a range of entries: the
+    answers are the ones the server's own process gives."""
+    c = _client(tmp_path, lib)
+    _index_all(c, lib)
+    queries = ["may the force be with you", "no no", "you're gonna need a bigger goat", "boat"]
+    here = {q: _search(c, lib, q) for q in queries}
+    used = []
+    real = LineIndex._get_pool
+
+    def pool(self, workers):
+        used.append(self)
+        return real(self, workers)
+
+    monkeypatch.setattr(LineIndex, "parallel_min", 1)
+    monkeypatch.setattr(LineIndex, "_workers", 3)  # however many cores the host has
+    monkeypatch.setattr(LineIndex, "_get_pool", pool)
+    try:
+        for q in queries:
+            assert _search(c, lib, q) == here[q], q
+        assert used and used[0]._pool is not None
+    finally:
+        for idx in used:
+            idx.close()
 
 
 def test_files_not_yet_in_the_index_are_still_searched(tmp_path, lib):
@@ -230,6 +258,33 @@ def test_positions_round_trip():
         assert _decode(_encode(ps, n)) == sum(1 << p for p in ps)
 
 
+def test_places_round_trip():
+    for n, cs, offs in ((10, [0, 0, 9], [0, 4, 250]), (1000, [3, 999], [300, 0]),
+                        (70000, [0, 69999], [1, 2]), (5, [], [])):
+        got = _decode_place(_encode_place(cs, offs, n))
+        assert (list(got[0]), list(got[1])) == (cs, offs)
+
+
+def test_an_index_of_the_old_format_is_rebuilt_from_the_cache(tmp_path):
+    """Format 1 had no word places: the file is started over, and the backfill run with
+    the server fills it in again from the cached subtitles, with its progress."""
+    path = tmp_path / FILE_NAME
+    with sqlite3.connect(path) as conn:  # a format-1 file, as an older server left it
+        conn.executescript("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
+                           "INSERT INTO meta VALUES ('version', '1');"
+                           "CREATE TABLE entry (id INTEGER PRIMARY KEY, name TEXT);"
+                           "INSERT INTO entry VALUES (1, 'a.json');")
+    idx = LineIndex(path)
+    assert idx.usable and len(idx) == 0
+    f = tmp_path / "a.json"
+    f.write_text("x")
+    cue = Cue(index=1, start=0, end=1, text="May the Force be with you.")
+    st = idx.backfill(lambda: [f], lambda _: [cue])
+    assert st["state"] == "ready" and st["done"] == st["total"] == 1 and len(idx) == 1
+    assert idx.candidates(Prefilter("may the force be with you", 60), ["a.json"], 3) == {
+        "a.json": [(0, 0)]}
+
+
 def test_typo_words_come_from_the_whole_vocabulary(tmp_path):
     idx = LineIndex(tmp_path / FILE_NAME)
     idx.add("a.json", [Cue(index=1, start=0, end=1, text="You're gonna need a bigger boat")])
@@ -264,6 +319,53 @@ def test_a_big_folder_listing_is_kept(tmp_path, lib, monkeypatch):
     c.post("/api/items/subtitles/reindex", params={"path": str(v)})
     hit = _search(c, lib, "platypus plays the oboe")
     assert [m["path"] for m in hit["matches"]] == [str(v)]
+
+
+def test_the_whole_library_is_listed_when_the_server_starts(tmp_path, lib, monkeypatch):
+    """The first whole-library search after a restart finds the listing made already."""
+    monkeypatch.setattr(folder_cache, "MIN_FILES", 10)
+    monkeypatch.setattr(folder_cache, "REFRESH_AFTER", 3600.0)
+    _index_all(_client(tmp_path, lib), lib)
+    kept = []
+    real = folder_cache.ListingCache.get
+
+    def spy(self, *a, **k):
+        got = real(self, *a, **k)
+        kept.append(got[1])
+        return got
+
+    monkeypatch.setattr(folder_cache.ListingCache, "get", spy)
+    app = create_app(Settings.from_env({
+        "QC_MEDIA_ROOTS": str(lib), "QC_STATE_DIR": str(tmp_path / "state"),
+        "QC_INDEX_CHECK_INTERVAL": "0", "QC_TRANSCRIBE": "off", "QC_UPDATE_CHECK": "0"}))
+    with TestClient(app) as c:
+        for t in threading.enumerate():
+            if t.name == "qc-listing-warm":
+                t.join(30)
+        c.headers["X-Quipclipper"] = "1"
+        r = c.get("/api/search/folder", params={"path": [str(lib)], "query": "make it so"})
+        assert r.status_code == 200 and r.json()["count"]
+    assert kept == [True]
+    # The same answer as a server that lists on the search itself.
+    fresh = _client(tmp_path, lib).get("/api/search/folder",
+                                       params={"path": [str(lib)], "query": "make it so"})
+    assert fresh.json() == r.json()
+
+
+def test_warming_a_listing_keeps_it_once():
+    lc = folder_cache.ListingCache(min_files=2)
+    builds = []
+
+    def build(restat):
+        builds.append(restat)
+        return [1, 2, 3]
+
+    lc.warm("k", build, len)
+    lc.warm("k", build, len)  # kept already: not listed again
+    assert builds == [True] and lc.get("k", build, len) == ([1, 2, 3], True)
+    small = folder_cache.ListingCache(min_files=10)
+    small.warm("s", build, len)
+    assert small.get("s", lambda r: [9], len) == ([9], False)  # too small to keep
 
 
 def test_listing_cache_refreshes_in_the_background():
@@ -341,3 +443,21 @@ def test_packed_cues_round_trip(tmp_path):
     assert idx.cues("b.json", [(0, 0)]) is None
     idx.remove("a.json")
     assert idx.cues("a.json", [(0, 0)]) is None
+
+
+def test_warm_starts_the_workers_for_a_big_index(tmp_path, monkeypatch):
+    idx = LineIndex(tmp_path / FILE_NAME)
+    idx.add("a.json", [Cue(index=1, start=0, end=1, text="Make it so.")])
+    idx.warm()  # one entry: too small for workers
+    assert idx._pool is None
+    monkeypatch.setattr(LineIndex, "parallel_min", 1)
+    monkeypatch.setattr(LineIndex, "_workers", 2)
+    try:
+        idx.warm()
+        assert idx._pool is not None
+        got = idx.search(Prefilter("make it so", 60), ["a.json"], limit=5, min_score=60,
+                         max_span=3)
+        assert [m.text for m in got["a.json"]] == ["Make it so."]
+    finally:
+        idx.close()
+    assert idx._pool is None

@@ -110,7 +110,7 @@ All settings are environment variables on the `app` service:
 | `QC_MEDIA_ROOTS` | *(required)* | Colon-separated list of media directories (in-container paths) |
 | `QC_CLIPS_DIR` | `/clips` | Where finished clips are saved |
 | `QC_CLIPS_URL_PREFIX` | *(empty)* | URL prefix where a front proxy (nginx) serves the clips dir directly; empty = download via the backend API |
-| `QC_STATE_DIR` | `/state` | Bookmarks, subtitle cache, and other persistent state. It includes the [line index](API.md#the-line-index) (`line_index.sqlite`, ~45 KB per indexed file: ~1.1 GB for ~24k). After an upgrade the server builds it from the cached subtitles, in the background while it already serves: ~4.5 min for ~24k files, with no media read. Searches are slower until it is done. |
+| `QC_STATE_DIR` | `/state` | Bookmarks, subtitle cache, and other persistent state. It includes the [line index](API.md#the-line-index) (`line_index.sqlite`, ~70 KB per indexed file: ~1.7 GB for ~24k). After an upgrade that changes its format the server rebuilds it from the cached subtitles, in the background while it already serves: ~7.5 min for ~24k files on a busy 6-core host, with no media read. Searches are slower until it is done. A library search with 2000+ indexed files runs in up to 4 worker processes of the server's. |
 | `QC_MAX_CONCURRENT_JOBS` | `2` | Clip-job thread-pool size |
 | `QC_PASSWORD` | *(none)* | When set, nginx gates the whole site with HTTP basic auth (username `QC_USERNAME`). Must be set on the **web** (nginx) service. Unset = open. |
 | `QC_USERNAME` | `quip` | Basic-auth username (only used when `QC_PASSWORD` is set). |

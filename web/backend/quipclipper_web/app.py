@@ -22,6 +22,7 @@ import math
 import os
 import re
 import shutil
+import logging
 import subprocess
 import tempfile
 import threading
@@ -141,6 +142,7 @@ UPLOADS_MAX = 4
 # a whole-library search runs it over every indexed line: 300 characters is ~0.9 s per
 # 20k lines) and the most matches returned (5 per file over ~30k files otherwise).
 QUERY_MAX = 300
+log = logging.getLogger(__name__)
 FOLDER_MATCHES_MAX = 500
 
 
@@ -749,10 +751,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         updates.start()  # the daily check for updates, while it's on
         if lines.usable:
             threading.Thread(target=_lines_backfill, name="qc-line-index", daemon=True).start()
+        threading.Thread(target=_warm_library_listing, name="qc-listing-warm",
+                         daemon=True).start()
         # Uploads a crash or a kill left behind: nothing uploaded outlives its job.
         shutil.rmtree(upload_dir, ignore_errors=True)
         yield
         lines_stop.set()
+        lines.close()
         updates.stop()
         index_check.stop()
         stopping[0] = True
@@ -1795,6 +1800,47 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     found.append((c, own))
         return found, books, bare
 
+    def _listing_parts(folders: list[Path], seen_books: set[Path], stored: dict):
+        """A folder search's listing key and the function that lists it (folder_cache)."""
+        key = (tuple(str(f) for f in folders),
+               frozenset(str(b) for b in seen_books), frozenset(stored.items()))
+
+        def build(restat: bool) -> tuple[list[tuple[Path, list[Path]]], int]:
+            got, in_books, _ = _media_under(folders, stored, set(), set(seen_books))
+            if restat:  # a background refresh: read every subtitle source's mtime again
+                with ThreadPoolExecutor(max_workers=8) as pool:
+                    list(pool.map(lambda x: sub_cache.index_entry(x[0], siblings=x[1]), got))
+            return got, in_books
+
+        return key, build
+
+    def _folder_listing(folders: list[Path], seen_books: set[Path], stored: dict):
+        """``((media files with their sidecars, books left out), kept)`` under
+        ``folders``. A big folder set's listing is kept for the next search (M27,
+        folder_cache): its files' subtitle-source mtimes are then taken as last read,
+        not stat'ed again."""
+        key, build = _listing_parts(folders, seen_books, stored)
+        return listings.get(key, build, lambda x: len(x[0]))
+
+    def _warm_library_listing() -> None:
+        """List the whole library once the server is up, as a search of every root
+        would (what LineFinder and the web app's Whole library send), and start the line
+        index's search workers, so the first such search after a restart doesn't wait
+        ~20 s for the folders, the stats and the processes. A background thread, I/O at
+        idle priority; nothing is kept for a small library."""
+        index_changes_mod.lower_thread_priority()
+        try:
+            folders = [_resolve(str(r)) for r in settings.media_roots]
+            if not folders or not all(f.is_dir() and not epub_items.is_epub_book(f)
+                                      for f in folders):
+                return  # a search of these would be refused or read books: nothing to warm
+            stored = transcripts.names() if stt_on else {}
+            key, build = _listing_parts(folders, set(), stored)
+            listings.warm(key, build, lambda x: len(x[0]))
+            lines.warm()  # and the line index's worker processes
+        except Exception as exc:  # noqa: BLE001 - only a head start: the search lists itself
+            log.warning("warming the library listing failed: %s", exc)
+
     @app.get("/api/search/folder")
     def search_dialogue_folder(
         path: list[str] = Query(...),
@@ -1852,20 +1898,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # per folder serves each file's sidecar lookups, and the per-file stats of the
         # index check run in threads (a library is ~70k files on a FUSE mount).
         stored = transcripts.names() if stt_on and machine != "exclude" else {}
-        # A big folder set's listing is kept for the next search (M27, folder_cache): its
-        # files' subtitle-source mtimes are then taken as last read, not stat'ed again.
-        listing_key = (tuple(str(f) for f in folders),
-                       frozenset(str(b) for b in seen_books), frozenset(stored.items()))
-
-        def _list(restat: bool) -> tuple[list[tuple[Path, list[Path]]], int]:
-            got, in_books, _ = _media_under(folders, stored, set(seen), set(seen_books))
-            if restat:  # a background refresh: read every subtitle source's mtime again
-                with ThreadPoolExecutor(max_workers=8) as pool:
-                    list(pool.map(lambda x: sub_cache.index_entry(x[0], siblings=x[1]), got))
-            return got, in_books
-
-        (found, books_not_searched), kept = listings.get(listing_key, _list,
-                                                         lambda x: len(x[0]))
+        (found, books_not_searched), kept = _folder_listing(folders, seen_books, stored)
 
         cached = sub_cache.entry_names()
 
@@ -1892,29 +1925,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         # The line index (M27) names, for each file read on its subtitles alone, the cues
         # that could match; files it hasn't indexed yet are scored whole, as before.
+        # The index searches them all at once (in worker processes for a big library);
+        # an entry it couldn't read is searched from its cache file below.
         prefilter = Prefilter(query, min_score)
-        regions: dict[str, list[tuple[int, int]]] = {}
+        indexed: dict[str, list[Match] | None] = {}
         via_index: set[str] = set()
         if machine != "only":
             via_index = {x[3] for x in videos if x[2] == "indexed" and not x[4] and x[3] in lines}
-            got = lines.candidates(prefilter, via_index, max_span) if via_index else {}
+            got = (lines.search(prefilter, via_index, limit=limit, min_score=min_score,
+                                max_span=max_span) if via_index else {})
             if got is None:
                 via_index = set()
             else:
-                regions = got
+                indexed = got
+                via_index -= {e for e, m in got.items() if m is None}
 
         def _search_one(item: tuple[Path, list[Path], str, str | None, bool]) -> list[dict]:
             video, subs, state, entry, maybe_heard = item
             if entry in via_index:
-                if entry not in regions:
-                    return []  # no window in it can reach min_score
-                # The cues to score, from the index: only those in the regions are built.
-                cues = lines.cues(entry, regions[entry]) or sub_cache.read_entry(entry)
-                if not cues:
-                    return []
-                matches = engine_search(prefilter, cues, limit=limit, min_score=min_score,
-                                        max_span=max_span, regions=regions[entry])
-                return _hits(video, matches)
+                return _hits(video, indexed.get(entry) or [])
             heard = (_machine_lines(video, siblings=subs)
                      if machine != "exclude" and maybe_heard else [])
             real = (sub_cache.read_entry(entry)
@@ -2015,7 +2044,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # A file the index ruled out, or one with no subtitles and no machine lines,
             # has nothing to score: no task for it.
             futures = {pool.submit(_search_one, v): v for v in videos
-                       if (v[3] not in via_index or v[3] in regions)
+                       if (v[3] not in via_index or v[3] in indexed)
                        and (v[2] == "indexed" or v[4])}
             futures.update({pool.submit(_search_book, b): b for b in books})
             futures.update({pool.submit(_search_yt, m): m["id"] for m in yt_videos})

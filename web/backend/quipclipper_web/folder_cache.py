@@ -59,6 +59,16 @@ class ListingCache:
         self._keep(key, listing, size)
         return listing, False
 
+    def warm(self, key: Hashable, build: Callable[[bool], Any],
+             size: Callable[[Any], int]) -> None:
+        """Build ``key``'s listing now with ``build(True)`` (every mtime read) and keep it
+        if it is big enough, unless one is kept already: a search's head start (the
+        server lists the whole library when it starts)."""
+        with self._lock:
+            if key in self._kept:
+                return
+        self._keep(key, build(True), size)
+
     def _keep(self, key: Hashable, listing: Any, size: Callable[[Any], int]) -> None:
         with self._lock:
             if size(listing) >= self.min_files:

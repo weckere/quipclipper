@@ -17,6 +17,7 @@ import pytest
 from quipclipper.models import Cue
 from quipclipper.search import (
     PHRASE_MAX, Prefilter, _f_beta, candidate_regions, coverage_needed, cue_words, search,
+    stretch_regions, word_places,
 )
 
 LINES = [
@@ -175,3 +176,93 @@ def test_regions_bound_the_windows():
     assert [m.text for m in got] == ["Make it so."]
     got = search("make it so", cues, regions=[(0, 1), (3, 3)])
     assert sorted(m.start for m in got) == [0.0, 6.0]  # the split line, and the last cue
+
+
+# --- the stretch bound: where the words are in the cues -------------------------------
+
+
+def _stretch(query: str, cues: list[Cue], min_score: float, max_span: int):
+    """candidate_regions, then stretch_regions, from the cues' words as an index keeps them."""
+    pf = Prefilter(query, min_score)
+    places, starts = word_places([c.text for c in cues])
+    rows = []
+    for w, (cs, offs) in places.items():
+        bits = 0
+        for j, _ in pf.hits(w):
+            bits |= 1 << j
+        if bits:
+            rows.append((bits, len(w), cs, offs))
+    return stretch_regions(pf, rows, _regions(query, cues, min_score, max_span), starts,
+                           max_span, len(cues))
+
+
+@pytest.mark.parametrize("seed", [1, 2, 3, 4])
+@pytest.mark.parametrize("min_score,max_span", [(60.0, 3), (0.0, 3), (45.0, 1), (80.0, 5),
+                                                (99.5, 3), (30.0, 2), (100.0, 3)])
+def test_stretch_regions_keep_every_result(seed, min_score, max_span):
+    cues = _corpus(seed)
+    for q in QUERIES + ["no no", "you you you", "the the", "a a a a", "be with you be"]:
+        full = search(q, cues, limit=1000, min_score=min_score, max_span=max_span)
+        regions = _stretch(q, cues, min_score, max_span)
+        part = (search(q, cues, limit=1000, min_score=min_score, max_span=max_span,
+                       regions=regions) if regions else [])
+        assert _key(part) == _key(full), q
+        assert _key(search(q, cues, limit=5, min_score=min_score, max_span=max_span,
+                           regions=regions or [(0, -1)])) == _key(full[:5]), q
+
+
+def _dense_corpus(seed: int, n: int = 600) -> list[Cue]:
+    """Cues made of the queries' own words, shuffled and spread: the common-word case
+    the stretch bound is for (every word there, too far apart or out of order)."""
+    rnd = random.Random(seed)
+    pool = " ".join(QUERIES + LINES).replace(",", "").replace(".", "").split() + FILLER
+    cues = []
+    for i in range(n):
+        words = [rnd.choice(pool) for _ in range(rnd.randint(1, 12))]
+        if rnd.random() < 0.1:
+            line = rnd.choice(LINES).split()
+            k = rnd.randint(0, len(words))
+            words[k:k] = line[:rnd.randint(1, len(line))]
+        if rnd.random() < 0.05:
+            words = ["♪"]  # a cue with no words
+        cues.append(Cue(index=i + 1, start=i * 2.0, end=i * 2.0 + 1.5, text=" ".join(words)))
+    return cues
+
+
+@pytest.mark.parametrize("seed", [5, 6, 7])
+@pytest.mark.parametrize("min_score,max_span", [(60.0, 3), (50.0, 4), (75.0, 2), (99.5, 3)])
+def test_stretch_regions_on_common_words(seed, min_score, max_span):
+    cues = _dense_corpus(seed)
+    narrowed = 0
+    for q in QUERIES + ["no no", "you you you", "i i am", "the the the the"]:
+        full = search(q, cues, limit=1000, min_score=min_score, max_span=max_span)
+        wide = _regions(q, cues, min_score, max_span)
+        regions = _stretch(q, cues, min_score, max_span)
+        part = (search(q, cues, limit=1000, min_score=min_score, max_span=max_span,
+                       regions=regions) if regions else [])
+        assert _key(part) == _key(full), q
+        assert sum(b - a + 1 for a, b in regions) <= sum(b - a + 1 for a, b in wide)
+        narrowed += sum(b - a + 1 for a, b in wide) - sum(b - a + 1 for a, b in regions)
+    assert narrowed > 0  # the bound does cut windows here
+
+
+def test_word_places_measure_like_the_scoring():
+    places, starts = word_places(["<i>Make it</i>", "♪", "so, Number One."])
+    assert starts == [0, 8, 8]  # "make it" + a space; the cue of only "♪" takes no room
+    assert places["make"] == ([0], [0]) and places["so"] == ([2], [0])
+    assert places["number"] == ([2], [3])
+    # "make it so": weights 5 + 3 + 3 = 11 = start of "so" (8) + len 2 + 1 - start of "make"
+    assert starts[2] + places["so"][1][0] + 2 + 1 - 0 == 11
+
+
+def test_a_spread_line_is_left_out_but_a_tight_one_kept():
+    filler = " ".join(["something"] * 8)
+    cues = [Cue(index=1, start=0, end=1, text=f"May {filler} the {filler} force"),
+            Cue(index=2, start=2, end=3, text=f"be {filler} with {filler} you"),
+            Cue(index=3, start=4, end=5, text="Elsewhere."),
+            Cue(index=4, start=6, end=7, text="May the Force be with you.")]
+    regions = _stretch("may the force be with you", cues, 60.0, 3)
+    assert _regions("may the force be with you", cues, 60.0, 3) == [(0, 3)]
+    assert regions == [(1, 3)]  # cue 0's words are too far apart to score 60
+    assert [m.text for m in search("may the force be with you", cues, regions=regions)] == [
+        "May the Force be with you."]

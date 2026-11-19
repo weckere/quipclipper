@@ -1132,7 +1132,8 @@ class TranscriptStore:
         """Cheap: ``media`` has a current transcript (one stat of the media, the store
         file read only when it changed). For listings that check many files; ``names``
         (from :meth:`names`) spares a stat of the store file each."""
-        name = self._file(media).name
+        # The store name without a Path: this runs once per file of a library search.
+        name = hashlib.sha256(str(media).encode()).hexdigest() + ".json"
         if names is None:
             names = self._stamp_of(name)
         if names.get(name) is None:

@@ -487,12 +487,51 @@ each one's subtitle source took another ~9 s. Three parts fix it:
 The index also keeps each entry's cues packed (zlib), so a search builds only the cues
 in its regions. Parsing a whole JSON entry for a few cues was most of the time left. One
 `Prefilter` serves every file of a search, so each word's typo matches are worked out
-once. Measured on that library, a busy 6-core host, warm: a distinctive line took
-2.5-3.5 s (it used to hit nginx's 300 s timeout), a line of common words 8-20 s. The
-index is ~1.1 GB, and the first backfill took ~4.5 min for 23.7k entries. The bound
-ignores word order and the words in between, which is what leaves common-word lines
-slow: "may the force be with you" leaves ~150k cues to score for 235 real matches. A bound
-that knows token positions would close that gap.
+once. That bound ignores word order and the words in between, which left lines of
+common words slow (8-20 s): "may the force be with you" left ~150k cues to score for 235
+real matches.
+
+**Where the words are, and worker processes (D-126, 2026-11-19).** Three more parts:
+
+- *A stretch bound.* Take any stretch of a window's words, from one matched word to
+  another, and let `W` be the weight of the query words matched in it (each counted
+  whole) and `E` the stretch's own weight. A run in order, or the any-order match, scores
+  at most `PHRASE_MAX * f_beta = PHRASE_MAX (1 + B2) W / (B2 T + E)` over its stretch
+  (`T` the query's weight). So a window reaches `min_score` only if it holds a stretch
+  with `E <= PHRASE_MAX (1 + B2) W / min_score - B2 T`: the words must be there *and*
+  close enough together. A word the query repeats counts once for each time the stretch
+  has it. The index stores, for each word in each entry, every place it occurs (cue and
+  character offset in the normalised cue), and each entry's cue starts. Then
+  `stretch_regions` tests the stretches of the cues `candidate_regions` left, without
+  reading any text. It is still exact: same lines, order and `count` as scoring every
+  cue. On the library above it leaves 1.3k files and 6.9k cues for "may the force be with
+  you", where the coverage bound left 15k and 150k. The new data is index format 2. An
+  older file is dropped and rebuilt from the cached subtitles when the server starts,
+  with progress in `GET /api/search/line-index`.
+- *Worker processes.* What is left is pure Python per entry, and threads share one
+  interpreter lock. So a search over 2000+ indexed entries is split by entry id into up
+  to 4 ranges, each searched whole in a worker process (spawned, not forked, since the
+  server's threads hold locks). Each worker has its own read-only connection. That
+  measured 2.4x on the busy host. A worker that fails sends the search back to the
+  server's own process.
+- *A warm start.* When the server starts it lists the whole library (every root, as
+  LineFinder and Whole library ask) and starts the workers, in the background. The
+  first library search after a restart used to wait ~20 s for that.
+
+Rejected: stopping once the top results can't change (`count` needs every file's
+matches), an index of adjacent word pairs (not exact: a line with short words in between
+still scores 90+), threads (the interpreter lock), and per-word bit sets over the whole
+library for the first bound (a faster fixed cost, but it needs segments merged in the
+background to stay current with re-indexing).
+
+Measured on that library, a copy of its state on the same host (6 cores, load 12-18),
+warm: "may the force be with you" 15 s before, 1.8 s now; "you are gonna need a bigger
+boat" 3-4 s, 1.3 s; "may the forks be with you" (misheard) 13-14 s, 1.7 s; a distinctive
+line ("frankly my dear i don't give a damn") 2-5 s, 1.0-1.2 s; "i am your father" 20 s,
+4.7 s (12.7k files really hold a match, and all of them are scored). The first search
+after a restart, once the warm-up is done (~22 s after start): ~1.8 s. About 1 s of each
+search is fixed: telling which of ~32k files are indexed, and looking up the words. The
+index is ~1.7 GB (~70 KB a file), and rebuilding it took ~7.5 min.
 
 ---
 

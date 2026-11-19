@@ -29,7 +29,9 @@ from __future__ import annotations
 import math
 import re
 import unicodedata
+from bisect import bisect_left, bisect_right
 from itertools import accumulate
+from typing import Any
 
 from rapidfuzz import fuzz
 
@@ -222,6 +224,18 @@ def coverage_needed(min_score: float) -> float:
     return _BETA2 * min_score / ((1 + _BETA2) * PHRASE_MAX - min_score)
 
 
+class _Groups(dict):
+    """bits -> the query's distinct words those query words stand for (filled on use)."""
+
+    def __init__(self, of: list[int]) -> None:
+        super().__init__()
+        self._of = of
+
+    def __missing__(self, bits: int) -> list[int]:
+        got = self[bits] = sorted({g for j, g in enumerate(self._of) if bits >> j & 1})
+        return got
+
+
 class Prefilter:
     """What an index of the cues' words needs to find a query's candidate windows.
 
@@ -233,6 +247,7 @@ class Prefilter:
     cue for those."""
 
     def __init__(self, query: str, min_score: float) -> None:
+        self.query = query
         self._q = _Query(query)
         self.words = self._q.words
         self.weights = self._q.weights
@@ -243,16 +258,185 @@ class Prefilter:
         else:  # rounded down a hair: a float a little under the bound must not cut a window
             need = math.ceil(coverage_needed(min_score) * total * (1 - 1e-6))
         self.need = max(1, need)  # a window with no word matched is never scored
+        # For stretch_regions: min_score, what reach() worked out, every word's bit, and
+        # for a query that repeats a word, each word's bits (one a time it is given) and
+        # the words a cue word's bits stand for.
+        self._min = min_score
+        self._reach: dict[int, float] = {}
+        self._all = (1 << len(self.words)) - 1
+        self._groups: tuple[list[list[int]], dict[int, list[int]]] | None = None
+        if self._q._repeated:
+            order: dict[str, int] = {}
+            slots: list[list[int]] = []
+            of = []
+            for j, w in enumerate(self.words):
+                g = order.setdefault(w, len(order))
+                if g == len(slots):
+                    slots.append([])
+                slots[g].append(1 << j)
+                of.append(g)
+            self._groups = (slots, _Groups(of))
 
     def hits(self, word: str) -> tuple[tuple[int, float], ...]:
         """``(query word index, similarity)`` for each query word a normalised cue word
         matches: the same word, or (both 3+ letters) one within a typo."""
         return self._q.hits(word)
 
+    def reach(self, bits: int) -> float:
+        """The longest stretch a set of query words (bit ``j``: word ``j``) may spread
+        over and still score ``min_score``, in the scoring's word weight (see
+        :func:`stretch_regions`); -1 when no stretch holding only these can."""
+        got = self._reach.get(bits)
+        if got is None:
+            got = self._reach[bits] = self._reach_of(bits)
+        return got
+
+    def _reach_of(self, bits: int) -> float:
+        weight = sum(w for j, w in enumerate(self.weights) if bits >> j & 1)
+        total = sum(self.weights)
+        if weight < self.need or self._min <= 0:
+            return -1.0 if self._min > 0 else math.inf
+        if self._min > PHRASE_MAX:  # only the line verbatim: every word, side by side
+            return float(total) if weight == total else -1.0
+        # A run of matched weight m over a stretch of weight e (p = m/e, r = m/total)
+        # scores at most PHRASE_MAX * f_beta = PHRASE_MAX (1 + B2) m / (B2 total + e), so
+        # it reaches min_score only while e <= PHRASE_MAX (1 + B2) m / min - B2 total.
+        # Lowered a hair, as `need` is: a float just under the bound must not cut a line.
+        return PHRASE_MAX * (1 + _BETA2) * weight / (self._min * (1 - 1e-9)) - _BETA2 * total
+
 
 def cue_words(text: str) -> list[str]:
     """A cue's words as the scoring sees them (what an index of the cues stores)."""
     return _normalize(text).split()
+
+
+def word_places(texts: list[str]) -> tuple[dict[str, tuple[list[int], list[int]]], list[int]]:
+    """Where each word of a list of cues is, as the scoring measures lines.
+
+    Returns ``(places, starts)``: ``places[word]`` is ``(cues, offsets)``, the position
+    of the cue and the word's character offset in the cue's normalised text, for every
+    time the word occurs, in order; ``starts[p]`` is where cue ``p``'s normalised text
+    begins when the cues are joined by single spaces (cues with no words take no room).
+    The scoring weighs a word ``len + 1``, so the weight of a stretch of words from one
+    starting at ``a`` to one of length ``n`` starting at ``b`` (offsets plus ``starts``)
+    is ``b + n + 1 - a``, across cues too. See :func:`stretch_regions`."""
+    places: dict[str, tuple[list[int], list[int]]] = {}
+    starts = []
+    at = 0
+    for p, text in enumerate(texts):
+        starts.append(at)
+        norm = _normalize(text)
+        if not norm:
+            continue
+        off = 0
+        for w in norm.split(" "):
+            got = places.get(w)
+            if got is None:
+                got = places[w] = ([], [])
+            got[0].append(p)
+            got[1].append(off)
+            off += len(w) + 1
+        at += len(norm) + 1
+    return places, starts
+
+
+def stretch_regions(pf: Prefilter, rows: list[tuple[int, int, Any, Any]],
+                    regions: list[tuple[int, int]], starts: Any, max_span: int,
+                    n: int) -> list[tuple[int, int]]:
+    """Narrow :func:`candidate_regions`' ``regions`` by where the words are in the cues.
+
+    ``rows`` holds, for each cue word that matches a query word, ``(bits, length, cues,
+    offsets)``: the query words it matches (bit ``j``: word ``j``), its length, and where
+    it is (:func:`word_places`: sorted sequences, the same length). ``starts`` is
+    :func:`word_places`' too.
+
+    The bound: a window's best run of words in order (or the words it holds in any
+    order) scores at most ``PHRASE_MAX * f_beta`` over the stretch of its words from the
+    run's first to its last match, crediting every query word matched in that stretch
+    whole. So a window can reach ``min_score`` only if it holds a stretch whose matched
+    query words weigh enough for the stretch's own weight (:meth:`Prefilter.reach`): a
+    window whose words are there but too far apart is left out. A word the query gives
+    twice counts once for each time the stretch has it. Every window that may score
+    holds such a stretch, and lies inside the cues from the stretch's last cue less
+    ``max_span - 1`` to its first plus ``max_span - 1``: those are the ranges returned."""
+    if not regions:
+        return []
+    if pf._min <= 0:
+        return regions
+    cover = 0
+    for lo, hi in regions:
+        cover |= ((1 << (hi - lo + 1)) - 1) << lo
+    found = []
+    for bits, length, cs, offs in rows:
+        k = len(cs)
+        if k <= 2 * len(regions):
+            for i in range(k):
+                c = cs[i]
+                if cover >> c & 1:
+                    at = starts[c] + offs[i]
+                    found.append((at, at + length + 1, c, bits))
+        else:
+            for lo, hi in regions:
+                i = bisect_left(cs, lo)
+                end = bisect_right(cs, hi, i)
+                while i < end:
+                    c = cs[i]
+                    at = starts[c] + offs[i]
+                    found.append((at, at + length + 1, c, bits))
+                    i += 1
+    if not found:
+        return []
+    found.sort()
+    reach = pf._reach
+    longest = pf.reach(pf._all)
+    keep = 0
+    m = len(found)
+    if pf._groups is None:
+        for a in range(m):
+            first, _, ca, bits = found[a]
+            for b in range(a, m):
+                _, end, cb, more = found[b]
+                if cb - ca >= max_span or end - first > longest:
+                    break
+                bits |= more
+                lim = reach.get(bits)
+                if lim is None:
+                    lim = pf.reach(bits)
+                if end - first <= lim:
+                    lo = max(cb - max_span + 1, 0)
+                    keep |= ((1 << (min(ca + max_span - 1, n - 1) - lo + 1)) - 1) << lo
+                    break
+    else:  # the query repeats a word: count how often the stretch has it
+        slots, groups = pf._groups
+        for a in range(m):
+            first, ca = found[a][0], found[a][2]
+            seen = [0] * len(slots)
+            bits = 0
+            for b in range(a, m):
+                _, end, cb, more = found[b]
+                if cb - ca >= max_span or end - first > longest:
+                    break
+                for g in groups[more]:
+                    if seen[g] < len(slots[g]):
+                        bits |= slots[g][seen[g]]
+                        seen[g] += 1
+                if end - first <= pf.reach(bits):
+                    lo = max(cb - max_span + 1, 0)
+                    keep |= ((1 << (min(ca + max_span - 1, n - 1) - lo + 1)) - 1) << lo
+                    break
+    return _runs(keep & cover)
+
+
+def _runs(cover: int) -> list[tuple[int, int]]:
+    """The runs of set bits of ``cover``, as inclusive ``(first, last)`` positions."""
+    out = []
+    while cover:
+        lo = (cover & -cover).bit_length() - 1
+        run = cover >> lo
+        length = (~run & (run + 1)).bit_length() - 1
+        out.append((lo, lo + length - 1))
+        cover &= ~(((1 << length) - 1) << lo)
+    return out
 
 
 def candidate_regions(masks: list[int], weights: list[int], need: int, max_span: int,
@@ -263,7 +447,8 @@ def candidate_regions(masks: list[int], weights: list[int], need: int, max_span:
     ``n`` is the number of cues. A window of up to ``max_span`` cues is worth scoring
     only if the weights of the query words it holds add up to ``need``; every such window
     lies inside a window of exactly ``max_span`` cues that also does, so those are the
-    ones checked, all at once, as bit sets. Pass the result to :func:`search`."""
+    ones checked, all at once, as bit sets. Pass the result to :func:`search`, or narrow
+    it first with :func:`stretch_regions`."""
     if not n or sum(w for w, m in zip(weights, masks) if m) < need:
         return []
     every = (1 << n) - 1
@@ -303,15 +488,7 @@ def candidate_regions(masks: list[int], weights: list[int], need: int, max_span:
     cover = starts
     for k in range(1, max_span):
         cover |= starts << k
-    cover &= every
-    out = []
-    while cover:
-        lo = (cover & -cover).bit_length() - 1
-        run = cover >> lo
-        length = (~run & (run + 1)).bit_length() - 1
-        out.append((lo, lo + length - 1))
-        cover &= ~(((1 << length) - 1) << lo)
-    return out
+    return _runs(cover & every)
 
 
 def search(

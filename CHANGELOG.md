@@ -19,19 +19,24 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   The pairing banner says "wants to start playback on Jellyfin devices and search the
   library's dialogue"; the banner and Settings ▸ Connected apps now also name the
   `transcribe` scope in words.
-- **A whole-library dialogue search answers in seconds instead of minutes**, with the
-  same request, the same response and the same results. A distinctive line took 2.5-3.5 s
-  on a ~24k-file library on a busy host; a line of common words is slower, 8-20 s. A new **line index**
-  (`line_index.sqlite` in the state dir) records which cues of each cached subtitle file
-  hold each word. A search scores only the windows of cues that hold enough of the query's
-  words, or words within a typo of them, to reach `min_score`, so a misheard word still
-  matches. The index keeps itself current as files are indexed, re-indexed or cleared.
+- **A whole-library dialogue search answers in a second or two instead of minutes**, with
+  the same request, the same response and the same results. On a ~24k-file library on a
+  busy host: "may the force be with you" 1.8 s, a misheard "may the forks be with you"
+  1.7 s, a distinctive line 1.0-1.3 s; "i am your father", which 12.7k files really hold,
+  4.7 s. A new **line index** (`line_index.sqlite` in the state dir, ~70 KB a file)
+  records where each word is in each cached subtitle file. A search scores only the
+  windows of cues that hold enough of the query's words, or words within a typo of them,
+  close enough together to reach `min_score`, so a misheard word still matches. A search
+  over 2000+ indexed files runs in up to 4 worker processes. The index keeps itself
+  current as files are indexed, re-indexed or cleared.
   When the server starts it fills itself in from the subtitles already cached, with no
   extraction, and resumes after a restart; until it is done, the files it hasn't reached
   are searched line by line as before. A folder set of 2000+ files also keeps its listing
   between searches and refreshes it in the background once it is a minute old, so a change
-  made outside QuipClipper reaches search within about a minute. `GET
-  /api/search/line-index` (CLI `index.lines`) shows how far the index has got.
+  made outside QuipClipper reaches search within about a minute. The server lists the
+  whole library and starts the workers when it starts, so the first library search after
+  a restart takes ~2 s instead of ~20 s. `GET /api/search/line-index` (CLI `index.lines`)
+  shows how far the index has got.
 
 ### Changed
 

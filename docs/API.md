@@ -229,17 +229,20 @@ alone, `machine=only` the machine lines alone.
 #### The line index
 
 A folder or whole-library search scores only the lines that could reach `min_score`. The
-**line index** (`line_index.sqlite` in the state dir) records which cues of each cached
-subtitle file hold each word. A search looks up the query's words, and the words within a
-typo of them, and scores only the windows of cues that hold enough of them. A window
-holding less than that can't reach `min_score`, so the results are the same lines, in the
-same order and with the same `count`, as scoring every line. A misheard or missing word
-still matches: what counts is the share of the query's words found, not all of them. The
-index is kept current as files are indexed, re-indexed or cleared. When the server starts,
-it fills itself in from the subtitles already cached: no extraction, no media read, and
-it resumes after a restart. Files it hasn't reached yet, files with machine transcript
-lines, and queries in a script written without spaces (Japanese, Chinese, Thai) are scored
-line by line, as before. See `GET /api/search/line-index` and the CLI's `index.lines`.
+**line index** (`line_index.sqlite` in the state dir) records where each word is in each
+cached subtitle file: which cues, and where in the cue. A search looks up the query's
+words, and the words within a typo of them, and scores only the windows of cues that hold
+enough of them close enough together. A window whose words are too few, or too far
+apart, can't reach `min_score`, so the results are the same lines, in the same order and
+with the same `count`, as scoring every line. A misheard or missing word still matches:
+what counts is the share of the query's words found, not all of them. A search over
+2000 or more indexed files runs in up to 4 worker processes. The index is kept current as
+files are indexed, re-indexed or cleared. When the server starts, it fills itself in from
+the subtitles already cached: no extraction, no media read, and it resumes after a
+restart. An index written by an older version is rebuilt the same way. Files it hasn't
+reached yet, files with machine transcript lines, and queries in a script written without
+spaces (Japanese, Chinese, Thai) are scored line by line, as before. See `GET
+/api/search/line-index` and the CLI's `index.lines`.
 
 For a folder set of 2000 or more media files (a whole library), the folder listing and
 each file's subtitle-source mtime are kept between searches and refreshed in the
@@ -249,7 +252,9 @@ subtitle replaced with no [re-index hook](#re-index-hooks)) shows up in a search
 refresh has run, about a minute after the change at most for a library searched
 regularly. Until then a deleted file's lines can still come up, and a replaced subtitle's
 old lines are searched instead of being left out as `changed`. Smaller folder sets are
-listed afresh on every search.
+listed afresh on every search. The server lists the whole library (every media root) in
+the background when it starts, so the first whole-library search after a restart finds
+the listing ready.
 
 How fast: on a home library (~32k media files, ~24k with subtitles indexed, on a busy
 6-core host), a warm whole-library search for a distinctive line ("you're gonna need a
