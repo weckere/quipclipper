@@ -412,8 +412,9 @@ no index and parsing a home library's 31 took 30-40 s a search. To keep a sweep 
 quick on a FUSE mount, each folder is listed once (`scandir` file types, no stat per
 file), each file gets only its own sidecars from that listing, the cache folder and
 transcript store are listed once instead of stat-ed per file, the index check's stats
-run in 8 threads, and the EPUB overlay check is cached per path and mtime. A warm
-library search there takes ~10 s (the first after a restart ~17 s).
+run in 8 threads, and the EPUB overlay check is cached per path and mtime. That made a
+warm library search ~10 s with ~1k files indexed. With ~24k indexed it took minutes,
+which is what D-125 below fixes.
 
 **The library index is a job someone starts (D-043, 2026-10-23).** Indexing the rest of
 the library is one background job (`POST /api/search/library/index`, `index.library`),
@@ -443,6 +444,55 @@ kernel parks a thread that holds the interpreter lock, and every request thread 
 behind it (review 2 measured up to a second per request with the CPU busy). It waits
 while a library run or re-index job is reading the disks, and treats an empty root (an
 unmounted pool) as missing rather than as "nothing changed".
+
+**A word index narrows a library search, without changing its results (D-125,
+2026-11-19).** LineFinder (M27) speaks a line and plays it, so a whole-library search has
+to answer in about a second. On a home library (~24k indexed files, ~15M cues) scoring
+every cue cost ~9 ms a file, minutes in all, and listing ~40k media files and stat-ing
+each one's subtitle source took another ~9 s. Three parts fix it:
+
+- *An exact bound.* Unless a window holds the query verbatim, it scores at most
+  `PHRASE_MAX * f_beta(coverage)` (§11 above), where coverage is the query's word weight
+  found, each word credited by its similarity. Crediting every word that has any match as
+  if it matched exactly can only raise that. So a window whose matched words weigh less
+  than `coverage_needed(min_score)` of the query (55% at the default 60) cannot reach
+  `min_score`. `candidate_regions` finds, with bit sets over cue positions, the windows of
+  `max_span` cues that hold enough. Every smaller window that holds enough lies inside one
+  of them. `search(regions=)` scores only those. This is a bound, not a heuristic: the
+  results are the ones scoring every cue gives, `count` included. A misheard or missing
+  word still matches, because the test is a share of the query's word weight and a word
+  "within a typo" uses the scoring's own rule. Queries in scripts written without spaces
+  are matched on characters, and skip the prefilter.
+- *The line index* (`quipclipper_web.line_index`, `line_index.sqlite` beside the cache,
+  Python's own `sqlite3`). `posting(word, entry)` is clustered by word, so a word's files
+  are one range read. A word's cues are a bit set where the word is common in the file, a
+  list of positions where it is rare. Typo matches are found by running rapidfuzz over the
+  index's vocabulary, by word length. The unit is the cache entry, whose name hashes the
+  path, the subtitle source's mtime and the track. An index entry therefore can't go stale:
+  re-indexing writes a new entry, and the cache's sweep deletes the old one, which the
+  `SubtitleCache` hooks pass on to the index. A rewrite of the same entry (`fresh=True`)
+  replaces it. A thread started with the server backfills entries cached before the
+  index existed. It reads the state dir only, lowers just its I/O class (the GIL, as
+  D-045), and resumes after a restart: each entry records its cache file's mtime, and the
+  backfill re-adds one that differs. Any SQLite error drops the index and the search
+  scores every cue, so the index can make a search faster but never wrong.
+- *A kept listing* (`quipclipper_web.folder_cache`). A folder set of 2000+ media files
+  keeps its listing and its files' subtitle-source mtimes between searches, and refreshes
+  both in the background once they are a minute old. Which cache entries exist is still
+  read on every search, so a file indexed through QuipClipper shows up at once. Changes
+  made outside it are seen after the next refresh. Validating each folder by its mtime
+  was rejected: mergerfs reports one branch's folder mtime, so a file landing on another
+  branch would never be seen.
+
+The index also keeps each entry's cues packed (zlib), so a search builds only the cues
+in its regions. Parsing a whole JSON entry for a few cues was most of the time left. One
+`Prefilter` serves every file of a search, so each word's typo matches are worked out
+once. Measured on that library, a busy 6-core host, warm: a distinctive line took
+2.5-3.5 s (it used to hit nginx's 300 s timeout), a line of common words 8-20 s. The
+index is ~1.1 GB, and the first backfill took ~4.5 min for 23.7k entries. The bound
+ignores word order and the words in between, which is what leaves common-word lines
+slow: "may the force be with you" leaves ~150k cues to score for 235 real matches. A bound
+that knows token positions would close that gap.
 
 ---
 

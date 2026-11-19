@@ -55,8 +55,15 @@ def _digest(raw: str) -> str:
 
 
 class SubtitleCache:
-    def __init__(self, cache_dir: Path, default_langs=None) -> None:
+    def __init__(self, cache_dir: Path, default_langs=None, lines=None) -> None:
         self._dir = cache_dir / "sub_cache"
+        # The line index (quipclipper_web.line_index.LineIndex), told of every entry
+        # written for the auto-selected subtitles and every entry removed, so it always
+        # matches the cache (M27).
+        self.lines = lines
+        # video path -> the mtime of its subtitle source as last read from the disk, for
+        # a big folder search that lists the files but doesn't stat each again (M27).
+        self._seen_mtime: dict[str, float] = {}
         self._dir.mkdir(parents=True, exist_ok=True)
         # Server-wide subtitle-language preference (B14) used when auto-selecting
         # (track is None). Kept fixed so the "auto" cache key stays consistent
@@ -83,9 +90,11 @@ class SubtitleCache:
         sidecar = find_sidecar(video, self._default_langs, siblings)
         target = sidecar if sidecar else video
         try:
-            return Path(target).stat().st_mtime
+            mtime = Path(target).stat().st_mtime
         except OSError:
-            return 0.0
+            mtime = 0.0
+        self._seen_mtime[str(video)] = mtime
+        return mtime
 
     def _cache_key(self, video: Path, track: int | None = None,
                    siblings: list[Path] | None = None) -> str:
@@ -140,24 +149,48 @@ class SubtitleCache:
         key, so one stat of the source and at most two lookups here; ``siblings`` (the
         folder's listing) spares listing the folder again, and ``names`` (from
         :meth:`entry_names`) the lookups. Never reads a subtitle file."""
+        return self.index_entry(video, siblings, names)[0]
+
+    def index_entry(self, video: Path, siblings: list[Path] | None = None,
+                    names: set[str] | None = None,
+                    seen: bool = False) -> tuple[str, str | None]:
+        """:meth:`index_state` and, when "indexed", the name of the entry that holds the
+        cues (for :meth:`read_entry`). ``seen``: take the subtitle source's mtime as last
+        read from the disk (by any call here), and stat it only when it never was."""
         try:
-            mtime = self._source_mtime(video, siblings)
+            mtime = self._seen_mtime.get(str(video)) if seen else None
+            if mtime is None:
+                mtime = self._source_mtime(video, siblings)
             key = self._key_at(video, mtime)
             if names is not None:
                 if key + ".json" in names:
-                    return "indexed"
+                    return "indexed", key + ".json"
                 if key + ".nosubs" in names:
-                    return "no_subs"
+                    return "no_subs", None
             else:
                 if (self._dir / (key + ".json")).exists():
-                    return "indexed"
+                    return "indexed", key + ".json"
                 if (self._dir / (key + ".nosubs")).exists():
-                    return "no_subs"
+                    return "no_subs", None
             if self._changed(video, mtime):
-                return "changed"
+                return "changed", None
         except (OSError, ValueError):  # ValueError: a name the file system can't take
             pass
-        return "not_indexed"
+        return "not_indexed", None
+
+    def read_entry(self, name: str) -> list[Cue] | None:
+        """The cues of the entry called ``name`` (from :meth:`index_entry`), or None."""
+        return self._read(self._dir / name)
+
+    def auto_entries(self) -> list[Path]:
+        """Every entry that may hold a file's auto-selected subtitles (the ones search
+        reads): those whose head says so, and older ones that don't record a track. The
+        explicit-track copies are left out. Reads each entry's head only."""
+        out = []
+        for f in sorted(self._dir.glob("*.json")):
+            if self._stored_track(f) in (None, "auto"):
+                out.append(f)
+        return out
 
     @staticmethod
     def _key_at(video: Path | str, mtime: float, tkey: str = "auto") -> str:
@@ -295,11 +328,17 @@ class SubtitleCache:
             entry.unlink()
         except FileNotFoundError:
             self._disown(video, entry.name)
+            self._unindex(entry.name)
             return False
         except OSError:
             return False
         self._disown(video, entry.name)
+        self._unindex(entry.name)
         return True
+
+    def _unindex(self, name: str) -> None:
+        if self.lines is not None and name.endswith(".json"):
+            self.lines.remove(name)
 
     def _read(self, cp: Path) -> list[Cue] | None:
         if not cp.exists():
@@ -320,6 +359,7 @@ class SubtitleCache:
             return None
         except (json.JSONDecodeError, KeyError, TypeError):
             cp.unlink(missing_ok=True)
+            self._unindex(cp.name)
             return None
 
     def _write(self, cp: Path, video: Path, cues: list[Cue],
@@ -344,6 +384,15 @@ class SubtitleCache:
                 f.write(payload)
             os.replace(tmp, cp)
             self._own(video, cp.name)
+            if self.lines is not None:
+                if track is None:
+                    try:
+                        stamp = cp.stat().st_mtime_ns
+                    except OSError:
+                        stamp = None
+                    self.lines.add(cp.name, cues, stamp)
+                else:  # an explicit track's copy: search never reads it
+                    self.lines.remove(cp.name)
         except OSError:
             # Best-effort cleanup; extraction result is still returned.
             if tmp is not None:

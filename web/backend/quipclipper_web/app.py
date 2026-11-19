@@ -69,6 +69,7 @@ from quipclipper.mkv import (
     is_matroska,
     mkvmerge_available,
 )
+from quipclipper.search import Prefilter
 from quipclipper.search import search as engine_search
 from quipclipper.subtitles import (
     AUDIO_EXTS,
@@ -89,7 +90,9 @@ from quipclipper_web import (
     library, lslink, lsset, media, pairing, peaks, youtube_items,
 )
 from quipclipper_web import caller as caller_mod
+from quipclipper_web import folder_cache
 from quipclipper_web import index_changes as index_changes_mod
+from quipclipper_web import line_index as line_index_mod
 from quipclipper_web.bookmarks import BookmarkStore
 from quipclipper_web.config import Settings
 from quipclipper_web.jobs import JobRegistry
@@ -619,7 +622,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # and no contention with clips or downloads.
     yt_jobs = JobRegistry(max_workers=2)
     bookmarks = BookmarkStore(settings.state_dir)
-    sub_cache = SubtitleCache(settings.state_dir, default_langs=settings.subtitle_langs)
+    # Where each word is in the cached subtitles (M27): a library-wide line search scores
+    # only the cues that could match. The cache keeps it current; a thread started with
+    # the server fills it in for entries cached before it existed.
+    lines = line_index_mod.LineIndex(settings.state_dir / line_index_mod.FILE_NAME)
+    lines_stop = threading.Event()
+    sub_cache = SubtitleCache(settings.state_dir, default_langs=settings.subtitle_langs,
+                              lines=lines)
+    # A big folder search's listing, kept for the next one (M27, folder_cache).
+    listings = folder_cache.ListingCache()
     yt_store = youtube_items.YouTubeStore(settings.state_dir, download_dir=settings.youtube_dir)
     flac_cache = clipmeta.FlacCache(settings.state_dir)
     peak_store = peaks.PeakStore(settings.state_dir)
@@ -722,15 +733,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     active_downloads: dict[str, str] = {}
     active_adds: dict[str, str] = {}
 
+    def _lines_backfill() -> None:
+        """Index the cache entries the line index lacks (all of them, the first time):
+        state-dir reads only, I/O at idle priority, the interpreter lock let go between
+        entries. Search scores the files it hasn't reached yet the old way."""
+        index_changes_mod.lower_thread_priority()
+        lines.backfill(sub_cache.auto_entries, lambda f: sub_cache.read_entry(f.name),
+                       stop=lines_stop, pause=lambda: time.sleep(0.001))
+
     @contextlib.asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         if jf_index is not None:
             jf_index.refresh_if_stale()  # build (or freshen) the path index in the background
         index_check.start()  # a check only: it never re-indexes
         updates.start()  # the daily check for updates, while it's on
+        if lines.usable:
+            threading.Thread(target=_lines_backfill, name="qc-line-index", daemon=True).start()
         # Uploads a crash or a kill left behind: nothing uploaded outlives its job.
         shutil.rmtree(upload_dir, ignore_errors=True)
         yield
+        lines_stop.set()
         updates.stop()
         index_check.stop()
         stopping[0] = True
@@ -1830,31 +1852,73 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # per folder serves each file's sidecar lookups, and the per-file stats of the
         # index check run in threads (a library is ~70k files on a FUSE mount).
         stored = transcripts.names() if stt_on and machine != "exclude" else {}
-        found, books_not_searched, _ = _media_under(folders, stored, seen, seen_books)
+        # A big folder set's listing is kept for the next search (M27, folder_cache): its
+        # files' subtitle-source mtimes are then taken as last read, not stat'ed again.
+        listing_key = (tuple(str(f) for f in folders),
+                       frozenset(str(b) for b in seen_books), frozenset(stored.items()))
+
+        def _list(restat: bool) -> tuple[list[tuple[Path, list[Path]]], int]:
+            got, in_books, _ = _media_under(folders, stored, set(seen), set(seen_books))
+            if restat:  # a background refresh: read every subtitle source's mtime again
+                with ThreadPoolExecutor(max_workers=8) as pool:
+                    list(pool.map(lambda x: sub_cache.index_entry(x[0], siblings=x[1]), got))
+            return got, in_books
+
+        (found, books_not_searched), kept = listings.get(listing_key, _list,
+                                                         lambda x: len(x[0]))
 
         cached = sub_cache.entry_names()
 
-        def _classify(item: tuple[Path, list[Path]]) -> tuple[Path, list[Path], str]:
+        def _classify(item: tuple[Path, list[Path]]
+                      ) -> tuple[Path, list[Path], str, str | None, bool]:
             c, subs = item
-            state = sub_cache.index_state(c, siblings=subs, names=cached)
-            if state == "not_indexed" and machine != "exclude" and _has_machine(c, subs, stored):
+            state, entry = sub_cache.index_entry(c, siblings=subs, names=cached, seen=kept)
+            heard = machine != "exclude" and _has_machine(c, subs, stored)
+            if state == "not_indexed" and heard:
                 state = "transcript"  # searchable on its machine lines alone
-            return c, subs, state
+            return c, subs, state, entry, heard
 
-        with ThreadPoolExecutor(max_workers=8) as pool:
-            classified = list(pool.map(_classify, found))
+        if kept:  # no stat to wait for
+            classified = [_classify(x) for x in found]
+        else:
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                classified = list(pool.map(_classify, found))
         videos = sorted((x for x in classified if x[2] not in ("not_indexed", "changed")),
                         key=lambda x: (x[0].name.lower(), str(x[0])))
-        changed_files = sorted(str(c) for c, _, st in classified if st == "changed")
+        changed_files = sorted(str(x[0]) for x in classified if x[2] == "changed")
         not_indexed = len(classified) - len(videos) - len(changed_files)
-        index_changes.note((c, st) for c, _, st in classified)
+        index_changes.note((x[0], x[2]) for x in classified)
         books.sort(key=lambda p: p.name.lower())
 
-        def _search_one(item: tuple[Path, list[Path], str]) -> list[dict]:
-            video, subs, state = item
-            heard = _machine_lines(video, siblings=subs) if machine != "exclude" else []
-            real = (sub_cache.cached(video, siblings=subs)
-                    if state == "indexed" and machine != "only" else None)
+        # The line index (M27) names, for each file read on its subtitles alone, the cues
+        # that could match; files it hasn't indexed yet are scored whole, as before.
+        prefilter = Prefilter(query, min_score)
+        regions: dict[str, list[tuple[int, int]]] = {}
+        via_index: set[str] = set()
+        if machine != "only":
+            via_index = {x[3] for x in videos if x[2] == "indexed" and not x[4] and x[3] in lines}
+            got = lines.candidates(prefilter, via_index, max_span) if via_index else {}
+            if got is None:
+                via_index = set()
+            else:
+                regions = got
+
+        def _search_one(item: tuple[Path, list[Path], str, str | None, bool]) -> list[dict]:
+            video, subs, state, entry, maybe_heard = item
+            if entry in via_index:
+                if entry not in regions:
+                    return []  # no window in it can reach min_score
+                # The cues to score, from the index: only those in the regions are built.
+                cues = lines.cues(entry, regions[entry]) or sub_cache.read_entry(entry)
+                if not cues:
+                    return []
+                matches = engine_search(prefilter, cues, limit=limit, min_score=min_score,
+                                        max_span=max_span, regions=regions[entry])
+                return _hits(video, matches)
+            heard = (_machine_lines(video, siblings=subs)
+                     if machine != "exclude" and maybe_heard else [])
+            real = (sub_cache.read_entry(entry)
+                    if state == "indexed" and machine != "only" and entry else None)
             cues = stt.merge_cues(real, heard) if real and heard else real or heard
             if not cues:
                 return []
@@ -1862,6 +1926,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 query, cues,
                 limit=limit, min_score=min_score, max_span=max_span,
             )
+            return _hits(video, matches)
+
+        def _hits(video: Path, matches: list[Match]) -> list[dict]:
             return [
                 {
                     "file": video.name,
@@ -1944,7 +2011,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if machine == "only":  # books and YouTube items have no machine transcripts
             books, yt_videos = [], []
         with ThreadPoolExecutor(max_workers=4) as pool:
-            futures = {pool.submit(_search_one, v): v for v in videos}
+            # A file the index ruled out has nothing to score: no task for it.
+            # A file the index ruled out, or one with no subtitles and no machine lines,
+            # has nothing to score: no task for it.
+            futures = {pool.submit(_search_one, v): v for v in videos
+                       if (v[3] not in via_index or v[3] in regions)
+                       and (v[2] == "indexed" or v[4])}
             futures.update({pool.submit(_search_book, b): b for b in books})
             futures.update({pool.submit(_search_yt, m): m["id"] for m in yt_videos})
             for fut in as_completed(futures):
@@ -1999,6 +2071,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     return videos, True
         videos.sort(key=lambda p: p.name.lower())
         return videos, False
+
+    @app.get("/api/search/line-index")
+    def line_index_status() -> dict:
+        """The line index (M27): ``entries`` cached subtitle files a folder search can
+        narrow down by word, ``usable`` false if it failed (search then scores every cue,
+        as before), and the fill-in run started with the server (``backfill``: its
+        ``state`` idle/building/ready/stopped/failed, ``done`` of ``total`` entries)."""
+        st = dict(lines.status)
+        return {"entries": len(lines), "usable": lines.usable, "backfill": st}
 
     @app.get("/api/search/folder/index-status")
     def folder_index_status(path: str = Query(...)) -> dict:

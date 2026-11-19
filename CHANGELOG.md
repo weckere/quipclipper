@@ -11,7 +11,7 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 
 ## [Unreleased]
 
-### LineFinder: a TV app's scopes (M27)
+### LineFinder (M27)
 
 - **Two new pairing scopes for a TV remote app.** `search` opens `GET /api/search`,
   `GET /api/search/folder` and `GET /api/library/roots` (so it can search the whole
@@ -19,6 +19,19 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   The pairing banner says "wants to start playback on Jellyfin devices and search the
   library's dialogue"; the banner and Settings ▸ Connected apps now also name the
   `transcribe` scope in words.
+- **A whole-library dialogue search answers in seconds instead of minutes**, with the
+  same request, the same response and the same results. A distinctive line took 2.5-3.5 s
+  on a ~24k-file library on a busy host; a line of common words is slower, 8-20 s. A new **line index**
+  (`line_index.sqlite` in the state dir) records which cues of each cached subtitle file
+  hold each word. A search scores only the windows of cues that hold enough of the query's
+  words, or words within a typo of them, to reach `min_score`, so a misheard word still
+  matches. The index keeps itself current as files are indexed, re-indexed or cleared.
+  When the server starts it fills itself in from the subtitles already cached, with no
+  extraction, and resumes after a restart; until it is done, the files it hasn't reached
+  are searched line by line as before. A folder set of 2000+ files also keeps its listing
+  between searches and refreshes it in the background once it is a minute old, so a change
+  made outside QuipClipper reaches search within about a minute. `GET
+  /api/search/line-index` (CLI `index.lines`) shows how far the index has got.
 
 ### Changed
 

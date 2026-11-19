@@ -194,6 +194,7 @@ resolved stream URLs, so `split_channels` and `backend=mkvmerge` return 400 for
 | GET | `/api/search/folder?path=&query=&limit=&machine=` | Search dialogue across a folder (repeat `path=` for several; `yt:` and EPUB books count). |
 | GET | `/api/search/folder/index-status?path=` | How much of a folder's subtitles are cached, for a folder of any size (a listing per folder and the cache's names: no extraction, no probe): `{total, indexed, no_subs, changed, changed_files, skipped, cap}`. `changed` counts files indexed before their subtitles changed (listed, up to 1000, in `changed_files`; see [below](#changed-subtitles)). `no_subs` counts files indexing found to have no subtitles at all (no sidecar, no text track); they are never offered for indexing. `cap` (500) is the most files `POST …/index` takes in one request; a bigger folder is indexed with `POST /api/search/library/index?path=`. `skipped` is always `false` now (kept for older clients). |
 | POST | `/api/search/folder/index?path=&force=` | Pre-extract subtitles for a folder of at most `cap` files (streams progress; 400 over it). |
+| GET | `/api/search/line-index` | The [line index](#the-line-index): `{entries, usable, backfill: {state, done, total, added, removed, started, finished, error}}`. `entries` counts the cached subtitle files a folder search can narrow down by word; `usable` is false when the index failed (searches then score every line). `backfill` is the run started with the server that fills it in from the cache: `state` is `idle`, `building`, `ready`, `stopped` or `failed`; `done` of `total` entries, `added` and `removed`, epoch-second `started`/`finished`. |
 | POST | `/api/search/library/index?path=` | Start the **library index**: every media file under the library roots (or under `path`, a folder of any size) that isn't indexed yet, as a background job. Returns `{job_id, existing, paths}`; while one runs, this returns it with `existing: true` (one at a time). 400 when `path` isn't a folder. See below. |
 | GET | `/api/search/library/index` | `{job, last}`: the running library index job (as `GET /api/jobs/{id}`, or null), and `last`: the last run's `result` (the current one's while it runs) plus `updated`, kept in the state dir across restarts; `status` is `scanning` or `indexing` while it runs, then `done`, `cancelled`, `failed`, or `interrupted` when a restart (or a server stop) cut it short; null before the first run. `failed` counts the files it failed on; `reasons` (the 10 most common) groups them as `[{reason, count}]`, and `errors` keeps the first 20 as `[{path, error}]`, for older clients. `failures` is the path of the full record, below. |
 | GET | `/api/search/library/index/failures` | Every file the last (or running) library index run failed on, grouped by reason: `{started, paths, whole_library, failed, kept, cap, groups: [{reason, count, files: [{path, error}]}], updated}`, the most common reason first and each group's files by path. A `reason` is the error's first two lines with the file's own path and name as `<file>` and hex numbers (ffmpeg's pointers and byte offsets) as `0x…`, so one failure on many files is one group; each file's `error` is its whole message (its path as `<file>`), up to 500 characters. The record keeps up to `cap` (5000) files; past that a failure is only counted (`kept` < `failed`). Kept in the state dir across restarts, written with the run's summary (every 30 s while it runs); a run from before the record existed shows its 20-file sample. Before the first run, an empty record. |
@@ -224,6 +225,38 @@ clips-library entries) is a [deep link](#deep-links) to that line, present only 
 `QC_PUBLIC_URL` is set. `machine: true` marks a hit on a [machine transcript](#machine-transcription)
 line; at an equal score a subtitle line ranks first. `machine=exclude` searches the subtitles
 alone, `machine=only` the machine lines alone.
+
+#### The line index
+
+A folder or whole-library search scores only the lines that could reach `min_score`. The
+**line index** (`line_index.sqlite` in the state dir) records which cues of each cached
+subtitle file hold each word. A search looks up the query's words, and the words within a
+typo of them, and scores only the windows of cues that hold enough of them. A window
+holding less than that can't reach `min_score`, so the results are the same lines, in the
+same order and with the same `count`, as scoring every line. A misheard or missing word
+still matches: what counts is the share of the query's words found, not all of them. The
+index is kept current as files are indexed, re-indexed or cleared. When the server starts,
+it fills itself in from the subtitles already cached: no extraction, no media read, and
+it resumes after a restart. Files it hasn't reached yet, files with machine transcript
+lines, and queries in a script written without spaces (Japanese, Chinese, Thai) are scored
+line by line, as before. See `GET /api/search/line-index` and the CLI's `index.lines`.
+
+For a folder set of 2000 or more media files (a whole library), the folder listing and
+each file's subtitle-source mtime are kept between searches and refreshed in the
+background when they are older than a minute. A file indexed or re-indexed through
+QuipClipper is searched at once. A change made outside it (a new file, a deleted one, a
+subtitle replaced with no [re-index hook](#re-index-hooks)) shows up in a search once a
+refresh has run, about a minute after the change at most for a library searched
+regularly. Until then a deleted file's lines can still come up, and a replaced subtitle's
+old lines are searched instead of being left out as `changed`. Smaller folder sets are
+listed afresh on every search.
+
+How fast: on a home library (~32k media files, ~24k with subtitles indexed, on a busy
+6-core host), a warm whole-library search for a distinctive line ("you're gonna need a
+bigger boat", "houston we have a problem") took 2.5-3.5 s instead of minutes. A line
+of common words ("may the force be with you", "i am your father") took 8-20 s: thousands
+of windows hold enough of its words to have to be scored. The first search after a start
+lists the folders and takes ~20 s.
 
 ### Machine transcription
 

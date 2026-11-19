@@ -26,6 +26,7 @@ F-measure: a missing query word costs more than an extra word in the line.
 
 from __future__ import annotations
 
+import math
 import re
 import unicodedata
 from itertools import accumulate
@@ -200,14 +201,128 @@ class _Query:
         return min(PHRASE_MAX, scorer(q, c, score_cutoff=min_score))
 
 
+# --- the candidate prefilter (an index of where each word is) -----------------------
+# A window scores at most PHRASE_MAX * f_beta(coverage) unless every query word is in it
+# as written (_Query.score's first bound), and coverage (the query's word weight found,
+# each word credited by its similarity) is at most the weight of the query words that
+# have any match in the window. So from where each word is, cue by cue, one can tell the
+# windows that can't reach min_score without reading their text: an index of the cues'
+# words narrows a library to the few windows worth scoring, and the scores, and so the
+# results, stay exactly what searching every cue gives.
+
+
+def coverage_needed(min_score: float) -> float:
+    """The least share of the query's word weight a window needs (each word found
+    counted whole) for its score's upper bound to reach ``min_score``."""
+    if min_score <= 0:
+        return 0.0
+    if min_score > PHRASE_MAX:
+        return 1.0  # only a verbatim line scores more: every word must be there
+    # PHRASE_MAX * (1 + B2) c / (B2 + c) >= m  <=>  c >= B2 m / ((1 + B2) PHRASE_MAX - m)
+    return _BETA2 * min_score / ((1 + _BETA2) * PHRASE_MAX - min_score)
+
+
+class Prefilter:
+    """What an index of the cues' words needs to find a query's candidate windows.
+
+    ``words`` and ``weights`` are the normalised query's words and their weights;
+    :meth:`hits` says which query words a cue word matches (exactly as the scoring
+    does); ``need`` is the least total weight of matched query words a window must
+    hold to be worth scoring. ``usable`` is False for a query with no words, or in a
+    script written without spaces (matched on characters, not words): search every
+    cue for those."""
+
+    def __init__(self, query: str, min_score: float) -> None:
+        self._q = _Query(query)
+        self.words = self._q.words
+        self.weights = self._q.weights
+        self.usable = bool(self.words) and not self._q.unspaced
+        total = sum(self.weights)
+        if min_score > PHRASE_MAX:
+            need = total
+        else:  # rounded down a hair: a float a little under the bound must not cut a window
+            need = math.ceil(coverage_needed(min_score) * total * (1 - 1e-6))
+        self.need = max(1, need)  # a window with no word matched is never scored
+
+    def hits(self, word: str) -> tuple[tuple[int, float], ...]:
+        """``(query word index, similarity)`` for each query word a normalised cue word
+        matches: the same word, or (both 3+ letters) one within a typo."""
+        return self._q.hits(word)
+
+
+def cue_words(text: str) -> list[str]:
+    """A cue's words as the scoring sees them (what an index of the cues stores)."""
+    return _normalize(text).split()
+
+
+def candidate_regions(masks: list[int], weights: list[int], need: int, max_span: int,
+                      n: int) -> list[tuple[int, int]]:
+    """The ranges of cue positions (inclusive) whose windows may reach the score.
+
+    ``masks[j]`` has bit ``p`` set when cue ``p`` holds a word matching query word ``j``;
+    ``n`` is the number of cues. A window of up to ``max_span`` cues is worth scoring
+    only if the weights of the query words it holds add up to ``need``; every such window
+    lies inside a window of exactly ``max_span`` cues that also does, so those are the
+    ones checked, all at once, as bit sets. Pass the result to :func:`search`."""
+    if not n or sum(w for w, m in zip(weights, masks) if m) < need:
+        return []
+    every = (1 << n) - 1
+    # Bit p of reach[j]: the window starting at cue p holds a match for word j.
+    reach = []
+    for m in masks:
+        r = m
+        for k in range(1, max_span):
+            r |= m >> k
+        reach.append(r & every)
+    # Add up the weights of the words each window holds, bit-sliced (planes[b] is bit b
+    # of every window's sum), then keep the windows whose sum is at least ``need``.
+    planes: list[int] = []
+    for w, r in zip(weights, reach):
+        if not r:
+            continue
+        level = 0
+        while w:
+            if w & 1:
+                carry, lv = r, level
+                while carry:
+                    while lv >= len(planes):
+                        planes.append(0)
+                    planes[lv], carry = planes[lv] ^ carry, planes[lv] & carry
+                    lv += 1
+            w >>= 1
+            level += 1
+    greater, equal = 0, every
+    for b in range(max(len(planes), need.bit_length()) - 1, -1, -1):
+        plane = planes[b] if b < len(planes) else 0
+        if need >> b & 1:
+            equal &= plane
+        else:
+            greater |= equal & plane
+            equal &= every ^ plane
+    starts = greater | equal
+    cover = starts
+    for k in range(1, max_span):
+        cover |= starts << k
+    cover &= every
+    out = []
+    while cover:
+        lo = (cover & -cover).bit_length() - 1
+        run = cover >> lo
+        length = (~run & (run + 1)).bit_length() - 1
+        out.append((lo, lo + length - 1))
+        cover &= ~(((1 << length) - 1) << lo)
+    return out
+
+
 def search(
-    query: str,
+    query: str | Prefilter,
     cues: list[Cue],
     *,
     limit: int = 10,
     min_score: float = 60.0,
     max_span: int = 3,
     collapse_overlapping: bool = True,
+    regions: list[tuple[int, int]] | None = None,
 ) -> list[Match]:
     """Return ranked, non-overlapping matches for `query` across the cues.
 
@@ -218,22 +333,31 @@ def search(
     place it occurs rather than several near-duplicates.
 
     Args:
-        query: dialogue text to find.
+        query: dialogue text to find, or a :class:`Prefilter` made of it (a search over
+            many files then works out each word's matches once, not once a file).
         cues: subtitle cues to search.
         limit: maximum number of matches to return.
         min_score: drop matches scoring below this (0-100).
         max_span: how many consecutive cues a single match may join (>=1).
         collapse_overlapping: drop matches that overlap a higher-ranked one.
+        regions: only windows lying wholly inside one of these ``(first, last)`` ranges
+            of positions in ``cues`` (inclusive, disjoint, in order) are scored. From
+            :func:`candidate_regions`, which leaves out only windows that can't reach
+            ``min_score``, the result is the same as searching every cue.
     """
-    q = _Query(query)
+    q = query._q if isinstance(query, Prefilter) else _Query(query)
     if not q.words:
         return []
     max_span = max(1, max_span)
 
-    # Normalise each cue once; a window reuses its cues' words and matches.
+    # Normalise each cue once; a window reuses its cues' words and matches. Only the
+    # cues in a region are read (the others stay None: no window reaches them).
     memo, hits = q._memo, q.hits
-    prepared = []
-    for cue in cues:
+    if regions is None:
+        regions = [(0, len(cues) - 1)]
+    prepared: list = [None] * len(cues)
+    for k in (k for lo, hi in regions for k in range(max(lo, 0), min(hi, len(cues) - 1) + 1)):
+        cue = cues[k]
         norm = _normalize(cue.text)
         words = norm.split()
         found = []
@@ -243,16 +367,18 @@ def search(
                 h = hits(w)
             if h:
                 found.append((p, h))
-        prepared.append((norm, [len(w) + 1 for w in words], found))
+        prepared[k] = (norm, [len(w) + 1 for w in words], found)
 
     candidates: list[Match] = []
-    for start in range(len(cues)):
+    starts = ((start, min(hi, len(cues) - 1)) for lo, hi in regions
+              for start in range(max(lo, 0), min(hi, len(cues) - 1) + 1))
+    for start, last in starts:
         norms: list[str] = []
         weights: list[int] = []
         found: list = []
         for span in range(max_span):
             i = start + span
-            if i >= len(cues):
+            if i > last:
                 break
             norm, w, f = prepared[i]
             if f:

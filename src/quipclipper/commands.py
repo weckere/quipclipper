@@ -403,6 +403,10 @@ COMMANDS: tuple[Command, ...] = (
             "GET", "/api/search/folder/index-status",
             params=(Param("path", "str", "Folder.", main=True, required=True),),
             ui="Dialogue index card"),
+    Command("index.lines", "Show the line index: how many cached subtitle files a "
+            "library-wide line search can narrow down by word, and how far filling it in "
+            "for files cached before it existed has got (it starts with the server).",
+            "GET", "/api/search/line-index"),
     Command("index.build", "Cache the subtitles of every file in a folder (prints "
             "progress).", "POST", "/api/search/folder/index",
             params=(Param("path", "str", "Folder.", main=True, required=True),
