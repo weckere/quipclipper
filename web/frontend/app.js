@@ -7356,7 +7356,11 @@ let pairWanted = new URLSearchParams(location.search).get("pair");  // ?pair=<id
 
 const pairWho = (r) => (r.host ? `${r.name} on ${r.host}` : r.name);
 // What a scoped app (M22) may do, in the server's words (pairing.SCOPES); null: everything.
-const SCOPE_LABELS = { "index.file": "queue subtitle re-indexes", "transcripts.read": "read transcripts" };
+const SCOPE_LABELS = {
+  "index.file": "queue subtitle re-indexes", "transcripts.read": "read transcripts",
+  transcribe: "transcribe audio it sends", search: "search the library's dialogue",
+  "jellyfin.play": "start playback on Jellyfin devices",
+};
 const pairCan = (scopes) => (scopes == null ? null
   : scopes.map((s) => SCOPE_LABELS[s] || s).join(" and ") || "nothing but check its key");
 // Who asked (a pairing request, or a connected app): the tailnet user behind Tailscale

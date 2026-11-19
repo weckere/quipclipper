@@ -74,6 +74,15 @@ SCOPES: dict[str, tuple[str, frozenset[tuple[str, str]]]] = {
     # Its own uploads only: the job routes below answer such a token for the jobs it started.
     "transcribe": ("transcribe audio it sends",
                    frozenset({("POST", "/api/transcribe")})),
+    # A TV remote app (LineFinder): search one file or folders for a line, and learn the
+    # library's roots so it can search all of it, as the web app's Whole library does.
+    "search": ("search the library's dialogue",
+               frozenset({("GET", "/api/search"), ("GET", "/api/search/folder"),
+                          ("GET", "/api/library/roots")})),
+    # ...and play the match on a Jellyfin client: list the clients, start a file on one.
+    "jellyfin.play": ("start playback on Jellyfin devices",
+                      frozenset({("GET", "/api/jellyfin/sessions"),
+                                 ("POST", "/api/jellyfin/play")})),
 }
 # Routes with a parameter a scope opens, as (method, pattern): the transcribe scope follows
 # and cancels its jobs (the app checks the job is the token's own, :attr:`Job.owner`).

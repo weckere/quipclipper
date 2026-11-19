@@ -868,6 +868,72 @@ def test_a_transcripts_read_token_reads_transcripts_only(tmp_path):
     assert c.get("/api/index/file", headers=key).status_code == 403
 
 
+_SRT = "1\n00:00:01,000 --> 00:00:03,500\nI'll be back.\n"
+
+
+def test_a_search_token_searches_the_whole_library_and_nothing_else(tmp_path):
+    """A TV remote app (LineFinder, M27): the roots, then a folder search over all of them,
+    or one file's; nothing else, not even the folder search's index routes."""
+    root = tmp_path / "media"
+    video = root / "T2" / "t2.mkv"
+    video.parent.mkdir(parents=True)
+    video.write_bytes(b"")
+    video.with_suffix(".en.srt").write_text(_SRT)
+    c = _client(tmp_path, QC_MEDIA_ROOTS=str(root))
+    token, _, got = _paired_scoped(c, ["search"])
+    assert got["scopes"] == ["search"]
+    key = {"X-API-Key": token}
+    roots = c.get("/api/library/roots", headers=key)
+    assert roots.status_code == 200 and roots.json() == {"roots": [str(root.resolve())]}
+    every = c.get("/api/search/folder", params={"path": roots.json()["roots"],
+                                                "query": "be back"}, headers=key)
+    assert every.status_code == 200, every.text
+    one = c.get("/api/search", params={"path": str(video), "query": "be back"}, headers=key)
+    assert one.status_code == 200, one.text
+    assert one.json()["matches"][0]["start"] == 1.0
+    for method, path in [("GET", "/api/library/browse"), ("GET", "/api/search/folder/index-status"),
+                         ("POST", "/api/search/folder/index"), ("GET", "/api/search/library/index"),
+                         ("GET", "/api/jellyfin/sessions"), ("POST", "/api/jellyfin/play"),
+                         ("GET", "/api/items/transcript"), ("GET", "/api/config"),
+                         ("GET", "/api/clips")]:
+        r = c.request(method, path, headers=key)
+        assert r.status_code == 403, (method, path, r.text)
+        assert "may only search the library's dialogue" in r.json()["detail"]
+
+
+def test_a_jellyfin_play_token_opens_only_the_jellyfin_play_routes(tmp_path):
+    c = _client(tmp_path)  # no Jellyfin here: past the gate, the routes say so themselves
+    token, _, _ = _paired_scoped(c, ["jellyfin.play", "search"])
+    key = {"X-API-Key": token}
+    assert c.get("/api/jellyfin/sessions", headers=key).status_code not in (401, 403)
+    # A POST with a client token needs no CSRF header (it is not a browser).
+    r = c.post("/api/jellyfin/play", json={"session": "tv", "path": "/x.mkv", "at": 1},
+               headers=key)
+    assert r.status_code not in (401, 403), r.text
+    for method, path in [("POST", "/api/jellyfin/index"), ("GET", "/api/jellyfin/image/abc"),
+                         ("POST", "/api/clips"), ("GET", "/api/clips")]:
+        r = c.request(method, path, headers=key)
+        assert r.status_code == 403, (method, path, r.text)
+        assert ("may only start playback on Jellyfin devices and search the library's "
+                "dialogue here") in r.json()["detail"]
+
+
+def test_the_gate_check_lets_a_tv_token_reach_only_its_routes(tmp_path):
+    c = _client(tmp_path)
+    token, _, _ = _paired_scoped(c, ["jellyfin.play", "search"])
+
+    def check(uri, method="GET"):
+        return c.get("/api/clients/check", headers={
+            "X-API-Key": token, "X-Original-URI": uri, "X-Original-Method": method}).status_code
+
+    assert check("/api/search/folder?path=/m&query=x") == 200
+    assert check("/api/library/roots") == 200
+    assert check("/api/jellyfin/play", "POST") == 200
+    assert check("/api/jellyfin/sessions?all=1") == 200
+    assert check("/clips/a.mka") == 401
+    assert check("/api/jellyfin/image/abc") == 401
+
+
 def test_a_scoped_basic_password_is_held_to_its_scopes_too(tmp_path):
     c = _client(tmp_path)
     token, _, _ = _paired_scoped(c, ["index.file"])
@@ -913,3 +979,14 @@ def test_scope_allows_matches_whole_routes_only():
     assert not allows(("index.file",), "GET", "/api/pair/abc/approve")
     assert not allows(("index.file",), "POST", "/api/pair/abc/approve")
     assert not allows((), "GET", "/api/index/file")
+
+
+_APP_JS = Path(__file__).resolve().parents[2] / "frontend" / "app.js"
+
+
+@pytest.mark.skipif(not _APP_JS.exists(), reason="web/frontend is not part of this source tree")
+def test_the_banner_names_every_scope_in_the_servers_words():
+    """The pairing banner's SCOPE_LABELS (app.js) say what pairing.SCOPES says."""
+    block = re.search(r"const SCOPE_LABELS = \{(.*?)\};", _APP_JS.read_text(), re.S).group(1)
+    labels = dict(re.findall(r'"?([\w.]+)"?:\s*"([^"]+)"', block))
+    assert labels == {name: words for name, (words, _) in pairing.SCOPES.items()}

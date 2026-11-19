@@ -633,6 +633,8 @@ throw them out. Times are UTC ISO 8601 with `Z`.
   | `index.file` | queue subtitle re-indexes | `POST` and `GET /api/index/file` |
   | `transcripts.read` | read transcripts | `GET /api/items/transcript` |
   | `transcribe` | transcribe audio it sends | `POST /api/transcribe`, and `GET` and `DELETE /api/jobs/{id}` for the jobs it started (another job is `404`) |
+  | `search` | search the library's dialogue | `GET /api/search` (one file), `GET /api/search/folder` (folders), and `GET /api/library/roots`, so it can search the whole library by passing every root as a `path` (what the web app's Whole library does). Not the folder search's index routes, nor browsing. |
+  | `jellyfin.play` | start playback on Jellyfin devices | `GET /api/jellyfin/sessions` (`all=1`: every client, with `can_play`) and `POST /api/jellyfin/play` |
 
   plus what every client may do: `GET /api/health`, `GET /api/clients/check`,
   `DELETE /api/clients/self`, and pairing again (`POST /api/pair`, `GET /api/pair/{id}`).
@@ -641,7 +643,8 @@ throw them out. Times are UTC ISO 8601 with `Z`.
   Settings ▸ Connected apps and `clients.list` show each app's scopes, or full access. No
   `scopes` (or `null`) asks for a full token, as before scopes existed; an empty list or an
   unknown scope is a `422`. `scopes` in the replies is a sorted list, or `null` for full
-  access.
+  access. Like any client token, a scoped one needs no `X-Quipclipper` header on its `POST`s,
+  and passes the [password gate](#authentication) only for its scopes' routes.
 - **Storage:** requests live in memory (a restart forgets them; the app asks again). Clients
   live in `state_dir/clients.json` (0600, written atomically): `{clients: [{id, name, host,
   address, user, user_name, token_sha256, created, last_used, scopes?}]}` (no `scopes`: full

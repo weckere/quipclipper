@@ -1231,3 +1231,29 @@ def test_the_plugins_reindex_waits_for_the_first_derived_map(fake, tmp_path, kno
     r = c.post("/api/index/file", json=body)
     assert r.status_code == 202, r.text
     assert r.json()["files"][0]["media"] == str(ep.resolve())
+
+
+def test_a_paired_tv_app_lists_clients_and_plays_with_a_scoped_token(fake, tmp_path, known):
+    """LineFinder (M27) pairs with scopes search + jellyfin.play: its token lists the
+    clients and starts a file on one, with no CSRF header (a client token is no browser)."""
+    root, ep = known
+    fake.sessions = _clients()
+    c = _playing(_client(_env(fake, tmp_path, root)))
+    req = c.post("/api/pair", json={"name": "LineFinder", "host": "living-room-tv",
+                                    "scopes": ["search", "jellyfin.play"]}).json()
+    assert c.post(f"/api/pair/{req['id']}/approve").status_code == 200
+    token = c.get(f"/api/pair/{req['id']}",
+                  headers={"X-Pair-Secret": req["poll_secret"]}).json()["token"]
+    tv = TestClient(c.app)  # no X-Quipclipper header, as an app sends it
+    key = {"Authorization": f"Bearer {token}"}
+    every = tv.get("/api/jellyfin/sessions", params={"all": "1"}, headers=key)
+    assert every.status_code == 200, every.text
+    assert "tv" in [s["id"] for s in every.json()["sessions"]]
+    r = tv.post("/api/jellyfin/play", json={"session": "tv", "path": str(ep), "at": 61.2},
+                headers=key)
+    assert r.status_code == 200, r.text
+    assert r.json()["command"] == "play"
+    assert tv.post("/api/jellyfin/index", headers=key).status_code == 403
+    # Without the token it is a browser request: the CSRF rule still holds.
+    assert tv.post("/api/jellyfin/play", json={"session": "tv", "path": str(ep),
+                                               "at": 1}).status_code == 403

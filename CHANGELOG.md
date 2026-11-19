@@ -11,6 +11,15 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 
 ## [Unreleased]
 
+### LineFinder: a TV app's scopes (M27)
+
+- **Two new pairing scopes for a TV remote app.** `search` opens `GET /api/search`,
+  `GET /api/search/folder` and `GET /api/library/roots` (so it can search the whole
+  library); `jellyfin.play` opens `GET /api/jellyfin/sessions` and `POST /api/jellyfin/play`.
+  The pairing banner says "wants to start playback on Jellyfin devices and search the
+  library's dialogue"; the banner and Settings ▸ Connected apps now also name the
+  `transcribe` scope in words.
+
 ### Changed
 
 - **New icon:** the scissors' finger loops are now a pair of quotation marks, in the browser tab
