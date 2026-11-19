@@ -11,6 +11,11 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 
 ## [Unreleased]
 
+### Changed
+
+- **New icon:** the scissors' finger loops are now a pair of quotation marks, in the browser tab
+  icon and beside the name in the header.
+
 ## [0.11.0] - 2026-11-19
 
 ### Transcribe audio an app sends (M21)
