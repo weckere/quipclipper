@@ -34,11 +34,13 @@ page = s.frame(None, "social preview", 0, 0, W, H, fill=BG)
 def scissors(scale):
     """The logo mark (index.html's logo-mark path, viewBox "4 3.5 24 24"), scaled: two
     quotation marks for finger loops (a circle with a tail each) and two crossed blades.
-    Written in absolute commands, moved to the origin."""
+    Written in absolute commands, with the path's own bounds (x 7.5 to 24.5, y 5.5 to 25.9,
+    so MARK_W by MARK_H units) moved to the origin: FigCraft stretches a path to its layer's
+    box, so the layer must be exactly the path's bounds."""
     k = scale
 
     def p(x, y):
-        return f"{(x - 4) * k:g} {(y - 3.5) * k:g}"
+        return f"{(x - 7.5) * k:g} {(y - 5.5) * k:g}"
 
     def quote(cx):  # a 3-unit circle centred on (cx, 19.5) and its tail down to the left
         r = 3 * k
@@ -52,8 +54,10 @@ def scissors(scale):
 # --- left: the name and what it does ---------------------------------------------------
 X = 80
 logo = s.frame(page, "logo", X, 104, 88, 88, fill=ACCENT, radius=22)
-s.vector(logo, "mark", 14, 14, 60, 60, scissors(2.5), fill=None, stroke=ACCENT_INK,
-         strokeWeight=5.5, strokeCap="round", strokeJoin="round")
+MARK_K, MARK_W, MARK_H = 88 / 32, 17, 20.4  # the favicon's scale: a 32-unit tile
+s.vector(logo, "mark", (88 - MARK_W * MARK_K) / 2, (88 - MARK_H * MARK_K) / 2,
+         MARK_W * MARK_K, MARK_H * MARK_K, scissors(MARK_K), fill=None, stroke=ACCENT_INK,
+         strokeWeight=2.2 * MARK_K, strokeCap="round", strokeJoin="round")
 s.text(page, "QuipClipper", X, 222, size=76, style="Bold", letterSpacing="-2%")
 s.text(page, "Find a moment by its dialogue,\nand cut it.", X, 330, size=34, w=540,
        color=DIM, lineHeight="130%")
