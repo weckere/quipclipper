@@ -50,6 +50,13 @@ class Job:
     # Anything else a finished job hands back, as JSON (e.g. the leadstinger:// link
     # of a Send to LeadStinger job).
     result: dict[str, Any] | None = None
+    # The paired app (client id) that started it, when one did: a scoped app's token sees
+    # and cancels only its own jobs (POST /api/transcribe).
+    owner: str | None = None
+    # Runs exactly once when the job is over, however it ends: done, failed, cancelled
+    # before it started, or dropped at shutdown (an upload's temporary files).
+    cleanup: Callable[[], None] | None = field(default=None, repr=False)
+    _cleaned: bool = field(default=False, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -94,8 +101,12 @@ class JobRegistry:
         self._lock = threading.Lock()
 
     def submit(self, fn: Callable[[Job], list[Path]], *, label: str = "",
-               cancellable: bool = False) -> Job:
-        job = Job(id=uuid.uuid4().hex[:12], label=label, cancellable=cancellable)
+               cancellable: bool = False, cleanup: Callable[[], None] | None = None,
+               owner: str | None = None) -> Job:
+        """Queue ``fn``. ``cleanup`` runs once when the job is over, however it ends
+        (see :attr:`Job.cleanup`)."""
+        job = Job(id=uuid.uuid4().hex[:12], label=label, cancellable=cancellable,
+                  cleanup=cleanup, owner=owner)
         cutoff = time.time() - self.MAX_FINISHED_AGE
         with self._lock:
             for jid, j in list(self._jobs.items()):
@@ -134,9 +145,13 @@ class JobRegistry:
                 job.status = Status.cancelled
                 job.finished = time.time()
                 self._futures.pop(job_id, None)
-                return True
-            # The worker grabbed it between our checks — treat as running.
-            return False
+                cancelled = True
+            else:
+                cancelled = False
+        if cancelled:
+            self._clean(job)
+            return True
+        return False  # the worker grabbed it between our checks: treat it as running
 
     def list_recent(self, limit: int = 20) -> list[Job]:
         with self._lock:
@@ -152,6 +167,23 @@ class JobRegistry:
                     if job.cancellable and job.status in (Status.queued, Status.running):
                         job.cancel_requested = True
         self._pool.shutdown(wait=False, cancel_futures=cancel)
+        if cancel:  # a queued job the pool dropped never runs: clean up after it here
+            with self._lock:
+                dropped = [self._jobs[j] for j, f in self._futures.items()
+                           if f.cancelled() and j in self._jobs]
+            for job in dropped:
+                self._clean(job)
+
+    @staticmethod
+    def _clean(job: Job) -> None:
+        """Run the job's cleanup, once."""
+        if job.cleanup is None or job._cleaned:
+            return
+        job._cleaned = True
+        try:
+            job.cleanup()
+        except Exception:
+            pass  # cleanup never fails a job
 
     def request_cancel(self, job_id: str) -> bool:
         """Ask a running job to stop at its next checkpoint (cooperative — the
@@ -166,6 +198,7 @@ class JobRegistry:
 
     def _run(self, job: Job, fn: Callable[[Job], list[Path]]) -> None:
         if job.status == Status.cancelled:  # cancelled after submit, before start
+            self._clean(job)
             return
         job.status = Status.running
         job.started = time.time()
@@ -177,6 +210,7 @@ class JobRegistry:
             job.status = Status.failed
         finally:
             job.finished = time.time()
+            self._clean(job)
         if job.status == Status.done and self._on_done is not None:
             try:
                 self._on_done(job)

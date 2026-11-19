@@ -339,16 +339,11 @@ def is_hallucination(text: str) -> bool:
         for h in _HALLUCINATION_WORDS)
 
 
-def parse_whisper_json(data: dict, *, offset: float = 0.0,
-                       keep: Range | None = None, model: str | None = None) -> list[Cue]:
-    """Cues from whisper.cpp's ``-oj``/``-ojf`` JSON (``transcription[].offsets`` in ms).
-
-    ``offset`` is added to every time (the decode started there). With ``keep``, only
-    segments whose midpoint falls inside it stay: the context decoded around a chunk
-    belongs to its neighbour. Sound descriptions, empty and music-only lines, repeats
-    of the line before and whisper's stock outro lines are dropped."""
+def _segments(data: dict, *, offset: float = 0.0,
+              keep: Range | None = None) -> Iterator[tuple[dict, float, float, str]]:
+    """The segments of whisper.cpp's JSON worth keeping, as ``(segment, start, end,
+    text)``: what :func:`parse_whisper_json` and :func:`parse_whisper_words` both read."""
     segs = data.get("transcription") if isinstance(data, dict) else None
-    out: list[Cue] = []
     prev = ""
     for seg in segs or []:
         if not isinstance(seg, dict):
@@ -371,8 +366,103 @@ def parse_whisper_json(data: dict, *, offset: float = 0.0,
         mid = (s + e) / 2
         if keep is not None and not keep[0] <= mid < keep[1]:
             continue
+        yield seg, s, e, text
+
+
+def parse_whisper_json(data: dict, *, offset: float = 0.0,
+                       keep: Range | None = None, model: str | None = None) -> list[Cue]:
+    """Cues from whisper.cpp's ``-oj``/``-ojf`` JSON (``transcription[].offsets`` in ms).
+
+    ``offset`` is added to every time (the decode started there). With ``keep``, only
+    segments whose midpoint falls inside it stay: the context decoded around a chunk
+    belongs to its neighbour. Sound descriptions, empty and music-only lines, repeats
+    of the line before and whisper's stock outro lines are dropped."""
+    out: list[Cue] = []
+    for _seg, s, e, text in _segments(data, offset=offset, keep=keep):
         out.append(Cue(index=len(out), start=round(s, 3), end=round(e, 3), text=text,
                        source=MACHINE))
+    return out
+
+
+# --- word timings (POST /api/transcribe) ------------------------------------------------
+# whisper.cpp's -ojf JSON lists each segment's tokens with their times. A token is a piece
+# of a word (" Hail", "ing"); one that starts with a space starts a new word, and one with
+# no letter or digit in it (",", "?") belongs to the word before. Its special tokens
+# ([_BEG_], [_TT_42], <|endoftext|>) aren't text.
+#
+# These token times are the word timings, not -dtw's. Measured on whisper.cpp 1.9.5 with
+# small.en (20 words with known boundaries, and real dialogue): a word's end is within about
+# 0.13 s, and its start is right except after a pause, where it is the end of the word
+# before. -dtw is ignored while flash attention is on (the default); with -nfa its t_dtw
+# lands about 0.1 s before each word's end (0.09 s off on average against the tokens'
+# 0.13 s), gives no start at all, collapses to one time over music, and the decode without
+# flash attention moved later words' token times by up to a second.
+
+_SPECIAL_TOKEN_RE = re.compile(r"^\s*(\[_[^\]]*\]|<\|[^|]*\|>)\s*$")
+_WORDISH_RE = re.compile(r"\w")
+
+
+def _token_time(tok: dict, key: str) -> float | None:
+    try:
+        return float((tok.get("offsets") or {})[key]) / 1000.0
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _has_word(group: list[dict]) -> bool:
+    return any(_WORDISH_RE.search(str(t.get("text") or "")) for t in group)
+
+
+def words_from_tokens(tokens: list, *, offset: float = 0.0) -> list[dict]:
+    """A segment's tokens merged into words: ``[{start, end, text}]`` in file time
+    (``offset`` added), each from its first token's start to its last token's end.
+    Times never run backwards."""
+    groups: list[list[dict]] = []
+    for tok in tokens or []:
+        if not isinstance(tok, dict):
+            continue
+        text = str(tok.get("text") or "")
+        if not text.strip() or _SPECIAL_TOKEN_RE.match(text):
+            continue
+        starts_word = text.startswith(" ") and _WORDISH_RE.search(text)
+        # A group of punctuation only (a leading quote) takes the next token too.
+        if groups and (not starts_word or not _has_word(groups[-1])):
+            groups[-1].append(tok)
+        else:
+            groups.append([tok])
+    out: list[dict] = []
+    for g in groups:
+        text = "".join(str(t.get("text") or "") for t in g).strip()
+        text = clean_text(text)
+        if not text:
+            continue
+        s, e = _token_time(g[0], "from"), _token_time(g[-1], "to")
+        if s is None or e is None:
+            continue
+        out.append({"start": s + offset, "end": max(e, s) + offset, "text": text})
+    for a, b in zip(out, out[1:]):  # never backwards
+        if b["start"] < a["start"]:
+            b["start"] = a["start"]
+        if b["end"] < b["start"]:
+            b["end"] = b["start"]
+    return out
+
+
+def parse_whisper_words(data: dict, *, offset: float = 0.0,
+                        keep: Range | None = None) -> list[dict]:
+    """Cues with word timings from whisper.cpp's ``-ojf`` JSON: the segments
+    :func:`parse_whisper_json` keeps, as ``{start, end, text, machine: true, words}``
+    (:func:`words_from_tokens`). A cue reaches out to cover its words; times are
+    rounded to the millisecond."""
+    out: list[dict] = []
+    for seg, s, e, text in _segments(data, offset=offset, keep=keep):
+        words = words_from_tokens(seg.get("tokens") or [], offset=offset)
+        if words:
+            s = min(s, words[0]["start"])
+            e = max(e, words[-1]["end"])
+        out.append({"start": round(s, 3), "end": round(e, 3), "text": text, "machine": True,
+                    "words": [{"start": round(w["start"], 3), "end": round(w["end"], 3),
+                               "text": w["text"]} for w in words]})
     return out
 
 
@@ -450,20 +540,24 @@ def extract_argv(source: str | Path, out_wav: str | Path, *, start: float, durat
 
 
 def whisper_argv(cfg: WhisperConfig, model_path: str, wav: str | Path, out_base: str | Path,
-                 *, prompt: str | None = None, vad: bool = False) -> list[str]:
+                 *, prompt: str | None = None, vad: bool = False,
+                 full: bool = False) -> list[str]:
     """``whisper-cli`` arguments: JSON out, English, capped threads, no console text.
 
     ``vad`` (Silero, when a VAD model is configured) skips what it hears as non-speech.
     Only whole-file runs use it (:func:`use_vad`): on a home library it dropped every sung line
     of the Darkplace song, the very lines a range or a gap is transcribed for. A seed
     ``prompt`` of the file's names made small.en write a single "." there, so runs
-    don't use one (M21 phase 0)."""
+    don't use one (M21 phase 0).
+
+    ``full`` writes ``-ojf`` JSON: each segment's tokens and their times, the word
+    timings (:func:`words_from_tokens`)."""
     binary = cfg.binary_path() or cfg.binary
     if os.sep in binary:
         binary = os.path.abspath(binary)
     cmd = [binary, "-m", os.path.abspath(model_path), "-f", os.path.abspath(wav),
            "-t", str(_clamp_threads(cfg.threads)), "-l", cfg.language,
-           "-oj", "-of", os.path.abspath(out_base), "-np"]
+           "-ojf" if full else "-oj", "-of", os.path.abspath(out_base), "-np"]
     if vad and cfg.vad_model:
         cmd += ["--vad", "-vm", os.path.abspath(cfg.vad_model)]
     if prompt:
@@ -1301,6 +1395,183 @@ def run(store: TranscriptStore, media: str | Path, ranges: list[Range], *, cfg: 
             if progress:
                 progress(done, total)
     return t if t is not None else store.load(media)
+
+
+# --- one audio file sent to be transcribed (POST /api/transcribe, transcribe.file) ------
+# An app such as LeadStinger sends a sample's audio and gets its lines back with word
+# timings, in seconds inside that file. Nothing is stored: no transcript, no sidecar; the
+# caller keeps the result. The file is decoded once to 16 kHz mono (which also proves it
+# is audio and measures it), then heard chunk by chunk like any range.
+
+# Defaults of the caps a server puts on one upload (QC_TRANSCRIBE_UPLOAD_MAX_MB and
+# QC_TRANSCRIBE_UPLOAD_MAX_SECONDS; 0 turns uploads off): a 5-minute 48 kHz stereo WAV fits.
+UPLOAD_MAX_MB = 64
+UPLOAD_MAX_SECONDS = 300.0
+
+
+class UnreadableAudio(ValueError):
+    """ffmpeg found no audio it could decode in the file."""
+
+
+class TooLong(ValueError):
+    """The audio runs longer than the duration cap."""
+
+    def __init__(self, seconds: float, limit: float) -> None:
+        super().__init__(f"The audio is longer than {limit:g} s, the most this server "
+                         "transcribes in one file.")
+        self.seconds = seconds
+        self.limit = limit
+
+
+@dataclass(frozen=True)
+class UploadLimits:
+    """The caps on one uploaded file: bytes and seconds. Either at 0 (or below) turns
+    uploads off."""
+
+    max_bytes: int = UPLOAD_MAX_MB * 1024 * 1024
+    max_seconds: float = UPLOAD_MAX_SECONDS
+
+    @property
+    def enabled(self) -> bool:
+        return self.max_bytes > 0 and self.max_seconds > 0
+
+    @classmethod
+    def from_env(cls, env=None) -> "UploadLimits":
+        e = os.environ if env is None else env
+
+        def num(name: str, default: float) -> float:
+            raw = (e.get(name) or "").strip()
+            try:
+                return float(raw) if raw else default
+            except ValueError:
+                return default
+
+        mb = num("QC_TRANSCRIBE_UPLOAD_MAX_MB", UPLOAD_MAX_MB)
+        return cls(max_bytes=int(mb * 1024 * 1024),
+                   max_seconds=num("QC_TRANSCRIBE_UPLOAD_MAX_SECONDS", UPLOAD_MAX_SECONDS))
+
+    def describe(self) -> dict | bool:
+        """``{max_bytes, max_seconds}``, or False when uploads are off."""
+        if not self.enabled:
+            return False
+        return {"max_bytes": self.max_bytes, "max_seconds": self.max_seconds}
+
+
+def convert_argv(source: str | Path, out_wav: str | Path, *, limit: float) -> list[str]:
+    """ffmpeg arguments that write the first audio stream of ``source`` as a 16 kHz mono
+    WAV, at most ``limit`` seconds of it."""
+    return ["ffmpeg", "-nostdin", "-v", "error", "-i", os.path.abspath(source),
+            "-map", "0:a:0", "-vn", "-sn", "-dn", "-ac", "1", "-ar", str(SAMPLE_RATE),
+            "-t", f"{limit:.3f}", "-f", "wav", "-acodec", "pcm_s16le", "-y",
+            os.path.abspath(out_wav)]
+
+
+def decode_upload(source: str | Path, out_wav: str | Path, *, max_seconds: float,
+                  cancelled: Callable[[], bool] | None = None) -> float:
+    """Decode ``source`` to a 16 kHz mono WAV at idle priority; its length in seconds.
+    Raises :class:`UnreadableAudio` for a file with no audio ffmpeg can decode and
+    :class:`TooLong` for one longer than ``max_seconds`` (only a second past the cap is
+    ever decoded)."""
+    import wave
+
+    out_wav = Path(out_wav)
+    try:
+        _run(convert_argv(source, out_wav, limit=max_seconds + 1.0), cancelled=cancelled,
+             timeout=max(120.0, max_seconds), cwd=out_wav.parent)
+    except RuntimeError as exc:
+        raise UnreadableAudio(f"That isn't audio ffmpeg can read ({exc}).") from None
+    try:
+        with wave.open(str(out_wav)) as w:
+            seconds = w.getnframes() / float(w.getframerate() or SAMPLE_RATE)
+    except (OSError, EOFError, wave.Error) as exc:
+        raise UnreadableAudio(f"That isn't audio ffmpeg can read ({exc}).") from None
+    if seconds <= 0:
+        raise UnreadableAudio("The file has no audio in it.")
+    if seconds > max_seconds + 1e-3:
+        raise TooLong(seconds, max_seconds)
+    return round(seconds, 3)
+
+
+def check_language(cfg: WhisperConfig, model: str, lang: str | None) -> str:
+    """The language a run is told to hear: ``lang``, else the server's. An English-only
+    model (``*.en``) hears only ``en``. Raises ValueError for anything else."""
+    lang = (lang or cfg.language or "en").strip().lower()
+    if not re.fullmatch(r"[a-z]{2,3}|auto", lang):
+        raise ValueError(f"Not a language code: {lang!r} (use e.g. en).")
+    if model.endswith(".en") and lang != "en":
+        raise ValueError(f"The {model} model hears English only (lang=en).")
+    return lang
+
+
+def transcribe_words(wav: str | Path, start: float, end: float, *, cfg: WhisperConfig,
+                     model: str, duration: float, workdir: str | Path,
+                     cancelled: Callable[[], bool] | None = None) -> tuple[list[dict], str | None]:
+    """One stretch of a 16 kHz WAV, heard with word timings (:func:`parse_whisper_words`):
+    its cues in file time and the language whisper says it heard. ``CONTEXT`` either
+    side is decoded and heard, and only the lines that belong in ``start..end`` kept, as
+    :func:`transcribe_range` does."""
+    model_path = cfg.model_path(model)
+    lo = max(0.0, start - CONTEXT)
+    hi = min(end + CONTEXT, duration)
+    with tempfile.TemporaryDirectory(prefix="qc-stt-", dir=workdir) as tmp:
+        tmp = os.path.abspath(tmp)
+        piece = Path(tmp) / "a.wav"
+        _run(extract_argv(wav, piece, start=lo, duration=hi - lo), cancelled=cancelled,
+             timeout=600, cwd=tmp)
+        if not piece.exists() or piece.stat().st_size <= 44:
+            return [], None
+        out = Path(tmp) / "out"
+        _run(whisper_argv(cfg, model_path, piece, out, full=True),
+             cancelled=cancelled, timeout=max(600.0, (hi - lo) * 20), cwd=tmp)
+        try:
+            data = json.loads(out.with_suffix(".json").read_text(encoding="utf-8",
+                                                                 errors="replace"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"whisper-cli wrote no readable transcript: {exc}") from exc
+    heard = (data.get("result") or {}).get("language") if isinstance(data, dict) else None
+    return parse_whisper_words(data, offset=lo, keep=(start, end)), heard
+
+
+def transcribe_file(wav: str | Path, duration: float, *, cfg: WhisperConfig,
+                    model: str | None = None, lang: str | None = None,
+                    workdir: str | Path | None = None,
+                    progress: Callable[[float, float], None] | None = None,
+                    cancelled: Callable[[], bool] | None = None) -> dict:
+    """Transcribe all of a 16 kHz mono WAV (:func:`decode_upload` made it): ``{cues,
+    cues_source, duration}``, each cue ``{start, end, text, machine: true, words}`` in
+    seconds inside the file, and ``cues_source`` ``{kind: "machine", engine, model,
+    lang}``. Chunk by chunk (``progress(done, total)`` after each); raises
+    :class:`Cancelled` when ``cancelled()`` turns true. No voice activity detection: a
+    sample is short, and VAD drops sung lines (:func:`whisper_argv`)."""
+    model = model or cfg.default_model
+    cfg.model_path(model)
+    lang = check_language(cfg, model, lang)
+    cfg = replace(cfg, language=lang)
+    cues: list[dict] = []
+    heard: str | None = None
+    done = 0.0
+    if progress:
+        progress(0.0, duration)
+    for s, e in chunks(0.0, duration):
+        if cancelled is not None and cancelled():
+            raise Cancelled()
+        got, said = transcribe_words(wav, s, e, cfg=cfg, model=model, duration=duration,
+                                     workdir=workdir or tempfile.gettempdir(),
+                                     cancelled=cancelled)
+        heard = heard or said
+        cues.extend(got)
+        done += e - s
+        if progress:
+            progress(done, duration)
+    for c in cues:  # inside the file, always
+        for x in (c, *c["words"]):
+            x["start"] = round(min(max(x["start"], 0.0), duration), 3)
+            x["end"] = round(min(max(x["end"], x["start"]), duration), 3)
+    cues.sort(key=lambda c: (c["start"], c["end"]))
+    return {"cues": cues,
+            "cues_source": {"kind": MACHINE, "engine": ENGINE, "model": model,
+                            "lang": heard if lang == "auto" and heard else lang},
+            "duration": duration}
 
 
 # --- the library sidecar ----------------------------------------------------------------

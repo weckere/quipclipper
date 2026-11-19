@@ -15,7 +15,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from quipclipper.transcribe import WhisperConfig
+from quipclipper.transcribe import UploadLimits, WhisperConfig
 
 from quipclipper_web import caller
 
@@ -135,6 +135,9 @@ class Settings:
     # Machine transcription (M21): whisper.cpp and its models, from QC_WHISPER_* (the
     # NixOS module's transcribe.* options). No model = the feature reports itself off.
     whisper: WhisperConfig = field(default_factory=WhisperConfig)
+    # The caps on one file sent to POST /api/transcribe (QC_TRANSCRIBE_UPLOAD_MAX_MB,
+    # QC_TRANSCRIBE_UPLOAD_MAX_SECONDS; either 0 turns uploads off).
+    transcribe_upload: UploadLimits = field(default_factory=UploadLimits)
     # Pairing (quipclipper.pair/1): apps such as LeadStinger ask for access and a person
     # approves them; QC_PAIRING=0 turns every /api/pair* route into 404.
     pairing: bool = True
@@ -241,6 +244,7 @@ class Settings:
                 t.strip() for t in _secret(e, "QC_HOOK_TOKEN").split(",") if t.strip()
             ),
             whisper=WhisperConfig.from_env(e),
+            transcribe_upload=UploadLimits.from_env(e),
             pairing=_switch(e.get("QC_PAIRING"), default=True),
             server_name=e.get("QC_SERVER_NAME", "").strip(),
             advertise=_switch(e.get("QC_ADVERTISE"), default=False),

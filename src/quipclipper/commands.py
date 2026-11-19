@@ -13,8 +13,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-# Where a parameter goes on the wire.
-PATH, QUERY, BODY, CLIENT = "path", "query", "body", "client"
+# Where a parameter goes on the wire. FILE: a local file whose bytes are the request body.
+PATH, QUERY, BODY, CLIENT, FILE = "path", "query", "body", "client", "file"
 
 
 @dataclass(frozen=True)
@@ -186,6 +186,23 @@ COMMANDS: tuple[Command, ...] = (
             params=(Param("daily", "bool", "Check once a day (--no-daily: only when asked).",
                           where=BODY, required=True),),
             ui="Check once a day (Settings ▸ Updates)"),
+
+    # --- transcribe: an audio file sent to be heard (M21; LeadStinger's samples) -------------
+    Command("transcribe.file", "Transcribe one audio file with whisper.cpp: its lines with "
+            "word timings, in seconds inside the file. A server is sent the file and keeps "
+            "nothing (a job at idle priority, queued behind other transcriptions; its caps "
+            "are in server.health); run here, it is heard on this machine.",
+            "POST", "/api/transcribe",
+            params=(Param("file", "str", "Audio file (anything ffmpeg decodes).", where=FILE,
+                          main=True, required=True),
+                    Param("lang", "str", "Language code the audio is in. Default: the "
+                          "server's (en); an English-only model (*.en) hears en only."),
+                    Param("model", "str", "Whisper model. Default: the settings value, else "
+                          "the server's (small.en).", choices=("small.en", "medium.en")),
+                    _JOB_FOLLOW[0]),
+            mode="both", response="job",
+            ui="—",  # no web UI: an app's request (LeadStinger sends a sample)
+            transcription=True),
 
     # --- library ----------------------------------------------------------------
     Command("library.roots", "List the media roots.", "GET", "/api/library/roots",

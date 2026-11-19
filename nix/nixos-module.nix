@@ -644,6 +644,26 @@ in
           caps it at 3 as well).
         '';
       };
+
+      upload = {
+        maxMegabytes = lib.mkOption {
+          type = lib.types.ints.unsigned;
+          default = 64;
+          description = ''
+            The largest audio file an app may send to `POST /api/transcribe` to be
+            transcribed (`QC_TRANSCRIBE_UPLOAD_MAX_MB`), in MiB; nginx's body limit on that
+            route follows it. 0 turns uploads off (the route answers 503).
+          '';
+        };
+        maxSeconds = lib.mkOption {
+          type = lib.types.ints.unsigned;
+          default = 300;
+          description = ''
+            The longest audio `POST /api/transcribe` takes (`QC_TRANSCRIBE_UPLOAD_MAX_SECONDS`);
+            longer answers 413. 0 turns uploads off.
+          '';
+        };
+      };
     };
 
     user = lib.mkOption {
@@ -851,6 +871,8 @@ in
         QC_WHISPER_MODEL = stt.defaultModel;
         QC_WHISPER_THREADS = toString stt.threads;
         QC_WHISPER_LANGUAGE = "en";
+        QC_TRANSCRIBE_UPLOAD_MAX_MB = toString stt.upload.maxMegabytes;
+        QC_TRANSCRIBE_UPLOAD_MAX_SECONDS = toString stt.upload.maxSeconds;
       } // lib.optionalAttrs (stt.enable && stt.vad) {
         QC_WHISPER_VAD_MODEL = toString sileroVad;
       } // lib.optionalAttrs (cfg.passwordFile != null) {
@@ -970,6 +992,18 @@ in
           proxyPass = proxyTarget;
           recommendedProxySettings = false;
           extraConfig = apiProxyHeaders;
+        };
+        # Audio an app sends to be transcribed: up to the upload cap, passed to the backend
+        # as it arrives (it counts the bytes and stops at the cap) rather than spooled here.
+        locations."= /api/transcribe" = {
+          proxyPass = proxyTarget;
+          recommendedProxySettings = false;
+          extraConfig = apiProxyHeaders + ''
+            client_max_body_size ${toString (stt.upload.maxMegabytes + 1)}m;
+            proxy_request_buffering off;
+            proxy_http_version 1.1;
+            proxy_read_timeout 300s;
+          '';
         };
         # Raw media streaming: don't spool large files through nginx's proxy
         # temp dir. Longest-prefix matching keeps /api/media/transcode (below)

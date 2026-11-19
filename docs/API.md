@@ -246,6 +246,78 @@ that run whisper answer 503 and `/api/health`'s `transcribe.available` is false.
 | GET | `/api/transcripts/orphans?stale=` | The stored transcripts a clean would delete, deleting nothing → `{count, orphans: [{file, path, reason}]}` (at most 200 listed). `reason` is `gone` (the media file was deleted), `stale` (only with `stale=true`: the media file was replaced since), `unreadable` (an older store format or a broken file) or `partial` (an interrupted save's temp file, over an hour old). A media file counts as gone only under a library root that is there and not empty, so a disk that isn't mounted loses nothing; a transcript of a file outside every root is left alone. |
 | POST | `/api/transcripts/clean?stale=` | Delete what the GET lists → `{count, removed}`. Only ever on request: nothing sweeps the store on a timer or a scan. Copies in the library are never touched. |
 
+#### Transcribing audio an app sends
+
+`POST /api/transcribe` hears one audio file the caller sends, such as a LeadStinger sample
+with no subtitles, and gives back its lines with **word timings**. Nothing is kept: no
+stored transcript, nothing in the media or clips folders.
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/transcribe?lang=&model=` | Start transcribing the request body (job). The body is the audio file itself, any `Content-Type` (`audio/wav`, `application/octet-stream`…; no multipart, no JSON): anything ffmpeg decodes. Its first audio stream is mixed to mono 16 kHz. `model` is one the server has (`transcribe.models`; default `default_model`); `lang` a language code (default the server's, `en`; an English-only `*.en` model hears `en` only). Returns `{job_id, duration}`, `duration` being the audio's length in seconds. |
+
+Follow the job with `GET /api/jobs/{id}` (`progress` reads `"0:12 of 0:40 transcribed"`) and
+stop it with `DELETE /api/jobs/{id}` (`{cancelled}` while it waits, `{cancelling}` while it
+runs; it then ends `cancelled` with no `result`). A finished job's `result`:
+
+```json
+{
+  "cues": [
+    {"start": 0.5, "end": 1.5, "text": "Hailing frequencies open.", "machine": true,
+     "words": [{"start": 0.5, "end": 0.9, "text": "Hailing"},
+               {"start": 0.9, "end": 1.3, "text": "frequencies"},
+               {"start": 1.3, "end": 1.5, "text": "open."}]}
+  ],
+  "cues_source": {"kind": "machine", "engine": "whisper.cpp", "model": "small.en", "lang": "en"},
+  "duration": 3.0
+}
+```
+
+The cues are [subtitle cues](#subtitle-cues) with `words` filled in: seconds inside the sent
+file, rounded to the millisecond, clamped to `[0, duration]`, in order. `text` is the line
+with sound descriptions (`[Music]`) and whisper's stock outro lines left out, as for every
+machine line; a file with no speech gives `"cues": []`. Each word is whisper.cpp's own timing
+(its `-ojf` tokens joined into words: a word keeps the punctuation after it), from its
+first token's start to its last token's end. A word's end is close (within about 0.1 s on
+speech); its start is right after another word, but after a pause whisper puts it at the
+end of the word before, so a word that follows silence may start early. A cue spans at least
+its words. `cues_source.lang` is the language asked for (whisper's own guess with
+`lang=auto` on a multilingual model).
+
+The job waits in the same one-at-a-time pool as every other transcription, at idle priority
+with the same thread cap, so an upload never slows playback or the library index; it may
+queue behind a long run. Decoding the upload (a second or two of ffmpeg, idle priority)
+happens before the reply.
+
+**Limits.** Read as it arrives, with a hard cap whatever `Content-Length` says:
+
+| Answer | When |
+|---|---|
+| `413` | Over `QC_TRANSCRIBE_UPLOAD_MAX_MB` (default 64 MiB; a `Content-Length` over it is refused before reading), or audio longer than `QC_TRANSCRIBE_UPLOAD_MAX_SECONDS` (default 300 s). |
+| `400` | An empty body, or nothing ffmpeg can decode as audio. |
+| `422` | A model the server lacks, a language that isn't a code, or a non-English `lang` with an English-only model. |
+| `429` | 4 uploads are already waiting or being heard; try again when one is done. |
+| `503` | Transcription is off here (`QC_TRANSCRIBE=0`, or no whisper.cpp), whisper.cpp or its model is missing, or uploads are off (either cap set to `0`). Unlike the endpoints above, off is `503`, not `404`. |
+
+An upload's audio waits in the state dir (`transcribe-uploads/`, one folder per upload, only
+the service can read it) and is deleted when its job ends, fails or is cancelled, also when
+it was cancelled before it started; a folder left by a crash is deleted when the server
+starts. The bundled nginx passes the body through as it arrives (`proxy_request_buffering
+off`) rather than spooling it.
+
+**Who may call it:** any API token (`QC_API_TOKEN`), a paired app's full-access token, or a
+browser (with the CSRF header). A paired app that asks for [scopes](#scopes) needs
+`transcribe`; such a token can then follow and cancel only the jobs it started (any other job
+id is `404`, `GET /api/jobs` is `403`).
+
+Where `/api/health` and `/api/config` have a `transcribe` block, it says whether uploads are
+taken: `upload` is `{max_bytes, max_seconds}`, or `false` (uploads off, or transcription not
+set up). With transcription off there is no `transcribe` block at all, so an app offers this
+only where `transcribe.upload` is an object.
+
+The CLI's `transcribe.file FILE [--lang] [--model]` sends a file and waits; without a
+server it hears the file on this machine.
+
 `/api/items` adds `transcript: {stored, library, writable, sidecar_name}` for a library
 file. `/api/library/browse` lists an audio file with a machine transcript (stored or in the
 library) like one with a transcript beside it, and marks entries `has_transcript` (not for a
@@ -257,8 +329,9 @@ While it's on, the rest of the API changes too:
 
 - `/api/health` gains `tools["whisper-cli"]` and `transcribe`: `{enabled, available, engine,
   binary, models: [{name, size, present}], default_model, threads, max_threads, vad,
-  language}`; `/api/config` gains `transcribe` (`{available, models, default_model, threads,
-  language}`). Off, neither appears.
+  language, upload}`; `/api/config` gains `transcribe` (`{available, models, default_model,
+  threads, language, upload}`). `upload` is `{max_bytes, max_seconds}` or `false`
+  ([above](#transcribing-audio-an-app-sends)). Off, neither appears.
 - `/api/items/subtitles` (`fmt=json`) cues carry `source`: `"machine"` for a machine line,
   else null. `machine=include` (the default) mixes them in, `exclude` leaves them out, `only`
   gives them alone. The captions carry only machine lines copied into the library, as
@@ -547,6 +620,7 @@ throw them out. Times are UTC ISO 8601 with `Z`.
   |---|---|---|
   | `index.file` | queue subtitle re-indexes | `POST` and `GET /api/index/file` |
   | `transcripts.read` | read transcripts | `GET /api/items/transcript` |
+  | `transcribe` | transcribe audio it sends | `POST /api/transcribe`, and `GET` and `DELETE /api/jobs/{id}` for the jobs it started (another job is `404`) |
 
   plus what every client may do: `GET /api/health`, `GET /api/clients/check`,
   `DELETE /api/clients/self`, and pairing again (`POST /api/pair`, `GET /api/pair/{id}`).
@@ -866,7 +940,8 @@ those are. They are the lines search reads for that source: the subtitle track c
 workspace (the request's `track`), else the best one (a sidecar file first, then the best
 embedded track), with machine-transcript lines mixed in where transcription is on.
 LeadStinger stores them with the tile, searches them and lets you move the words onto their
-audio; quipclipper does no word alignment.
+audio. A clip's cues have no word timings; [`POST /api/transcribe`](#transcribing-audio-an-app-sends)
+gives them for audio sent to it.
 
 Each cue is `{start, end, text}`, plus `machine: true` for a line a speech-to-text model
 heard:
@@ -876,7 +951,7 @@ heard:
 | `start`, `end` | Seconds **inside the clip file**: the same frame as `trim` (0 is the clip's first sample; a lossless video cut that starts on an earlier keyframe is off by the same amount `trim` is). A line that starts before the cut or ends after it is clamped to the file, `[0, duration]`. |
 | `text` | The line as search reads it: one line of text (a caption's lines joined by a space, formatting tags removed). |
 | `machine` | `true` for a machine-transcript line; missing otherwise. |
-| `words` | Reserved: `[{start, end, text}]` word timings, only ever written from a source that really has them. No source has them today, so no cue carries it; treat it as optional. |
+| `words` | `[{start, end, text}]` word timings, in the same frame, only from a source that really has them: whisper.cpp's, in [`POST /api/transcribe`](#transcribing-audio-an-app-sends)'s result. A clip's cues never carry it (subtitles have no word timings); treat it as optional. |
 
 `cues_source` is `{kind, lang, …}`; `lang` is the language code the source gives, or `null`:
 

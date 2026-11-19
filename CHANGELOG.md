@@ -11,6 +11,23 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 
 ## [Unreleased]
 
+### Transcribe audio an app sends (M21)
+
+- **`POST /api/transcribe`: an app sends an audio file and gets its lines back with word
+  timings.** For LeadStinger's samples with no subtitles. The body is the audio itself
+  (anything ffmpeg decodes; optional `lang` and `model`); it runs as a job in the same
+  one-at-a-time, idle-priority pool as every transcription, and its result is
+  `{cues, cues_source, duration}`: cues in seconds inside the file with `words`, each word
+  whisper.cpp's own timing (its `-ojf` tokens joined into words). Nothing is kept: the upload
+  waits in the state dir and is deleted when the job ends, fails or is cancelled. Caps:
+  `QC_TRANSCRIBE_UPLOAD_MAX_MB` (64) and `QC_TRANSCRIBE_UPLOAD_MAX_SECONDS` (300), the NixOS
+  module's `transcribe.upload.*`; the body is counted as it arrives, whatever
+  `Content-Length` says (413), unreadable audio is 400, transcription off or not set up 503,
+  and a fifth waiting upload 429. `/api/health` and `/api/config`'s `transcribe` block gains
+  `upload` (the caps, or `false`). A paired app may ask for the new `transcribe` scope,
+  which also follows and cancels only its own jobs. The bundled nginx passes this route's
+  body through unspooled. CLI: `transcribe.file FILE`, against a server or on this machine.
+
 ## [0.10.0] - 2026-11-16
 
 ### Clips carry their subtitles (M20)

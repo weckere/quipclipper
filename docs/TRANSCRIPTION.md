@@ -170,10 +170,14 @@ the CLI (whisper-cli and a model there, or `QC_TRANSCRIBE=1`); `search`, `search
 | `index.transcribe` | Transcribe a folder's files with whisper.cpp, one after another at idle priority: whole files that have no subtitles (audio without a transcript included), or the gaps between every file's subtitle lines. Only ever on request; cancel it like any job. | `PATH` `--mode` `--model` `--wait` `--out-dir` | `POST /api/search/folder/transcribe` | Transcribe files without subtitles; Fill gaps in every file (Dialogue index card); ✕ Cancel |
 | `index.transcript-orphans` | List the stored machine transcripts no file needs any more: their media file was deleted (with --stale, also replaced since), or they can't be read. Deletes nothing. | `--stale` | `GET /api/transcripts/orphans` · local | Library home: the orphaned transcripts count |
 | `index.transcript-clean` ⚠ | Delete the stored machine transcripts `index.transcript-orphans` lists. Never runs on its own; copies in the library stay. A disk that isn't mounted counts as nothing deleted. | `--stale` | `POST /api/transcripts/clean` · local | Library home: Remove orphaned transcripts |
+| `transcribe.file` | Transcribe one audio file with whisper.cpp: its lines with word timings, in seconds inside the file. A server is sent the file and keeps nothing (a job at idle priority, queued behind other transcriptions; its caps are in server.health); run here, it is heard on this machine. | `FILE` `--lang` `--model` `--wait` | `POST /api/transcribe` · local | — |
 
 ## API
 
 The endpoints (transcribe, show, export, delete, copy to the library, folder runs, orphans)
 and what transcription adds to search, the script, `/api/health` and `/api/config` are in
 [API.md](API.md#machine-transcription). Off, every transcription endpoint answers 404 with
-the reason, and `machine=only` too.
+the reason, and `machine=only` too. An app such as LeadStinger can also send an audio file of its own
+to be heard, with word timings, and nothing kept
+([`POST /api/transcribe`](API.md#transcribing-audio-an-app-sends); it answers 503 when
+transcription is off).

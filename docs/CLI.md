@@ -144,6 +144,12 @@ by default land where they always did.
 | `update.check` | Check for updates now: ask GitHub for the latest release and say whether it is newer than this build (only the request is sent, naming the version). It never updates anything. |  | `POST /api/update/check` · local | Check for updates (Settings ▸ Updates) |
 | `update.settings` | Turn the server's daily check for updates on or off, for every browser. Once set, this wins over QC_UPDATE_CHECK. | `--daily` | `PUT /api/update/settings` | Check once a day (Settings ▸ Updates) |
 
+## transcribe
+
+| Command | What it does | Arguments | API | Web UI |
+|---|---|---|---|---|
+| `transcribe.file` ² | Transcribe one audio file with whisper.cpp: its lines with word timings, in seconds inside the file. A server is sent the file and keeps nothing (a job at idle priority, queued behind other transcriptions; its caps are in server.health); run here, it is heard on this machine. | `FILE` `--lang` `--model` `--wait` | `POST /api/transcribe` · local | — |
+
 ## library
 
 | Command | What it does | Arguments | API | Web UI |

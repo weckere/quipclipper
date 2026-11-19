@@ -34,6 +34,7 @@ from typing import Annotated
 from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
@@ -130,6 +131,9 @@ CLIPS_CONTRACT = "quipclipper.clips/1"
 # (indexing, transcription) will touch. The nginx-side timeout is 600s,
 # so a huge tree can't be swept in one request — cap it and tell the client.
 INDEX_CAP = 500
+# Uploads to POST /api/transcribe waiting or being heard at once; one more answers 429, so
+# a busy client can't fill the disk with queued audio.
+UPLOADS_MAX = 4
 # A folder or library search: the longest query (scoring is quadratic in its words, and
 # a whole-library search runs it over every indexed line: 300 characters is ~0.9 s per
 # 20k lines) and the most matches returned (5 per file over ~30k files otherwise).
@@ -628,6 +632,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # out of everything.
     stt_on = settings.whisper.enabled
     stt_jobs = JobRegistry(max_workers=1)
+    # Audio sent to POST /api/transcribe waits here, one folder per upload, until its job is
+    # over (then the folder goes); never in the media or clips folders.
+    upload_dir = settings.state_dir / "transcribe-uploads"
+    upload_lock = threading.Lock()
     active_stt: dict[str, str] = {}
     # The library index (M20): one job at a time, only when someone starts it.
     lib_jobs = JobRegistry(max_workers=1)
@@ -720,6 +728,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             jf_index.refresh_if_stale()  # build (or freshen) the path index in the background
         index_check.start()  # a check only: it never re-indexes
         updates.start()  # the daily check for updates, while it's on
+        # Uploads a crash or a kill left behind: nothing uploaded outlives its job.
+        shutil.rmtree(upload_dir, ignore_errors=True)
         yield
         updates.stop()
         index_check.stop()
@@ -815,6 +825,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         return await call_next(request)
 
+    def _transcribe_info(info: dict) -> dict:
+        """The transcribe block of /api/health and /api/config, with ``upload``: the caps
+        on audio sent to POST /api/transcribe, or false where this server takes none."""
+        limits = settings.transcribe_upload
+        info["upload"] = limits.describe() if info.get("available") else False
+        return info
+
     @app.get("/api/health")
     def health() -> dict:
         """Liveness probe plus a quick check that the cutting tools are present."""
@@ -841,7 +858,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "jellyfin": settings.jellyfin_enabled,  # Now playing (M15) configured
             # Machine transcription (M21): whisper.cpp, its models and thread cap; only
             # while it's on (D-053).
-            **({"transcribe": settings.whisper.describe()} if stt_on else {}),
+            **({"transcribe": _transcribe_info(settings.whisper.describe())} if stt_on else {}),
         }
 
     def _server_id() -> str:
@@ -884,9 +901,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "jellyfin": settings.jellyfin_enabled,
             # Machine transcription (M21): whether it's set up, and the models to offer;
             # only while it's on (D-053).
-            **({"transcribe": {k: v for k, v in settings.whisper.describe().items()
-                               if k in ("available", "models", "default_model", "threads",
-                                        "language")}} if stt_on else {}),
+            **({"transcribe": _transcribe_info({
+                k: v for k, v in settings.whisper.describe().items()
+                if k in ("available", "models", "default_model", "threads", "language")})}
+               if stt_on else {}),
         }
 
     # --- check for updates (M24) -------------------------------------------------
@@ -2661,6 +2679,109 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         removed = transcripts.clean(settings.media_roots, stale=stale)
         return {"count": len(removed), "removed": [o.to_json() for o in removed[:200]]}
 
+    # --- transcribe audio an app sends (POST /api/transcribe) ---------------------------
+    # LeadStinger sends a sample that has no subtitles and gets its lines back with word
+    # timings. The body is the audio itself, read with a hard cap however long it says it
+    # is; the file is decoded to 16 kHz mono here (which proves it is audio and measures
+    # it), then a job in stt_jobs hears it, queued behind any other transcription. Nothing
+    # is kept: the upload's folder goes when its job is over, however it ends.
+
+    def _upload_limits() -> stt.UploadLimits:
+        """The caps, or 503 when this server can't take an upload."""
+        if not stt_on:
+            raise HTTPException(status_code=503, detail=stt.OFF_REASON)
+        if not settings.whisper.available:
+            raise HTTPException(status_code=503, detail="Transcription isn't set up on this "
+                                "server: it needs whisper.cpp and a model (QC_WHISPER_MODEL).")
+        limits = settings.transcribe_upload
+        if not limits.enabled:
+            raise HTTPException(status_code=503, detail="This server doesn't transcribe "
+                                "uploaded audio (QC_TRANSCRIBE_UPLOAD_MAX_MB or "
+                                "QC_TRANSCRIBE_UPLOAD_MAX_SECONDS is 0).")
+        return limits
+
+    def _upload_slot() -> Path:
+        """A new folder for one upload, or 429 while UPLOADS_MAX are waiting or running."""
+        with upload_lock:
+            upload_dir.mkdir(parents=True, exist_ok=True)
+            if sum(1 for _ in upload_dir.iterdir()) >= UPLOADS_MAX:
+                raise HTTPException(status_code=429, detail=f"{UPLOADS_MAX} uploads are "
+                                    "already waiting to be transcribed here; try again when "
+                                    "one is done.")
+            return Path(tempfile.mkdtemp(prefix="up-", dir=upload_dir))
+
+    def _too_big(limit: int) -> HTTPException:
+        return HTTPException(status_code=413, detail=f"The file is larger than "
+                             f"{limit / 1048576:g} MB, the most this server transcribes.")
+
+    @app.post("/api/transcribe")
+    async def transcribe_upload(
+        request: Request,
+        lang: str | None = Query(None, max_length=8),
+        model: str | None = Query(None, max_length=40),
+    ) -> dict:
+        """Start transcribing the audio in the request body (a job; poll it): its result is
+        ``{cues, cues_source, duration}`` with word timings, in seconds inside the file."""
+        limits = _upload_limits()
+        model = model or settings.whisper.default_model
+        try:
+            settings.whisper.model_path(model)
+            lang = stt.check_language(settings.whisper, model, lang)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        declared = request.headers.get("content-length", "")
+        if declared.isdigit() and int(declared) > limits.max_bytes:
+            raise _too_big(limits.max_bytes)  # said so up front: don't read it
+        folder = _upload_slot()
+        done = False
+        try:
+            src = folder / "upload"
+            size = 0
+            fd = os.open(src, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "wb") as fh:
+                async for chunk in request.stream():
+                    size += len(chunk)
+                    if size > limits.max_bytes:
+                        raise _too_big(limits.max_bytes)
+                    await run_in_threadpool(fh.write, chunk)
+            if not size:
+                raise HTTPException(status_code=400, detail="The request has no audio in it: "
+                                    "send the file as the request body.")
+            wav = folder / "audio.wav"
+            try:
+                duration = await run_in_threadpool(stt.decode_upload, src, wav,
+                                                   max_seconds=limits.max_seconds)
+            except stt.TooLong as exc:
+                raise HTTPException(status_code=413, detail=str(exc))
+            except stt.UnreadableAudio as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
+            except OSError as exc:  # no ffmpeg here
+                raise HTTPException(status_code=503, detail=f"Can't decode audio here: {exc}")
+            src.unlink(missing_ok=True)  # the WAV is all the job needs
+
+            def run_job(job) -> list[Path]:
+                def progress(heard: float, total: float) -> None:
+                    job.progress = f"{_clock(heard)} of {_clock(total)} transcribed"
+
+                with contextlib.suppress(stt.Cancelled):
+                    job.result = stt.transcribe_file(
+                        wav, duration, cfg=settings.whisper, model=model, lang=lang,
+                        workdir=folder, progress=progress,
+                        cancelled=lambda: job.cancel_requested)
+                return []
+
+            client = getattr(request.state, "client", None)
+            who = f" from {client.get('name')}" if client and client.get("name") else ""
+            job = stt_jobs.submit(
+                run_job, label=f"Transcribe {duration:g} s of audio{who} ({model})",
+                cancellable=True, owner=client.get("id") if client else None,
+                cleanup=lambda: shutil.rmtree(folder, ignore_errors=True))
+            done = True
+            return {"job_id": job.id, "duration": duration}
+        finally:
+            if not done:
+                shutil.rmtree(folder, ignore_errors=True)
+
     @app.post("/api/search/folder/transcribe")
     def transcribe_folder(req: FolderTranscribeRequest) -> dict:
         """Transcribe a folder's files one after another (a job; cancellable): whole files
@@ -4221,15 +4342,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         merged.sort(key=lambda j: j.created, reverse=True)
         return {"jobs": [_job_dict(j) for j in merged[:20]]}
 
+    def _not_theirs(request: Request, job) -> bool:
+        """A scoped app's token (M22) sees only the jobs it started (POST /api/transcribe)."""
+        client = getattr(request.state, "client", None)
+        return bool(client and client.get("scopes") is not None
+                    and job is not None and job.owner != client.get("id"))
+
     @app.get("/api/jobs/{job_id}")
-    def get_job(job_id: str) -> dict:
+    def get_job(job_id: str, request: Request) -> dict:
         job, _ = _find_job(job_id)
-        if job is None:
+        if job is None or _not_theirs(request, job):
             raise HTTPException(status_code=404, detail="Job not found.")
         return _job_dict(job)
 
     @app.delete("/api/jobs/{job_id}")
-    def cancel_job(job_id: str) -> dict:
+    def cancel_job(job_id: str, request: Request) -> dict:
         """Cancel a job, or prune a finished one (R2).
 
         A queued job is pulled from the pool and marked cancelled; a finished job
@@ -4239,7 +4366,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         can't be interrupted, so that returns 409.
         """
         job, registry = _find_job(job_id)
-        if job is None:
+        if job is None or _not_theirs(request, job):
             raise HTTPException(status_code=404, detail="Job not found.")
         if registry.cancel(job_id):
             return {"cancelled": job_id}

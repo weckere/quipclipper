@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterator, Optional, Protocol
 
-from quipclipper.commands import BODY, PATH, QUERY, SETTINGS, Command
+from quipclipper.commands import BODY, FILE, PATH, QUERY, SETTINGS, Command
 
 # Exit codes (also documented in docs/CLI.md).
 EXIT_OK, EXIT_FAILED, EXIT_USAGE, EXIT_NO_SERVER, EXIT_AUTH, EXIT_REFUSED = 0, 1, 2, 3, 4, 5
@@ -76,7 +76,7 @@ class Response:
 
 class Transport(Protocol):
     def request(self, method: str, path: str, query: list[tuple[str, str]],
-                body: Optional[dict], stream: bool = False) -> Response: ...
+                body: Optional[dict | bytes], stream: bool = False) -> Response: ...
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -116,7 +116,10 @@ class UrllibTransport:
             url += "?" + urllib.parse.urlencode(query)
         headers = {"X-Quipclipper": "1", "Accept": "application/json"}
         data = None
-        if body is not None:
+        if isinstance(body, (bytes, bytearray)):  # a file sent as it is (transcribe.file)
+            data = bytes(body)
+            headers["Content-Type"] = "application/octet-stream"
+        elif body is not None:
             data = json.dumps(body).encode()
             headers["Content-Type"] = "application/json"
         if self.token:
@@ -231,10 +234,12 @@ def _wire(value: Any, ptype: str, name: str = "") -> Any:
 
 
 def build_request(cmd: Command, values: dict[str, Any]):
-    """Turn a command and its values into (method, path, query, body)."""
+    """Turn a command and its values into (method, path, query, body). A ``FILE``
+    parameter's file is the body, as bytes."""
     path = cmd.path or ""
     query: list[tuple[str, str]] = []
     body: dict[str, Any] = {}
+    raw: Optional[bytes] = None
     for p in cmd.params:
         v = _wire(values.get(p.name, p.default), p.type, p.name)
         if p.where == PATH:
@@ -261,6 +266,17 @@ def build_request(cmd: Command, values: dict[str, Any]):
                                    code="usage", exit_code=EXIT_USAGE)
                 continue
             body[p.name] = v
+        elif p.where == FILE:
+            if v is None:
+                raise CliError(f"{p.name} is required", code="usage", exit_code=EXIT_USAGE)
+            f = Path(str(v)).expanduser()
+            try:
+                raw = f.read_bytes()
+            except OSError as exc:
+                raise CliError(f"Can't read {f}: {exc.strerror or exc}", code="not_found"
+                               if isinstance(exc, FileNotFoundError) else "io") from None
+    if raw is not None:
+        return cmd.method, path, query, raw
     has_body = any(p.where == BODY for p in cmd.params)
     return cmd.method, path, query, (body if has_body else None)
 

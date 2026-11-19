@@ -71,6 +71,15 @@ SCOPES: dict[str, tuple[str, frozenset[tuple[str, str]]]] = {
                    frozenset({("POST", "/api/index/file"), ("GET", "/api/index/file")})),
     "transcripts.read": ("read transcripts",
                          frozenset({("GET", "/api/items/transcript")})),
+    # Its own uploads only: the job routes below answer such a token for the jobs it started.
+    "transcribe": ("transcribe audio it sends",
+                   frozenset({("POST", "/api/transcribe")})),
+}
+# Routes with a parameter a scope opens, as (method, pattern): the transcribe scope follows
+# and cancels its jobs (the app checks the job is the token's own, :attr:`Job.owner`).
+_JOB_ROUTE = re.compile(r"^/api/jobs/[^/]+$")
+SCOPE_PATTERNS: dict[str, tuple[tuple[str, re.Pattern], ...]] = {
+    "transcribe": (("GET", _JOB_ROUTE), ("DELETE", _JOB_ROUTE)),
 }
 # What any client token may do, scoped or not: check itself (the nginx password gate asks),
 # disconnect itself, see the server is up, and pair again.
@@ -131,7 +140,9 @@ def scope_allows(scopes, method: str, path: str) -> bool:
     want = (method.upper(), path)
     if want in CLIENT_ROUTES or (want[0] == "GET" and _POLL_ROUTE.match(path)):
         return True
-    return any(want in SCOPES[s][1] for s in scopes if s in SCOPES)
+    return any(want in SCOPES[s][1]
+               or any(m == want[0] and rx.match(path) for m, rx in SCOPE_PATTERNS.get(s, ()))
+               for s in scopes if s in SCOPES)
 
 
 # --- files in the state dir --------------------------------------------------------------

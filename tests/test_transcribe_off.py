@@ -27,7 +27,7 @@ def test_the_transcription_commands_are_marked():
     assert sorted(STT) == sorted([
         "item.transcribe", "item.transcript", "item.transcript-clear",
         "item.transcript-copy", "item.transcript-uncopy", "index.transcribe",
-        "index.transcript-orphans", "index.transcript-clean"])
+        "index.transcript-orphans", "index.transcript-clean", "transcribe.file"])
 
 
 def test_hidden_from_help_and_commands_marked_in_docs():

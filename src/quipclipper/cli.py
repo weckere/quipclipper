@@ -736,6 +736,23 @@ def _fmt_transcribe(data: dict) -> None:
                     f"({', '.join(t['models'])})", dim=True)
 
 
+def _fmt_transcribe_file(data: dict) -> None:
+    if "status" in data:  # a server job
+        _fmt_job({k: x for k, x in data.items() if k != "result"})
+        data = data.get("result") or {}
+    for cue in data.get("cues") or []:
+        typer.echo(f"{cue['start']:>8.2f}  {AUTO_MARK}{cue['text']}")
+        words = cue.get("words") or []
+        if words:
+            typer.secho("          " + " ".join(f"{w['text']}@{w['start']:.2f}" for w in words),
+                        dim=True)
+    src = data.get("cues_source")
+    if src:
+        n = len(data.get("cues") or [])
+        typer.secho(f"{n} line{'' if n == 1 else 's'} in {data.get('duration', 0):g} s "
+                    f"({src.get('engine')} {src.get('model')}, {src.get('lang')})", dim=True)
+
+
 def _fmt_transcript(data: dict) -> None:
     t = data.get("transcript") or data.get("stored")  # run here / a server
     if t:
@@ -770,6 +787,7 @@ def _fmt_orphans(data: dict) -> None:
 
 _FORMATTERS = {
     "item.transcribe": _fmt_transcribe, "index.transcribe": _fmt_transcribe,
+    "transcribe.file": _fmt_transcribe_file,
     "item.transcript": _fmt_transcript,
     "index.transcript-orphans": _fmt_orphans, "index.transcript-clean": _fmt_orphans,
     "library.browse": _fmt_entries, "library.find": _fmt_entries,
@@ -1940,6 +1958,47 @@ def _local_transcribe(c: Context, v: dict) -> Any:
             "transcript": t.summary() if t else None}
 
 
+def _local_transcribe_file(c: Context, v: dict) -> Any:
+    """transcribe.file run here: the file decoded and heard on this machine, under the same
+    duration cap a server sets (QC_TRANSCRIBE_UPLOAD_MAX_SECONDS); nothing is stored."""
+    from quipclipper import transcribe as tr
+
+    cfg = tr.WhisperConfig.from_env()
+    if not cfg.binary_path():
+        raise CliError(f"{cfg.binary} not found: install whisper.cpp, or set QC_WHISPER_BIN.",
+                       code="missing_tool")
+    if not cfg.models:
+        raise CliError("No whisper model: set QC_WHISPER_MODEL to a ggml model file "
+                       "(e.g. ggml-small.en.bin).", code="usage", exit_code=EXIT_USAGE)
+    src = Path(str(v.get("file") or "")).expanduser()
+    if not src.is_file():
+        raise CliError(f"Not a file: {src}", code="not_found")
+    model = v.get("model") or cfg.default_model
+    try:
+        cfg.model_path(model)
+        lang = tr.check_language(cfg, model, v.get("lang"))
+    except ValueError as exc:
+        raise CliError(str(exc), code="usage", exit_code=EXIT_USAGE) from None
+    limit = tr.UploadLimits.from_env().max_seconds
+    limit = limit if limit > 0 else tr.UPLOAD_MAX_SECONDS
+
+    def progress(done: float, total: float) -> None:
+        if not c.json:
+            typer.secho(f"  transcribing… {format_clock(done)} of {format_clock(total)}",
+                        dim=True, err=True)
+
+    with tempfile.TemporaryDirectory(prefix="quipclipper-stt-") as tmp:
+        wav = Path(tmp) / "audio.wav"
+        try:
+            duration = tr.decode_upload(src, wav, max_seconds=limit)
+            return tr.transcribe_file(wav, duration, cfg=cfg, model=model, lang=lang,
+                                      workdir=tmp, progress=progress)
+        except (tr.UnreadableAudio, tr.TooLong) as exc:
+            raise CliError(str(exc), code="usage", exit_code=EXIT_USAGE) from None
+        except RuntimeError as exc:
+            raise CliError(str(exc), code="failed") from None
+
+
 def _local_transcript(c: Context, v: dict) -> Any:
     from quipclipper import transcribe as tr
 
@@ -2044,6 +2103,7 @@ _LOCAL = {
     "update.status": lambda c, v: _local_update(c, v, check=False),
     "update.check": lambda c, v: _local_update(c, v, check=True),
     "item.transcribe": _local_transcribe,
+    "transcribe.file": _local_transcribe_file,
     "index.transcript-orphans": _local_transcript_orphans,
     "index.transcript-clean": _local_transcript_clean,
     "item.transcript": _local_transcript,
@@ -2052,7 +2112,7 @@ _LOCAL = {
     "item.transcript-uncopy": _local_transcript_uncopy,
 }
 # Commands whose --model falls back to the stt_model setting.
-_STT_MODEL = ("item.transcribe", "index.transcribe")
+_STT_MODEL = ("item.transcribe", "index.transcribe", "transcribe.file")
 
 
 def _client_job_wait(c: Context, v: dict) -> Any:
