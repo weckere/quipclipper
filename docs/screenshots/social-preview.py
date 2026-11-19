@@ -5,7 +5,9 @@
 FRAME.png is the fixture's frame at 0:40.1 (the big bunny), e.g.
     ffmpeg -ss 40.1 -i "Large Locutus Leporid (2016).mp4" -frames:v 1 -vf scale=1008:-2 frame.png
 Writes OUT_DIR/social-preview.{json,figcraft,png}. Needs figcraft-cli and the kit from the
-figcraft skill (~/.claude/skills/figcraft/figcraft_kit.py).
+figcraft skill (~/.claude/skills/figcraft/figcraft_kit.py). Commit it compressed:
+    pngquant --quality 70-92 --strip --force \
+        --output docs/screenshots/social-preview.png OUT_DIR/social-preview.png
 """
 import math
 import os
@@ -131,8 +133,12 @@ xs = [i * 1.5 for i in range(int(IW / 1.5) + 1)]
 peaks = [level(V0 + (V1 - V0) * x / IW) for x in xs]
 upper = [(x, MID - p * (0.7 + 0.3 * rng.random()) * HALF) for x, p in zip(xs, peaks)]
 lower = [(x, MID + p * (0.7 + 0.3 * rng.random()) * HALF) for x, p in zip(xs, peaks)]
-wave = "M" + " L".join(f"{x:.1f} {y:.1f}" for x, y in upper + lower[::-1]) + " Z"
-s.vector(strip, "wave", 0, 0, IW, SH, wave, fill=DIM)
+# The layer sits on the path's own bounds (FigCraft fits a path to its layer's box).
+outline = upper + lower[::-1]
+x0, y0 = min(x for x, _ in outline), min(y for _, y in outline)
+x1, y1 = max(x for x, _ in outline), max(y for _, y in outline)
+wave = "M" + " L".join(f"{x - x0:.1f} {y - y0:.1f}" for x, y in outline) + " Z"
+s.vector(strip, "wave", x0, y0, x1 - x0, y1 - y0, wave, fill=DIM)
 
 for t in range(37, 44):
     x = wx(t)
