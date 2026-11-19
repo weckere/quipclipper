@@ -276,12 +276,24 @@ runs; it then ends `cancelled` with no `result`). A finished job's `result`:
 The cues are [subtitle cues](#subtitle-cues) with `words` filled in: seconds inside the sent
 file, rounded to the millisecond, clamped to `[0, duration]`, in order. `text` is the line
 with sound descriptions (`[Music]`) and whisper's stock outro lines left out, as for every
-machine line; a file with no speech gives `"cues": []`. Each word is whisper.cpp's own timing
-(its `-ojf` tokens joined into words: a word keeps the punctuation after it), from its
-first token's start to its last token's end. A word's end is close (within about 0.1 s on
-speech); its start is right after another word, but after a pause whisper puts it at the
-end of the word before, so a word that follows silence may start early. A cue spans at least
-its words. `cues_source.lang` is the language asked for (whisper's own guess with
+machine line; a file with no speech gives `"cues": []`. Each word starts as whisper.cpp's own
+timing (its `-ojf` tokens joined into words: a word keeps the punctuation after it), from
+its first token's start to its last token's end, and is then moved onto the pauses in the
+audio. whisper gets a word right after another word, but after a pause it puts the word at
+the end of the one before (on film dialogue a line's first words can land a second early,
+in the silence before it). So each clear pause in the decoded audio (at least 0.2 s, near
+silence or 25 dB under the speech around it) is matched to the gap between two words that
+whisper puts nearest it, preferring a new line or punctuation: the word after it starts
+where the sound starts again, the word before it ends where the sound stopped, and the
+words between two pauses keep whisper's proportions. A start never moves more than 0.15 s
+earlier than whisper's, a word never grows by more than 0.6 s, and over music or steady
+noise, with no clear pause, nothing moves. Measured with small.en on six film and TV clips
+against the speech in their centre channel: on the three whose audio has clear pauses, the
+word starts nearest each place speech resumes went from 0.14-0.33 s off on average to
+0.05-0.12 s (a line's first word, hand-checked: from up to 1.1 s early to within 0.06 s), and
+ends from 0.2-0.86 s to 0.03-0.76 s; the other three (noise, a ship's hum) were left as they
+were. Words stay in order and never overlap, and a cue spans its
+first word to its last. `cues_source.lang` is the language asked for (whisper's own guess with
 `lang=auto` on a multilingual model).
 
 The job waits in the same one-at-a-time pool as every other transcription, at idle priority

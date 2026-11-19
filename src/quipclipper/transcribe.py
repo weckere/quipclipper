@@ -396,7 +396,8 @@ def parse_whisper_json(data: dict, *, offset: float = 0.0,
 # before. -dtw is ignored while flash attention is on (the default); with -nfa its t_dtw
 # lands about 0.1 s before each word's end (0.09 s off on average against the tokens'
 # 0.13 s), gives no start at all, collapses to one time over music, and the decode without
-# flash attention moved later words' token times by up to a second.
+# flash attention moved later words' token times by up to a second. An uploaded file's
+# word times are then moved onto the pauses in its audio (refine_words).
 
 _SPECIAL_TOKEN_RE = re.compile(r"^\s*(\[_[^\]]*\]|<\|[^|]*\|>)\s*$")
 _WORDISH_RE = re.compile(r"\w")
@@ -1532,6 +1533,225 @@ def transcribe_words(wav: str | Path, start: float, end: float, *, cfg: WhisperC
     return parse_whisper_words(data, offset=lo, keep=(start, end)), heard
 
 
+
+# --- word times moved onto the audio's pauses -------------------------------------------
+# whisper.cpp's token times put a word that follows a pause at the end of the word before
+# it, and on film dialogue a whole phrase after a pause can come out up to a second early
+# (a line's first words squeezed into the silence before it). The decoded audio says where
+# the pauses really are: stretches at least PAUSE long that are near silence (SILENT_DB) or
+# far below the speech around them (CLEAR_CONTRAST); a lull in music or steady noise isn't
+# one. Each pause is matched to one gap between two words (or before the first,
+# after the last), in order, the nearest within PAUSE_REACH and preferring a gap whisper
+# itself marks (a new line, a comma or full stop). A matched pause ends the word before it
+# where the pause starts and starts the word after it where the pause ends; the words in
+# between keep whisper's proportions, stretched onto the audio between two pauses. Since
+# whisper starts words on time or early, a pause never pulls a start more than START_EARLY
+# earlier, and a word grows by WORD_GROW at most. Where the audio shows no clear pause
+# nothing moves. Measured on six film and TV clips against their centre channel's speech:
+# starts after a pause 0.14-0.33 s off on average before, 0.05-0.12 s after; a line's first
+# word up to 1.1 s early before, within 0.06 s after (docs/API.md has the numbers).
+ONSET_FRAME = 0.01  # seconds per energy frame
+PAUSE = 0.2  # the shortest pause between words (seconds)
+PAUSE_BLIP = 0.06  # a click shorter than this doesn't end a pause
+PAUSE_CONTRAST = 15.0  # dB between the speech level and the floor, for a pause to be clear
+SILENT_DB = -55.0  # a pause this quiet (dBFS, median) is clear whatever is around it
+CLEAR_CONTRAST = 25.0  # else it must be this far (dB) below the speech level
+PAUSE_LEVEL = 0.4  # quiet is below floor + this share of (speech level - floor)
+PAUSE_WINDOW = 4.0  # seconds either side that set the local floor and speech level
+PAUSE_REACH = 1.5  # the furthest a pause moves a word's edge (seconds)
+START_EARLY = 0.15  # the most a pause moves a word's start earlier than whisper's (seconds)
+WORD_GROW = 0.6  # the most a word grows (seconds)
+STRETCH = 1.5  # words between two pauses stretch to at most this (+ 0.5 s) of whisper's span
+_LINE_END = re.compile(r"[.!?…][\"')\]]*$|--$|—$")
+_CLAUSE_END = re.compile(r"[,;:]$")
+
+
+def _percentile(sorted_vals: list[float], q: float) -> float:
+    return sorted_vals[min(len(sorted_vals) - 1, max(0, int(q * (len(sorted_vals) - 1))))]
+
+
+def pauses(wav: str | Path, duration: float) -> list[Range]:
+    """The clear pauses in a 16 kHz mono WAV: ``[(start, end)]`` of each stretch at least
+    ``PAUSE`` long that is quiet against the speech around it. Empty where the audio
+    gives no clear contrast (music, steady noise)."""
+    import math
+
+    energy, t0 = _wav_frames(Path(wav), 0.0, duration, ONSET_FRAME)
+    if len(energy) < 3:
+        return []
+    # A little smoothing (30 ms) so a stop consonant's dip isn't read as quiet.
+    smooth = [sum(energy[max(0, i - 1):i + 2]) / len(energy[max(0, i - 1):i + 2])
+              for i in range(len(energy))]
+    db = [10 * math.log10(max(e, 1.0) / 32768.0 ** 2) for e in smooth]
+    # The local floor and speech level, per second, from the frames PAUSE_WINDOW around.
+    per = int(round(1.0 / ONSET_FRAME))
+    reach = int(round(PAUSE_WINDOW / ONSET_FRAME))
+    thresholds: list[float | None] = []
+    levels: list[float] = []
+    for blk in range(0, len(db), per):
+        vals = sorted(db[max(0, blk - reach):blk + per + reach])
+        floor, speech = _percentile(vals, 0.1), _percentile(vals, 0.9)
+        levels.append(speech)
+        thresholds.append(floor + PAUSE_LEVEL * (speech - floor)
+                          if speech - floor >= PAUSE_CONTRAST else None)
+    quiet = [thresholds[i // per] is not None and db[i] < thresholds[i // per]
+             for i in range(len(db))]
+    # Runs of quiet, with clicks shorter than PAUSE_BLIP folded in.
+    runs: list[list[int]] = []
+    i = 0
+    while i < len(quiet):
+        if not quiet[i]:
+            i += 1
+            continue
+        j = i
+        while j < len(quiet) and quiet[j]:
+            j += 1
+        if runs and i - runs[-1][1] < PAUSE_BLIP / ONSET_FRAME:
+            runs[-1][1] = j
+        else:
+            runs.append([i, j])
+        i = j
+    out: list[Range] = []
+    for a, b in runs:
+        if (b - a) * ONSET_FRAME < PAUSE - 1e-9:
+            continue
+        # Clear only near silence, or far below the speech: not a lull in music or noise.
+        inside = _percentile(sorted(db[a:b]), 0.5)
+        if inside <= SILENT_DB or levels[a // per] - inside >= CLEAR_CONTRAST:
+            out.append((round(t0 + a * ONSET_FRAME, 3),
+                        round(min(duration, t0 + b * ONSET_FRAME), 3)))
+    return out
+
+
+def _edge_bonus(words: list[dict], cue_of: list[int], b: int) -> float:
+    """How strongly whisper itself marks a pause between word ``b - 1`` and word ``b``."""
+    if b == 0 or b == len(words):
+        return 0.0
+    if cue_of[b] != cue_of[b - 1]:
+        return 0.5
+    prev = words[b - 1]["text"]
+    if _LINE_END.search(prev):
+        return 0.5
+    if _CLAUSE_END.search(prev):
+        return 0.3
+    return 0.0
+
+
+def _match_pauses(words: list[dict], cue_of: list[int],
+                  found: list[Range]) -> dict[int, Range]:
+    """Each pause matched to at most one word gap (``b``: between word ``b - 1`` and word
+    ``b``), in order, maximising the summed closeness plus :func:`_edge_bonus`."""
+    n, m = len(words), len(found)
+    edges = []
+    for b in range(n + 1):
+        lo = words[b - 1]["end"] if b > 0 else words[0]["start"]
+        hi = words[b]["start"] if b < n else words[-1]["end"]
+        edges.append((min(lo, hi), max(lo, hi), _edge_bonus(words, cue_of, b)))
+
+    def score(b: int, g: int) -> float:
+        lo, hi, bonus = edges[b]
+        gs, ge = found[g]
+        d = max(0.0, gs - hi, lo - ge)
+        # whisper starts a word on time or early, never clearly late
+        if d > PAUSE_REACH or (b < n and ge < hi - START_EARLY):
+            return -1.0
+        return 1.0 - d / PAUSE_REACH + bonus
+
+    # best[b][g]: the best score using gaps < b and pauses < g.
+    best = [[0.0] * (m + 1) for _ in range(n + 2)]
+    for b in range(n, -1, -1):
+        for g in range(m - 1, -1, -1):
+            s = score(b, g)
+            take = s + best[b + 1][g + 1] if s > 0 else -1.0
+            best[b][g] = max(best[b + 1][g], best[b][g + 1], take)
+    out: dict[int, Range] = {}
+    b = g = 0
+    while b <= n and g < m:
+        s = score(b, g)
+        if s > 0 and abs(best[b][g] - (s + best[b + 1][g + 1])) < 1e-9:
+            out[b] = found[g]
+            b, g = b + 1, g + 1
+        elif best[b][g] == best[b + 1][g]:
+            b += 1
+        else:
+            g += 1
+    return out
+
+
+def refine_words(cues: list[dict], wav: str | Path, duration: float) -> list[dict]:
+    """``cues`` (in order, each with ``words``) with their word times moved onto the
+    audio's pauses (:func:`pauses`, :func:`_match_pauses`): a word after a pause starts
+    where the pause ends, the word before it ends where the pause starts, and the words
+    between two pauses keep whisper's proportions. Each cue then spans its first to its
+    last word. Words stay in order and never overlap; with no clear pause, nothing moves."""
+    words: list[dict] = []
+    cue_of: list[int] = []
+    for k, c in enumerate(cues):
+        for w in c.get("words") or []:
+            words.append(w)
+            cue_of.append(k)
+    if not words:
+        return cues
+    found = pauses(wav, duration)
+    matched = _match_pauses(words, cue_of, found) if found else {}
+    if not matched:
+        return cues
+    n = len(words)
+    new: list[list[float]] = [[w["start"], w["end"]] for w in words]
+    cuts = sorted(matched)
+    # Spans of words between matched gaps: words lo..hi-1 sit between gap lo and gap hi.
+    bounds = sorted(set([0, n] + cuts))
+    for lo, hi in zip(bounds, bounds[1:]):
+        if lo >= hi:
+            continue
+        x0, x1 = words[lo]["start"], words[hi - 1]["end"]
+        y0 = matched[lo][1] if lo in matched else None
+        y1 = matched[hi][0] if hi in matched else None
+        if y0 is not None and y1 is not None and y1 - y0 > STRETCH * (x1 - x0) + 0.5:
+            # Words stretched over far more audio than whisper heard them in: a pause the
+            # line runs past (noise, someone else). Only its start is clear.
+            y1 = None
+        if y0 is None and y1 is None:
+            continue
+        if y0 is None:  # before the first matched pause: only the words up against it move
+            limit = y1
+            for i in range(hi - 1, lo - 1, -1):
+                s0, e0 = words[i]["start"], words[i]["end"]
+                e = y1 if i == hi - 1 else min(e0, limit)
+                new[i] = [max(0.0, min(s0, e - (e0 - s0))), e]
+                limit = new[i][0]
+            continue
+        if y1 is None:  # after the last: likewise
+            limit = y0
+            for i in range(lo, hi):
+                s0, e0 = words[i]["start"], words[i]["end"]
+                s = y0 if i == lo else max(s0, limit)
+                new[i] = [s, min(duration, max(e0, s + (e0 - s0)))]
+                limit = new[i][1]
+            continue
+        y1 = max(y1, y0)
+        span = x1 - x0
+        for i in range(lo, hi):
+            if span > 1e-9:
+                f = lambda t: y0 + (t - x0) * (y1 - y0) / span  # noqa: E731
+                new[i] = [f(words[i]["start"]), f(words[i]["end"])]
+            else:  # every word at one instant: share the stretch evenly
+                k = (y1 - y0) / (hi - lo)
+                new[i] = [y0 + (i - lo) * k, y0 + (i - lo + 1) * k]
+    prev_end = 0.0
+    for w, (s, e) in zip(words, new):
+        s = min(max(s, prev_end, 0.0), duration)
+        # A word grows by at most WORD_GROW: past that, the sound isn't clearly the word.
+        e = min(max(e, s), s + (w["end"] - w["start"]) + WORD_GROW, duration)
+        w["start"], w["end"] = round(s, 3), round(e, 3)
+        prev_end = w["end"]
+    for c in cues:
+        ws = c.get("words") or []
+        if ws:
+            c["start"], c["end"] = ws[0]["start"], ws[-1]["end"]
+    return cues
+
+
 def transcribe_file(wav: str | Path, duration: float, *, cfg: WhisperConfig,
                     model: str | None = None, lang: str | None = None,
                     workdir: str | Path | None = None,
@@ -1542,7 +1762,8 @@ def transcribe_file(wav: str | Path, duration: float, *, cfg: WhisperConfig,
     seconds inside the file, and ``cues_source`` ``{kind: "machine", engine, model,
     lang}``. Chunk by chunk (``progress(done, total)`` after each); raises
     :class:`Cancelled` when ``cancelled()`` turns true. No voice activity detection: a
-    sample is short, and VAD drops sung lines (:func:`whisper_argv`)."""
+    sample is short, and VAD drops sung lines (:func:`whisper_argv`). Word times are then
+    moved onto the audio's pauses (:func:`refine_words`)."""
     model = model or cfg.default_model
     cfg.model_path(model)
     lang = check_language(cfg, model, lang)
@@ -1568,6 +1789,7 @@ def transcribe_file(wav: str | Path, duration: float, *, cfg: WhisperConfig,
             x["start"] = round(min(max(x["start"], 0.0), duration), 3)
             x["end"] = round(min(max(x["end"], x["start"]), duration), 3)
     cues.sort(key=lambda c: (c["start"], c["end"]))
+    refine_words(cues, wav, duration)
     return {"cues": cues,
             "cues_source": {"kind": MACHINE, "engine": ENGINE, "model": model,
                             "lang": heard if lang == "auto" and heard else lang},

@@ -180,4 +180,7 @@ and what transcription adds to search, the script, `/api/health` and `/api/confi
 the reason, and `machine=only` too. An app such as LeadStinger can also send an audio file of its own
 to be heard, with word timings, and nothing kept
 ([`POST /api/transcribe`](API.md#transcribing-audio-an-app-sends); it answers 503 when
-transcription is off).
+transcription is off). Its word times start as whisper's and are then moved onto the pauses
+in the audio, since whisper starts a word that follows a pause too early; the method and
+its limits are in the same section. Library transcription has no word timings and is not
+changed.

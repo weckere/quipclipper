@@ -27,6 +27,12 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   `upload` (the caps, or `false`). A paired app may ask for the new `transcribe` scope,
   which also follows and cancels only its own jobs. The bundled nginx passes this route's
   body through unspooled. CLI: `transcribe.file FILE`, against a server or on this machine.
+- **Word times follow the audio's pauses.** whisper.cpp starts a word that follows a pause
+  at the end of the word before (on film dialogue a line's first words came up to 1.1 s
+  early). `POST /api/transcribe` and `transcribe.file` now match each clear pause in the
+  audio to the gap between two words nearest it: the word after it starts where the sound
+  does, the one before it ends where the sound stops. Over music or steady noise nothing
+  moves. Same fields as before.
 
 ## [0.10.0] - 2026-11-16
 
