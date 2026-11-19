@@ -349,7 +349,7 @@ setup, what each feature writes where, and troubleshooting.
   `GET /api/items/transcript` and `DELETE /api/clients/self` (Disconnect). The plugin's README
   has an nginx example.
 - **Machine transcripts in Jellyfin's subtitle search.** For a movie or episode QuipClipper
-  has transcribed, Jellyfin's **Search subtitles** dialog lists "quipclipper (machine
+  has transcribed, Jellyfin's **Search subtitles** dialog lists "QuipClipper (machine
   transcript)" results: **Machine lines only** (the lines no subtitle has) and **Full machine
   transcript**. Picking one makes Jellyfin save it beside the media as
   `<name>.en.whisper.srt`, the name Copy to library uses, so it is a separate "whisper" track
