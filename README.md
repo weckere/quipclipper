@@ -1,16 +1,16 @@
-# quipclipper
+# QuipClipper
 
 [![CI](https://github.com/weckere/quipclipper/actions/workflows/ci.yml/badge.svg?branch=dev)](https://github.com/weckere/quipclipper/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/weckere/quipclipper)](https://github.com/weckere/quipclipper/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **Find a moment in your movies and shows by its dialogue, and cut it.** Type the line you
-remember; quipclipper finds it in the subtitles, shows it on the script, and cuts the clip
+remember; QuipClipper finds it in the subtitles, shows it on the script, and cuts the clip
 (losslessly when it can) from any browser or the command line.
 
 Subtitles already carry exact timestamps, so the trick is simple: parse the subtitles,
 fuzzy-search the line, map the match back to its time span, and cut it with ffmpeg or
-mkvmerge. quipclipper is a **self-hosted web app** over your own media folders, plus a
+mkvmerge. QuipClipper is a **self-hosted web app** over your own media folders, plus a
 **CLI** that can do everything the web app does.
 
 ![The workspace: a video with its script, one line selected, and the waveform strip under the player with the selection's in and out handles](docs/screenshots/workspace-dark.png)
@@ -120,7 +120,7 @@ Connected apps lists the apps let in, each with its own key and a Revoke button.
 
 ## Install
 
-quipclipper needs `ffmpeg` and `ffprobe`; `mkvmerge` (MKVToolNix) is used when present.
+QuipClipper needs `ffmpeg` and `ffprobe`; `mkvmerge` (MKVToolNix) is used when present.
 The Docker images and the Nix packages include them. Releases are listed in
 [CHANGELOG.md](CHANGELOG.md) and on the [releases page](https://github.com/weckere/quipclipper/releases).
 
@@ -204,13 +204,13 @@ example.
 
 [LeadStinger](https://github.com/weckere/leadstinger) is a soundboard for live shows.
 Click the **Send to LeadStinger** button (the cassette icon) beside Make clip, or tick the toggle beside
-Clip / Export selected, and the line goes straight into LeadStinger as a new tile: quipclipper cuts it
+Clip / Export selected, and the line goes straight into LeadStinger as a new tile: QuipClipper cuts it
 as a full-mix FLAC with its padding kept as handles, and the tile's trim sits exactly on
 the line, so it can still be nudged there. Several lines at once make a LeadStinger set
 file that goes straight in as a set of tiles; it stays there to download for a LeadStinger
 that can't take a set by link yet. LeadStinger connects once by **pairing**: it asks, you click Allow on the banner in
-quipclipper (after checking the code), and it gets its own key, revocable under Settings ▸
-Connected apps; no token to copy. On a LAN, quipclipper can also announce itself so
+QuipClipper (after checking the code), and it gets its own key, revocable under Settings ▸
+Connected apps; no token to copy. On a LAN, QuipClipper can also announce itself so
 LeadStinger finds it (opt-in). From the CLI it is `leadstinger.quip`, `leadstinger.link`,
 `leadstinger.set`, `leadstinger.send` and `leadstinger.connect`. Setup and the link format:
 [docs/MANUAL.md](docs/MANUAL.md#sending-clips-to-leadstinger).
@@ -222,7 +222,7 @@ an API key set, a **Now playing** card on the library lists what each client is 
 and **Open at 12:34** opens the file in the workspace with the line just heard selected:
 nothing to search for. Jellyfin's posters show on the library and in the workspace, clip
 names can use the episode's real title (`{show}/S{season}E{episode}_{title}`), and new
-clips are scanned into a Jellyfin clips library so they show up on the TV. quipclipper
+clips are scanned into a Jellyfin clips library so they show up on the TV. QuipClipper
 still reads and cuts the media from its own folders. From the CLI: `quipclipper
 nowplaying`, `quipclipper clip.nowplaying -t audio` and `quipclipper jellyfin.lookup PATH`.
 Setup and path mapping: [docs/MANUAL.md](docs/MANUAL.md#now-playing-jellyfin).
@@ -230,18 +230,18 @@ Setup and path mapping: [docs/MANUAL.md](docs/MANUAL.md#now-playing-jellyfin).
 ### Jellyfin plugin
 
 [jellyfin-plugin-quipclipper](https://github.com/weckere/jellyfin-plugin-quipclipper) (MIT,
-Jellyfin 12.x) is quipclipper's side inside Jellyfin. Install it from its repository in
+Jellyfin 12.x) is QuipClipper's side inside Jellyfin. Install it from its repository in
 Jellyfin's dashboard (**Plugins › Repositories**, add
 `https://weckere.github.io/jellyfin-plugin-quipclipper/manifest.json`), restart Jellyfin, and:
 
-- **Clips by their line:** a Home Videos library on quipclipper's clips folder shows each clip
+- **Clips by their line:** a Home Videos library on QuipClipper's clips folder shows each clip
   named by its line, with the source's artwork, overview and show. Nothing to set up.
-- **Subtitles searchable at once:** connect it on its settings page (enter quipclipper's URL,
-  or **Find on this network** when quipclipper advertises itself, then Allow the code in
-  quipclipper's banner) and every subtitle Jellyfin brings in is re-indexed here within a
+- **Subtitles searchable at once:** connect it on its settings page (enter QuipClipper's URL,
+  or **Find on this network** when QuipClipper advertises itself, then Allow the code in
+  QuipClipper's banner) and every subtitle Jellyfin brings in is re-indexed here within a
   minute.
 - **Machine transcripts as a subtitle source:** Jellyfin's **Search subtitles** dialog offers
-  quipclipper's machine transcript of a movie or episode.
+  QuipClipper's machine transcript of a movie or episode.
 
 Its key can only queue re-indexes and read transcripts. Install, pairing, the network route a
 Jellyfin in a container needs, and troubleshooting: the
@@ -251,7 +251,7 @@ Jellyfin in a container needs, and troubleshooting: the
 ### Bazarr, Sonarr and Radarr
 
 When Bazarr downloads or upgrades a subtitle, a one-line post-processing command tells
-quipclipper, and it re-indexes just that file in the background at idle priority, so
+QuipClipper, and it re-indexes just that file in the background at idle priority, so
 search always has the current lines. Sonarr and Radarr can do the same on import,
 upgrade and rename with a plain webhook. A hook token can only queue re-indexes, and
 `QC_PATH_MAP` maps their container paths onto yours. The script
@@ -262,7 +262,7 @@ and copy-paste setup: [docs/HOOKS.md](docs/HOOKS.md).
 
 Subtitles skip things: most often a song's lyrics, sometimes a whole file has none. Where
 [whisper.cpp](https://github.com/ggml-org/whisper.cpp) is installed (`whisper-cli` and a
-model; on NixOS, `services.quipclipper-web.transcribe.enable = true`), quipclipper can
+model; on NixOS, `services.quipclipper-web.transcribe.enable = true`), QuipClipper can
 transcribe what you point it at: a waveform selection, the gaps between a file's subtitle
 lines, a whole file, or a folder. It only runs when you ask, never on its own, at idle
 priority with at most 3 threads and one run at a time, so playback never notices it.
@@ -297,7 +297,7 @@ Details: [docs/MANUAL.md](docs/MANUAL.md#keyboard-screen-readers-and-low-vision)
 
 ## Experimental sources
 
-- **YouTube:** paste a URL and quipclipper fetches the transcript and details with yt-dlp
+- **YouTube:** paste a URL and QuipClipper fetches the transcript and details with yt-dlp
   (nothing is downloaded unless you ask); search, bookmark and clip it like a file. It can
   also backfill transcripts for YouTube videos already in your library.
 - **Podcasts and audiobooks:** an audio file with a sidecar transcript (`.srt`, `.vtt`,
@@ -341,14 +341,14 @@ CLI command in `src/quipclipper/commands.py`: a parity test fails until it has o
 
 ## Licence and credits
 
-quipclipper is released under the [MIT licence](LICENSE). The web app's optional LAN
+QuipClipper is released under the [MIT licence](LICENSE). The web app's optional LAN
 advertiser uses [python-zeroconf](https://github.com/python-zeroconf/python-zeroconf)
-(LGPL-2.1) as an installed library; none of its code is copied into quipclipper.
+(LGPL-2.1) as an installed library; none of its code is copied into QuipClipper.
 
 The screenshots use **"Large Locutus Leporid (2016)"**, a fixture cut from
 [*Big Buck Bunny*](https://peach.blender.org/) (© 2008 Blender Foundation,
 www.bigbuckbunny.org), licensed [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/).
 Its subtitles quote a few Borg lines from *Star Trek: The Next Generation* for search to
-find; Star Trek is a trademark of CBS Studios, and quipclipper has nothing to do with it.
+find; Star Trek is a trademark of CBS Studios, and QuipClipper has nothing to do with it.
 How the fixture and the screenshots are made:
 [docs/screenshots/fixture](docs/screenshots/fixture/README.md).

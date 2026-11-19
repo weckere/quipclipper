@@ -1,11 +1,11 @@
-# quipclipper — Design Notes & Rationale
+# QuipClipper — Design Notes & Rationale
 
 This document records the significant design decisions made while building
-quipclipper, the alternatives considered, and why each choice was made. It is
+QuipClipper, the alternatives considered, and why each choice was made. It is
 organised by topic rather than chronologically. For usage see
 [`MANUAL.md`](MANUAL.md).
 
-A recurring theme: quipclipper is built around the observation that **subtitles are a
+A recurring theme: QuipClipper is built around the observation that **subtitles are a
 free, accurate timecode index** for spoken dialogue, and that **lossless cutting**
 of media is a solved problem if you respect codec constraints. Most decisions
 follow from taking those two facts seriously.
@@ -75,7 +75,7 @@ the CLI-first scoping here describes the original engine.)
 - **[`typer`](https://typer.tiangolo.com/)** — declarative CLI with type hints,
   automatic `--help`, and boolean `--flag/--no-flag` pairs. Rationale: minimal
   boilerplate for a CLI with many options; the `--x/--no-x` convention maps
-  cleanly onto quipclipper's many toggles.
+  cleanly onto QuipClipper's many toggles.
 
 **Layout:** `src/`-layout package with a `pyproject.toml` (hatchling backend) and a
 `quipclipper` console-script entry point — standard, tooling-friendly Python packaging.
@@ -89,7 +89,7 @@ re-encoding opt-in (`--no-lossless`).
 
 **Context / inspiration:** [LosslessCut](https://github.com/mifi/lossless-cut) is
 the well-known GUI proof that the right way to cut media is to **copy the encoded
-packets** rather than decode-and-re-encode. quipclipper adopts the same philosophy on
+packets** rather than decode-and-re-encode. QuipClipper adopts the same philosophy on
 the command line.
 
 **Rationale:**
@@ -194,7 +194,7 @@ default, with an opt-in `original` re-encode. `--include-lfe/--no-lfe` toggles L
 
 **The honest constraint:** Splitting **cannot be a stream copy**. Individual
 channels can't be routed out of a compressed surround bitstream without decoding
-it. This is a property of the codecs, not a quipclipper limitation, and it is stated
+it. This is a property of the codecs, not a QuipClipper limitation, and it is stated
 plainly in the CLI note and the docs.
 
 **Rationale for the format choices:**
@@ -254,7 +254,7 @@ ffmpeg input with its own `-ss`. This produced **misaligned** subtitles: ffmpeg'
 text-subtitle input seeking is unreliable (it kept lines from outside the range and
 shifted times incorrectly), and the muxed stream picked up a multi-second offset.
 
-**Resolution (ffmpeg backend):** Because quipclipper has already parsed the cues, it
+**Resolution (ffmpeg backend):** Because QuipClipper has already parsed the cues, it
 **renders its own clip-aligned SRT** in memory (the cues overlapping the window,
 shifted to start at zero) and muxes that with no `-ss`. The key realisation was
 that `-avoid_negative_ts make_zero` applies the **same global timestamp shift** to
@@ -264,7 +264,7 @@ lead-in cancels out. This was verified by extracting both the preserved embedded
 track and the muxed sidecar from a test clip and confirming identical timing.
 
 **With mkvmerge** the problem disappears: a sidecar added as an extra input is
-trimmed and time-shifted natively by `--split`, so quipclipper just passes the file.
+trimmed and time-shifted natively by `--split`, so QuipClipper just passes the file.
 
 ---
 
@@ -287,13 +287,13 @@ native subtitle handling, all tracks retained).
 
 **Implementation details:**
 - **Track-id mapping:** `mkvmerge -J` (JSON identification) lists tracks with global
-  IDs and types. quipclipper maps the user's ffmpeg-style `a:N` audio indices to
+  IDs and types. QuipClipper maps the user's ffmpeg-style `a:N` audio indices to
   mkvmerge global IDs by enumerating the audio tracks in order.
 - **Selection flags:** `-a` (audio tracks), `-D`/`-S`/`-M`/`-B` (drop video /
   subtitles / attachments / buttons), `--no-chapters`. Audio-only output drops
   video and subtitles and writes `.mka`.
 - **Output naming:** a single retained part is written to the given name; older
-  mkvmerge versions append `-001`, which quipclipper normalises by renaming.
+  mkvmerge versions append `-001`, which QuipClipper normalises by renaming.
 - **Command construction is a pure function** (`build_mkvmerge_args`) so it can be
   unit-tested without invoking mkvmerge.
 
@@ -320,7 +320,7 @@ scratch space and confirm before remuxing; `--yes` skips prompts.
   remuxing it to another MKV gains nothing. Cutting MKV directly with mkvmerge
   is equally accurate. Hence the automatic skip
   (`do_remux = use_mkvmerge and remux_first and not is_matroska(source)`).
-- **Disk safety** — because the temp file is roughly the size of the source, quipclipper
+- **Disk safety** — because the temp file is roughly the size of the source, QuipClipper
   estimates it (`~source size + sidecars`, since a remux re-wraps without
   recompressing) and asks for confirmation. The temp file is created next to the
   output and deleted in a `finally` block so it is cleaned up even on error.
@@ -534,7 +534,7 @@ lists the candidates. The old `_pick_track` prompt and its now-unreachable
 
 ## 14. CLI and UX conventions
 
-- **Preview then confirm.** Before cutting, quipclipper prints the selected match(es),
+- **Preview then confirm.** Before cutting, QuipClipper prints the selected match(es),
   the clip range, the mode (e.g. "lossless copy (mkvmerge)"), and any relevant
   notes, then asks "Proceed?". `--yes/-y` skips **all** prompts (including the remux
   disk-space confirmation) for scripting.
@@ -545,7 +545,7 @@ lists the candidates. The old `_pick_track` prompt and its now-unreachable
   files, unknown layouts, bad track indices, image-subtitle extraction failures, and
   ffmpeg/mkvmerge failures are caught and printed as concise red messages with a
   non-zero exit code. Raw ffmpeg/mkvmerge stderr is suppressed when the error is
-  already explained by quipclipper's own message.
+  already explained by QuipClipper's own message.
 - **`tracks` shows selectable indices.** It groups streams by type and prints the
   `a:N`/`s:N` indices that feed `--audio-track`/`--track`, so the user can discover
   what to select.
@@ -554,10 +554,10 @@ lists the candidates. The old `_pick_track` prompt and its now-unreachable
 
 ## 15. Nix flake
 
-**Decision:** Provide a `flake.nix` so quipclipper can be installed declaratively
+**Decision:** Provide a `flake.nix` so QuipClipper can be installed declaratively
 on NixOS or nix-darwin systems.
 
-**Rationale:** A Nix flake makes quipclipper a first-class package that can be
+**Rationale:** A Nix flake makes QuipClipper a first-class package that can be
 added as a flake input to a system configuration. The wrapper automatically
 puts `ffmpeg` and `mkvmerge` on `PATH`, so the user never has to manage runtime
 dependencies manually.
@@ -587,7 +587,7 @@ inputs.quipclipper.url = "github:weckere/quipclipper";
 **Decision:** Unit-test the pure logic exhaustively; verify the media integration
 against real tools during development rather than mocking ffmpeg/mkvmerge.
 
-**Rationale:** The risky, fiddly parts of quipclipper are *decisions about command
+**Rationale:** The risky, fiddly parts of QuipClipper are *decisions about command
 construction and ranking*, not the act of running a subprocess. So:
 
 - **Command builders are pure functions** (`_ffmpeg_args`, `build_mkvmerge_args`)
@@ -611,7 +611,7 @@ real pipeline works.
 ## 17. Experimental: audio-only sources and EPUB3 media overlays
 
 These are newer, still-being-shaken-out source classes (flagged experimental in
-the README/manual). The common thread: quipclipper's core is *cues → search →
+the README/manual). The common thread: QuipClipper's core is *cues → search →
 cut a time range*, and anything that can be reduced to "(audio file, timed text)"
 fits with little new machinery.
 
@@ -691,7 +691,7 @@ layouts, subtitle tracks) is fixed once and both get it.
 of commands, each with its HTTP endpoint, parameters and place in the web UI; the CLI
 is built from it, and `docs/CLI.md` is generated from it. A parity test fails when an
 API route, a request field, an `/api/` call in `app.js` or a web preference has no
-command, so a new UI feature can't skip the CLI (and agents, which drive quipclipper
+command, so a new UI feature can't skip the CLI (and agents, which drive QuipClipper
 through the CLI, get it too). Presentation-only preferences (theme, subtitle size) are
 listed as exempt, with the reason.
 
@@ -750,9 +750,9 @@ doesn't know. Deep links (Copy link), which are pasted to other people, still ne
 **LAN advertising is opt-in and lives outside the app.** `quipclipper-web advertise` is its
 own process because in Docker it needs the host's network (multicast doesn't cross the
 bridge) while the app stays on the bridge. It uses python-zeroconf, LGPL-2.1, as an installed
-dependency (no code copied), which is compatible with quipclipper's MIT licence; an Avahi
+dependency (no code copied), which is compatible with QuipClipper's MIT licence; an Avahi
 sidecar was the alternative, but it needs D-Bus and is heavier. The NixOS module uses the
-host's Avahi instead. Advertising tells the whole LAN where quipclipper is, so it is off by
+host's Avahi instead. Advertising tells the whole LAN where QuipClipper is, so it is off by
 default and the docs say tailnet-only installs must leave it off.
 
 ---
@@ -781,7 +781,7 @@ can't be read with `builtins.fromTOML`.
 
 ## References
 
-- **LosslessCut** — lossless media cutting via stream copy; the model for quipclipper's
+- **LosslessCut** — lossless media cutting via stream copy; the model for QuipClipper's
   default behaviour. <https://github.com/mifi/lossless-cut>
 - **FFmpeg — Seeking** — `-ss` before vs. after `-i`, accurate vs. fast seeks.
   <https://trac.ffmpeg.org/wiki/Seeking>

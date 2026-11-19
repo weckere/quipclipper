@@ -139,7 +139,7 @@ def how_to_update(install: str, tag: str | None = None, web: bool = False,
                              "sudo nixos-rebuild switch --flake .#<host>"]}
     if install == "nix":
         return {"install": "nix",
-                "summary": "This runs from the quipclipper flake: upgrade the profile that "
+                "summary": "This runs from the QuipClipper flake: upgrade the profile that "
                            "installed it, or update the flake input that provides it.",
                 "commands": ["nix profile upgrade quipclipper"]}
     git = f"git+https://github.com/{REPO}@{ref}"

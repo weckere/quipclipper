@@ -50,7 +50,7 @@ python3Packages.buildPythonApplication {
   ];
 
   meta = {
-    description = "Web app for quipclipper — find and cut clips from a browser";
+    description = "Web app for QuipClipper — find and cut clips from a browser";
     homepage = "https://github.com/weckere/quipclipper";
     license = lib.licenses.mit;
     mainProgram = "quipclipper-web";

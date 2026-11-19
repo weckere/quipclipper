@@ -7576,11 +7576,11 @@ async function refreshUpdate() {
 function updateResultHtml(u) {
   const latest = u.latest || {};
   const v = escapeHtml(latest.version || "");
-  const notes = latest.url ? ` <a href="${escapeHtml(latest.url)}" target="_blank" rel="noopener noreferrer" title="What's new in quipclipper ${v}, on GitHub (opens a new tab)">Release notes</a>` : "";
+  const notes = latest.url ? ` <a href="${escapeHtml(latest.url)}" target="_blank" rel="noopener noreferrer" title="What's new in QuipClipper ${v}, on GitHub (opens a new tab)">Release notes</a>` : "";
   let html = "";
   if (u.state === "update_available") {
     const how = u.how_to_update || {};
-    html += `<p class="update-found"><strong>quipclipper ${v} is available.</strong>${notes}</p>`;
+    html += `<p class="update-found"><strong>QuipClipper ${v} is available.</strong>${notes}</p>`;
     html += `<p>${escapeHtml(how.summary || "")}</p>`;
     if ((how.commands || []).length) {
       html += `<pre class="update-commands"><code>${how.commands.map(escapeHtml).join("\n")}</code></pre>`;
@@ -7609,7 +7609,7 @@ function updateResultHtml(u) {
 /** One line for the live region after Check for updates. */
 function updateSummary(u) {
   if (u.error) return `Couldn't check for updates: ${u.error.message || "no answer"}.`;
-  if (u.state === "update_available") return `quipclipper ${u.latest.version} is available.`;
+  if (u.state === "update_available") return `QuipClipper ${u.latest.version} is available.`;
   if (u.state === "up_to_date") return `Up to date: ${u.latest.version} is the latest release.`;
   if (u.state === "ahead") return `This build is newer than the latest release, ${u.latest.version}.`;
   return "Checked for updates.";
@@ -7618,13 +7618,13 @@ function updateSummary(u) {
 function showUpdate(u) {
   updateInfo = u;
   const cur = u.current || {};
-  $("update-build").textContent = `This server: quipclipper ${cur.label} (${INSTALL_NAMES[cur.install] || cur.install}).`;
+  $("update-build").textContent = `This server: QuipClipper ${cur.label} (${INSTALL_NAMES[cur.install] || cur.install}).`;
   $("update-result").innerHTML = updateResultHtml(u);
   $("update-daily").checked = !!u.daily;
   const note = $("update-note");
   if (u.update_available && u.latest) {
-    const url = u.latest.url ? `<a href="${escapeHtml(u.latest.url)}" target="_blank" rel="noopener noreferrer" title="What's new in quipclipper ${escapeHtml(u.latest.version)}, on GitHub (opens a new tab)">release notes</a>, ` : "";
-    note.innerHTML = `<strong>quipclipper ${escapeHtml(u.latest.version)} is available</strong>: ${url}` +
+    const url = u.latest.url ? `<a href="${escapeHtml(u.latest.url)}" target="_blank" rel="noopener noreferrer" title="What's new in QuipClipper ${escapeHtml(u.latest.version)}, on GitHub (opens a new tab)">release notes</a>, ` : "";
+    note.innerHTML = `<strong>QuipClipper ${escapeHtml(u.latest.version)} is available</strong>: ${url}` +
       `<button type="button" class="link-btn update-how" data-action="update.status" aria-haspopup="dialog" title="How to update this install (Settings ▸ Updates)">how to update</button>`;
     note.querySelector("button").onclick = (e) => {
       e.stopPropagation();

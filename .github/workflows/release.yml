@@ -156,4 +156,4 @@ jobs:
           VERSION: ${{ needs.check.outputs.version }}
         run: |
           gh release create "$GITHUB_REF_NAME" --verify-tag \
-            --title "quipclipper $VERSION" --notes-file notes.md
+            --title "QuipClipper $VERSION" --notes-file notes.md

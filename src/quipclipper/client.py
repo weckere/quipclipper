@@ -325,7 +325,7 @@ def _error_from(resp: Response, path: str = "") -> CliError:
 
 def call(ctx: Context, method: str, path: str, query=None, body=None, stream=False) -> Response:
     if not ctx.remote:
-        raise CliError("This command needs a quipclipper server: pass --server URL or "
+        raise CliError("This command needs a QuipClipper server: pass --server URL or "
                        "set QC_URL.", code="no_server", exit_code=EXIT_NO_SERVER)
     resp = ctx.transport.request(method, path, query or [], body, stream=stream)
     if resp.status >= 300:

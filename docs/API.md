@@ -1,6 +1,6 @@
-# quipclipper Web API
+# QuipClipper Web API
 
-The quipclipper web app is backed by a plain HTTP+JSON API — the same one the
+The QuipClipper web app is backed by a plain HTTP+JSON API — the same one the
 browser UI runs on. It's designed to be driven by agents and scripts, not just
 the frontend: browse the library, search dialogue, cut clips, and download them,
 all over HTTP.
@@ -240,7 +240,7 @@ that run whisper answer 503 and `/api/health`'s `transcribe.available` is false.
 | POST | `/api/items/transcribe` | Start transcribing (job): `{path, mode, start, end, model, audio, redo}`. `mode` is `range` (`start`..`end`, seconds), `gaps` (every stretch of 4 s or more between subtitle lines) or `file`; omitted, it is `range` when `start` is given, else `gaps`. `model` names one the server has (`/api/health`'s `transcribe.models`: `small.en`, the default, and `medium.en` when installed); never a path. Parts done before are skipped unless `redo`. Returns `{job_id}` (`existing: true` when the same request is already queued or running). The job's `progress` reads `"1:10 of 4:00 transcribed"`; `DELETE /api/jobs/{id}` stops it, keeping finished chunks. Its `result`: `{path, mode, model, transcribed: [[start, end]…], new_lines, transcript, note?}`. 422: a bad range (end before start, or past a week), a model the server lacks, or a YouTube/EPUB ref; 404: not a file; 503: transcription isn't set up. |
 | GET | `/api/items/transcript?path=&fmt=&lines=&source=` | A file's machine transcript (json): `{path, stored, library, writable, sidecar_name, lines: [{start, end, text, source}]}`. `stored` is `{ranges, covered, lines, models, language, updated, engine}` or null; `library` names the copies next to the file. `fmt=srt` or `vtt` downloads the lines. By default `lines` holds the stored transcript and the library copies together; `lines=machine` gives only the stored lines no subtitle has (what Copy to library writes), `lines=all` the whole stored transcript, and then a `fmt=srt`/`vtt` with nothing to serve is a 404 (no transcript, or the subtitles have every line). `source=jellyfin`: `path` is as Jellyfin reports it, mapped as for [`POST /api/index/file`](#re-index-hooks) (503 while the map isn't derived yet). The Jellyfin plugin's subtitle provider reads these with its `transcripts.read` token. |
 | DELETE | `/api/items/transcript?path=` | Delete the stored transcript → `{deleted}` (a library copy stays). |
-| POST | `/api/items/transcript/library?path=` | Copy the machine lines (those no subtitle line has) next to the file as `<name>.<lang>.whisper.srt` → `{sidecar, lines}`. quipclipper reads that file as machine lines, never as the file's subtitles; the captions then show them, and Jellyfin offers it as a subtitle track. 403 = a read-only folder (needs `writableMediaRoots`), 404 = no transcript, 409 = no line left that the subtitles don't already have. |
+| POST | `/api/items/transcript/library?path=` | Copy the machine lines (those no subtitle line has) next to the file as `<name>.<lang>.whisper.srt` → `{sidecar, lines}`. QuipClipper reads that file as machine lines, never as the file's subtitles; the captions then show them, and Jellyfin offers it as a subtitle track. 403 = a read-only folder (needs `writableMediaRoots`), 404 = no transcript, 409 = no line left that the subtitles don't already have. |
 | DELETE | `/api/items/transcript/library?path=` | Remove this file's copies next to it (`<name>.<lang>.whisper.srt`/`.vtt`; never another file's, such as `<name>.Part2.en.whisper.srt`) → `{removed}`. 403 = a read-only folder. |
 | POST | `/api/search/folder/transcribe` | Transcribe a folder's files one after another (job): `{path, mode, model}`. `mode=nosubs` (default) does whole files that have no subtitles, audio files with no transcript included; `gaps` does the gaps in every subtitled file. Files already done are skipped, and so is a file whose subtitles can't be checked (an `error` in its `files` entry: a whole-file run of a subtitled film would cost hours). In `gaps` mode, a file not indexed yet has its subtitles extracted first, at idle priority as the folder index does (Cancel stops that too). Returns `{job_id, candidates}`, or `{job_id: null, candidates: 0}` when there is nothing to do. Progress reads `"3/41 files, <name>: 1:10 of 4:00 transcribed"`; the `result` is `{path, mode, model, files: [{name, path, new_lines, error?}], new_lines, note}`. 400 = over 500 files (audio counted too) or not a folder; 422 = a model the server lacks. A server shutdown stops a running transcription (its finished chunks are kept) and drops queued ones. |
 | GET | `/api/transcripts/orphans?stale=` | The stored transcripts a clean would delete, deleting nothing → `{count, orphans: [{file, path, reason}]}` (at most 200 listed). `reason` is `gone` (the media file was deleted), `stale` (only with `stale=true`: the media file was replaced since), `unreadable` (an older store format or a broken file) or `partial` (an interrupted save's temp file, over an hour old). A media file counts as gone only under a library root that is there and not empty, so a disk that isn't mounted loses nothing; a transcript of a file outside every root is left alone. |
@@ -357,7 +357,7 @@ The guide, with the settings and the web app: [TRANSCRIPTION.md](TRANSCRIPTION.m
 
 ### Re-index hooks
 
-How Bazarr, Sonarr and Radarr (or anything) tell quipclipper that a file's subtitles
+How Bazarr, Sonarr and Radarr (or anything) tell QuipClipper that a file's subtitles
 changed, so it re-indexes that file instead of leaving it out of search. Setup, the hook
 script and the troubleshooting table: [HOOKS.md](HOOKS.md).
 
@@ -646,7 +646,7 @@ throw them out. Times are UTC ISO 8601 with `Z`.
   live in `state_dir/clients.json` (0600, written atomically): `{clients: [{id, name, host,
   address, user, user_name, token_sha256, created, last_used, scopes?}]}` (no `scopes`: full
   access; a `scopes` that isn't a list of known names opens nothing; the three caller fields
-  are `""` for apps paired before quipclipper kept them). The token itself is never stored. `last_used` is
+  are `""` for apps paired before QuipClipper kept them). The token itself is never stored. `last_used` is
   written at most once a minute.
 - **Behind the password gate** (`QC_PASSWORD` / `passwordFile`), nginx lets exactly
   `POST /api/pair` and `GET /api/pair/<id>` through without the password. Listing, approving
@@ -719,7 +719,7 @@ cue at or before `position` from `/api/items/subtitles` and `POST /api/clip` it;
 `clip.nowplaying` does exactly that. Each session also has `art`, its poster
 (`{"id", "type", "tag"}`, the series' for an episode; see the image proxy below), or `null`.
 
-Every session also says whether quipclipper can start something on it: `can_play` is true
+Every session also says whether QuipClipper can start something on it: `can_play` is true
 when the client takes remote control from Jellyfin (`SupportsRemoteControl`) and can be
 told to play video or audio (`media_types`, Jellyfin's `PlayableMediaTypes`); otherwise
 `control_note` says why. `last_active` is Jellyfin's `LastActivityDate`. **`all=1`** adds
@@ -836,7 +836,7 @@ anything; see [DEPLOY.md](DEPLOY.md#checking-for-updates) for what a check sends
 {
   "current": {"version": "0.5.1", "commit": "2da1479c…", "short": "2da1479", "dev": true,
               "install": "nixos", "label": "dev build 2da1479, ahead of 0.5.1"},
-  "latest": {"version": "0.6.0", "tag": "v0.6.0", "name": "quipclipper 0.6.0",
+  "latest": {"version": "0.6.0", "tag": "v0.6.0", "name": "QuipClipper 0.6.0",
              "url": "https://github.com/weckere/quipclipper/releases/tag/v0.6.0",
              "published_at": "2026-11-01T10:00:00Z"},
   "state": "update_available",
@@ -890,7 +890,7 @@ listing answers `304` with no body):
 | `folders` | The folder's own subfolders that hold clips or sets (names). |
 | `clips` | The entries (below), sorted by `sort`. |
 | `count` | How many entries. |
-| `cursor` | `v1.<n>`: the newest entry's time (the newest file of this listing's `folder`/`recursive`/`q`/`kind`, never older than `since`). Pass it as `since` to poll for new clips. It follows the file's modification time, so a re-cut clip counts as new; backfilling a sidecar doesn't. A clip quipclipper cuts is listed only once the file and its sidecar are both written, stamped with that moment, so a poll never sees a half-written clip or one without its `meta`. A file copied into the library keeping an older modification time isn't new to a cursor: list without `since` to catch up. |
+| `cursor` | `v1.<n>`: the newest entry's time (the newest file of this listing's `folder`/`recursive`/`q`/`kind`, never older than `since`). Pass it as `since` to poll for new clips. It follows the file's modification time, so a re-cut clip counts as new; backfilling a sidecar doesn't. A clip QuipClipper cuts is listed only once the file and its sidecar are both written, stamped with that moment, so a poll never sees a half-written clip or one without its `meta`. A file copied into the library keeping an older modification time isn't new to a cursor: list without `since` to catch up. |
 | `etag` | Changes when any listed file or its sidecar changes (or the folders do). |
 
 A clip is any file a cut writes: `.mkv`, `.mp4`, `.m4v`, `.webm`, `.gif`, or audio as
@@ -916,7 +916,7 @@ Each entry:
 
 ### The metadata sidecar
 
-Every file quipclipper writes into the clips library (a clip job, a batch export,
+Every file QuipClipper writes into the clips library (a clip job, a batch export,
 clip.nowplaying, Send to LeadStinger, a set file) gets `.<file name>.qc.json` beside it.
 It's a dot-file, so listings, the library browser and Jellyfin skip it. Clips cut before
 sidecars existed get one from `POST /api/clips/backfill` (`clips.backfill`), marked
@@ -930,7 +930,7 @@ sidecars existed get one from `POST /api/clips/backfill` (`clips.backfill`), mar
 | `kind` | `audio`, `video`, `gif` or `set`. |
 | `origin` | `clip` (a clip job), `leadstinger.quip` (Send to LeadStinger), `leadstinger.set`, or `backfill`. |
 | `created` | When it was cut (ISO 8601 UTC). |
-| `source` | `{path, name, url}`: the source as quipclipper names it (a library path, a `yt:` or EPUB ref), its display name (the movie or show), and a YouTube page URL. Backfill adds `stem`, the source name read from the clip's folder or file name. |
+| `source` | `{path, name, url}`: the source as QuipClipper names it (a library path, a `yt:` or EPUB ref), its display name (the movie or show), and a YouTube page URL. Backfill adds `stem`, the source name read from the clip's folder or file name. |
 | `line` | `{start, end}`: the line's span in the source, in seconds. |
 | `clip` | `{start, end}`: the span cut from the source (the line plus its padding). |
 | `padding` | `{before, after}`: seconds of handle audio either side of the line. |
@@ -997,7 +997,7 @@ comes as it is. A set file or a GIF is `400`; a clip ffmpeg can't convert (no au
 A job (follow it at `/api/jobs/{id}`). For every clip and set without a sidecar it writes
 one from ffprobe, the file name (source, timestamp, line) and, when the source's name
 matches one file Jellyfin knows, Jellyfin's show and episode. A sidecar left behind by a
-clip moved outside quipclipper is re-attached to the file with the same name and size; one
+clip moved outside QuipClipper is re-attached to the file with the same name and size; one
 whose clip is gone is deleted, and so are FLAC copies of deleted clips. The job's `result`
 counts them (`clips`, `written`, `kept`, `reattached`, `pruned`, `jellyfin`, `errors`,
 `flac_pruned`). Safe to run again.

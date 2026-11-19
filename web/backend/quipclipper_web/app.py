@@ -279,7 +279,7 @@ class LeadStingerSetRequest(BaseModel):
     """JSON body for POST /api/leadstinger/set (M14, D-024, D-026)."""
 
     # None: the source's title for one clip, the shared title for a batch from one
-    # show or movie, else "quipclipper <date>". LeadStinger numbers a taken name.
+    # show or movie, else "QuipClipper <date>". LeadStinger numbers a taken name.
     name: str | None = Field(None, min_length=1, max_length=80)
     items: list[LeadStingerItem] = Field(..., min_length=1, max_length=200)
 
@@ -744,7 +744,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         index_changes.flush()
         peak_store.shutdown()
 
-    app = FastAPI(title="quipclipper-web", version=__version__, lifespan=lifespan)
+    app = FastAPI(title="QuipClipper", version=__version__, lifespan=lifespan)
     app.state.settings = settings
 
     @app.exception_handler(RequestValidationError)
@@ -4070,7 +4070,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     trim = lsset.trim_for(None if whole else item.start, item.end, before)
                     where = "" if whole else f" · {format_timestamp(item.start)}"
                     notes = (item.notes or "").strip() or (
-                        f"{Path(item.path).stem}{where} · quipclipper")
+                        f"{Path(item.path).stem}{where} · QuipClipper")
                     cues = do_cut.meta.get("cues")
                     tiles.append((arcname, title, trim, notes, cues))
                     files.append((arcname, written[0]))
@@ -4084,7 +4084,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                            if cues is not None else {}),
                     })
                 set_name = lsset.safe_name(req.name or lsset.auto_set_name(sources),
-                                           fallback="quipclipper")
+                                           fallback="QuipClipper")
                 # Clips live in a folder named after the set inside the zip.
                 files = [(f"{set_name}/{a}", src) for a, src in files]
                 tiles = [lsset.tile_entry(f"{set_name}/{a}", title=t, trim=tr, notes=no,

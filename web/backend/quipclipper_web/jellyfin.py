@@ -305,12 +305,12 @@ def now_playing(
         else:
             mapped = map_path(jf_path, path_map)
             if mapped is None:
-                note = "Not in quipclipper's library (no path mapping for it)."
+                note = "Not in QuipClipper's library (no path mapping for it)."
             else:
                 try:
                     path = str(library.resolve_within_roots(mapped, roots))
                 except library.PathNotAllowed:
-                    note = "Not in quipclipper's library (outside the media roots)."
+                    note = "Not in QuipClipper's library (outside the media roots)."
         out.append({
             **_session_fields(s),
             "idle": False,

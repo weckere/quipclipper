@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to quipclipper are written down here. The format follows
+All notable changes to QuipClipper are written down here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/) (still 0.x: a minor version for features, a patch
 for fixes).
@@ -15,6 +15,10 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 
 - **New icon:** the scissors' finger loops are now a pair of quotation marks, in the browser tab
   icon and beside the name in the header.
+- **The name is written QuipClipper** in the web app (page title, header, update notices), the
+  CLI's and the API's messages, the NixOS module's option descriptions and the docs. The
+  `quipclipper` command, package, image and config names stay lowercase. A LeadStinger set
+  with no single source is now named "QuipClipper <date>".
 
 ## [0.11.0] - 2026-11-19
 

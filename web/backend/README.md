@@ -1,7 +1,7 @@
 # quipclipper-web
 
-The web backend for [quipclipper](../../README.md): a small FastAPI app that wraps
-the quipclipper engine so clips can be found and cut from a browser. See
+The web backend for [QuipClipper](../../README.md): a small FastAPI app that wraps
+the QuipClipper engine so clips can be found and cut from a browser. See
 [`docs/WEBAPP_PLAN.md`](../../docs/WEBAPP_PLAN.md) for the full design.
 
 The backend serves the API and (in dev) the static frontend; in a real

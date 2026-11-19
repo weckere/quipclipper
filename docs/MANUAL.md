@@ -1,4 +1,4 @@
-# quipclipper — User Manual
+# QuipClipper — User Manual
 
 `quipclipper` finds and cuts audio/video clips from movies and TV shows by **searching
 the subtitle dialogue**. Subtitles already carry precise timestamps, so the whole
@@ -6,7 +6,7 @@ job is: parse the subtitles → fuzzy-search the line you remember → map the m
 back to its time span → cut it out. The result is a lossless clip, produced
 in a fraction of a second.
 
-quipclipper comes as a **self-hosted web app** and a **command-line tool** over the same
+QuipClipper comes as a **self-hosted web app** and a **command-line tool** over the same
 engine. This manual covers both: the web app's screens, the CLI on local files, and the
 topics they share. For a shorter tour see [`../README.md`](../README.md); to install the
 web app see [`DEPLOY.md`](DEPLOY.md); every CLI command (including the ones that drive a
@@ -69,7 +69,7 @@ NixOS module: see [`DEPLOY.md`](DEPLOY.md).
 
 ### Nix
 
-quipclipper provides a Nix flake. `ffmpeg` and `mkvmerge` are wrapped onto `PATH`
+QuipClipper provides a Nix flake. `ffmpeg` and `mkvmerge` are wrapped onto `PATH`
 automatically — no separate install needed:
 
 ```nix
@@ -90,7 +90,7 @@ A dev shell is also available: `nix develop github:weckere/quipclipper`.
 | [MKVToolNix](https://mkvtoolnix.download/) (`mkvmerge`) | optional | the preferred backend for lossless cuts (see [Backends](#backends-ffmpeg-and-mkvmerge)) |
 
 `ffmpeg`/`ffprobe` and `mkvmerge` must be on your `PATH`. If `mkvmerge` is absent,
-quipclipper falls back to ffmpeg automatically.
+QuipClipper falls back to ffmpeg automatically.
 
 ## Quick start
 
@@ -150,7 +150,7 @@ typing what you remember, select it on the script, and cut it. The screenshots i
 
 ### The top bar
 
-- **quipclipper** (the logo) goes back to the top of the library.
+- **QuipClipper** (the logo) goes back to the top of the library.
 - **The search box** searches dialogue. Its chip says where: **This video**, **This
   folder**, **Whole library**, or **N folders** when the library filter has narrowed the
   list. It follows the page you are on until you pick one yourself. With Jellyfin set up,
@@ -414,9 +414,9 @@ from `dev` "dev build 2da1479, ahead of 0.5.1" (its commit, and the release it i
 on). **Check for updates** asks GitHub for the latest release and says whether it is newer,
 with its release notes and how to update this install (Docker, NixOS, Nix or pip); the
 answer is read out to a screen reader. **Check once a day** turns the server's daily check
-on or off; when it finds a newer release, the footer says "quipclipper X.Y.Z is available"
+on or off; when it finds a newer release, the footer says "QuipClipper X.Y.Z is available"
 by the version, with **release notes** and **how to update**, which opens this section.
-quipclipper never updates itself. CLI: `update.status`, `update.check`, `update.settings`;
+QuipClipper never updates itself. CLI: `update.status`, `update.check`, `update.settings`;
 the server's settings are in [DEPLOY.md](DEPLOY.md#checking-for-updates).
 
 ### Keyboard, screen readers and low vision
@@ -449,7 +449,7 @@ The web app aims at WCAG 2.2 AA.
 ### YouTube sources (experimental)
 
 Open **YouTube** in the library's rail and paste a watch URL
-(`youtube.com/watch`, `youtu.be/…`, shorts/embed links work too). quipclipper
+(`youtube.com/watch`, `youtu.be/…`, shorts/embed links work too). QuipClipper
 runs **yt-dlp** to fetch the video's **subtitles and metadata only** — nothing
 is downloaded — and the video joins the list permanently (stored under the
 state dir; the ✕ on its row removes it).
@@ -499,7 +499,7 @@ From there it works like any library item:
 #### Backfilling subtitles for existing videos
 
 If your library already holds YouTube-sourced videos with **no subtitles** — a
-Pinchflat/yt-dlp archive that only saved `.info.json`, say — quipclipper can
+Pinchflat/yt-dlp archive that only saved `.info.json`, say — QuipClipper can
 fetch their transcripts on demand so they become dialogue-searchable and
 clippable like anything else. It recognises a video's YouTube id from the
 `[<id>]` in its filename or a sibling `.info.json`, then downloads a `.vtt`
@@ -538,7 +538,7 @@ message instead.
 Requires `yt-dlp` on the backend's PATH — the Docker image installs it via pip
 (rebuild the image to pick up a current release when YouTube changes something),
 and the Nix package wraps it in. `/api/health` reports whether it's present.
-Stream URLs expire after a few hours; quipclipper re-resolves them on demand,
+Stream URLs expire after a few hours; QuipClipper re-resolves them on demand,
 so long sessions just keep working. Heads-up: some videos only expose formats
 ffmpeg can't fetch directly — those fail with a clear error rather than
 silently degrading.
@@ -548,7 +548,7 @@ silently degrading.
 ## Command reference
 
 This section covers the three commands that work on **local files**: `search`, `clip`
-and `tracks`. Every action in the web app is also a command that drives a quipclipper
+and `tracks`. Every action in the web app is also a command that drives a QuipClipper
 server over its HTTP API (`quipclipper ls`, `search.folder`, `bookmark.add`, `clip.batch`,
 `leadstinger.quip`, `clip.nowplaying`…); those are all in [`CLI.md`](CLI.md), generated
 from the command registry. Run `quipclipper --help` or `quipclipper <command> --help`
@@ -649,7 +649,7 @@ quipclipper clip QUERY --video FILE [OPTIONS]
 | `--min-score` | 60 | Drop matches scoring below this (0–100; see [Scores](#search-scores)). |
 | `--max-span` | 3 | Max consecutive captions a single match may join. |
 
-Before cutting, quipclipper prints a preview (the selected match, the clip range and
+Before cutting, QuipClipper prints a preview (the selected match, the clip range and
 mode, and any relevant notes) and asks you to confirm — unless `--yes` is given.
 
 ### `quipclipper tracks`
@@ -674,7 +674,7 @@ quipclipper tracks movie.mkv
 
 ### Lossless cutting
 
-quipclipper can cut **losslessly**: it copies the original encoded packets into a
+QuipClipper can cut **losslessly**: it copies the original encoded packets into a
 new container with **no re-encoding at all**. A lossy AC3/AAC/EAC3 track stays
 that exact lossy bitstream, byte-for-byte, and the cut is near-instant. The
 inspiration and model is [LosslessCut](https://github.com/mifi/lossless-cut).
@@ -703,7 +703,7 @@ GIF output is inherently a re-encode and ignores `--lossless`.
 
 ### Backends: ffmpeg and mkvmerge
 
-quipclipper has two cutting backends:
+QuipClipper has two cutting backends:
 
 - **ffmpeg** — universal; used for gif, re-encodes (`--no-lossless`), channel
   splitting, and as a fallback when mkvmerge is unavailable.
@@ -728,7 +728,7 @@ By default, non-MKV sources are cut **directly** from the source with mkvmerge �
 no temporary copy needed. **MKV sources are always cut directly** (already a clean
 container).
 
-For maximum accuracy on non-MKV sources, pass `--remux-first`: quipclipper will mux
+For maximum accuracy on non-MKV sources, pass `--remux-first`: QuipClipper will mux
 the source (and any sidecar subtitle) into a temporary MKV with mkvmerge first,
 then cut from that. This bypasses ffmpeg entirely but copies the full source to
 a temp file, so it needs local disk space:
@@ -823,13 +823,13 @@ The channel groups are derived from the stream's ffmpeg channel layout, so 5.1,
 
 Video clips keep all embedded subtitle tracks (they ride along in the stream
 copy). When you search with an external subtitle file (`--subs` or a sidecar),
-quipclipper also muxes those lines into the clip, trimmed and time-shifted to line up
+QuipClipper also muxes those lines into the clip, trimmed and time-shifted to line up
 with the cut. Disable with `--no-embed-subs`.
 
 - With the **mkvmerge** backend, the sidecar is added as an extra input and
   mkvmerge trims and shifts it natively.
-- With the **ffmpeg** backend, quipclipper renders a clip-aligned SRT from the parsed
-  cues and muxes it (ffmpeg's own text-subtitle seeking is unreliable, so quipclipper
+- With the **ffmpeg** backend, QuipClipper renders a clip-aligned SRT from the parsed
+  cues and muxes it (ffmpeg's own text-subtitle seeking is unreliable, so QuipClipper
   does the trimming itself).
 
 ### Searching and the picker
@@ -867,7 +867,7 @@ with multiple selections.
 ### Subtitle track selection
 
 When a video has multiple embedded subtitle tracks and no `--track` is given,
-quipclipper auto-selects the best dialogue track. Tracks are scored so that
+QuipClipper auto-selects the best dialogue track. Tracks are scored so that
 **text beats image, then English full dialogue beats SDH, which beats forced**
 (forced tracks carry only foreign-language portions, so they have minimal
 dialogue); a track with no language tag counts as English so single-language
@@ -889,7 +889,7 @@ always used as-is; ties break by extension priority (`.srt` > `.vtt` > … > `.j
 
 **Image subtitles (PGS/VOBSUB) are not usable.** Blu-ray `.sup` (PGS) and DVD
 VOBSUB tracks are bitmaps, not text — they can't be extracted to SRT, searched,
-or displayed. quipclipper only handles text subtitles, so image tracks rank
+or displayed. QuipClipper only handles text subtitles, so image tracks rank
 below every text track in auto-selection (chosen only if nothing else exists,
 then erroring with "supply an .srt"), and the web app hides them from its picker.
 If a file has *only* image subtitles, supply a text sidecar with `--subs`.
@@ -903,7 +903,7 @@ picker and its search/index cache, so all paths agree on the default track.
 Search reads subtitle lines, so a line the subtitles leave out (most often a song's
 lyrics), or a file with no subtitles at all, can't be found. Where
 [whisper.cpp](https://github.com/ggml-org/whisper.cpp) is installed (`whisper-cli` and a
-ggml model, `QC_WHISPER_MODEL`), quipclipper can transcribe a stretch, a file's gaps, a whole
+ggml model, `QC_WHISPER_MODEL`), QuipClipper can transcribe a stretch, a file's gaps, a whole
 file or a folder, and keeps what it hears as *machine* lines: searchable, shown in violet
 with an **auto** chip, and never passed off as subtitles (a subtitle line wins wherever both
 cover a stretch, and the captions leave machine lines out until you copy them to the
@@ -950,10 +950,10 @@ A synced **EPUB3 Media Overlay** book bundles the text *and* the narration audio
 in one `.epub`, with a SMIL map tying each sentence to an audio time span. The
 biggest producer is [Storyteller](https://gitlab.com/storyteller-platform/storyteller),
 which aligns an ebook to its audiobook; its output is named `<Title> (readaloud).epub`
-(newer) or `aligned/<Title>.epub` (older). quipclipper detects these by their
+(newer) or `aligned/<Title>.epub` (older). QuipClipper detects these by their
 manifest (a media-overlay declaration), regardless of filename.
 
-Point `search`/`clip` at the `.epub` and quipclipper reads its overlay cues
+Point `search`/`clip` at the `.epub` and QuipClipper reads its overlay cues
 directly — no sidecar, no extraction step for you:
 
 ```
@@ -973,13 +973,13 @@ quipclipper clip   "you will become one with the borg" --video "Book (readaloud)
 ### Sending clips to LeadStinger
 
 [LeadStinger](https://github.com/weckere/leadstinger) is a soundboard for live shows.
-quipclipper can hand it a line in one click. In the web app, click the cassette **Send to
+QuipClipper can hand it a line in one click. In the web app, click the cassette **Send to
 LeadStinger** button beside Make clip (it uses the Before/After padding), tick the small
 Send to LeadStinger toggle beside Clip / Export selected with one line or clip ticked, or
 use a clip's Send to LeadStinger button in the Clips library; on
-the command line, `quipclipper leadstinger.quip` / `leadstinger.link`. quipclipper cuts
+the command line, `quipclipper leadstinger.quip` / `leadstinger.link`. QuipClipper cuts
 the line, then opens a `leadstinger://quip` link; LeadStinger downloads the clip from the
-quipclipper server into a new tile whose trim is exactly the line.
+QuipClipper server into a new tile whose trim is exactly the line.
 
 With **several lines** ticked, the toggle makes a LeadStinger set file (one tile per line,
 each with its handles) and opens its link too, so the whole set goes straight into
@@ -1019,16 +1019,16 @@ LeadStinger converts video or AC-3/DTS clips on import).
 
 **Setup, once:**
 
-1. **quipclipper's own address** goes in each link. It is `QC_PUBLIC_URL` when set
+1. **QuipClipper's own address** goes in each link. It is `QC_PUBLIC_URL` when set
    (`https://quipclipper.example.net` on the `app` service in Docker, or
    `services.quipclipper-web.publicUrl` on NixOS); else the address the
    [LAN advertiser](#advertising-on-the-local-network) announces; else the address your
-   browser is using for quipclipper, so a fresh install works without setting anything.
-   Set `QC_PUBLIC_URL` when the machine with LeadStinger reaches quipclipper at a different
+   browser is using for QuipClipper, so a fresh install works without setting anything.
+   Set `QC_PUBLIC_URL` when the machine with LeadStinger reaches QuipClipper at a different
    address than your browser does, and for the CLI's and agents' links.
 2. **Connect LeadStinger**: the easy way is [pairing](#connecting-leadstinger-pairing), below,
    with nothing to copy. Or, by hand, with an API token:
-3. **Have an API token.** LeadStinger downloads with quipclipper's `QC_API_TOKEN`. If
+3. **Have an API token.** LeadStinger downloads with QuipClipper's `QC_API_TOKEN`. If
    there is none yet, make one (`openssl rand -hex 32`) and set it:
    - **Docker:** `QC_API_TOKEN: "<token>"` on **both** the `app` and `web` services in
      `docker-compose.yml` (the `web` one lets `api:<token>` through the password gate).
@@ -1058,7 +1058,7 @@ leadstinger://quip?server=<QC_PUBLIC_URL>&clip=<clip path>&title=<text>&start=<s
 
 | Parameter | |
 |---|---|
-| `server` | quipclipper's address (step 1 above), without a trailing `/`. |
+| `server` | QuipClipper's address (step 1 above), without a trailing `/`. |
 | `clip` | The clip's path inside the clips library, as `/api/clips/download/{path}` takes it (`LeadStinger/S03E26_00-33-20_Resistance_is_futile.flac`). A set file (`LeadStinger/Borg.lsset`) is imported as a set of tiles, and its link has nothing after `clip`. |
 | `title` | The tile's title: the line (one line, at most 200 characters), or the clip's name. |
 | `start`, `end` | Where the line sits *inside the clip*, in seconds: the tile's trim. With 2 s before, a line from 33:22.4 to 33:24.0 gives `start=2&end=3.6`. Left out for a whole library clip. |
@@ -1071,14 +1071,14 @@ in a title goes out as `%2B`. The link holds no token.
 
 LeadStinger can connect without anyone copying a token: it asks, and you let it in.
 
-1. Start it from either side: **Connect LeadStinger** in quipclipper's Settings (on the
+1. Start it from either side: **Connect LeadStinger** in QuipClipper's Settings (on the
    computer with LeadStinger), **Send to LeadStinger** on a line, which offers to connect
    when LeadStinger doesn't know this server yet, or LeadStinger's own Connect or "Find on
    network".
 2. LeadStinger asks whether to connect, then shows a **code** such as `7F3K`.
-3. A banner appears at the top of every quipclipper page: **"LeadStinger on laptop wants
+3. A banner appears at the top of every QuipClipper page: **"LeadStinger on laptop wants
    access, code 7F3K."** Check that the code is the one LeadStinger shows, then **Allow**
-   (or **Deny**). LeadStinger may open quipclipper for you with that request highlighted.
+   (or **Deny**). LeadStinger may open QuipClipper for you with that request highlighted.
    The banner also says who is asking: the computer's address and, behind Tailscale serve,
    the tailnet user ("From alex@example.com, 100.101.102.103"). Behind a proxy it shows the
    proxy's address until the proxy is listed as trusted (`nginx.trustedProxies` in the
@@ -1088,22 +1088,22 @@ LeadStinger can connect without anyone copying a token: it asks, and you let it 
    Settings ▸ Connected apps lists it; **Revoke** disconnects it.
 
 A request waits 10 minutes. Behind a password (`QC_PASSWORD`), LeadStinger can ask and wait
-without the password, but only someone signed in to quipclipper can allow it. From the
+without the password, but only someone signed in to QuipClipper can allow it. From the
 command line: `quipclipper pair.list`, `pair.approve ID`, `pair.deny ID`, `clients.list`,
 `clients.revoke ID` (behind a password, with `QC_API_TOKEN`). `QC_PAIRING=0` (NixOS:
 `pairing.enable = false`) turns pairing off.
 
 #### Advertising on the local network
 
-On a home network, quipclipper can announce itself so LeadStinger finds it ("QuipClipper on
+On a home network, QuipClipper can announce itself so LeadStinger finds it ("QuipClipper on
 nas") without anyone typing an address. It is off by default:
 
 - **Docker:** uncomment the `advertise` service in `docker-compose.yml` (it needs host
   networking, because announcements don't cross Docker's own network).
 - **NixOS:** `services.quipclipper-web.advertise.enable = true` (Avahi).
 
-**Leave it off when quipclipper is only reached over a tailnet or VPN**: it tells every
-device on the LAN that quipclipper runs there. See [DEPLOY.md](DEPLOY.md#advertising-on-the-local-network).
+**Leave it off when QuipClipper is only reached over a tailnet or VPN**: it tells every
+device on the LAN that QuipClipper runs there. See [DEPLOY.md](DEPLOY.md#advertising-on-the-local-network).
 
 From the CLI (it needs a server, `--server`/`QC_URL`):
 
@@ -1123,9 +1123,9 @@ this machine (see [`CLI.md`](CLI.md)).
 
 ### Now playing (Jellyfin)
 
-Watching something on a Jellyfin client and hear a line worth keeping? quipclipper can
+Watching something on a Jellyfin client and hear a line worth keeping? QuipClipper can
 ask Jellyfin what is playing and open that file at the playhead, so there is nothing to
-search for. quipclipper still reads the media from its own media roots and cuts it
+search for. QuipClipper still reads the media from its own media roots and cuts it
 itself; Jellyfin only says what is playing and, below, what each file is called.
 
 **In the web app**, a **Now playing** card at the top of the library lists each Jellyfin
@@ -1149,7 +1149,7 @@ quipclipper clip.nowplaying --session bedroom --back 5 --lines 2
 `--before`/`--after`, `--template`…). With several sessions playing it stops and lists
 them; pick one with `--session` (its id, or part of the device, user or client name).
 
-**Accuracy.** A playing client reports its position about every 10 seconds; quipclipper
+**Accuracy.** A playing client reports its position about every 10 seconds; QuipClipper
 adds the time since the last report (at most 30 s), so the playhead is close, and a
 paused client is exact. The line *at or before* the playhead is the one that has
 started, which is the one you just heard.
@@ -1163,7 +1163,7 @@ started, which is the one you just heard.
    (NixOS; the file can stay root-only, systemd hands the service a copy).
 3. **Path mapping**, when Jellyfin sees the media under other paths (it runs in a
    container, or on another machine): `QC_JELLYFIN_PATH_MAP=/movies=/media/movies:/shows=/media/shows`
-   (Jellyfin's path `=` quipclipper's, pairs separated by `:`; for a path holding `:`, `;`
+   (Jellyfin's path `=` QuipClipper's, pairs separated by `:`; for a path holding `:`, `;`
    or `=`, JSON: `{"/movies": "/media/movies"}`), or
    `jellyfin.pathMap = { "/movies" = "/srv/movies"; }` (NixOS). A file that maps
    nowhere, or outside the media roots, shows on the card as not in the library.
@@ -1213,12 +1213,12 @@ second) as `--at` to play a line found with `search`.
 
 ### Titles, posters and the clips library (Jellyfin)
 
-With Jellyfin set up, quipclipper also learns what Jellyfin knows about each file:
+With Jellyfin set up, QuipClipper also learns what Jellyfin knows about each file:
 
 - **Posters.** Library rows for the shows, seasons, movies and episodes Jellyfin knows
   show its poster (an episode shows its still), and so do the workspace header (with the
   episode's real title under it) and the Now playing card. A folder or file Jellyfin
-  doesn't know keeps its icon. The images come through quipclipper's server, so the API
+  doesn't know keeps its icon. The images come through QuipClipper's server, so the API
   key never reaches the browser.
 - **Clip names.** In the Name template, `{title}` is the episode's or movie's real title,
   and `{show}`, `{season}`, `{episode}` and `{year}` come from Jellyfin too:
@@ -1227,11 +1227,11 @@ With Jellyfin set up, quipclipper also learns what Jellyfin knows about each fil
   doesn't know gets the names parsed from its path. The default name (`…_{folder}`) is
   the same as before.
 - **New clips on the TV.** When a clip or a LeadStinger set lands in the clips folder,
-  quipclipper asks Jellyfin to scan the library that holds it, ten seconds after the last
+  QuipClipper asks Jellyfin to scan the library that holds it, ten seconds after the last
   one, so the clip is there on the TV without waiting for Jellyfin's own scan.
 
 What Jellyfin knows comes from an index of its whole library, kept in the state dir and
-rebuilt every hour (a 25,000-item library takes about 15 seconds; quipclipper keeps
+rebuilt every hour (a 25,000-item library takes about 15 seconds; QuipClipper keeps
 working from the old index meanwhile). After adding media, Jellyfin's own scan picks it
 up, and the next rebuild brings it here; `quipclipper jellyfin.reindex` does it now.
 `quipclipper jellyfin.lookup PATH` shows what Jellyfin knows about a file or folder and
@@ -1240,7 +1240,7 @@ the values its clip names get.
 **For the clips library**, add the clips folder to Jellyfin as a library (a *Home videos*
 library suits clips: no metadata lookups), mount it into Jellyfin's container if it runs
 in one, and add it to the path map like the media folders
-(`QC_JELLYFIN_PATH_MAP=…:/clips=/srv/clips`, or `jellyfin.pathMap."/clips"`). quipclipper
+(`QC_JELLYFIN_PATH_MAP=…:/clips=/srv/clips`, or `jellyfin.pathMap."/clips"`). QuipClipper
 finds the library by its folder. Without one, clips still work; they just wait for
 Jellyfin's own scan.
 
@@ -1292,7 +1292,7 @@ media; the integration behaviour was verified against real `ffmpeg` and
 | Symptom | Cause / fix |
 |---|---|
 | `ffmpeg not found on PATH` | Install ffmpeg (and ffprobe). |
-| `mkvmerge not found` (note) | Install MKVToolNix for the most accurate cuts; quipclipper falls back to ffmpeg. |
+| `mkvmerge not found` (note) | Install MKVToolNix for the most accurate cuts; QuipClipper falls back to ffmpeg. |
 | `Could not determine the channel layout` | The audio stream's layout is unknown to ffprobe; channel splitting needs a recognised layout. |
 | `None of the requested --audio-track indices exist` | Check indices with `quipclipper tracks`. |
 | Clip starts slightly early | Expected for lossless cuts (keyframe lead-in); use `--no-lossless` for frame-exact boundaries. |
@@ -1302,7 +1302,7 @@ media; the integration behaviour was verified against real `ffmpeg` and
 | No banner appears when LeadStinger asks to connect | The banner checks every 20 s (every 3 s while a request waits, or right after Connect LeadStinger), only while the page is visible; reload the page. `QC_PAIRING=0` turns pairing off. |
 | No Now playing card | Jellyfin isn't configured: set `QC_JELLYFIN_URL` and the API key (`/api/health` says `jellyfin: true` when it is). |
 | `Jellyfin answered 401 (check the API key)` / `Jellyfin is unreachable` (502) | The key is wrong or revoked, or `QC_JELLYFIN_URL` isn't reachable from the server. |
-| Now playing says "Not in quipclipper's library" | Jellyfin's path for that file has no `QC_JELLYFIN_PATH_MAP` entry, or it maps outside the media roots. |
+| Now playing says "Not in QuipClipper's library" | Jellyfin's path for that file has no `QC_JELLYFIN_PATH_MAP` entry, or it maps outside the media roots. |
 | Nothing happens on Send to LeadStinger | The system doesn't know the `leadstinger://` scheme: open LeadStinger once (macOS) or run `leadstinger --register-links` (Linux AppImage/tarball). |
 
 ## License

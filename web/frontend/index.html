@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>quipclipper</title>
+    <title>QuipClipper</title>
     <meta name="color-scheme" content="dark light" />
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2032%2032%22%3E%3Crect%20width=%2232%22%20height=%2232%22%20rx=%228%22%20fill=%22%23F2B544%22/%3E%3Cpath%20d=%22M13.5%2019.5a3%203%200%201%201-6%200a3%203%200%201%201%206%200c0%203.6-2%205.8-5%206.4M24.5%2019.5a3%203%200%201%201-6%200a3%203%200%201%201%206%200c0%203.6-2%205.8-5%206.4M12.6%2017.2L23%205.5M19.4%2017.2L9%205.5%22%20fill=%22none%22%20stroke=%22%231A1303%22%20stroke-width=%222.2%22%20stroke-linecap=%22round%22%20stroke-linejoin=%22round%22/%3E%3C/svg%3E" />
     <script>
@@ -42,7 +42,7 @@
       <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4 L12 15 M7 10.5 L12 15.5 L17 10.5 M5 19.5 L19 19.5"/></symbol>
     </svg>
     <header class="app-header">
-      <h1><button type="button" id="home-link" class="home-link" data-action="library.roots" title="Back to the top of the library"><span class="logo-box"><svg class="logo-mark" viewBox="4 3.5 24 24" width="18" height="18" aria-hidden="true"><path d="M13.5 19.5a3 3 0 1 1-6 0a3 3 0 1 1 6 0c0 3.6-2 5.8-5 6.4M24.5 19.5a3 3 0 1 1-6 0a3 3 0 1 1 6 0c0 3.6-2 5.8-5 6.4M12.6 17.2L23 5.5M19.4 17.2L9 5.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>quipclipper</button></h1>
+      <h1><button type="button" id="home-link" class="home-link" data-action="library.roots" title="Back to the top of the library"><span class="logo-box"><svg class="logo-mark" viewBox="4 3.5 24 24" width="18" height="18" aria-hidden="true"><path d="M13.5 19.5a3 3 0 1 1-6 0a3 3 0 1 1 6 0c0 3.6-2 5.8-5 6.4M24.5 19.5a3 3 0 1 1-6 0a3 3 0 1 1 6 0c0 3.6-2 5.8-5 6.4M12.6 17.2L23 5.5M19.4 17.2L9 5.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>QuipClipper</button></h1>
       <!-- One search box. The chip picks where it looks: this video (/api/search), this folder
            or the whole library (/api/search/folder). -->
       <form id="global-search" class="global-search" role="search" autocomplete="off" data-action="search.item search.folder">
@@ -109,10 +109,10 @@
           <div class="set-row" id="update-setting">
             <h3 class="set-label" id="update-label" tabindex="-1">Updates</h3>
             <p id="update-build" class="set-help" data-action="update.status">This server: …</p>
-            <button type="button" id="update-check" class="btn" data-action="update.check" title="Ask GitHub for the latest quipclipper release. Only the request is sent; nothing updates by itself.">Check for updates</button>
+            <button type="button" id="update-check" class="btn" data-action="update.check" title="Ask GitHub for the latest QuipClipper release. Only the request is sent; nothing updates by itself.">Check for updates</button>
             <div id="update-result" class="set-help update-result"></div>
             <label class="checkbox-label set-check" title="Once a day, ask GitHub whether a newer release is out. For this server, in every browser."><input id="update-daily" class="switch" type="checkbox" data-action="update.settings" /> Check once a day</label>
-            <p class="muted set-help">For this server, in every browser. A check asks GitHub for the latest release and sends nothing else; quipclipper never updates itself.</p>
+            <p class="muted set-help">For this server, in every browser. A check asks GitHub for the latest release and sends nothing else; QuipClipper never updates itself.</p>
           </div>
           <p class="muted set-help">The clip name template is the Name field in the clip bar. The YouTube player choice is on a YouTube video.</p>
         </div>
@@ -554,7 +554,7 @@
                     <a id="stt-export" data-action="item.transcript" class="reindex-link" title="Save the machine lines as a SubRip (.srt) file" download>Export .srt</a>
                     <button type="button" id="stt-clear" data-action="item.transcript-clear" class="reindex-link" title="Delete this file's machine transcript (a copy in the library stays)">Delete transcript</button>
                   </div>
-                  <p id="stt-readonly" class="stt-note muted" hidden>This folder is read-only here, so the transcript can't be copied next to the file. It stays searchable in quipclipper.</p>
+                  <p id="stt-readonly" class="stt-note muted" hidden>This folder is read-only here, so the transcript can't be copied next to the file. It stays searchable in QuipClipper.</p>
                 </div>
               </div>
               <!-- The dialogue cues. -->

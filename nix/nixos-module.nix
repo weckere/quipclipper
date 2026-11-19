@@ -4,7 +4,7 @@
 # host nginx to serve the frontend, proxy /api, and serve /clips — optionally
 # behind basic-auth. Set `nginx.enable = false` to run only the backend and bring
 # your own front. The nginx vhost's port/bind/default_server are configurable
-# (`nginx.{port,listen,defaultServer}`) so quipclipper can share a host. Option
+# (`nginx.{port,listen,defaultServer}`) so QuipClipper can share a host. Option
 # names mirror the Docker env vars (see the option table in the README).
 #
 # Imported via `inputs.quipclipper.nixosModules.default`, which passes `self`
@@ -132,7 +132,7 @@ let
 in
 {
   options.services.quipclipper-web = {
-    enable = lib.mkEnableOption "the quipclipper web app";
+    enable = lib.mkEnableOption "the QuipClipper web app";
 
     mediaRoots = lib.mkOption {
       type = lib.types.listOf lib.types.path;
@@ -147,10 +147,10 @@ in
       example = [ "/srv/media/youtube" ];
       description = ''
         Media roots the app may also **write into** — bound read-write instead of
-        read-only, so quipclipper can drop subtitle sidecars (e.g. transcripts it
+        read-only, so QuipClipper can drop subtitle sidecars (e.g. transcripts it
         downloads, or the subtitle-backfill feature) next to your videos. Browsed
         and clipped exactly like `mediaRoots`; only the mount mode differs. Use
-        this for a folder you want quipclipper to enrich (a Pinchflat/yt-dlp
+        this for a folder you want QuipClipper to enrich (a Pinchflat/yt-dlp
         library); keep everything you want protected in `mediaRoots`. "Copy to
         library" of a machine transcript (`<name>.<lang>.whisper.srt`) also works
         only here; on a read-only root it says so.
@@ -200,7 +200,7 @@ in
       description = ''
         Whether the daily check for updates is on (`QC_UPDATE_CHECK`) until someone turns
         it on or off under Settings ▸ Updates (or `update.settings`): from then on that
-        setting wins. A check asks GitHub for the latest quipclipper release, sending only
+        setting wins. A check asks GitHub for the latest QuipClipper release, sending only
         the request (it names the version), and shows a notice by the version in the
         footer when one is newer, with how to update (bump the flake input, rebuild). It
         never updates anything. Check for updates in Settings works either way.
@@ -234,7 +234,7 @@ in
           records). Off by default.
 
           **Tailnet-only installs must leave this off**: it tells every device on the
-          LAN that quipclipper runs here, and where. Turn it on only when the site is
+          LAN that QuipClipper runs here, and where. Turn it on only when the site is
           meant to be used from this LAN anyway (nginx listening on a LAN address). The
           record leaves out the server's id (it is made at run time); LeadStinger reads
           it from `/api/config`.
@@ -301,7 +301,7 @@ in
       example = "/run/secrets/quipclipper-hook-token";
       description = ''
         File holding a hook token, and nothing else (`QC_HOOK_TOKEN_FILE`): a
-        low-privilege token Bazarr, Sonarr and Radarr use to tell quipclipper that a
+        low-privilege token Bazarr, Sonarr and Radarr use to tell QuipClipper that a
         file's subtitles changed (`POST /api/index/file`). It may only queue
         re-indexes; every other endpoint refuses it. systemd reads the file as root
         and hands the service a copy as a credential, so it can stay root-only (e.g. a
@@ -507,7 +507,7 @@ in
         default = true;
         description = ''
           Make the bundled vhost nginx's `default_server` (catch-all). Set `false`
-          so quipclipper can coexist with another web service on the same host/port
+          so QuipClipper can coexist with another web service on the same host/port
           without grabbing every unmatched request. (Forced off when a
           `virtualHost` server name is set.)
         '';
@@ -765,7 +765,7 @@ in
       services.quipclipper-web.advertise.enable is on, but every nginx.listen address
       (${lib.concatMapStringsSep ", " (l: l.addr or "0.0.0.0") nginxListen}) looks
       unreachable from the LAN (loopback, a Docker or private bridge, or the tailnet). The
-      LAN learns that quipclipper runs here and can't use it: tailnet-only installs should
+      LAN learns that QuipClipper runs here and can't use it: tailnet-only installs should
       leave advertising off.
     '' ++ lib.optional
       (cfg.nginx.enable && !(builtins.elem cfg.listenAddress [ "127.0.0.1" "::1" "localhost" ])) ''
@@ -805,7 +805,7 @@ in
     };
 
     systemd.services.quipclipper-web = {
-      description = "quipclipper web backend";
+      description = "QuipClipper web backend";
       wantedBy = [ "multi-user.target" ];
       after = [ "network.target" ];
       # Wait for the filesystems holding clipsDir and the media roots — important

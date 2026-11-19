@@ -111,7 +111,7 @@ def _main(
     ctx: typer.Context,
     server: Optional[str] = typer.Option(
         None, "--server", "-S", envvar="QC_URL",
-        help="quipclipper server URL (or set QC_URL). Token: QC_API_TOKEN or "
+        help="QuipClipper server URL (or set QC_URL). Token: QC_API_TOKEN or "
              "QC_API_TOKEN_FILE."),
     local: bool = typer.Option(False, "--local", help="Run on local files even when a "
                                                       "server is configured."),
@@ -564,12 +564,12 @@ def _fmt_health(data: dict) -> None:
 
 def _fmt_update(data: dict) -> None:
     cur = data.get("current") or {}
-    typer.echo(f"This {'install' if data.get('where') == 'local' else 'server'}: quipclipper "
+    typer.echo(f"This {'install' if data.get('where') == 'local' else 'server'}: QuipClipper "
                f"{cur.get('label', '?')} ({cur.get('install', '?')})")
     latest = data.get("latest") or {}
     state = data.get("state")
     if state == "update_available":
-        typer.secho(f"quipclipper {latest.get('version')} is available. Release notes: "
+        typer.secho(f"QuipClipper {latest.get('version')} is available. Release notes: "
                     f"{latest.get('url')}", fg="green", bold=True)
         how = data.get("how_to_update") or {}
         typer.echo(how.get("summary", ""))
@@ -1823,7 +1823,7 @@ def pick_session(sessions: list[dict], want: Optional[str]) -> dict:
         elif want:
             msg = f"No Jellyfin session matches {want!r}."
         else:
-            msg = "Nothing playing on Jellyfin is in quipclipper's library: " + "; ".join(
+            msg = "Nothing playing on Jellyfin is in QuipClipper's library: " + "; ".join(
                 f"{s.get('device')}: {s.get('note')}" for s in sessions)
         raise CliError(msg, code="not_found")
     if len(hits) > 1:

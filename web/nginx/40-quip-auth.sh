@@ -39,7 +39,7 @@ if [ -n "${QC_PASSWORD:-}" ]; then
     # `satisfy any` lets a request through when either the password or the token checks
     # out, and the token is checked by the backend (location /_quip_client).
     {
-        echo 'auth_basic "quipclipper";'
+        echo 'auth_basic "QuipClipper";'
         echo "auth_basic_user_file $htpw;"
         echo 'satisfy any;'
         echo 'auth_request /_quip_client;'

@@ -30,21 +30,29 @@ page = s.frame(None, "social preview", 0, 0, W, H, fill=BG)
 
 
 def scissors(scale):
-    """The logo mark (index.html's 24-unit path), scaled; circles as two arcs."""
+    """The logo mark (index.html's logo-mark path, viewBox "4 3.5 24 24"), scaled: two
+    quotation marks for finger loops (a circle with a tail each) and two crossed blades.
+    Written in absolute commands, moved to the origin."""
     k = scale
-    def circle(cx, cy, r):
-        return (f"M{(cx + r) * k} {cy * k} A{r * k} {r * k} 0 1 1 {(cx - r) * k} {cy * k} "
-                f"A{r * k} {r * k} 0 1 1 {(cx + r) * k} {cy * k} Z")
-    return (circle(6, 6, 2.5) + " " + circle(6, 18, 2.5) +
-            f" M{8 * k} {7.6 * k} L{20 * k} {18.5 * k} M{8 * k} {16.4 * k} L{20 * k} {5.5 * k}")
+
+    def p(x, y):
+        return f"{(x - 4) * k:g} {(y - 3.5) * k:g}"
+
+    def quote(cx):  # a 3-unit circle centred on (cx, 19.5) and its tail down to the left
+        r = 3 * k
+        return (f"M{p(cx + 3, 19.5)} A{r:g} {r:g} 0 1 1 {p(cx - 3, 19.5)} "
+                f"A{r:g} {r:g} 0 1 1 {p(cx + 3, 19.5)} "
+                f"C{p(cx + 3, 23.1)} {p(cx + 1, 25.3)} {p(cx - 2, 25.9)}")
+    return (quote(10.5) + " " + quote(21.5) +
+            f" M{p(12.6, 17.2)} L{p(23, 5.5)} M{p(19.4, 17.2)} L{p(9, 5.5)}")
 
 
 # --- left: the name and what it does ---------------------------------------------------
 X = 80
 logo = s.frame(page, "logo", X, 104, 88, 88, fill=ACCENT, radius=22)
 s.vector(logo, "mark", 14, 14, 60, 60, scissors(2.5), fill=None, stroke=ACCENT_INK,
-         strokeWeight=5.2, strokeCap="round", strokeJoin="round")
-s.text(page, "quipclipper", X, 222, size=76, style="Bold", letterSpacing="-2%")
+         strokeWeight=5.5, strokeCap="round", strokeJoin="round")
+s.text(page, "QuipClipper", X, 222, size=76, style="Bold", letterSpacing="-2%")
 s.text(page, "Find a moment by its dialogue,\nand cut it.", X, 330, size=34, w=540,
        color=DIM, lineHeight="130%")
 

@@ -55,7 +55,7 @@ quipclipper item.transcript "Darkplace S01E06.mkv" --fmt srt > lyrics.srt
 Machine lines print with `[auto]`; `--machine exclude` searches the subtitles alone and
 `--machine only` the machine lines alone (of a media file: not with `--subs`).
 
-**Where transcripts live.** Not next to the media: in quipclipper's state (the server's
+**Where transcripts live.** Not next to the media: in QuipClipper's state (the server's
 state dir, or `~/.cache/quipclipper/transcripts` when the CLI runs whisper itself), keyed
 on the media file, so new subtitles don't throw a transcript away. `item.transcript-clear`
 deletes one. A transcript belongs to the file it was made of: once the media file is
@@ -68,7 +68,7 @@ every library root, never counts as gone.
 **Copying to the library.** `item.transcript-copy` writes a file's transcript next to it
 as a subtitle file named **`<name>.<lang>.whisper.srt`** (for example
 `S01E06.en.whisper.srt`), in a writable folder only. The `whisper` token marks it as
-machine-made: quipclipper reads it as machine lines (and from then on shows them in the
+machine-made: QuipClipper reads it as machine lines (and from then on shows them in the
 player's captions), never as the file's subtitles, and Jellyfin offers it as its own
 subtitle track. Only lines the subtitles don't already have are copied. `item.transcript-uncopy` removes it
 again (only this file's copy: `Show.Part2.en.whisper.srt` belongs to `Show.Part2.mkv`, not
@@ -78,7 +78,7 @@ to `Show.mkv`).
 movie's or episode's **Search subtitles** dialog in Jellyfin offers its stored transcript as
 "Machine lines only" or "Full machine transcript", and Jellyfin saves the one picked under
 the same `<name>.en.whisper.srt` name, so it stays machine lines here too. Jellyfin writes
-that file, not quipclipper, so it works in folders quipclipper can only read, as long as Jellyfin can write there. It offers
+that file, not QuipClipper, so it works in folders QuipClipper can only read, as long as Jellyfin can write there. It offers
 only what is already transcribed, and only to a search run by hand.
 
 **Running it on your own machine.** With no server set, the CLI runs `whisper-cli` itself:
@@ -110,7 +110,7 @@ stays off there. If you want to try it anyway (untested): build a self-contained
 `whisper-cli` for the image's Debian (x86-64 or arm64, `cmake -DBUILD_SHARED_LIBS=OFF`),
 mount it and a ggml model into the `app` container, and set `QC_WHISPER_BIN` and
 `QC_WHISPER_MODEL` to their paths; it then turns on by itself. The idle-priority rule still
-holds there: quipclipper refuses to start whisper if it can't lower its priority.
+holds there: QuipClipper refuses to start whisper if it can't lower its priority.
 
 On NixOS, `services.quipclipper-web.transcribe`:
 

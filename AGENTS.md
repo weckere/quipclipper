@@ -1,4 +1,4 @@
-# AGENTS.md: instructions for every coding agent working on quipclipper
+# AGENTS.md: instructions for every coding agent working on QuipClipper
 
 This file is for any agent (OpenCode, Claude Code or another) that opens this repo. If a
 `CLAUDE.md` sits next to it, read that too: it holds the owner's local working notes and
@@ -6,7 +6,7 @@ applies to you as well. Start with README.md, docs/DESIGN_NOTES.md and docs/API.
 
 ## What this is
 
-quipclipper finds a moment in a movie, show, podcast or audiobook by its dialogue and cuts it
+QuipClipper finds a moment in a movie, show, podcast or audiobook by its dialogue and cuts it
 losslessly: an engine + CLI (`src/quipclipper/`), a FastAPI web app (`web/backend/`,
 `web/frontend/`), Docker images and a NixOS module (`nix/`).
 

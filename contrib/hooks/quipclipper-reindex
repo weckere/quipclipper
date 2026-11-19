@@ -1,11 +1,11 @@
 #!/bin/sh
-# quipclipper-reindex: tell quipclipper that files' subtitles changed, so it
+# quipclipper-reindex: tell QuipClipper that files' subtitles changed, so it
 # re-indexes them (POST /api/index/file). POSIX sh + curl, nothing else.
 # Setup for Bazarr, Sonarr and Radarr: docs/HOOKS.md.
 #
 #   quipclipper-reindex [--url URL] [--token-file FILE] [--user USER] [--force] PATH...
 #
-# Each PATH is a media file or a subtitle file (quipclipper finds the media file
+# Each PATH is a media file or a subtitle file (QuipClipper finds the media file
 # next to it), as this machine or container sees it; the server's QC_PATH_MAP maps
 # it onto its own paths. With no PATH, it reads a Sonarr or Radarr Custom Script
 # event from the environment (import, upgrade, rename; Test checks the connection).

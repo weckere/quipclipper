@@ -2,14 +2,14 @@
 
 *Historical plan (pre-implementation); Jellyfin enrichment and `QC_SAVE_TO_LIBRARY` were later dropped — see [`WEBAPP_PROGRESS.md`](WEBAPP_PROGRESS.md).*
 
-A self-hosted **web application** that reproduces everything the quipclipper CLI
+A self-hosted **web application** that reproduces everything the QuipClipper CLI
 does, served by **nginx**, deployable **either as a Docker container or as a Nix
 flake with a declarative NixOS module**. It is meant to run on the same host as
 your Jellyfin server so it can mount/read the *same media directories* and work
 directly on the files — no transcoding round-trips, no re-uploading, local-speed
 access to your whole library.
 
-This is **not** a Jellyfin plugin. quipclipper stays Python; the existing engine is
+This is **not** a Jellyfin plugin. QuipClipper stays Python; the existing engine is
 wrapped in a thin HTTP API. Nothing about it depends on Jellyfin being installed
 (Jellyfin metadata is an optional enrichment).
 
@@ -88,7 +88,7 @@ deployment modes — only *how they're assembled and run* differs (see §4).
 ## 4. Deployment: Docker and Nix flake
 
 The application is built from the same three pieces regardless of deployment:
-the **backend** (Python/uvicorn, importing the quipclipper engine), the **frontend**
+the **backend** (Python/uvicorn, importing the QuipClipper engine), the **frontend**
 (static SPA files), and an **nginx site config**. Both deployment paths are
 first-class and tested.
 

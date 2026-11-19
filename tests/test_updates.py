@@ -462,7 +462,7 @@ def test_cli_update_check_here(local_cache, monkeypatch):
     monkeypatch.setattr(upd, "fetch_tag_commit", lambda version, tag, **kw: None)
     r = runner.invoke(cli.app, ["update.check"])
     assert r.exit_code == 0, r.output
-    assert "quipclipper 99.0.0 is available" in r.output
+    assert "QuipClipper 99.0.0 is available" in r.output
     assert "pip install --upgrade" in r.output
     assert "Daily check" not in r.output  # a server's only
     assert local_cache.exists()

@@ -192,7 +192,7 @@ def run(settings: Settings, *, port: int | None = None, stop: threading.Event | 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="quipclipper-web advertise",
-        description="Announce this quipclipper server on the local network (mDNS, "
+        description="Announce this QuipClipper server on the local network (mDNS, "
                     "_quipclipper._tcp) until stopped. Needs QC_ADVERTISE=1. Tailnet-only "
                     "installs should not advertise.")
     parser.add_argument("--port", type=int, default=None,

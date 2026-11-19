@@ -84,7 +84,7 @@ fi
 # --- commit, tag, push ------------------------------------------------------
 git commit --quiet -m "release: $tag" -- pyproject.toml web/backend/pyproject.toml CHANGELOG.md
 trap - EXIT
-git tag -a "$tag" -m "quipclipper $version"
+git tag -a "$tag" -m "QuipClipper $version"
 # The push is atomic: on failure nothing reached origin, but dev and the tag moved
 # here. Don't push dev alone (that publishes the release commit without main or
 # the tag): retry the same push, or undo the local release.

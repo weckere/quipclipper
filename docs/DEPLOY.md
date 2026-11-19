@@ -1,4 +1,4 @@
-# Deploying the quipclipper web app
+# Deploying the QuipClipper web app
 
 Two ways to run the web app: **Docker Compose** with the prebuilt images, or the
 **NixOS module** from the flake. Both run the same backend (FastAPI) behind nginx.
@@ -122,11 +122,11 @@ All settings are environment variables on the `app` service:
 | `QC_ADVERTISE` / `QC_ADVERTISE_PORT` | *(off)* | For the `quipclipper-web advertise` process only: `1` to announce the server on the LAN, and the port browsers use. See [Advertising on the local network](#advertising-on-the-local-network). |
 | `QC_JELLYFIN_URL` | *(none)* | Jellyfin's base URL, for **Now playing** (what each Jellyfin client is playing, opened at its playhead). Needs the key below. See [docs/MANUAL.md](MANUAL.md#now-playing-jellyfin). |
 | `QC_JELLYFIN_API_KEY` / `QC_JELLYFIN_API_KEY_FILE` | *(none)* | A Jellyfin API key, or a file holding one. |
-| `QC_HOOK_TOKEN` / `QC_HOOK_TOKEN_FILE` | *(none)* | A low-privilege token for the **re-index hooks** (Bazarr, Sonarr, Radarr tell quipclipper a file's subtitles changed): it may only queue re-indexes. Behind a password, set it on the **web** service too, which adds a `hook` login. See [HOOKS.md](HOOKS.md). |
+| `QC_HOOK_TOKEN` / `QC_HOOK_TOKEN_FILE` | *(none)* | A low-privilege token for the **re-index hooks** (Bazarr, Sonarr, Radarr tell QuipClipper a file's subtitles changed): it may only queue re-indexes. Behind a password, set it on the **web** service too, which adds a `hook` login. See [HOOKS.md](HOOKS.md). |
 | `QC_UPDATE_CHECK` | `1` | The daily [check for updates](#checking-for-updates) (GitHub's latest release, nothing else sent; it never updates). `0` = off until someone turns it on under Settings ▸ Updates: once set there, that setting wins. **Check for updates** works either way. |
 | `QC_INDEX_CHECK_INTERVAL` | `3600` | Seconds between the background checks for files whose subtitles changed since they were indexed (folder listings and file dates only, at the idle I/O priority, skipped while a library run or re-index runs; it never re-indexes, the library page offers a button). `0` = off. See [MANUAL.md](MANUAL.md#changed-subtitles). |
-| `QC_PATH_MAP` | *(none)* | The hooks' paths → quipclipper's, e.g. `/tv=/media/shows:/movies=/media/movies`, when Bazarr, Sonarr or Radarr see the media elsewhere (their own containers). Or JSON, `{"/tv": "/media/shows"}`, for paths holding `:`, `;` or `=` (or a backslash before the character). |
-| `QC_JELLYFIN_PATH_MAP` | *(derived)* | Jellyfin's paths → quipclipper's, e.g. `/movies=/media/movies:/shows=/media/shows`, when Jellyfin sees the media elsewhere (its own container). Same syntax as `QC_PATH_MAP` (JSON too). Unset, quipclipper derives it from Jellyfin's libraries by finding a few of each library's files under the media roots ([how](API.md#titles-and-artwork-jellyfin)); set it when that misses a library. |
+| `QC_PATH_MAP` | *(none)* | The hooks' paths → QuipClipper's, e.g. `/tv=/media/shows:/movies=/media/movies`, when Bazarr, Sonarr or Radarr see the media elsewhere (their own containers). Or JSON, `{"/tv": "/media/shows"}`, for paths holding `:`, `;` or `=` (or a backslash before the character). |
+| `QC_JELLYFIN_PATH_MAP` | *(derived)* | Jellyfin's paths → QuipClipper's, e.g. `/movies=/media/movies:/shows=/media/shows`, when Jellyfin sees the media elsewhere (its own container). Same syntax as `QC_PATH_MAP` (JSON too). Unset, QuipClipper derives it from Jellyfin's libraries by finding a few of each library's files under the media roots ([how](API.md#titles-and-artwork-jellyfin)); set it when that misses a library. |
 | `QC_YOUTUBE_DIR` | *(none)* | Where downloaded YouTube videos land (each as `<Title> [<id>].mp4` with a `.vtt` sidecar, a normal library item). Unset = private in the state dir. See [YouTube sources](MANUAL.md#youtube-sources-experimental). |
 | `QC_TRANSCRIBE` | *(automatic)* | [Machine transcription](TRANSCRIPTION.md) is on where `whisper-cli` and a model file are installed (the two rows below), off elsewhere. `0` turns it off even there; `1` forces it on (without whisper it then reports itself not set up). |
 | `QC_WHISPER_MODEL` / `QC_WHISPER_MODELS` | *(none)* | [Machine transcription](TRANSCRIPTION.md) with whisper.cpp: a ggml file (`/models/ggml-small.en.bin`), or `small.en=/models/ggml-small.en.bin,medium.en=/models/ggml-medium.en.bin` for a choice with `QC_WHISPER_MODEL` naming the default. A bare name needs `QC_WHISPER_MODELS` to say where its file is. No model file = off. It runs only when asked, at idle priority, one run at a time. |
@@ -204,21 +204,21 @@ Optional settings (all off/defaulted unless set):
 | `virtualHost` | nginx server name for a public hostname; pair with `enableACME`/`forceSSL` on that vhost for TLS. Default (null) is a catch-all vhost for LAN-by-IP over `:80`. |
 | `nginx.enable` | `false` runs **only** the hardened backend on `listenAddress:listenPort` and skips the bundled vhost — bring your own front (nginx/Caddy/Tailscale) proxying to it (the backend then serves clips itself). |
 | `nginx.port` / `nginx.listen` | Move the bundled vhost off `:80`. `nginx.port` sets the port; `nginx.listen` (e.g. `[ { addr = "172.17.0.1"; port = 8080; } ]`) sets explicit listen entries to bind a specific address/port. `openFirewall` tracks whichever it binds. |
-| `nginx.defaultServer` | `false` so the vhost isn't nginx's catch-all `default_server` — lets quipclipper coexist with another web service on the host without grabbing every unmatched request. |
+| `nginx.defaultServer` | `false` so the vhost isn't nginx's catch-all `default_server` — lets QuipClipper coexist with another web service on the host without grabbing every unmatched request. |
 | `clipsDir` | Where finished clips live (default `/var/lib/quipclipper-web/clips`, private to the service). |
 | `clipsGroup` / `clipsMode` | Share `clipsDir` with other users/services (SMB export, Jellyfin library). See below. |
 | `manageClipsDir` | `false` = `clipsDir` is owned/created elsewhere (e.g. an existing SMB mount); the module won't chown/chmod it. See below. |
-| `writableMediaRoots` | Media roots the app may **write into** (bound read-write, not read-only) — so it can drop subtitle sidecars next to your videos (downloaded transcripts, subtitle backfill, and **Copy to library** of a machine transcript, which says so on a read-only root). Browsed and clipped exactly like `mediaRoots`. Use it for a library you want quipclipper to enrich (e.g. a Pinchflat/yt-dlp folder). |
+| `writableMediaRoots` | Media roots the app may **write into** (bound read-write, not read-only) — so it can drop subtitle sidecars next to your videos (downloaded transcripts, subtitle backfill, and **Copy to library** of a machine transcript, which says so on a read-only root). Browsed and clipped exactly like `mediaRoots`. Use it for a library you want QuipClipper to enrich (e.g. a Pinchflat/yt-dlp folder). |
 | `youtubeDir` | Where downloaded YouTube videos land (default `null` = private in the state dir). Point it at a folder — ideally under a `writableMediaRoots` entry — and each download becomes `<Title> [<id>].mp4` with a `.vtt` sidecar: a browsable, dialogue-searchable library item, visible to Jellyfin/Samba too, with Pinchflat's metadata files beside it (`-thumb.jpg`, `.info.json`, `.description`, and an `.nfo` for Jellyfin). |
 | `subtitleLangs`, `listenAddress`, `listenPort`, `maxConcurrentJobs` | Mirror the Docker env vars `QC_SUBTITLE_LANGS` / `QC_BIND` / `QC_PORT` / `QC_MAX_CONCURRENT_JOBS`. `youtubeDir` mirrors `QC_YOUTUBE_DIR`. |
 
-The module builds the app from quipclipper's own pinned nixpkgs, so you don't
+The module builds the app from QuipClipper's own pinned nixpkgs, so you don't
 need an `inputs.nixpkgs.follows`.
 
 ### Sharing the clips directory
 
 By default `clipsDir` is private (`0750`, owned by the service) and served only
-through quipclipper's own web UI. To make finished clips land in a folder other
+through QuipClipper's own web UI. To make finished clips land in a folder other
 users and services can read — an SMB export, a directory Jellyfin indexes — there
 are two supported flows:
 
@@ -321,7 +321,7 @@ for one app, say) must blank `Tailscale-User-Login`/`-Name` itself: the global
 ## The Jellyfin plugin
 
 [jellyfin-plugin-quipclipper](https://github.com/weckere/jellyfin-plugin-quipclipper) (Jellyfin
-12.x) names quipclipper's clips by their line in Jellyfin, and tells quipclipper when Jellyfin
+12.x) names QuipClipper's clips by their line in Jellyfin, and tells QuipClipper when Jellyfin
 brings in a subtitle (its own downloads, its subtitle dialog, a file dropped into a watched
 folder), so that file is re-indexed within seconds (see [HOOKS.md](HOOKS.md#4-jellyfin-the-plugin)).
 Install it from its repository in Jellyfin's dashboard (**Plugins › Repositories**,
@@ -332,28 +332,28 @@ setup, what each feature writes where, and troubleshooting.
 
 - **Clip metadata needs no pairing.** Add a Home Videos library on this server's clips folder
   (`QC_CLIPS_DIR`, as Jellyfin sees it): each clip shows by its line, read from the
-  `.<clip>.qc.json` sidecar quipclipper writes beside it.
+  `.<clip>.qc.json` sidecar QuipClipper writes beside it.
 - **Finding the URL.** When this server [advertises itself](#advertising-on-the-local-network),
   the plugin's **Find on this network** lists it and fills in the URL. Jellyfin needs to see
   the LAN's multicast for that: a Jellyfin in Docker finds it only with `network_mode: host`.
   Otherwise type the URL; that always works.
 
-- **It pairs.** Allow the code it shows in quipclipper's banner. It asks only for
+- **It pairs.** Allow the code it shows in QuipClipper's banner. It asks only for
   [scopes](API.md#scopes) `index.file` and `transcripts.read`, so its token, which Jellyfin keeps
   in its plugin configuration, can queue re-indexes and read transcripts and nothing else.
   **Disconnect** on the plugin page, or Revoke under Settings ▸ Connected apps, ends it.
-- **Jellyfin must reach quipclipper.** Behind the password gate that works as it is: pairing and
-  client tokens pass the gate (above). If Jellyfin runs where quipclipper is deliberately out of
+- **Jellyfin must reach QuipClipper.** Behind the password gate that works as it is: pairing and
+  client tokens pass the gate (above). If Jellyfin runs where QuipClipper is deliberately out of
   reach (another container network, a tailnet that closes containers off), open just the plugin's
   routes to just Jellyfin's address: `/api/pair` and `/api/pair/<id>`, `POST /api/index/file`,
   `GET /api/items/transcript` and `DELETE /api/clients/self` (Disconnect). The plugin's README
   has an nginx example.
-- **Machine transcripts in Jellyfin's subtitle search.** For a movie or episode quipclipper
+- **Machine transcripts in Jellyfin's subtitle search.** For a movie or episode QuipClipper
   has transcribed, Jellyfin's **Search subtitles** dialog lists "quipclipper (machine
   transcript)" results: **Machine lines only** (the lines no subtitle has) and **Full machine
   transcript**. Picking one makes Jellyfin save it beside the media as
   `<name>.en.whisper.srt`, the name Copy to library uses, so it is a separate "whisper" track
-  in Jellyfin and quipclipper reads it as machine lines, never as subtitles. Only a search
+  in Jellyfin and QuipClipper reads it as machine lines, never as subtitles. Only a search
   someone runs by hand gets results: Jellyfin's own automatic downloads never do, an item
   with no stored transcript gets none (nothing starts a transcription), and neither does one
   that already has a `.whisper.srt`.
@@ -375,7 +375,7 @@ the Jellyfin plugin's **Find on this network** offers it, and Send to LeadStinge
 the advertised URL.
 
 **Tailnet-only installs: leave advertising off.** It tells every device on the LAN that
-quipclipper runs here, and where; for an install reached only over a tailnet or VPN that is
+QuipClipper runs here, and where; for an install reached only over a tailnet or VPN that is
 information the LAN shouldn't get, and nothing on the LAN can use it anyway. Turn it on
 only when the site is meant to be used from the LAN (and for an install already open on the
 LAN it reveals nothing a port scan wouldn't).
@@ -403,7 +403,7 @@ LAN it reveals nothing a port scan wouldn't).
 The web app is two containers:
 
 - **app** — Python (FastAPI + Uvicorn) serving the API (the image holds no frontend).
-  Runs the quipclipper engine for search and clipping via a thread-pool job queue.
+  Runs the QuipClipper engine for search and clipping via a thread-pool job queue.
 - **web** — Nginx serving the UI (its image holds the frontend and hls.js), large file downloads
   (clips), and forwarding API requests to the app.
 
@@ -418,8 +418,8 @@ check asks GitHub for the latest release of weckere/quipclipper
 (`https://api.github.com/repos/weckere/quipclipper/releases/latest`, with
 `User-Agent: quipclipper/<version>` and nothing else about the install; `https_proxy` is
 honoured; each request gives up after 10 s). When that release is newer than the running one, the
-footer says "quipclipper X.Y.Z is available" by the version, with the release notes and
-**how to update** this install. quipclipper never updates itself.
+footer says "QuipClipper X.Y.Z is available" by the version, with the release notes and
+**how to update** this install. QuipClipper never updates itself.
 
 - **Daily check:** on unless `QC_UPDATE_CHECK=0` (NixOS `updateCheck = false;`). The
   **Check once a day** switch under Settings ▸ Updates (or `update.settings --daily` /
@@ -452,7 +452,7 @@ footer says "quipclipper X.Y.Z is available" by the version, with the release no
 
 ## Versions and upgrades
 
-quipclipper follows [Semantic Versioning](https://semver.org/) (still 0.x: a minor
+QuipClipper follows [Semantic Versioning](https://semver.org/) (still 0.x: a minor
 version for features, a patch for fixes). [CHANGELOG.md](../CHANGELOG.md) lists what
 changed in each release, and every release is on the
 [releases page](https://github.com/weckere/quipclipper/releases) with its images.

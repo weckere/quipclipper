@@ -132,7 +132,7 @@ def test_set_job_cuts_flac_with_each_items_padding_and_writes_the_lsset(tmp_path
     t1, t2 = m["sets"][0]["tiles"]
     assert (t1["trim_start"], t1["trim_end"]) == (2.0, 3.6)
     assert t1["title"] == "Resistance is futile."
-    assert t1["notes"] == "TNG S03E26 · 00:33:22.400 · quipclipper"
+    assert t1["notes"] == "TNG S03E26 · 00:33:22.400 · QuipClipper"
     assert (t2["trim_start"], t2["trim_end"]) == (1.0, 2.5)                 # clamped lead
     # The staging folder is gone.
     assert not any((tmp_path / "state" / "lsset-staging").iterdir())
@@ -162,15 +162,15 @@ def test_a_batch_from_several_sources_is_named_quipclipper_and_the_date(tmp_path
             {"path": str(a), "start": 1, "end": 2}, {"path": str(b), "start": 1, "end": 2},
         ]}).json()["job_id"])
     assert job["status"] == "done", job
-    assert job["files"][0]["name"].startswith("quipclipper 20")
+    assert job["files"][0]["name"].startswith("QuipClipper 20")
 
 
 def test_auto_set_name():
     from datetime import date
 
     assert lsset.auto_set_name(["Star Trek", "Star Trek"]) == "Star Trek"
-    assert lsset.auto_set_name(["A", "B"], today=date(2026, 10, 20)) == "quipclipper 2026-10-20"
-    assert lsset.auto_set_name([], today=date(2026, 10, 20)) == "quipclipper 2026-10-20"
+    assert lsset.auto_set_name(["A", "B"], today=date(2026, 10, 20)) == "QuipClipper 2026-10-20"
+    assert lsset.auto_set_name([], today=date(2026, 10, 20)) == "QuipClipper 2026-10-20"
 
 
 def test_a_second_set_with_the_same_name_is_numbered(tmp_path):

@@ -706,7 +706,7 @@ COMMANDS: tuple[Command, ...] = (
             "opens the set's leadstinger://quip link, so LeadStinger imports it as tiles.",
             "POST", "/api/leadstinger/set",
             params=(Param("name", "str", "The set's name in LeadStinger. Default: the movie "
-                          "or show, else quipclipper and the date.", where=BODY, main=True),
+                          "or show, else QuipClipper and the date.", where=BODY, main=True),
                     Param("before", "float", "Seconds of padding before each line (a "
                           "bookmark's own padding wins); kept as handle audio around the "
                           "tile's trim.", where=CLIENT, default=0.0),
@@ -722,7 +722,7 @@ COMMANDS: tuple[Command, ...] = (
     Command("leadstinger.send", "Put the clips on stdin straight into LeadStinger on this "
             "machine: a new set, or appended to an existing one with --set.", None, None,
             params=(Param("name", "str", "The new set's name (ignored with --set). "
-                          "Default: the movie or show, else quipclipper and the date.",
+                          "Default: the movie or show, else QuipClipper and the date.",
                           where=CLIENT, main=True),
                     Param("set", "str", "Append to this existing LeadStinger set instead of "
                           "importing a new one.", where=CLIENT),

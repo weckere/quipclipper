@@ -59,11 +59,11 @@ def trim_for(start: float | None, end: float | None, before: float) -> Trim:
 
 def auto_set_name(source_titles: list[str], today: date | None = None) -> str:
     """A set name without asking: the movie or show when every clip comes from it,
-    else ``quipclipper <date>``."""
+    else ``QuipClipper <date>``."""
     titles = {t.strip() for t in source_titles if t and t.strip()}
     if len(titles) == 1:
         return titles.pop()
-    return f"quipclipper {(today or date.today()).isoformat()}"
+    return f"QuipClipper {(today or date.today()).isoformat()}"
 
 
 def tile_entry(file: str, *, title: str, trim: Trim, notes: str = "",

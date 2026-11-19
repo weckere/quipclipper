@@ -1,4 +1,4 @@
-# quipclipper command reference
+# QuipClipper command reference
 
 Everything the web app can do, the `quipclipper` command can do. Each action in the
 web UI is a command here, and the test suite fails if the web app gains an action
@@ -12,7 +12,7 @@ The tables below are generated from the command registry,
 
 ## Two ways to run
 
-**Against a server.** Most commands drive a quipclipper web server over its HTTP
+**Against a server.** Most commands drive a QuipClipper web server over its HTTP
 API, so you can search and clip a library that lives on another machine:
 
 ```sh

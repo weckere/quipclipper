@@ -60,7 +60,7 @@ services:
       # QC_JELLYFIN_URL: http://jellyfin:8096
       # QC_JELLYFIN_API_KEY: <key>
       # QC_JELLYFIN_PATH_MAP: /movies=/media/movies:/shows=/media/shows
-      # Re-index hooks: Bazarr (and Sonarr/Radarr) tell quipclipper when a file's
+      # Re-index hooks: Bazarr (and Sonarr/Radarr) tell QuipClipper when a file's
       # subtitles change. A token that may only do that, and their container paths
       # mapped onto the ones above. Set the token on the web service too if it has
       # QC_PASSWORD (it adds a "hook" login). See docs/HOOKS.md.
@@ -74,7 +74,7 @@ services:
       # path referenced by QC_MEDIA_ROOTS above.
       - /path/to/movies:/media/movies:ro
       - /path/to/shows:/media/shows:ro
-      # A library quipclipper may write into (YouTube downloads / subtitle
+      # A library QuipClipper may write into (YouTube downloads / subtitle
       # backfill) — read-WRITE, and add its in-container path to QC_MEDIA_ROOTS.
       # - /path/to/youtube:/media/youtube
       # Where finished clips are written (read-write).
@@ -124,12 +124,12 @@ services:
     #   # so the pairing banner shows the caller, not the proxy (docs/DEPLOY.md).
     #   QC_TRUSTED_PROXIES: "172.18.0.5"
 
-  # --- Optional: announce quipclipper on your local network -----------------
+  # --- Optional: announce QuipClipper on your local network -----------------
   # LeadStinger's "Find on network" then lists it ("QuipClipper on <host>")
   # without anyone typing an address, and Send to LeadStinger links name this
   # URL. mDNS doesn't cross Docker's bridge network, so this one small process
   # runs on the host's network. Leave it off for a server reached only over a
-  # tailnet or VPN: it tells every device on the LAN that quipclipper runs here.
+  # tailnet or VPN: it tells every device on the LAN that QuipClipper runs here.
   # advertise:
   #   image: ghcr.io/weckere/quipclipper-app:latest
   #   restart: unless-stopped

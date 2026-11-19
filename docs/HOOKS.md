@@ -3,7 +3,7 @@
 Dialogue search reads only indexed files, and an index entry belongs to one version
 of a file's subtitles. When Bazarr downloads or upgrades a subtitle, or Sonarr or
 Radarr imports, upgrades or renames a file, that file drops out of search until it is
-indexed again. A hook tells quipclipper the moment that happens, and quipclipper
+indexed again. A hook tells QuipClipper the moment that happens, and QuipClipper
 re-indexes just that file:
 
 - in the background, one file at a time, at idle priority (like **Index the whole
@@ -28,7 +28,7 @@ Jellyfin plugin: see [section 4](#4-jellyfin-the-plugin).
 
 ## 1. The server
 
-Make a token and give it to quipclipper's backend:
+Make a token and give it to QuipClipper's backend:
 
 ```bash
 openssl rand -hex 32
@@ -37,7 +37,7 @@ openssl rand -hex 32
 | Setting | Example | What it does |
 |---|---|---|
 | `QC_HOOK_TOKEN` (or `QC_HOOK_TOKEN_FILE`) | `9f2c…` | Token(s) that may only queue re-indexes. Comma-separate several to rotate (the backend accepts all of them; behind a password gate the `hook` login knows only the first, so callers move to the new token when it goes first). |
-| `QC_PATH_MAP` | `/tv=/media/shows:/movies=/media/movies` | The other apps' paths → quipclipper's. `<theirs>=<ours>` pairs, separated by `:` or `;`; the longest matching prefix wins; a path nothing matches is used as it is. A path holding `:`, `;` or `=`: put a backslash before it (`/tv\:x=/media/shows`), or give the map as JSON, `{"/tv": "/media/shows", "/movies": "/media/movies"}` (the NixOS module's `pathMap` does). |
+| `QC_PATH_MAP` | `/tv=/media/shows:/movies=/media/movies` | The other apps' paths → QuipClipper's. `<theirs>=<ours>` pairs, separated by `:` or `;`; the longest matching prefix wins; a path nothing matches is used as it is. A path holding `:`, `;` or `=`: put a backslash before it (`/tv\:x=/media/shows`), or give the map as JSON, `{"/tv": "/media/shows", "/movies": "/media/movies"}` (the NixOS module's `pathMap` does). |
 
 **Docker Compose** (`docker-compose.example.yml`): set both on the `app` service. If
 the site has a password (`QC_PASSWORD`), also set `QC_HOOK_TOKEN` on the `web`
@@ -138,8 +138,8 @@ straight away, and a rename keeps it searchable.
 | Username | `hook` |
 | Password | the token |
 
-**Test** sends a test event; quipclipper answers 200 when the URL and token are
-right. quipclipper reads the file paths out of Sonarr's and Radarr's own webhook
+**Test** sends a test event; QuipClipper answers 200 when the URL and token are
+right. QuipClipper reads the file paths out of Sonarr's and Radarr's own webhook
 body (`episodeFile`, `episodeFiles`, `movieFile`, `renamedEpisodeFiles`,
 `renamedMovieFiles`), mapped through `QC_PATH_MAP`.
 
@@ -167,12 +167,12 @@ quipclipper-reindex [--url URL] [--token-file FILE] [--user USER] [--force] PATH
 
 | Flag | Environment | Meaning |
 |---|---|---|
-| `--url` | `QUIPCLIPPER_URL` | The quipclipper server. |
+| `--url` | `QUIPCLIPPER_URL` | The QuipClipper server. |
 | `--token-file` | `QUIPCLIPPER_TOKEN_FILE` (or `QUIPCLIPPER_TOKEN`) | A file holding the hook token (or the API token). |
 | `--user` | `QUIPCLIPPER_USER` | The login sent with the token through a password gate: `hook` (default), or `api` with the full API token. |
 | `--force` | | Re-read the files even when their index is current. |
 
-Each `PATH` is a media file or a subtitle file (quipclipper finds the media file
+Each `PATH` is a media file or a subtitle file (QuipClipper finds the media file
 whose name starts the subtitle's, in the same folder). It exits 0 when the server
 queued the files, 1 when it refused (the reason on stderr), 2 for a setup error. The
 token goes to `curl` through a pipe: it is never on a command line, in the process
@@ -188,18 +188,18 @@ them: it watches Jellyfin's items, and when an item's external subtitle files ch
 added, removed or rewritten) it sends that file to `POST /api/index/file`.
 
 - **Setup** is pairing, not a token: install the plugin (see
-  [DEPLOY.md](DEPLOY.md#the-jellyfin-plugin)), enter quipclipper's URL on its settings page,
-  press **Connect** and Allow the code in quipclipper's banner. Its token is
+  [DEPLOY.md](DEPLOY.md#the-jellyfin-plugin)), enter QuipClipper's URL on its settings page,
+  press **Connect** and Allow the code in QuipClipper's banner. Its token is
   [scoped](API.md#scopes) to `index.file` and `transcripts.read`: like the hook token, it can
   queue re-indexes and nothing that changes anything else.
 - **Libraries:** the plugin page lists Jellyfin's libraries; it watches the ones you tick
   (none ticked: all).
 - **No path map to write.** It sends Jellyfin's paths with `"source": "jellyfin"`, which
-  quipclipper maps with `QC_JELLYFIN_PATH_MAP`, or derives the map from Jellyfin's libraries
+  QuipClipper maps with `QC_JELLYFIN_PATH_MAP`, or derives the map from Jellyfin's libraries
   when that's unset.
 - **What it sends:** only a real change. On its first run it notes what every item has
   and sends nothing; after that it waits ~10 s after the last change (a library scan is a
-  storm of item updates) and sends at most 1,000 paths per request. While quipclipper is
+  storm of item updates) and sends at most 1,000 paths per request. While QuipClipper is
   down it keeps what's waiting (up to 10,000 files) and retries with growing pauses.
 - **Never a burden to Jellyfin:** it does its work off Jellyfin's scan, with short
   timeouts, and nothing it does can fail a scan. If a Jellyfin update takes away something
