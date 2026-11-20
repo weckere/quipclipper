@@ -9,6 +9,7 @@ For the CLI on its own, see the [README](../README.md#install).
 - [NixOS module](#nixos-module)
   - [Sharing the clips directory](#sharing-the-clips-directory)
 - [Pairing behind the password gate](#pairing-behind-the-password-gate)
+  - [Signed media links behind the password gate](#signed-media-links-behind-the-password-gate)
 - [Advertising on the local network](#advertising-on-the-local-network)
 - [Architecture](#architecture)
 - [Versions and upgrades](#versions-and-upgrades)
@@ -279,6 +280,8 @@ bundled nginx (the Docker image and the NixOS module alike) makes exactly these 
   token are answered by nginx alone, so browsers don't cost the backend anything extra.
   The gate's `api` login still knows only `QC_API_TOKEN`, and its `hook` login gets `403`
   on `/clips/` (nginx serves those files without the backend, which refuses it elsewhere).
+- A [signed media link](API.md#signed-media-links) (`GET /api/media/s/…`) passes without
+  the password: [below](#signed-media-links-behind-the-password-gate).
 
 The API locations also pass the `Host` the browser sent, port included, as `X-Quip-Host`,
 so links without `QC_PUBLIC_URL` name the address the browser used. A proxy in front of
@@ -289,6 +292,38 @@ gate, the same token check; without them, paired apps work on an open server onl
 
 `QC_PAIRING=0` (NixOS: `pairing.enable = false`) turns pairing off; the module then leaves
 the exemptions out.
+
+### Signed media links behind the password gate
+
+A [signed media link](API.md#signed-media-links) is opened by a player such as VLC, which
+sends no password and no token: the signature in its path is the proof, and the backend
+checks it. The bundled nginx (the Docker image and the NixOS module alike) serves the
+route from a location of its own that skips the password gate, takes GET (and HEAD) only,
+checks the raw URI as well as the normalised one, and doesn't log the URL (it is the
+credential). With your own front (`nginx.enable = false`, or another nginx server block),
+add the same location:
+
+```nginx
+location ^~ /api/media/s/ {
+    auth_basic off;
+    auth_request off;       # where the gate also checks client tokens
+    access_log off;         # the URL is the credential
+    limit_except GET { deny all; }
+    # The location matches the normalised path, but the raw one is what is passed on.
+    if ($request_uri !~ "^/api/media/s/[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/[^/?]+$") { return 404; }
+    proxy_pass http://127.0.0.1:8000;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    # proxy_set_header X-Quip-Proxy-Secret …;   # if QC_PROXY_SECRET is set
+    proxy_buffering off;    # a film is streamed, not spooled
+}
+```
+
+`^~` matters: it outranks the regex locations and, being longer, the `/api/media` prefix.
+A proxy that logs requests in front of nginx (Caddy, Traefik) should leave this path out of
+its access log too. The links point at `QC_PUBLIC_URL` when it is set, so set it to the
+address the players reach.
 
 ### Behind another proxy: the caller's real address
 

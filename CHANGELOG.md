@@ -13,6 +13,15 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 
 ### LineFinder (M27)
 
+- **Signed media links, so a paired app can play a file in VLC.** A new `media.link` scope
+  opens `GET /api/media/link?path=…[&subtitles=eng][&track=]` (CLI `media.link`), which
+  answers `{url, subtitles_url, expires_at}`: links that open the raw file (Range requests
+  and all) and its subtitles as SRT or WebVTT with no token or password, for 6 hours. Each
+  link is signed (HMAC-SHA256, key in `state_dir/media-link.key`) for one file and the app
+  that asked; a bad, expired or revoked link answers the same `404`. The bundled nginx
+  passes `/api/media/s/` through the password gate for GET only and doesn't log it; the
+  backend redacts the token in its own access log. The pairing banner says the app "wants
+  to make links a player such as VLC opens without a token".
 - **Two new pairing scopes for a TV remote app.** `search` opens `GET /api/search`,
   `GET /api/search/folder` and `GET /api/library/roots` (so it can search the whole
   library); `jellyfin.play` opens `GET /api/jellyfin/sessions` and `POST /api/jellyfin/play`.

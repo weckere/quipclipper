@@ -7360,6 +7360,7 @@ const SCOPE_LABELS = {
   "index.file": "queue subtitle re-indexes", "transcripts.read": "read transcripts",
   transcribe: "transcribe audio it sends", search: "search the library's dialogue",
   "jellyfin.play": "start playback on Jellyfin devices",
+  "media.link": "make links a player such as VLC opens without a token",
 };
 const pairCan = (scopes) => (scopes == null ? null
   : scopes.map((s) => SCOPE_LABELS[s] || s).join(" and ") || "nothing but check its key");

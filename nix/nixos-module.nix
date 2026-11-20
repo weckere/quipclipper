@@ -115,6 +115,8 @@ let
   '' + lib.optionalString gated ''
     auth_request off;
   '';
+  # A signed media link (the backend checks its signature) gets past the gate too.
+  signedOpen = pairOpen;
   # LAN advertising (Avahi): where browsers reach this server, and what to call it.
   advertisePort = cfg.advertise.port;
   advertiseUrl =
@@ -1003,6 +1005,20 @@ in
             proxy_request_buffering off;
             proxy_http_version 1.1;
             proxy_read_timeout 300s;
+          '';
+        };
+        # Signed media links (docs/API.md): a player such as VLC opens
+        # /api/media/s/<token>/<name> with no password and no token; the signature in the
+        # path is the proof and the backend checks it. GET (and HEAD) only; the raw URI is
+        # checked as well (the location matches the normalised one); never logged.
+        locations."^~ /api/media/s/" = {
+          proxyPass = proxyTarget;
+          recommendedProxySettings = false;
+          extraConfig = apiProxyHeaders + signedOpen + ''
+            access_log off;
+            limit_except GET { deny all; }
+            if ($request_uri !~ "^/api/media/s/[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/[^/?]+$") { return 404; }
+            proxy_buffering off;
           '';
         };
         # Raw media streaming: don't spool large files through nginx's proxy

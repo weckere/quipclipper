@@ -83,12 +83,20 @@ SCOPES: dict[str, tuple[str, frozenset[tuple[str, str]]]] = {
     "jellyfin.play": ("start playback on Jellyfin devices",
                       frozenset({("GET", "/api/jellyfin/sessions"),
                                  ("POST", "/api/jellyfin/play")})),
+    # ...or in a player that can't send a token (VLC): a short-lived signed link to one
+    # file and its subtitles (media_links, D-133). The link itself needs no token.
+    "media.link": ("make links a player such as VLC opens without a token",
+                   frozenset({("GET", "/api/media/link")})),
 }
 # Routes with a parameter a scope opens, as (method, pattern): the transcribe scope follows
 # and cancels its jobs (the app checks the job is the token's own, :attr:`Job.owner`).
 _JOB_ROUTE = re.compile(r"^/api/jobs/[^/]+$")
+# A signed media link needs no token, but a player that sends the app's along anyway
+# (an HTTP stack that adds it to every request) is let through to it too.
+_SIGNED_MEDIA = re.compile(r"^/api/media/s/[^/]+/[^/]+$")
 SCOPE_PATTERNS: dict[str, tuple[tuple[str, re.Pattern], ...]] = {
     "transcribe": (("GET", _JOB_ROUTE), ("DELETE", _JOB_ROUTE)),
+    "media.link": (("GET", _SIGNED_MEDIA), ("HEAD", _SIGNED_MEDIA)),
 }
 # What any client token may do, scoped or not: check itself (the nginx password gate asks),
 # disconnect itself, see the server is up, and pair again.
@@ -355,6 +363,15 @@ class ClientStore:
                 except OSError:
                     pass   # a read-only state dir still authenticates
             return self.public(row)
+
+    def get(self, client_id: str) -> dict | None:
+        """One client as :meth:`public` shows it, or None (revoked, or never paired)."""
+        with self._lock:
+            self._load()
+            for r in self._clients:
+                if r["id"] == client_id:
+                    return self.public(r)
+            return None
 
     def list(self) -> list[dict]:
         with self._lock:

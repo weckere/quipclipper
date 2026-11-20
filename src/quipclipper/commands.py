@@ -595,6 +595,22 @@ COMMANDS: tuple[Command, ...] = (
             "hourly on its own), e.g. after adding media.", "POST", "/api/jellyfin/index",
             ui="—"),
 
+    # --- media links ---------------------------------------------------------------------
+    Command("media.link", "A short-lived signed link (6 h) to a library file that a player "
+            "such as VLC opens with no token, Range requests and all, and one to its "
+            "subtitles as SRT or WebVTT. A paired app needs the media.link scope.",
+            "GET", "/api/media/link",
+            params=(Param("path", "str", "Media file under the media roots.", main=True,
+                          required=True),
+                    Param("subtitles", "str", "Also link the subtitles in this language "
+                          "(e.g. eng): the first non-forced track, a sidecar first.",
+                          flags=("-s",)),
+                    Param("track", "int", "Link this subtitle track instead (the one a "
+                          "line was found in).", flags=("-t",)),
+                    Param("subtitles_format", "str", "The subtitles' format.",
+                          default="srt", choices=("srt", "vtt"))),
+            ui="—"),
+
     # --- jobs ------------------------------------------------------------------------------
     Command("job.list", "List recent jobs (clips, downloads, YouTube).", "GET", "/api/jobs",
             shortcut="jobs", ui="Jobs popover"),
@@ -865,6 +881,8 @@ EXEMPT_ROUTES: dict[tuple[str, str], str] = {
     ("GET", "/api/media/transcode"): "playback: live transcode for the player",
     ("GET", "/api/media/hls"): "playback: HLS playlist for the player",
     ("GET", "/api/media/hls/{token}/{name}"): "playback: HLS segments for the player",
+    ("GET", "/api/media/s/{token}/{name}"): "playback: the signed link a player opens "
+                                            "(media.link makes it)",
     ("GET", "/api/clips/stream/{clip_path}"): "playback: inline clip stream "
                                               "(clips.download saves the same file)",
     ("GET", "/api/jellyfin/image/{item_id}"): "presentation: a poster for the browser "

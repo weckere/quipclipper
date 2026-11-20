@@ -1,7 +1,9 @@
-"""The password gate's exemptions stay exactly what pairing needs (docs/API.md, Pairing).
+"""The password gate's exemptions stay exactly what pairing and signed media links need
+(docs/API.md, Pairing and Signed media links).
 
 Behind QC_PASSWORD / passwordFile, nginx lets two requests through without the password:
 an app asking to pair (POST /api/pair) and polling its own request (GET /api/pair/<id>).
+A signed media link (GET /api/media/s/…) passes too; the backend checks its signature.
 A request with a client token gets through only after the backend says the token is
 current (auth_request to /api/clients/check). Both nginx configurations (the Docker image's
 and the NixOS module's) are read here, so a new `auth_basic off` somewhere else fails.
@@ -23,6 +25,8 @@ MODULE = ROOT / "nix/nixos-module.nix"
 pytestmark = pytest.mark.skipif(not NGINX.is_file(), reason="not a full checkout")
 
 PAIR_POLL = '"^/api/pair/[A-Za-z0-9_-]+$"'
+SIGNED = "^~ /api/media/s/"
+SIGNED_URI = r'if ($request_uri !~ "^/api/media/s/[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/[^/?]+$") { return 404; }'
 
 
 def _locations(conf: str) -> dict[str, str]:
@@ -46,7 +50,7 @@ def test_docker_nginx_exempts_only_the_pairing_requests():
     conf = re.sub(r"#.*", "", NGINX.read_text())
     locs = _locations(conf)
     open_ = {spec for spec, body in locs.items() if "auth_basic off" in _own(body)}
-    assert open_ == {"@quip_pair_open", f"~ {PAIR_POLL}"}
+    assert open_ == {"@quip_pair_open", f"~ {PAIR_POLL}", SIGNED}
     # POST /api/pair goes to the open named location; GET /api/pair (the list) stays gated.
     exact = _own(locs["= /api/pair"])
     assert "error_page 418 = @quip_pair_open;" in exact
@@ -58,6 +62,23 @@ def test_docker_nginx_exempts_only_the_pairing_requests():
     assert not re.match(PAIR_POLL.strip('"'), "/api/pair/abc/approve")
     # Both live inside a prefix that outranks the generic `^~ /api/` block.
     assert "^~ /api/pair/" in locs
+
+
+def _signed_uri_ok(uri: str) -> bool:
+    return bool(re.match(r"^/api/media/s/[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/[^/?]+$", uri))
+
+
+def test_signed_media_links_pass_the_gate_for_get_only_and_unlogged():
+    """A signed link (docs/API.md) is open: GET/HEAD, its raw URI checked, not logged."""
+    body = _own(_locations(re.sub(r"#.*", "", NGINX.read_text()))[SIGNED])
+    for line in ("auth_basic off;", "auth_request off;", "access_log off;",
+                 "limit_except GET { deny all; }", SIGNED_URI,
+                 "include /etc/nginx/quip-proxy.conf;"):
+        assert line in body, line
+    assert _signed_uri_ok("/api/media/s/eyJ2IjoxfQ.c2ln/Film%20(2001).mkv")
+    for bad in ("/api/media/s/eyJ2IjoxfQ.c2ln/../../clips/x", "/api/media/s/abc/x",
+                "/api/x/../media/s/a.b/c", "/api/media/s/a.b/c?x=1", "/api/media/s/a.b/c/d"):
+        assert not _signed_uri_ok(bad), bad
 
 
 def test_docker_gate_asks_the_backend_about_client_tokens():
@@ -104,6 +125,12 @@ def test_nixos_module_exempts_only_the_pairing_requests():
     assert "error_page 418 = @quipclipper_pair_open;" in nix
     assert "auth_request /_quipclipper_client;" in nix
     assert '"${proxyTarget}/api/clients/check"' in nix
+    # Signed media links get past it too, the same way as the Docker image's.
+    signed = nix.split(f'locations."{SIGNED}" = {{', 1)[1].split("};", 1)[0]
+    assert "extraConfig = apiProxyHeaders + signedOpen" in signed
+    assert "signedOpen = pairOpen;" in nix
+    for line in ("access_log off;", "limit_except GET { deny all; }", SIGNED_URI):
+        assert line in signed, line
 
 
 def test_a_host_name_listen_address_stays_out_of_the_trusted_peers():

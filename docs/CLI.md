@@ -230,6 +230,12 @@ by default land where they always did.
 | `jellyfin.lookup` | What Jellyfin knows about a library file or folder: its title, series, season, episode, year, ids and artwork, and the values its clip names get. | `PATH` | `GET /api/jellyfin/lookup` | Posters and titles on library rows, the workspace header and Now playing |
 | `jellyfin.reindex` | Rebuild the path index from Jellyfin now (it is rebuilt hourly on its own), e.g. after adding media. |  | `POST /api/jellyfin/index` | — |
 
+## media
+
+| Command | What it does | Arguments | API | Web UI |
+|---|---|---|---|---|
+| `media.link` | A short-lived signed link (6 h) to a library file that a player such as VLC opens with no token, Range requests and all, and one to its subtitles as SRT or WebVTT. A paired app needs the media.link scope. | `PATH` `--subtitles` `--track` `--subtitles-format` | `GET /api/media/link` | — |
+
 ## job
 
 | Command | What it does | Arguments | API | Web UI |

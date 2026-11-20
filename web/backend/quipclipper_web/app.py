@@ -92,6 +92,7 @@ from quipclipper_web import (
 )
 from quipclipper_web import caller as caller_mod
 from quipclipper_web import folder_cache
+from quipclipper_web import media_links
 from quipclipper_web import index_changes as index_changes_mod
 from quipclipper_web import line_index as line_index_mod
 from quipclipper_web.bookmarks import BookmarkStore
@@ -584,7 +585,9 @@ _IMAGE_TYPES = frozenset({"image/jpeg", "image/png", "image/webp", "image/gif"})
 _IMAGE_MAX_WIDTH = 800  # px: the widest artwork the UI asks for, at 2x
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None,
+               clock: Callable[[], float] | None = None) -> FastAPI:
+    """The app. ``clock`` (tests): what signed media links take as the time."""
     settings = settings or Settings.from_env()
 
     # Jellyfin titles and artwork (M18): the path index, and a library scan after
@@ -704,6 +707,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Pairing (quipclipper.pair/1): apps that asked for access, and the ones a person let in.
     clients = pairing.ClientStore(settings.state_dir)
     pairs = pairing.Pairing(clients)
+    # Signed media links (M27, D-133): a player that can't send a token opens one file.
+    links = media_links.MediaLinks(settings.state_dir, clients, clock=clock or time.time)
+    media_links.install_log_filter()
     server_id: list[str] = []  # made on first use, so importing the app writes nothing
     # Check for updates (M24): asks GitHub for the latest release, by hand or once a day;
     # it never updates anything.
@@ -3173,6 +3179,98 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=f"Not found: {path}")
         mime = _BROWSER_MIME.get(p.suffix.lower(), "application/octet-stream")
         return FileResponse(p, media_type=mime)
+
+    # --- signed media links (M27, D-133) ------------------------------------------
+
+    def _link_base(request: Request) -> str:
+        """Where a signed link points: QC_PUBLIC_URL, else the address this request
+        reached the app at (the app that asked can reach it), else the advertised one;
+        "" (a link relative to the server) when none is known."""
+        base = lslink.request_base(request.headers, request.url.scheme,
+                                   request.scope.get("root_path") or "")
+        try:
+            return lslink.link_server(settings.public_url, base,
+                                      pairing.advertised_url(settings.state_dir)) or ""
+        except lslink.LinkError:
+            return base or ""
+
+    @app.get("/api/media/link")
+    def media_link(
+        request: Request,
+        path: str = Query(...),
+        subtitles: str | None = Query(None, min_length=1, max_length=16,
+                                      pattern=r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{1,8})?$"),
+        track: int | None = Query(None, ge=0),
+        subtitles_format: str = Query("srt", pattern="^(srt|vtt)$"),
+    ) -> dict:
+        """A short-lived signed link to a library file that a player such as VLC opens
+        with no token (Range requests work), and one to its subtitles: the ``track`` the
+        line was found in, else the first non-forced one in the ``subtitles`` language;
+        null when neither is asked for or there is none. Media roots only."""
+        if youtube_items.parse_ref(path) is not None or epub_items.parse_ref(path)[1] is not None:
+            raise HTTPException(status_code=400, detail="Only files in the media roots get "
+                                "signed links (not YouTube items or audiobook chapters).")
+        p = _resolve(path)
+        if not p.is_file():
+            raise HTTPException(status_code=404, detail=f"Not found: {path}")
+        client = request.state.client
+        issuer = client["id"] if client else ""
+        sub_fields = None
+        if track is not None:
+            sub_fields = {"t": track}
+        elif subtitles:
+            sub_fields = media_links.pick_subtitles(p, subtitles)
+        try:
+            token, expires = links.issue({"k": "file", "p": str(p)}, issuer)
+            sub_token = (links.issue({"k": "subs", "p": str(p), **sub_fields,
+                                      "f": subtitles_format}, issuer)[0]
+                         if sub_fields is not None else None)
+        except OSError as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
+        base = _link_base(request) + media_links.ROUTE_PREFIX
+        lang = f".{subtitles}" if subtitles else ""
+        return {
+            "url": f"{base}{token}/{media_links.link_name(p.name)}",
+            "subtitles_url": (f"{base}{sub_token}/"
+                              f"{media_links.link_name(f'{p.stem}{lang}.{subtitles_format}')}"
+                              if sub_token else None),
+            "expires_at": pairing.iso(expires),
+        }
+
+    _LINK_GONE = {"detail": "Not Found"}   # what an unknown route answers: nothing more
+
+    @app.api_route(media_links.ROUTE_PREFIX + "{token}/{name}", methods=["GET", "HEAD"],
+                   include_in_schema=False)
+    def media_signed(token: str, name: str):
+        """A signed link (GET /api/media/link): the file, or its subtitles. ``name`` is for
+        the player to show. Bad, expired, revoked and unknown links all answer one 404."""
+        got = links.verify(token)
+        if got is None:
+            return JSONResponse(_LINK_GONE, status_code=404)
+        try:
+            p = library.resolve_within_roots(got["p"], settings.media_roots)
+        except library.PathNotAllowed:
+            return JSONResponse(_LINK_GONE, status_code=404)
+        if str(p) != got["p"] or not p.is_file():
+            return JSONResponse(_LINK_GONE, status_code=404)
+        if got["k"] == "file":
+            mime = _BROWSER_MIME.get(p.suffix.lower(), "application/octet-stream")
+            return FileResponse(p, media_type=mime, headers={"Cache-Control": "private"})
+        try:
+            if isinstance(got.get("x"), str):
+                side = library.resolve_within_roots(got["x"], settings.media_roots)
+                if str(side) != got["x"] or not side.is_file():
+                    return JSONResponse(_LINK_GONE, status_code=404)
+                cues = load_subtitles(side, p)
+            elif isinstance(got.get("t"), int) and not isinstance(got.get("t"), bool):
+                cues = sub_cache.resolve(p, track=got["t"])
+            else:
+                return JSONResponse(_LINK_GONE, status_code=404)
+        except (library.PathNotAllowed, ValueError, FileNotFoundError, RuntimeError, OSError):
+            return JSONResponse(_LINK_GONE, status_code=404)
+        if got.get("f") == "vtt":
+            return Response(stt.cues_to_vtt(cues), media_type="text/vtt; charset=utf-8")
+        return Response(stt.cues_to_srt(cues), media_type="application/x-subrip; charset=utf-8")
 
     @app.get("/api/media/keyframe")
     def keyframe_before(

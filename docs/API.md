@@ -497,6 +497,51 @@ drops matches below it; `min_score=100` keeps only verbatim lines.
 | GET | `/api/media/hls?path=&venc=` | HLS playlist (iOS preview). Segment/init URIs inside it point at `/api/media/hls/{token}/{name}` — clients just follow the playlist. |
 | GET | `/api/media/audio?path=&start=&end=[&audio=]` | A small audio-only excerpt of `start..end` (at most 120 s): mono AAC at 64 kb/s as an ADTS stream (`audio/aac`), video dropped, `audio` the stream (a:N, default the first). What the search results' Listen button plays in place (`item.listen` saves it; the `Content-Disposition` names the file `<stem>_<start>-<end>.aac`). Streamed as ffmpeg makes it, not cached; 400 for an empty or overlong range. |
 
+### Signed media links
+
+A player that can't send a token (VLC) gets a short-lived link that carries its own proof
+(M27, D-133). A paired app with the `media.link` scope (or a full token, or `QC_API_TOKEN`)
+asks; CLI `media.link`.
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/media/link?path=[&subtitles=eng][&track=][&subtitles_format=srt\|vtt]` | `{"url", "subtitles_url", "expires_at"}` for a file under the media roots. |
+| GET, HEAD | `/api/media/s/{token}/{name}` | What a link opens: the raw file with Range requests (`206`), or its subtitles as SRT (`application/x-subrip`) or WebVTT. No token, no password. |
+
+```json
+{"url": "https://quip.example/api/media/s/eyJ2Ijox….Xb3k…/Film%20(2001).mkv",
+ "subtitles_url": "https://quip.example/api/media/s/eyJ2Ijox….q9Lw…/Film%20(2001).eng.srt",
+ "expires_at": "2026-11-20T14:00:00Z"}
+```
+
+- **What it links:** `url` the file itself. `subtitles_url` the subtitle track `track` (the
+  one a line was found in, as search results name it) when given; else, with `subtitles`
+  (a language code, `eng` or `en` alike), the first non-forced text subtitles in that
+  language, a sidecar before an embedded track and full dialogue before SDH; `null` when
+  neither is asked for or there are none. `subtitles_format` is `srt` (default) or `vtt`.
+  The last path segment is the file's name for the player to show; it changes nothing.
+- **Where it points:** `QC_PUBLIC_URL`, else the address the request reached the server at,
+  else the advertised one; a link relative to the server when none is known.
+- **How long:** 6 hours from issue (`expires_at`), enough to watch a film through.
+- **Refused at issue:** a path outside the media roots (`403`), a folder or missing file
+  (`404`), YouTube items and audiobook chapters (`400`), a token without the scope (`403`).
+- **What a link proves:** the token is `<payload>.<signature>`: base64url JSON naming the
+  resolved path, the kind (file or subtitles, and which subtitles), the expiry and the
+  issuing client, and an HMAC-SHA256 of it under a key kept in `state_dir/media-link.key`
+  (0600, made on first use). The server checks, on every request: the signature (constant
+  time), the expiry, that the issuing client is still paired with `media.link` or full access
+  (disconnecting or revoking the app kills its links), and that the path still resolves to
+  the same file inside the media roots. A bad, expired, revoked or unknown link answers
+  `404 {"detail": "Not Found"}`, exactly what an unknown route answers. Deleting
+  `media-link.key` kills every link at once (links a person made with `QC_API_TOKEN` have
+  no client to revoke).
+- **Kept out of logs:** the backend rewrites the token in uvicorn's access log to
+  `<redacted>`; the bundled nginx doesn't log the route. Anyone holding a link can play
+  that one file until it expires, so treat it like a password; it names the file's path.
+- **Behind the password gate** the link route passes without the password (GET/HEAD only,
+  its raw URI checked); see [DEPLOY.md](DEPLOY.md#signed-media-links-behind-the-password-gate).
+  `QC_PROXY_SECRET` still applies.
+
 ### Clipping & jobs
 | Method | Path | Purpose |
 |---|---|---|
@@ -673,6 +718,7 @@ throw them out. Times are UTC ISO 8601 with `Z`.
   | `transcribe` | transcribe audio it sends | `POST /api/transcribe`, and `GET` and `DELETE /api/jobs/{id}` for the jobs it started (another job is `404`) |
   | `search` | search the library's dialogue | `GET /api/search` (one file), `GET /api/search/folder` (folders), and `GET /api/library/roots`, so it can search the whole library by passing every root as a `path` (what the web app's Whole library does). Not the folder search's index routes, nor browsing. |
   | `jellyfin.play` | start playback on Jellyfin devices | `GET /api/jellyfin/sessions` (`all=1`: every client, with `can_play`) and `POST /api/jellyfin/play` |
+  | `media.link` | make links a player such as VLC opens without a token | `GET /api/media/link` ([signed media links](#signed-media-links)); the links themselves need no token |
 
   plus what every client may do: `GET /api/health`, `GET /api/clients/check`,
   `DELETE /api/clients/self`, and pairing again (`POST /api/pair`, `GET /api/pair/{id}`).
@@ -690,8 +736,9 @@ throw them out. Times are UTC ISO 8601 with `Z`.
   are `""` for apps paired before QuipClipper kept them). The token itself is never stored. `last_used` is
   written at most once a minute.
 - **Behind the password gate** (`QC_PASSWORD` / `passwordFile`), nginx lets exactly
-  `POST /api/pair` and `GET /api/pair/<id>` through without the password. Listing, approving
-  and denying stay behind it.
+  `POST /api/pair` and `GET /api/pair/<id>` through without the password (and, apart from
+  pairing, [signed media links](#signed-media-links)). Listing, approving and denying stay
+  behind it.
 
 ```sh
 # The app's side
