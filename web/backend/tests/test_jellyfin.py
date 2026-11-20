@@ -44,6 +44,17 @@ class FakeJellyfin:
         # its session report the item playing (a client that starts it).
         self.streams: dict[str, list[dict]] = {}
         self.starts_playing = True
+        # A session the fake started: its position moves 1 s each time /Sessions is read
+        # (while ``advance``), as a playing client's reports do. ``auto_sub`` is the
+        # subtitle stream the client turns on by itself; ``sub_rejects`` how many
+        # SetSubtitleStreamIndex commands it drops (reporting -1, as the TV did when its
+        # player wasn't ready); ``sub_reports`` False: it never reports a subtitle index.
+        self.started: set[str] = set()
+        self.advance = True
+        self.auto_sub: int | None = None
+        self.sub_rejects = 0
+        self.sub_reports = True
+        self.general_at: list[int] = []  # the session's PositionTicks at each command
         self.requests: list[tuple[str, dict, str]] = []
         self.status = 200
         fake = self
@@ -69,6 +80,12 @@ class FakeJellyfin:
                 if url is None:
                     return
                 if url.path == "/Sessions":
+                    for s in fake.sessions:
+                        play = s.get("PlayState") or {}
+                        if fake.advance and s.get("Id") in fake.started \
+                                and not play.get("IsPaused") \
+                                and isinstance(play.get("PositionTicks"), int):
+                            play["PositionTicks"] += jellyfin.TICKS
                     return self._send(200, fake.sessions)
                 if url.path == "/Items" and query.get("ParentId"):
                     # A few of one library's files (the path map derivation, M22).
@@ -120,13 +137,30 @@ class FakeJellyfin:
                             if s.get("Id") == parts[2]:
                                 s["NowPlayingItem"] = {"Id": query["itemIds"],
                                                        "Type": "Episode"}
-                                s["PlayState"] = {"IsPaused": False}
+                                s["PlayState"] = {
+                                    "IsPaused": False,
+                                    "PositionTicks": int(query["startPositionTicks"])}
+                                if fake.auto_sub is not None:
+                                    s["PlayState"]["SubtitleStreamIndex"] = fake.auto_sub
+                                fake.started.add(parts[2])
                     self.send_response(204)
                     self.end_headers()
                     return
                 if len(parts) == 4 and parts[1] == "Sessions" and parts[3] == "Command":
                     length = int(self.headers.get("Content-Length") or 0)
-                    fake.general.append((parts[2], json.loads(self.rfile.read(length))))
+                    body = json.loads(self.rfile.read(length))
+                    fake.general.append((parts[2], body))
+                    for s in fake.sessions:
+                        if s.get("Id") != parts[2]:
+                            continue
+                        play = s.setdefault("PlayState", {})
+                        fake.general_at.append(play.get("PositionTicks"))
+                        if body.get("Name") == "SetSubtitleStreamIndex" and fake.sub_reports:
+                            if fake.sub_rejects:
+                                fake.sub_rejects -= 1
+                                play["SubtitleStreamIndex"] = -1
+                            else:
+                                play["SubtitleStreamIndex"] = int(body["Arguments"]["Index"])
                     self.send_response(204)
                     self.end_headers()
                     return
@@ -1097,26 +1131,31 @@ def test_play_turns_on_the_sidecar_the_line_was_found_in(fake, tmp_path, known, 
     assert out["subtitles"]["title"] == "English (SRT)"
 
 
-def test_play_waits_for_the_client_to_report_it_playing(fake, tmp_path, known, clock,
-                                                        monkeypatch):
+def test_play_waits_until_the_playback_has_really_started(fake, tmp_path, known, clock,
+                                                          monkeypatch):
+    # The TV reports the file at once, before its player has the tracks (a subtitle
+    # command then fails: seen 2026-11-20); only a position that moves means it plays.
     root, ep = known
     fake.sessions, fake.streams[EP_ID] = _sub_tv(), EP_STREAMS
-    fake.starts_playing = False
+    fake.advance = False
     c = _playing(_client(_env(fake, tmp_path, root)))
     real = jellyfin.JellyfinClient.sessions
     asked = []
 
-    def sessions(self, active_within=0):  # the TV reports the file on the third look
+    def sessions(self, active_within=0):  # frozen for the first looks, then it plays
         asked.append(1)
-        if len(asked) == 3:
-            fake.sessions[0]["NowPlayingItem"] = {"Id": EP_ID, "Type": "Episode"}
+        fake.advance = len(asked) >= 5
         return real(self, active_within)
 
     monkeypatch.setattr(jellyfin.JellyfinClient, "sessions", sessions)
     out = _play_subs(c, ep, subtitles="eng")
-    assert out["subtitles"]["set"] is True
-    # The play's own look (1), the wait's first look (2), one poll later it plays (3).
-    assert len(asked) == 3 and clock == [jellyfin.SUBTITLE_POLL]
+    assert out["subtitles"]["set"] is True and out["subtitles"]["index"] == 5
+    start = 61 * jellyfin.TICKS
+    # Sent only once the position had moved from where the play started it.
+    assert fake.general_at[0] > start
+    # Look 1 is the play's own; 2-4 show the item frozen at the start; 5 shows it moved,
+    # so the wait slept three polls; look 6 confirms the stream, with no more sleep.
+    assert len(asked) == 6 and clock == [jellyfin.SUBTITLE_POLL] * 3
 
 
 def test_play_gives_up_on_subtitles_when_the_client_never_plays(fake, tmp_path, known,
@@ -1126,8 +1165,64 @@ def test_play_gives_up_on_subtitles_when_the_client_never_plays(fake, tmp_path, 
     fake.starts_playing = False
     out = _play_subs(_playing(_client(_env(fake, tmp_path, root))), ep, subtitles="eng")
     assert out["command"] == "play" and out["subtitles"]["set"] is False
-    assert "didn't report the file playing" in out["subtitles"]["note"]
+    assert "didn't start playing the file" in out["subtitles"]["note"]
     assert sum(clock) <= jellyfin.SUBTITLE_WAIT and fake.general == []
+
+
+def test_play_reported_but_never_moving_is_not_started(fake, tmp_path, known, clock):
+    root, ep = known
+    fake.sessions, fake.streams[EP_ID] = _sub_tv(), EP_STREAMS
+    fake.advance = False  # the item shows, its position never moves (a stale report)
+    out = _play_subs(_playing(_client(_env(fake, tmp_path, root))), ep, subtitles="eng")
+    assert out["subtitles"]["set"] is False and fake.general == []
+    assert sum(clock) <= jellyfin.SUBTITLE_WAIT
+
+
+def test_play_leaves_the_language_on_when_the_client_already_shows_it(fake, tmp_path,
+                                                                     known, clock):
+    root, ep = known
+    fake.sessions, fake.streams[EP_ID] = _sub_tv(), EP_STREAMS
+    fake.auto_sub = 4  # the client put English SDH on by itself: nothing is sent
+    c = _playing(_client(_env(fake, tmp_path, root)))
+    out = _play_subs(c, ep, subtitles="eng")
+    assert fake.general == []
+    assert out["subtitles"] == {"set": True, "index": 4, "language": "eng",
+                                "title": "English SDH", "match": "language",
+                                "note": "eng subtitles were already on (stream 4); left as "
+                                        "they were."}
+    # The one it would pick is on already: the match says how it was chosen.
+    fake.sessions, fake.auto_sub = _sub_tv(), 5
+    out = _play_subs(c, ep, subtitles="eng", track=3)
+    assert fake.general == [] and out["subtitles"]["match"] == "track"
+    # A forced-only English stream on (what Jellyfin picked on the TV) isn't enough.
+    fake.sessions, fake.auto_sub = _sub_tv(), 2
+    out = _play_subs(c, ep, subtitles="eng")
+    assert out["subtitles"]["set"] is True and out["subtitles"]["note"] is None
+    assert [b["Arguments"]["Index"] for _, b in fake.general] == ["5"]
+
+
+def test_play_confirms_the_subtitles_and_sends_once_more(fake, tmp_path, known, clock):
+    root, ep = known
+    fake.streams[EP_ID] = EP_STREAMS
+    c = _playing(_client(_env(fake, tmp_path, root)))
+    # The client drops the first command (it reports -1): sent again, then confirmed.
+    fake.sessions, fake.sub_rejects = _sub_tv(), 1
+    out = _play_subs(c, ep, subtitles="eng")
+    assert out["subtitles"]["set"] is True and len(fake.general) == 2
+    # It drops both: not set, and the note says what it reports.
+    fake.general.clear()
+    fake.sessions, fake.sub_rejects = _sub_tv(), 2
+    out = _play_subs(c, ep, subtitles="eng")
+    assert out["subtitles"]["set"] is False and len(fake.general) == 2
+    assert out["subtitles"]["index"] == 5
+    assert out["subtitles"]["note"] == ("Sent SetSubtitleStreamIndex twice, but the client "
+                                        "still reports none on, not stream 5.")
+    # A client that never reports its subtitle stream can't be confirmed either.
+    fake.general.clear()
+    fake.sessions, fake.sub_reports = _sub_tv(), False
+    out = _play_subs(c, ep, subtitles="eng")
+    assert out["subtitles"]["set"] is False and len(fake.general) == 2
+    assert sum(clock) <= 3 * jellyfin.SUBTITLE_WAIT  # every wait stayed bounded
 
 
 def test_play_seek_sets_subtitles_at_once(fake, tmp_path, known, clock):

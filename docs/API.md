@@ -857,10 +857,16 @@ starts.
 Jellyfin's `eng` by prefix, as subtitle languages match elsewhere) to turn that language's
 subtitles on once the file plays, and `"track": 3` to name the embedded subtitle track
 (`s:N`, as in `GET /api/search?track=`) the line was found in. Without `subtitles` nothing
-changes. With it, after the play or seek the server waits up to 8 s (asking every 0.5 s)
-for the client to report the file playing, then sends Jellyfin's `SetSubtitleStreamIndex`
-general command (`POST /Sessions/{id}/Command`) with the stream's Jellyfin `Index` in the
-media source that is playing. The stream is, in order: the `track`'s (the N-th embedded
+changes. With it, the server first waits, up to 15 s (asking every 0.5 s), until the
+client is really playing the file. After a play, the file must be its now-playing item,
+not paused, with a position that has moved between two looks. A client lists the file at
+once, before its player has the file's tracks, and a subtitle command then fails. After a
+seek it only has to list the file. If a full stream in that language (not forced-only) is
+already on (`PlayState.SubtitleStreamIndex`), nothing is sent. Otherwise the server sends
+Jellyfin's `SetSubtitleStreamIndex` general command (`POST /Sessions/{id}/Command`) with
+the stream's Jellyfin `Index` in the media source that is playing. It then waits up to
+4 s for the client to report that stream on, and sends the command once more if it
+doesn't. The stream is, in order: the `track`'s (the N-th embedded
 subtitle stream) when it is in that language or untagged; else, with no `track`, the
 subtitle file next to the media in that language (`find_sidecar`, matched to Jellyfin's
 external stream by file name); else the language's best stream by the ranking search
@@ -873,12 +879,22 @@ subtitles search read. The reply then carries:
               "match": "track", "note": null}
 ```
 
-`match` is `track`, `sidecar` or `language` (how the stream was chosen). Subtitles never
-fail the play: when they can't be set, `set` is false, `index` and `match` are null, and
-`note` says why (the client doesn't list `SetSubtitleStreamIndex` in its supported
-commands, it didn't report the file playing in time, the file has no such stream, or
-Jellyfin refused). `note` is also set, with `set` true, when the `track` named wasn't in
-that language and the language's best one was used. A `subtitles` that isn't 2-8 letters or
+`set` true means confirmed: the client reported the stream on, or a full stream in that
+language was already on. In that last case `index` is the stream that was on and `note`
+says it was left as it was. `match` is `track`, `sidecar` or `language` (how the stream
+was chosen). Subtitles never fail the play. When they can't be set, `set` is false and
+`note` says why:
+
+- the client doesn't list `SetSubtitleStreamIndex` in its supported commands;
+- it didn't start playing within 15 s;
+- the file has no such stream;
+- Jellyfin refused the command;
+- the client still didn't report the stream on after two commands. Then `index` and
+  `match` name the stream that was sent.
+
+The longest a play with subtitles takes is about 23 s. `note` is also set, with `set`
+true, when the `track` named wasn't in that language and the language's best one was
+used. A `subtitles` that isn't 2-8 letters or
 hyphens is a 422. The web UI's Play on… doesn't send it.
 
 ### Titles and artwork (Jellyfin)

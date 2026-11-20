@@ -1125,8 +1125,8 @@ def create_app(settings: Settings | None = None,
                     side = find_sidecar(p, (req.subtitles.lower(),))
                     sidecar = side.name if side is not None else None
             out["subtitles"] = jellyfin.turn_on_subtitles(
-                client, target, item["id"], req.subtitles.lower(), track=req.track,
-                sidecar=sidecar)
+                client, target, item["id"], req.subtitles.lower(), command=command,
+                track=req.track, sidecar=sidecar)
         return out
 
     @app.post("/api/jellyfin/index")

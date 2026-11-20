@@ -361,10 +361,14 @@ def now_playing(
 # --- Subtitles on play (M27) ---------------------------------------------------------------
 
 SUBTITLE_COMMAND = "SetSubtitleStreamIndex"
-# How long a play waits for the client to report the item playing before it gives up on
+# How long a play waits for the client to start playing the item before it gives up on
 # subtitles (the play itself has already been sent), and how often it asks.
-SUBTITLE_WAIT = 8.0
+# 15 s: a client reports its position every few seconds, and a play is taken as started
+# only once that position has moved (LineFinder gives the whole request 30 s).
+SUBTITLE_WAIT = 15.0
 SUBTITLE_POLL = 0.5
+# After the command: how long to wait for the client to report the stream on (each try).
+SUBTITLE_CONFIRM = 4.0
 # The clock and sleep the wait uses: module attributes so tests replace them (no real sleeps).
 _monotonic = time.monotonic
 _sleep = time.sleep
@@ -430,30 +434,92 @@ def pick_subtitle(streams: list[dict], lang: str, *, track: int | None = None,
     return None, f"This file has no {lang} subtitles that aren't forced-only."
 
 
-def wait_playing(client: JellyfinClient, session_id: str, item_id: str,
-                 within: float = SUBTITLE_WAIT) -> dict | None:
-    """The session once it reports ``item_id`` playing, asking every ``SUBTITLE_POLL``
-    seconds for at most ``within``; None when it doesn't (or it closed)."""
+def _session(client: JellyfinClient, session_id: str) -> dict | None:
+    """One session as Jellyfin lists it now; None when it's gone or Jellyfin didn't answer."""
+    try:
+        raw = client.sessions(CONTROLLABLE_WITHIN)
+    except JellyfinError:
+        return None
+    return next((x for x in raw if x.get("Id") == session_id), None)
+
+
+def _poll(probe: Callable[[], Any], within: float) -> Any:
+    """``probe()`` every ``SUBTITLE_POLL`` seconds until it returns something, for at most
+    ``within`` seconds; None when it never does."""
     deadline = _monotonic() + within
     while True:
-        try:
-            raw = client.sessions(CONTROLLABLE_WITHIN)
-        except JellyfinError:
-            raw = []
-        s = next((x for x in raw if x.get("Id") == session_id), None)
-        if s is not None and (s.get("NowPlayingItem") or {}).get("Id") == item_id:
-            return s
+        found = probe()
+        if found is not None:
+            return found
         if _monotonic() + SUBTITLE_POLL > deadline:
             return None
         _sleep(SUBTITLE_POLL)
 
 
+def wait_playing(client: JellyfinClient, session_id: str, item_id: str,
+                 within: float = SUBTITLE_WAIT) -> dict | None:
+    """The session once it reports ``item_id`` as its NowPlayingItem (a seek: the client
+    was already playing it); None when it doesn't within ``within`` seconds."""
+    def probe():
+        s = _session(client, session_id)
+        return s if s and (s.get("NowPlayingItem") or {}).get("Id") == item_id else None
+    return _poll(probe, within)
+
+
+def wait_started(client: JellyfinClient, session_id: str, item_id: str,
+                 within: float = SUBTITLE_WAIT) -> dict | None:
+    """The session once this play of ``item_id`` has really started: the item is its
+    NowPlayingItem, not paused, and its PositionTicks went up between two looks. A client
+    reports the item at once, before its player has the file's tracks (a subtitle command
+    then fails), and may still show it from an earlier playback; neither moves the
+    position, so both are passed over. None when it doesn't start within ``within``."""
+    last: list[float | None] = [None]
+
+    def probe():
+        s = _session(client, session_id)
+        play = (s or {}).get("PlayState") or {}
+        pos = play.get("PositionTicks")
+        if not s or (s.get("NowPlayingItem") or {}).get("Id") != item_id \
+                or play.get("IsPaused") or not isinstance(pos, (int, float)):
+            last[0] = None
+            return None
+        moved = last[0] is not None and pos > last[0]
+        last[0] = pos
+        return s if moved else None
+    return _poll(probe, within)
+
+
+def wait_subtitle(client: JellyfinClient, session_id: str, index: int,
+                  within: float = SUBTITLE_CONFIRM) -> tuple[bool, Any]:
+    """Whether the session reports subtitle stream ``index`` on within ``within`` seconds,
+    and the index it reported last (None when it reports none)."""
+    seen: list[Any] = [None]
+
+    def probe():
+        s = _session(client, session_id)
+        seen[0] = ((s or {}).get("PlayState") or {}).get("SubtitleStreamIndex")
+        return True if seen[0] == index else None
+    return bool(_poll(probe, within)), seen[0]
+
+
+def _is_full(stream: dict | None, lang: str) -> bool:
+    """A subtitle stream in ``lang`` that isn't forced-only."""
+    if not stream or stream.get("Type") != "Subtitle":
+        return False
+    title = " ".join(str(stream.get(k) or "") for k in ("Title", "DisplayTitle"))
+    return lang_matches(stream.get("Language"), lang) and not stream.get("IsForced") \
+        and not _FORCED_RE.search(title)
+
+
 def turn_on_subtitles(client: JellyfinClient, target: dict, item_id: str, lang: str, *,
-                      track: int | None = None, sidecar: str | None = None) -> dict:
-    """After a play or seek: wait for the client to be playing ``item_id``, then turn on
-    its ``lang`` subtitles (``pick_subtitle``) with ``SetSubtitleStreamIndex``. Never
-    raises: the reply says whether it was set, the stream's index and language, and a
-    note when it wasn't (or how the stream was chosen)."""
+                      command: str = "play", track: int | None = None,
+                      sidecar: str | None = None) -> dict:
+    """After a play or seek (``command``): wait until the client is really playing
+    ``item_id`` (``wait_started`` after a play, ``wait_playing`` after a seek), then turn
+    on its ``lang`` subtitles (``pick_subtitle``) with ``SetSubtitleStreamIndex``, unless
+    a full ``lang`` stream is already on. ``set`` means confirmed: the client reported the
+    stream on afterwards (the command is sent once more when it didn't). Never raises;
+    ``note`` says why when it wasn't set."""
     out: dict[str, Any] = {"set": False, "index": None, "language": lang, "title": None,
                            "match": None, "note": None}
     if SUBTITLE_COMMAND not in supported_commands(target):
@@ -465,28 +531,50 @@ def turn_on_subtitles(client: JellyfinClient, target: dict, item_id: str, lang: 
     except JellyfinError as exc:
         out["note"] = f"Couldn't read the file's subtitle streams: {exc}"
         return out
-    playing = wait_playing(client, sid, item_id)
+    wait = wait_started if command == "play" else wait_playing
+    playing = wait(client, sid, item_id)
     if playing is None:
-        out["note"] = (f"The client didn't report the file playing within "
+        out["note"] = (f"The client didn't start playing the file within "
                        f"{SUBTITLE_WAIT:g} s, so subtitles weren't set.")
         return out
-    source_id = (playing.get("PlayState") or {}).get("MediaSourceId")
-    source = next((m for m in sources if m.get("Id") == source_id), None) or (
-        sources[0] if sources else {})
-    stream, how = pick_subtitle(source.get("MediaStreams") or [], lang, track=track,
-                                sidecar=sidecar)
+    state = playing.get("PlayState") or {}
+    source = next((m for m in sources if m.get("Id") == state.get("MediaSourceId")),
+                  None) or (sources[0] if sources else {})
+    streams = source.get("MediaStreams") or []
+    stream, how = pick_subtitle(streams, lang, track=track, sidecar=sidecar)
     if stream is None:
         out["note"] = how
         return out
-    out.update(index=stream["Index"], language=stream.get("Language") or lang,
-               title=stream.get("DisplayTitle") or stream.get("Title"), match=how)
-    try:
-        client.command(sid, SUBTITLE_COMMAND, {"Index": str(stream["Index"])})
-    except JellyfinError as exc:
-        out["note"] = f"Jellyfin refused {SUBTITLE_COMMAND}: {exc}"
+
+    def describe(m: dict, match: str) -> None:
+        out.update(index=m["Index"], language=m.get("Language") or lang,
+                   title=m.get("DisplayTitle") or m.get("Title"), match=match)
+
+    current = state.get("SubtitleStreamIndex")
+    on = next((m for m in streams if m.get("Type") == "Subtitle"
+               and m.get("Index") == current), None)
+    if _is_full(on, lang):  # already showing them: leave the client's choice alone
+        describe(on, how if on is stream else "language")
+        out["set"] = True
+        out["note"] = f"{lang} subtitles were already on (stream {current}); left as they were."
         return out
-    out["set"] = True
-    if how == "language" and track is not None:
+    describe(stream, how)
+    reported = None
+    for _ in range(2):  # the command, and once more when the client didn't take it
+        try:
+            client.command(sid, SUBTITLE_COMMAND, {"Index": str(stream["Index"])})
+        except JellyfinError as exc:
+            out["note"] = f"Jellyfin refused {SUBTITLE_COMMAND}: {exc}"
+            return out
+        ok, reported = wait_subtitle(client, sid, stream["Index"])
+        if ok:
+            out["set"] = True
+            break
+    if not out["set"]:
+        shown = "none" if reported in (None, -1) else f"stream {reported}"
+        out["note"] = (f"Sent {SUBTITLE_COMMAND} twice, but the client still reports "
+                       f"{shown} on, not stream {stream['Index']}.")
+    elif how == "language" and track is not None:
         out["note"] = (f"The line's track (s:{track}) isn't a {lang} stream Jellyfin "
                        "lists; turned on the best one in that language.")
     return out
