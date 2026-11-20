@@ -853,6 +853,34 @@ their ids); 502 and 503 as above. The web UI starts one second before the line (
 selection's in point when Before pads more), so the first word isn't lost while the TV
 starts.
 
+**Subtitles on play (M27).** Add `"subtitles": "eng"` (a language code; `en` matches
+Jellyfin's `eng` by prefix, as subtitle languages match elsewhere) to turn that language's
+subtitles on once the file plays, and `"track": 3` to name the embedded subtitle track
+(`s:N`, as in `GET /api/search?track=`) the line was found in. Without `subtitles` nothing
+changes. With it, after the play or seek the server waits up to 8 s (asking every 0.5 s)
+for the client to report the file playing, then sends Jellyfin's `SetSubtitleStreamIndex`
+general command (`POST /Sessions/{id}/Command`) with the stream's Jellyfin `Index` in the
+media source that is playing. The stream is, in order: the `track`'s (the N-th embedded
+subtitle stream) when it is in that language or untagged; else, with no `track`, the
+subtitle file next to the media in that language (`find_sidecar`, matched to Jellyfin's
+external stream by file name); else the language's best stream by the ranking search
+uses to pick a file's track (`best_track`: text above image, full dialogue above SDH
+above commentary, ties to the first), never a forced-only one, so play turns on the
+subtitles search read. The reply then carries:
+
+```json
+"subtitles": {"set": true, "index": 5, "language": "eng", "title": "English - SRT",
+              "match": "track", "note": null}
+```
+
+`match` is `track`, `sidecar` or `language` (how the stream was chosen). Subtitles never
+fail the play: when they can't be set, `set` is false, `index` and `match` are null, and
+`note` says why (the client doesn't list `SetSubtitleStreamIndex` in its supported
+commands, it didn't report the file playing in time, the file has no such stream, or
+Jellyfin refused). `note` is also set, with `set` true, when the `track` named wasn't in
+that language and the language's best one was used. A `subtitles` that isn't 2-8 letters or
+hyphens is a 422. The web UI's Play on… doesn't send it.
+
 ### Titles and artwork (Jellyfin)
 | Method | Path | Purpose |
 |---|---|---|

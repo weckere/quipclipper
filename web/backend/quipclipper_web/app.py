@@ -324,6 +324,12 @@ class JellyfinPlayRequest(BaseModel):
     path: str
     # Where to start, in seconds into the file. The web UI sends a little before the line.
     at: float = Field(0.0, ge=0, allow_inf_nan=False)
+    # Turn these subtitles on once it plays (M27): a language code, "eng" or "en". Omitted:
+    # the client's own subtitle choice stands.
+    subtitles: str | None = Field(None, min_length=2, max_length=8, pattern=r"^[A-Za-z-]+$")
+    # The embedded subtitle track (s:N) the line was found in, so that one is turned on
+    # when it is in that language. Without it a sidecar in that language is looked for.
+    track: int | None = Field(None, ge=0)
 
 
 class ClipRequest(BaseModel):
@@ -1106,10 +1112,22 @@ def create_app(settings: Settings | None = None,
             if exc.status == 404:
                 raise HTTPException(status_code=404, detail="That Jellyfin client has closed.")
             raise HTTPException(status_code=502, detail=str(exc))
-        return {"session": sid, "device": target.get("DeviceName"),
-                "client": target.get("Client"), "item_id": item["id"],
-                "title": item.get("title"), "path": str(p), "at": req.at,
-                "command": command}
+        out = {"session": sid, "device": target.get("DeviceName"),
+               "client": target.get("Client"), "item_id": item["id"],
+               "title": item.get("title"), "path": str(p), "at": req.at,
+               "command": command}
+        if req.subtitles:
+            # Which subtitles the line came from: the track it names, else a sidecar in
+            # that language next to the file (what a search would have read first).
+            sidecar = None
+            if req.track is None:
+                with contextlib.suppress(OSError):
+                    side = find_sidecar(p, (req.subtitles.lower(),))
+                    sidecar = side.name if side is not None else None
+            out["subtitles"] = jellyfin.turn_on_subtitles(
+                client, target, item["id"], req.subtitles.lower(), track=req.track,
+                sidecar=sidecar)
+        return out
 
     @app.post("/api/jellyfin/index")
     def jellyfin_reindex() -> dict:

@@ -626,6 +626,13 @@ def _fmt_play(data: dict) -> None:
     did = "Seeked" if data.get("command") == "seek" else "Playing"
     typer.echo(f"{did} {data.get('title') or data.get('path')} on {data.get('device')} "
                f"({data.get('client')}) at {format_clock(data.get('at') or 0)}")
+    subs = data.get("subtitles")
+    if isinstance(subs, dict):
+        if subs.get("set"):
+            typer.echo(f"Subtitles on: {subs.get('title') or subs.get('language')} "
+                       f"(stream {subs.get('index')})")
+        else:
+            typer.echo(f"Subtitles not set: {subs.get('note')}")
 
 
 def _fmt_jf_index(index: dict) -> str:

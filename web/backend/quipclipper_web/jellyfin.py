@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -22,6 +23,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from quipclipper.subtitles import (
+    _FORCED_RE, IMAGE_SUBTITLE_CODECS, SubtitleTrack, best_track,
+)
 from quipclipper_web import library
 
 _HEX32 = re.compile(r"[0-9a-f]{32}\Z")  # a Jellyfin item id or image tag
@@ -60,12 +64,14 @@ class JellyfinClient:
         self.timeout = timeout
 
     def _open(self, method: str, path: str, query: dict[str, Any] | None = None, *,
-              timeout: float | None = None, accept: str = "application/json"):
+              timeout: float | None = None, accept: str = "application/json",
+              body: bytes | None = None):
         qs = ("?" + urllib.parse.urlencode(query)) if query else ""
-        req = urllib.request.Request(self.url + path + qs, method=method, headers={
-            "Authorization": f'MediaBrowser Token="{self.api_key}"',
-            "Accept": accept,
-        })
+        headers = {"Authorization": f'MediaBrowser Token="{self.api_key}"', "Accept": accept}
+        if body is not None:
+            headers["Content-Type"] = "application/json"
+        req = urllib.request.Request(self.url + path + qs, data=body, method=method,
+                                     headers=headers)
         try:
             return urllib.request.urlopen(req, timeout=timeout or self.timeout)
         except urllib.error.HTTPError as exc:
@@ -83,8 +89,9 @@ class JellyfinClient:
         except (OSError, ValueError) as exc:  # a reply cut off or not JSON
             raise JellyfinError(f"Jellyfin sent a bad reply: {exc}") from exc
 
-    def post(self, path: str, query: dict[str, Any] | None = None) -> None:
-        with self._open("POST", path, query) as resp:
+    def post(self, path: str, query: dict[str, Any] | None = None, *,
+             body: bytes | None = None) -> None:
+        with self._open("POST", path, query, body=body) as resp:
             resp.read()
 
     def image(self, item_id: str, image_type: str, max_width: int,
@@ -156,6 +163,21 @@ class JellyfinClient:
         query = {"seekPositionTicks": int(round(at * TICKS))} if at is not None else None
         self.post(f"/Sessions/{urllib.parse.quote(session_id, safe='')}/Playing/{command}",
                   query)
+
+    def command(self, session_id: str, name: str, arguments: dict[str, str]) -> None:
+        """A general command (``SetSubtitleStreamIndex``, …) to a client."""
+        body = json.dumps({"Name": name, "Arguments": arguments}).encode()
+        self.post(f"/Sessions/{urllib.parse.quote(session_id, safe='')}/Command", body=body)
+
+    def media_sources(self, item_id: str) -> list[dict]:
+        """An item's media sources, each with its ``MediaStreams`` (Jellyfin's indexes)."""
+        data = self.get("/Items", {"Ids": item_id, "Fields": "MediaSources,MediaStreams"})
+        items = (data.get("Items") or []) if isinstance(data, dict) else []
+        item = items[0] if items and isinstance(items[0], dict) else {}
+        sources = [m for m in item.get("MediaSources") or [] if isinstance(m, dict)]
+        if not sources and isinstance(item.get("MediaStreams"), list):
+            sources = [{"Id": item.get("Id"), "MediaStreams": item["MediaStreams"]}]
+        return sources
 
     def item_path(self, item_id: str) -> str | None:
         """An item's path, for a session whose NowPlayingItem left it out."""
@@ -334,3 +356,137 @@ def now_playing(
     out.sort(key=lambda r: r["reported_at"] or "", reverse=True)
     idle.sort(key=lambda r: r["last_active"] or "", reverse=True)
     return out + idle
+
+
+# --- Subtitles on play (M27) ---------------------------------------------------------------
+
+SUBTITLE_COMMAND = "SetSubtitleStreamIndex"
+# How long a play waits for the client to report the item playing before it gives up on
+# subtitles (the play itself has already been sent), and how often it asks.
+SUBTITLE_WAIT = 8.0
+SUBTITLE_POLL = 0.5
+# The clock and sleep the wait uses: module attributes so tests replace them (no real sleeps).
+_monotonic = time.monotonic
+_sleep = time.sleep
+
+
+def supported_commands(s: dict) -> list[str]:
+    """The general commands a session says it takes (top level, or under Capabilities)."""
+    cmds = s.get("SupportedCommands")
+    if not isinstance(cmds, list):
+        cmds = (s.get("Capabilities") or {}).get("SupportedCommands")
+    return [c for c in cmds or [] if isinstance(c, str)]
+
+
+def lang_matches(stream_lang: Any, want: str) -> bool:
+    """A stream's language against the asked one, by prefix (``en`` matches ``eng``), the
+    way subtitle languages are matched elsewhere."""
+    have = str(stream_lang or "").casefold()
+    want = want.casefold()
+    return bool(have) and (have.startswith(want) or want.startswith(have))
+
+
+def pick_subtitle(streams: list[dict], lang: str, *, track: int | None = None,
+                  sidecar: str | None = None) -> tuple[dict | None, str]:
+    """The subtitle stream to turn on and how it was chosen: ``track`` (the line's
+    embedded track s:N, the N-th embedded subtitle stream), else ``sidecar`` (the line's
+    subtitle file, by name), when that stream is in ``lang`` (or untagged); else the
+    stream in ``lang`` search's ``best_track`` ranks first, never a forced-only one.
+    (None, why) when there is none."""
+    subs = sorted((m for m in streams if isinstance(m, dict) and m.get("Type") == "Subtitle"
+                   and isinstance(m.get("Index"), int)), key=lambda m: m["Index"])
+
+    def fits(m: dict) -> bool:
+        return not m.get("Language") or m.get("Language") == "und" or lang_matches(
+            m.get("Language"), lang)
+
+    if track is not None:
+        embedded = [m for m in subs if not m.get("IsExternal")]
+        if 0 <= track < len(embedded) and fits(embedded[track]):
+            return embedded[track], "track"
+    if sidecar:
+        name = sidecar.casefold()
+        for m in subs:
+            path = str(m.get("Path") or "")
+            if m.get("IsExternal") and path.replace("\\", "/").rsplit("/", 1)[-1].casefold() == name \
+                    and fits(m):
+                return m, "sidecar"
+    # The language's best stream by search's own ranking (best_track: text above image,
+    # full dialogue above SDH above commentary), so play turns on what search would read.
+    # Forced-only streams never count.
+    ranked = []
+    for pos, m in enumerate(subs):
+        title = " ".join(str(m.get(k) or "") for k in ("Title", "DisplayTitle")).strip()
+        if not lang_matches(m.get("Language"), lang) or m.get("IsForced") \
+                or _FORCED_RE.search(title):
+            continue
+        codec = str(m.get("Codec") or "subrip").lower()
+        if m.get("IsTextSubtitleStream") is False and codec not in IMAGE_SUBTITLE_CODECS:
+            codec = "dvd_subtitle"  # an image stream Jellyfin names some other way
+        ranked.append(SubtitleTrack(pos, codec, str(m.get("Language")), title or None,
+                                    False, bool(m.get("IsHearingImpaired"))))
+    if ranked:
+        return subs[best_track(ranked, (lang,)).index], "language"
+    return None, f"This file has no {lang} subtitles that aren't forced-only."
+
+
+def wait_playing(client: JellyfinClient, session_id: str, item_id: str,
+                 within: float = SUBTITLE_WAIT) -> dict | None:
+    """The session once it reports ``item_id`` playing, asking every ``SUBTITLE_POLL``
+    seconds for at most ``within``; None when it doesn't (or it closed)."""
+    deadline = _monotonic() + within
+    while True:
+        try:
+            raw = client.sessions(CONTROLLABLE_WITHIN)
+        except JellyfinError:
+            raw = []
+        s = next((x for x in raw if x.get("Id") == session_id), None)
+        if s is not None and (s.get("NowPlayingItem") or {}).get("Id") == item_id:
+            return s
+        if _monotonic() + SUBTITLE_POLL > deadline:
+            return None
+        _sleep(SUBTITLE_POLL)
+
+
+def turn_on_subtitles(client: JellyfinClient, target: dict, item_id: str, lang: str, *,
+                      track: int | None = None, sidecar: str | None = None) -> dict:
+    """After a play or seek: wait for the client to be playing ``item_id``, then turn on
+    its ``lang`` subtitles (``pick_subtitle``) with ``SetSubtitleStreamIndex``. Never
+    raises: the reply says whether it was set, the stream's index and language, and a
+    note when it wasn't (or how the stream was chosen)."""
+    out: dict[str, Any] = {"set": False, "index": None, "language": lang, "title": None,
+                           "match": None, "note": None}
+    if SUBTITLE_COMMAND not in supported_commands(target):
+        out["note"] = f"{target.get('Client')} doesn't take {SUBTITLE_COMMAND}."
+        return out
+    sid = str(target["Id"])
+    try:
+        sources = client.media_sources(item_id)
+    except JellyfinError as exc:
+        out["note"] = f"Couldn't read the file's subtitle streams: {exc}"
+        return out
+    playing = wait_playing(client, sid, item_id)
+    if playing is None:
+        out["note"] = (f"The client didn't report the file playing within "
+                       f"{SUBTITLE_WAIT:g} s, so subtitles weren't set.")
+        return out
+    source_id = (playing.get("PlayState") or {}).get("MediaSourceId")
+    source = next((m for m in sources if m.get("Id") == source_id), None) or (
+        sources[0] if sources else {})
+    stream, how = pick_subtitle(source.get("MediaStreams") or [], lang, track=track,
+                                sidecar=sidecar)
+    if stream is None:
+        out["note"] = how
+        return out
+    out.update(index=stream["Index"], language=stream.get("Language") or lang,
+               title=stream.get("DisplayTitle") or stream.get("Title"), match=how)
+    try:
+        client.command(sid, SUBTITLE_COMMAND, {"Index": str(stream["Index"])})
+    except JellyfinError as exc:
+        out["note"] = f"Jellyfin refused {SUBTITLE_COMMAND}: {exc}"
+        return out
+    out["set"] = True
+    if how == "language" and track is not None:
+        out["note"] = (f"The line's track (s:{track}) isn't a {lang} stream Jellyfin "
+                       "lists; turned on the best one in that language.")
+    return out

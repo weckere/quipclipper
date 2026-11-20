@@ -39,6 +39,11 @@ class FakeJellyfin:
         self.images: dict[tuple[str, str], tuple[bytes, str]] = {}
         self.refreshed: list[str] = []
         self.commands: list[tuple[str, str, dict]] = []  # (session, command, query)
+        self.general: list[tuple[str, dict]] = []  # (session, body) of /Sessions/x/Command
+        # Subtitles on play (M27): the streams each item lists, and whether a PlayNow makes
+        # its session report the item playing (a client that starts it).
+        self.streams: dict[str, list[dict]] = {}
+        self.starts_playing = True
         self.requests: list[tuple[str, dict, str]] = []
         self.status = 200
         fake = self
@@ -76,6 +81,12 @@ class FakeJellyfin:
                 if url.path == "/Items" and query.get("Recursive") == "true":
                     start, limit = int(query["StartIndex"]), int(query["Limit"])
                     return self._send(200, {"Items": fake.library[start:start + limit]})
+                if url.path == "/Items" and "MediaSources" in query.get("Fields", ""):
+                    ids = query.get("Ids", "")
+                    if ids not in fake.streams:
+                        return self._send(200, {"Items": []})
+                    return self._send(200, {"Items": [{"Id": ids, "MediaSources": [
+                        {"Id": ids, "MediaStreams": fake.streams[ids]}]}]})
                 if url.path == "/Items":
                     ids = query.get("Ids", "")
                     return self._send(200, {"Items": [fake.items[ids]] if ids in fake.items
@@ -104,6 +115,18 @@ class FakeJellyfin:
                         return self._send(404, {})
                     command = parts[4] if len(parts) == 5 else query.get("playCommand")
                     fake.commands.append((parts[2], command, query))
+                    if command == "PlayNow" and fake.starts_playing:
+                        for s in fake.sessions:
+                            if s.get("Id") == parts[2]:
+                                s["NowPlayingItem"] = {"Id": query["itemIds"],
+                                                       "Type": "Episode"}
+                                s["PlayState"] = {"IsPaused": False}
+                    self.send_response(204)
+                    self.end_headers()
+                    return
+                if len(parts) == 4 and parts[1] == "Sessions" and parts[3] == "Command":
+                    length = int(self.headers.get("Content-Length") or 0)
+                    fake.general.append((parts[2], json.loads(self.rfile.read(length))))
                     self.send_response(204)
                     self.end_headers()
                     return
@@ -975,6 +998,218 @@ def test_play_needs_jellyfin(tmp_path, media):
     c = _client({"QC_MEDIA_ROOTS": str(root), "QC_STATE_DIR": str(tmp_path / "state")})
     r = c.post("/api/jellyfin/play", json={"session": "tv", "path": str(ep)})
     assert r.status_code == 503
+
+
+# --- Subtitles on play (M27) ---------------------------------------------------------------
+
+SUB_CMDS = ["DisplayMessage", "SetSubtitleStreamIndex", "SetAudioStreamIndex"]
+
+
+def _sub(index, lang, *, external=False, forced=False, path=None, title=None) -> dict:
+    return {"Type": "Subtitle", "Index": index, "Language": lang, "IsExternal": external,
+            "IsForced": forced, "Path": path, "DisplayTitle": title or f"{lang} {index}"}
+
+
+EP_STREAMS = [
+    {"Type": "Video", "Index": 0}, {"Type": "Audio", "Index": 1, "Language": "eng"},
+    _sub(2, "eng", forced=True, title="English (Forced)"),  # s:0
+    _sub(3, "ger"),  # s:1
+    _sub(4, "eng", title="English SDH"),  # s:2
+    _sub(5, "eng", title="English"),  # s:3
+    _sub(6, "eng", external=True, path="/shows/Star Trek TNG/Season 3/S03E26.en.srt",
+         title="English (SRT)"),
+]
+
+
+@pytest.fixture()
+def clock(monkeypatch):
+    """A fake clock for the wait for playback: each sleep moves it on, nothing waits."""
+    now = [100.0]
+    slept: list[float] = []
+
+    def sleep(seconds):
+        slept.append(seconds)
+        now[0] += seconds
+
+    monkeypatch.setattr(jellyfin, "_monotonic", lambda: now[0])
+    monkeypatch.setattr(jellyfin, "_sleep", sleep)
+    return slept
+
+
+def _sub_tv(**over) -> list[dict]:
+    return [_client_session("tv", "BRAVIA 4K VH2", "Jellyfin for Android TV (patched)",
+                            SupportedCommands=SUB_CMDS, **over), *_clients()[1:]]
+
+
+def _play_subs(c, ep, **body):
+    r = c.post("/api/jellyfin/play", json={"session": "tv", "path": str(ep), "at": 61.0,
+                                           **body})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_play_without_subtitles_sends_no_command(fake, tmp_path, known, clock):
+    root, ep = known
+    fake.sessions, fake.streams[EP_ID] = _sub_tv(), EP_STREAMS
+    out = _play_subs(_playing(_client(_env(fake, tmp_path, root))), ep)
+    assert "subtitles" not in out and fake.general == [] and clock == []
+
+
+def test_play_turns_on_the_languages_best_stream_as_search_ranks_it(fake, tmp_path, known,
+                                                                    clock):
+    root, ep = known
+    fake.sessions, fake.streams[EP_ID] = _sub_tv(), EP_STREAMS
+    out = _play_subs(_playing(_client(_env(fake, tmp_path, root))), ep, subtitles="ENG")
+    assert out["command"] == "play"
+    # The first English stream is forced-only, the next SDH: the full one (5) is the one
+    # search's best_track reads, so it is the one turned on.
+    assert out["subtitles"] == {"set": True, "index": 5, "language": "eng",
+                                "title": "English", "match": "language", "note": None}
+    assert fake.general == [("tv", {"Name": "SetSubtitleStreamIndex",
+                                    "Arguments": {"Index": "5"}})]
+    assert [cmd for _, cmd, _ in fake.commands] == ["PlayNow"]  # the play went first
+    # "en" matches Jellyfin's "eng" the way subtitle languages match elsewhere.
+    fake.sessions = _sub_tv()
+    assert _play_subs(_playing(_client(_env(fake, tmp_path, root))), ep,
+                      subtitles="en")["subtitles"]["index"] == 5
+
+
+def test_play_turns_on_the_track_the_line_was_found_in(fake, tmp_path, known, clock):
+    root, ep = known
+    fake.sessions, fake.streams[EP_ID] = _sub_tv(), EP_STREAMS
+    c = _playing(_client(_env(fake, tmp_path, root)))
+    out = _play_subs(c, ep, subtitles="eng", track=2)  # s:2 = Jellyfin's stream 4 (SDH)
+    assert (out["subtitles"]["index"], out["subtitles"]["match"]) == (4, "track")
+    assert out["subtitles"]["note"] is None
+    # s:1 is German: the English one is turned on instead, and the reply says why.
+    fake.sessions = _sub_tv()
+    out = _play_subs(c, ep, subtitles="eng", track=1)
+    assert (out["subtitles"]["index"], out["subtitles"]["match"]) == (5, "language")
+    assert "s:1" in out["subtitles"]["note"]
+
+
+def test_play_turns_on_the_sidecar_the_line_was_found_in(fake, tmp_path, known, clock):
+    root, ep = known
+    (ep.parent / "S03E26.en.srt").write_text("1\n00:00:01,000 --> 00:00:02,000\nHi\n")
+    fake.sessions, fake.streams[EP_ID] = _sub_tv(), EP_STREAMS
+    out = _play_subs(_playing(_client(_env(fake, tmp_path, root))), ep, subtitles="eng")
+    assert (out["subtitles"]["index"], out["subtitles"]["match"]) == (6, "sidecar")
+    assert out["subtitles"]["title"] == "English (SRT)"
+
+
+def test_play_waits_for_the_client_to_report_it_playing(fake, tmp_path, known, clock,
+                                                        monkeypatch):
+    root, ep = known
+    fake.sessions, fake.streams[EP_ID] = _sub_tv(), EP_STREAMS
+    fake.starts_playing = False
+    c = _playing(_client(_env(fake, tmp_path, root)))
+    real = jellyfin.JellyfinClient.sessions
+    asked = []
+
+    def sessions(self, active_within=0):  # the TV reports the file on the third look
+        asked.append(1)
+        if len(asked) == 3:
+            fake.sessions[0]["NowPlayingItem"] = {"Id": EP_ID, "Type": "Episode"}
+        return real(self, active_within)
+
+    monkeypatch.setattr(jellyfin.JellyfinClient, "sessions", sessions)
+    out = _play_subs(c, ep, subtitles="eng")
+    assert out["subtitles"]["set"] is True
+    # The play's own look (1), the wait's first look (2), one poll later it plays (3).
+    assert len(asked) == 3 and clock == [jellyfin.SUBTITLE_POLL]
+
+
+def test_play_gives_up_on_subtitles_when_the_client_never_plays(fake, tmp_path, known,
+                                                                clock):
+    root, ep = known
+    fake.sessions, fake.streams[EP_ID] = _sub_tv(), EP_STREAMS
+    fake.starts_playing = False
+    out = _play_subs(_playing(_client(_env(fake, tmp_path, root))), ep, subtitles="eng")
+    assert out["command"] == "play" and out["subtitles"]["set"] is False
+    assert "didn't report the file playing" in out["subtitles"]["note"]
+    assert sum(clock) <= jellyfin.SUBTITLE_WAIT and fake.general == []
+
+
+def test_play_seek_sets_subtitles_at_once(fake, tmp_path, known, clock):
+    root, ep = known
+    fake.sessions = _sub_tv(NowPlayingItem={"Id": EP_ID, "Type": "Episode"},
+                            PlayState={"IsPaused": False})
+    fake.streams[EP_ID] = EP_STREAMS
+    out = _play_subs(_playing(_client(_env(fake, tmp_path, root))), ep, subtitles="eng")
+    assert out["command"] == "seek" and out["subtitles"]["set"] is True
+    assert clock == [] and len(fake.general) == 1
+
+
+def test_play_subtitles_never_fail_the_play(fake, tmp_path, known, clock):
+    root, ep = known
+    c = _playing(_client(_env(fake, tmp_path, root)))
+    # A client that doesn't list the command gets a note, and nothing is sent.
+    fake.sessions, fake.streams[EP_ID] = _clients(), EP_STREAMS
+    out = _play_subs(c, ep, subtitles="eng")
+    assert out["subtitles"]["set"] is False
+    assert "doesn't take SetSubtitleStreamIndex" in out["subtitles"]["note"]
+    # No stream in that language (and a forced-only one doesn't count).
+    fake.sessions = _sub_tv()
+    out = _play_subs(c, ep, subtitles="fre")
+    assert out["subtitles"] == {"set": False, "index": None, "language": "fre",
+                                "title": None, "match": None,
+                                "note": "This file has no fre subtitles that aren't "
+                                        "forced-only."}
+    # Jellyfin can't say what streams the file has.
+    fake.sessions, fake.streams = _sub_tv(), {}
+    out = _play_subs(c, ep, subtitles="eng")
+    assert out["subtitles"]["set"] is False and fake.general == []
+    # A bad language code is the request's fault.
+    assert c.post("/api/jellyfin/play", json={"session": "tv", "path": str(ep),
+                                              "subtitles": "e n"}).status_code == 422
+
+
+def test_pick_subtitle_ranks_like_search():
+    sdh_first = [_sub(2, "eng", title="English SDH"), _sub(3, "eng", title="Commentary"),
+                 _sub(4, "eng", title="English")]
+    assert jellyfin.pick_subtitle(sdh_first, "eng")[0]["Index"] == 4
+    # Hearing-impaired by Jellyfin's flag, a forced title, an image stream: all below.
+    flagged = [{**_sub(2, "eng"), "IsHearingImpaired": True},
+               _sub(3, "eng", title="English Forced"),
+               {**_sub(4, "eng"), "Codec": "PGSSUB", "IsTextSubtitleStream": False},
+               _sub(5, "eng", title="English")]
+    assert jellyfin.pick_subtitle(flagged, "eng")[0]["Index"] == 5
+    # Only SDH and image streams: SDH (text) wins; ties keep the first.
+    assert jellyfin.pick_subtitle(flagged[:1] + flagged[2:3], "eng")[0]["Index"] == 2
+    assert jellyfin.pick_subtitle([_sub(7, "eng"), _sub(8, "eng")], "eng")[0]["Index"] == 7
+    assert jellyfin.pick_subtitle(flagged[1:2], "eng")[0] is None  # forced-only
+
+
+def test_pick_subtitle_untagged_streams_and_capabilities():
+    streams = [_sub(3, None), _sub(4, "eng", external=True, path="C:\\x\\Ep.EN.srt")]
+    assert jellyfin.pick_subtitle(streams, "eng", track=0)[0]["Index"] == 3  # untagged fits
+    assert jellyfin.pick_subtitle(streams, "eng", sidecar="ep.en.srt")[1] == "sidecar"
+    assert jellyfin.pick_subtitle(streams, "eng", track=5)[0]["Index"] == 4
+    assert jellyfin.supported_commands(
+        {"Capabilities": {"SupportedCommands": ["SetSubtitleStreamIndex"]}}) == [
+        "SetSubtitleStreamIndex"]
+    assert jellyfin.supported_commands({}) == []
+
+
+def test_cli_play_with_subtitles(fake, known, cli_run, clock, capsys):
+    from quipclipper import cli
+
+    _, ep = known
+    fake.sessions, fake.streams[EP_ID] = _sub_tv(), EP_STREAMS
+    code, out = cli_run("jellyfin.reindex")
+    code, out = cli_run("jellyfin.play", str(ep), "--session", "tv", "--at", "62",
+                        "--subtitles", "eng", "--track", "3")
+    assert code == 0, out
+    assert out["subtitles"]["index"] == 5 and fake.general[-1][1]["Arguments"] == {
+        "Index": "5"}
+    capsys.readouterr()
+    _fmt = cli._FORMATTERS["jellyfin.play"]
+    _fmt({"command": "play", "title": "X", "device": "TV", "client": "c", "at": 1,
+          "subtitles": {"set": True, "index": 5, "title": "English"}})
+    _fmt({"command": "play", "title": "X", "device": "TV", "client": "c", "at": 1,
+          "subtitles": {"set": False, "note": "No English."}})
+    assert capsys.readouterr().out.splitlines()[1::2] == [
+        "Subtitles on: English (stream 5)", "Subtitles not set: No English."]
 
 
 def test_cli_play_and_sessions_all(fake, known, cli_run, capsys):

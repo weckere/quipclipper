@@ -22,6 +22,14 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   passes `/api/media/s/` through the password gate for GET only and doesn't log it; the
   backend redacts the token in its own access log. The pairing banner says the app "wants
   to make links a player such as VLC opens without a token".
+- **Play on Jellyfin can turn subtitles on.** `POST /api/jellyfin/play` takes
+  `subtitles` (a language code such as `eng`) and `track` (the embedded track the line
+  was found in): once the client reports the file playing (waited for, up to 8 s) the
+  server sends Jellyfin's `SetSubtitleStreamIndex` for that track, the sidecar in that
+  language, or the language's best stream ranked as search ranks tracks (full dialogue
+  above SDH and commentary, never forced-only). The reply's `subtitles` says whether it
+  was set, which stream, and why not; the play never fails over it. CLI:
+  `jellyfin.play --subtitles eng --track N`.
 - **Two new pairing scopes for a TV remote app.** `search` opens `GET /api/search`,
   `GET /api/search/folder` and `GET /api/library/roots` (so it can search the whole
   library); `jellyfin.play` opens `GET /api/jellyfin/sessions` and `POST /api/jellyfin/play`.

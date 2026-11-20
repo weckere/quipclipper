@@ -583,7 +583,11 @@ COMMANDS: tuple[Command, ...] = (
                           "jellyfin.sessions --all, or part of its device, user or client "
                           "name.", where=BODY, required=True, flags=("-S",)),
                     Param("at", "float", "Where to start, in seconds.", where=BODY,
-                          default=0.0)),
+                          default=0.0),
+                    Param("subtitles", "str", "Turn these subtitles on once it plays: a "
+                          "language code such as eng (or en).", where=BODY),
+                    Param("track", "int", "The embedded subtitle track (s:N) the line was "
+                          "found in, so that one is the one turned on.", where=BODY)),
             ui="Play on… (a search hit, a match in the workspace, the workspace selection)"),
     Command("jellyfin.lookup", "What Jellyfin knows about a library file or folder: its "
             "title, series, season, episode, year, ids and artwork, and the values its "
