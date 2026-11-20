@@ -520,6 +520,11 @@ asks; CLI `media.link`.
   language, a sidecar before an embedded track and full dialogue before SDH; `null` when
   neither is asked for or there are none. `subtitles_format` is `srt` (default) or `vtt`.
   The last path segment is the file's name for the player to show; it changes nothing.
+  VLC for Android (TV included, tried with 3.7.2) ignores a separate subtitle link
+  (its `subtitles_location` extra), so there only `url` matters; other players can load
+  `subtitles_url`.
+- **Kinds:** the signed payload names what it opens (`k`: `file` or `subs`), so a later
+  variant (a remuxed stream, say) is another kind behind the same signing and route.
 - **Where it points:** `QC_PUBLIC_URL`, else the address the request reached the server at,
   else the advertised one; a link relative to the server when none is known.
 - **How long:** 6 hours from issue (`expires_at`), enough to watch a film through.
