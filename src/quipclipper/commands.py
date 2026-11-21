@@ -602,7 +602,8 @@ COMMANDS: tuple[Command, ...] = (
     # --- media links ---------------------------------------------------------------------
     Command("media.link", "A short-lived signed link (6 h) to a library file that a player "
             "such as VLC opens with no token, Range requests and all, and one to its "
-            "subtitles as SRT or WebVTT. A paired app needs the media.link scope.",
+            "subtitles as SRT or WebVTT; with --start, a playlist that starts there. A paired "
+            "app needs the media.link scope.",
             "GET", "/api/media/link",
             params=(Param("path", "str", "Media file under the media roots.", main=True,
                           required=True),
@@ -612,7 +613,10 @@ COMMANDS: tuple[Command, ...] = (
                     Param("track", "int", "Link this subtitle track instead (the one a "
                           "line was found in).", flags=("-t",)),
                     Param("subtitles_format", "str", "The subtitles' format.",
-                          default="srt", choices=("srt", "vtt"))),
+                          default="srt", choices=("srt", "vtt")),
+                    Param("start", "float", "Start here (s): the link is then an HLS "
+                          "playlist of the whole file that begins at the keyframe at or "
+                          "before it, for players that take no start time.")),
             ui="—"),
 
     # --- jobs ------------------------------------------------------------------------------

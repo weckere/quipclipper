@@ -96,8 +96,8 @@ def test_a_media_link_scope_gets_a_link_and_the_link_needs_no_token(env):
     c = env["c"]
     token, cid = _pair(c, ["media.link"])
     got = _link(c, env["film"], token)
-    assert set(got) == {"url", "subtitles_url", "expires_at"}
-    assert got["subtitles_url"] is None
+    assert set(got) == {"url", "subtitles_url", "expires_at", "starts_at"}
+    assert got["subtitles_url"] is None and got["starts_at"] is None
     assert got["expires_at"] == pairing.iso(T0 + media_links.LIFETIME)
     assert got["url"].startswith("http://testserver/api/media/s/")
     assert got["url"].endswith("/Film%20%282001%29.mkv")

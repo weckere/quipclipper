@@ -22,6 +22,14 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   passes `/api/media/s/` through the password gate for GET only and doesn't log it; the
   backend redacts the token in its own access log. The pairing banner says the app "wants
   to make links a player such as VLC opens without a token".
+- **A media link can start at the line**, for players that take no start time (VLC for
+  iOS). `GET /api/media/link?…&start=305` (CLI `media.link --start 305`) links an HLS
+  playlist of the whole file that starts at the keyframe at or before `start`, and says
+  where in `starts_at`. The viewer can still seek back to the beginning and on to the end;
+  subtitles stay in sync with the same `subtitles_url`. Segments are cut on demand by
+  stream copy into MPEG-TS (no re-encoding, nothing on disk); files whose video MPEG-TS
+  can't carry (AV1, VP9) are refused with `422`, and audio it can't carry (FLAC, PCM) is
+  left out. The reply always has `starts_at` (`null` without `start`).
 - **Play on Jellyfin can turn subtitles on.** `POST /api/jellyfin/play` takes
   `subtitles` (a language code such as `eng`) and `track` (the embedded track the line
   was found in). Once the client is really playing the file (its position moving; waited

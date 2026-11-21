@@ -234,7 +234,7 @@ by default land where they always did.
 
 | Command | What it does | Arguments | API | Web UI |
 |---|---|---|---|---|
-| `media.link` | A short-lived signed link (6 h) to a library file that a player such as VLC opens with no token, Range requests and all, and one to its subtitles as SRT or WebVTT. A paired app needs the media.link scope. | `PATH` `--subtitles` `--track` `--subtitles-format` | `GET /api/media/link` | — |
+| `media.link` | A short-lived signed link (6 h) to a library file that a player such as VLC opens with no token, Range requests and all, and one to its subtitles as SRT or WebVTT; with --start, a playlist that starts there. A paired app needs the media.link scope. | `PATH` `--subtitles` `--track` `--subtitles-format` `--start` | `GET /api/media/link` | — |
 
 ## job
 

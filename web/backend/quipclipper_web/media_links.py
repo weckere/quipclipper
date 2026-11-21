@@ -6,9 +6,14 @@ A paired app (scope ``media.link``) asks ``GET /api/media/link?path=…`` and ge
 
 The token is ``<payload>.<sig>``. ``payload`` is base64url compact JSON::
 
-    {"v": 1, "k": "file" | "subs", "p": <resolved absolute path>, "e": <expiry, unix s>,
-     "c": <issuing client id, "" for a person>,
-     "t": <embedded track> | "x": <sidecar path>, "f": "srt" | "vtt"}   # subs only
+    {"v": 1, "k": "file" | "subs" | "hls", "p": <resolved absolute path>,
+     "e": <expiry, unix s>, "c": <issuing client id, "" for a person>,
+     "t": <embedded track> | "x": <sidecar path>, "f": "srt" | "vtt",     # subs only
+     "s": <start, s>, "d": <duration, s>, "o": <container start, s>,
+     "m": [<stream indices to copy>], "i": <the stream cuts follow>}    # hls only
+
+``hls`` (D-137, :mod:`start_links`) is a playlist that starts at ``s``: one token opens
+``<stem>.m3u8`` and its segments ``NNNNN.ts`` beside it.
 
 ``sig`` is HMAC-SHA256 over :data:`CONTEXT` + payload with a 32-byte key kept in
 ``state_dir/media-link.key`` (0600, made on first use; deleting it kills every link).
@@ -29,6 +34,7 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import os
 import re
 import secrets
@@ -46,6 +52,7 @@ CONTEXT = b"quipclipper.media-link/1\n"
 SCOPE = "media.link"
 ROUTE_PREFIX = "/api/media/s/"
 SUB_FORMATS = ("srt", "vtt")
+KINDS = ("file", "subs", "hls")
 
 _B64 = re.compile(r"^[A-Za-z0-9_-]+$")
 TOKEN_RE = r"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"
@@ -172,10 +179,12 @@ class MediaLinks:
         except (ValueError, UnicodeDecodeError):
             return None
         if (not isinstance(body, dict) or body.get("v") != 1
-                or body.get("k") not in ("file", "subs")
+                or body.get("k") not in KINDS
                 or not isinstance(body.get("p"), str)
                 or not isinstance(body.get("e"), int) or isinstance(body.get("e"), bool)
                 or not isinstance(body.get("c"), str)):
+            return None
+        if body["k"] == "hls" and not _hls_fields_ok(body):
             return None
         if self.clock() >= body["e"]:
             return None
@@ -190,6 +199,21 @@ class MediaLinks:
             return False
         scopes = row.get("scopes")
         return scopes is None or SCOPE in scopes
+
+
+def _number(v) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
+def _hls_fields_ok(body: dict) -> bool:
+    """A start link's own fields (start_links.Source plus the start) are well formed."""
+    m = body.get("m")
+    return (_number(body.get("s")) and _number(body.get("d")) and _number(body.get("o"))
+            and 0 <= body["s"] < body["d"]
+            and isinstance(m, list) and bool(m)
+            and all(isinstance(i, int) and not isinstance(i, bool) and i >= 0 for i in m)
+            and isinstance(body.get("i"), int) and not isinstance(body.get("i"), bool)
+            and body["i"] in m)
 
 
 class RedactLinks(logging.Filter):

@@ -92,7 +92,7 @@ from quipclipper_web import (
 )
 from quipclipper_web import caller as caller_mod
 from quipclipper_web import folder_cache
-from quipclipper_web import media_links
+from quipclipper_web import media_links, start_links
 from quipclipper_web import index_changes as index_changes_mod
 from quipclipper_web import line_index as line_index_mod
 from quipclipper_web.bookmarks import BookmarkStore
@@ -240,6 +240,35 @@ _BROWSER_MIME = {
     ".oga": "audio/ogg",
     ".opus": "audio/ogg",
 }
+
+
+class _ProcStream(StreamingResponse):
+    """A subprocess's stdout as the response body. The process is killed when the
+    response ends for any reason (done, the client gone, the server stopping), even
+    when the body was never started."""
+
+    def __init__(self, proc: asyncio.subprocess.Process,
+                 running: set[asyncio.subprocess.Process], **kw):
+        self._proc, self._running = proc, running
+
+        async def body():
+            assert proc.stdout is not None
+            while chunk := await proc.stdout.read(64 * 1024):
+                yield chunk
+
+        super().__init__(body(), **kw)
+
+    async def __call__(self, scope, receive, send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            if self._proc.returncode is None:
+                with contextlib.suppress(ProcessLookupError):
+                    self._proc.kill()
+            try:
+                await asyncio.shield(self._proc.wait())
+            finally:
+                self._running.discard(self._proc)
 
 
 class BookmarkCreate(BaseModel):
@@ -716,6 +745,7 @@ def create_app(settings: Settings | None = None,
     # Signed media links (M27, D-133): a player that can't send a token opens one file.
     links = media_links.MediaLinks(settings.state_dir, clients, clock=clock or time.time)
     media_links.install_log_filter()
+    start_cuts = start_links.Cuts()
     server_id: list[str] = []  # made on first use, so importing the app writes nothing
     # Check for updates (M24): asks GitHub for the latest release, by hand or once a day;
     # it never updates anything.
@@ -782,6 +812,10 @@ def create_app(settings: Settings | None = None,
         lib_jobs.shutdown(cancel=True)  # a rerun resumes from the cache
         index_changes.flush()
         peak_store.shutdown()
+        for proc in list(_start_procs):   # segment cuts (D-137): their clients are gone
+            if proc.returncode is None:
+                with contextlib.suppress(ProcessLookupError):
+                    proc.kill()
 
     app = FastAPI(title="QuipClipper", version=__version__, lifespan=lifespan)
     app.state.settings = settings
@@ -3220,11 +3254,16 @@ def create_app(settings: Settings | None = None,
                                       pattern=r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{1,8})?$"),
         track: int | None = Query(None, ge=0),
         subtitles_format: str = Query("srt", pattern="^(srt|vtt)$"),
+        start: float | None = Query(None, ge=0),
     ) -> dict:
         """A short-lived signed link to a library file that a player such as VLC opens
         with no token (Range requests work), and one to its subtitles: the ``track`` the
         line was found in, else the first non-forced one in the ``subtitles`` language;
-        null when neither is asked for or there is none. Media roots only."""
+        null when neither is asked for or there is none. Media roots only.
+
+        With ``start`` (s) the link is an HLS playlist of the whole file that starts at
+        the keyframe at or before it (D-137, for players that take no start time);
+        ``starts_at`` says where that is. The subtitles keep the file's timeline."""
         if youtube_items.parse_ref(path) is not None or epub_items.parse_ref(path)[1] is not None:
             raise HTTPException(status_code=400, detail="Only files in the media roots get "
                                 "signed links (not YouTube items or audiobook chapters).")
@@ -3238,8 +3277,28 @@ def create_app(settings: Settings | None = None,
             sub_fields = {"t": track}
         elif subtitles:
             sub_fields = media_links.pick_subtitles(p, subtitles)
+        fields: dict = {"k": "file", "p": str(p)}
+        starts_at = None
+        if start is not None:
+            try:
+                src = start_links.probe_source(p)
+            except start_links.StartLinkError as exc:
+                raise HTTPException(status_code=422, detail=f"No start link for this "
+                                    f"file: {exc}")
+            if start >= src.duration:
+                raise HTTPException(status_code=400, detail=f"start is past the end of "
+                                    f"the file ({src.duration:.3f} s).")
+            s0 = round(start, 3)
+            try:
+                cut = start_cuts.at(p, src, s0)
+            except RuntimeError as exc:
+                raise HTTPException(status_code=422, detail=f"No start link for this "
+                                    f"file: {exc}")
+            starts_at = round(cut - src.offset, 3)
+            fields = {"k": "hls", "p": str(p), "s": s0, "d": round(src.duration, 3),
+                      "o": src.offset, "m": list(src.maps), "i": src.key}
         try:
-            token, expires = links.issue({"k": "file", "p": str(p)}, issuer)
+            token, expires = links.issue(fields, issuer)
             sub_token = (links.issue({"k": "subs", "p": str(p), **sub_fields,
                                       "f": subtitles_format}, issuer)[0]
                          if sub_fields is not None else None)
@@ -3247,30 +3306,46 @@ def create_app(settings: Settings | None = None,
             raise HTTPException(status_code=503, detail=str(exc))
         base = _link_base(request) + media_links.ROUTE_PREFIX
         lang = f".{subtitles}" if subtitles else ""
+        name = p.name if start is None else p.stem + start_links.PLAYLIST_SUFFIX
         return {
-            "url": f"{base}{token}/{media_links.link_name(p.name)}",
+            "url": f"{base}{token}/{media_links.link_name(name)}",
             "subtitles_url": (f"{base}{sub_token}/"
                               f"{media_links.link_name(f'{p.stem}{lang}.{subtitles_format}')}"
                               if sub_token else None),
             "expires_at": pairing.iso(expires),
+            "starts_at": starts_at,
         }
 
     _LINK_GONE = {"detail": "Not Found"}   # what an unknown route answers: nothing more
 
     @app.api_route(media_links.ROUTE_PREFIX + "{token}/{name}", methods=["GET", "HEAD"],
                    include_in_schema=False)
-    def media_signed(token: str, name: str):
-        """A signed link (GET /api/media/link): the file, or its subtitles. ``name`` is for
-        the player to show. Bad, expired, revoked and unknown links all answer one 404."""
+    async def media_signed(request: Request, token: str, name: str):
+        """A signed link (GET /api/media/link): the file, its subtitles, or a playlist
+        that starts at a line and its segments. ``name`` is for the player to show (and,
+        for a playlist, which part). Bad, expired, revoked and unknown links all answer
+        one 404."""
+        found = await asyncio.to_thread(_signed_target, token)
+        if found is None:
+            return JSONResponse(_LINK_GONE, status_code=404)
+        got, p = found
+        if got["k"] == "hls":
+            return await _start_link(request, got, p, name)
+        return await asyncio.to_thread(_signed_file, got, p)
+
+    def _signed_target(token: str) -> tuple[dict, Path] | None:
         got = links.verify(token)
         if got is None:
-            return JSONResponse(_LINK_GONE, status_code=404)
+            return None
         try:
             p = library.resolve_within_roots(got["p"], settings.media_roots)
         except library.PathNotAllowed:
-            return JSONResponse(_LINK_GONE, status_code=404)
+            return None
         if str(p) != got["p"] or not p.is_file():
-            return JSONResponse(_LINK_GONE, status_code=404)
+            return None
+        return got, p
+
+    def _signed_file(got: dict, p: Path):
         if got["k"] == "file":
             mime = _BROWSER_MIME.get(p.suffix.lower(), "application/octet-stream")
             return FileResponse(p, media_type=mime, headers={"Cache-Control": "private"})
@@ -3289,6 +3364,47 @@ def create_app(settings: Settings | None = None,
         if got.get("f") == "vtt":
             return Response(stt.cues_to_vtt(cues), media_type="text/vtt; charset=utf-8")
         return Response(stt.cues_to_srt(cues), media_type="application/x-subrip; charset=utf-8")
+
+    # Segment cuts running now (D-137): each dies with its connection, and on shutdown.
+    _start_procs: set[asyncio.subprocess.Process] = set()
+
+    async def _start_link(request: Request, got: dict, p: Path, name: str):
+        """A start link's playlist (``*.m3u8``) or segment ``NNNNN.ts`` (D-137)."""
+        src = start_links.Source(duration=got["d"], offset=got["o"], maps=tuple(got["m"]),
+                                 key=got["i"])
+        bounds = start_links.boundaries(got["s"], src.duration)
+        if name.endswith(start_links.PLAYLIST_SUFFIX):
+            body = start_links.playlist(bounds, got["s"])
+            return Response(b"" if request.method == "HEAD" else body.encode("ascii"),
+                            media_type=start_links.PLAYLIST_TYPE,
+                            headers={"Cache-Control": "private",
+                                     "Content-Length": str(len(body))})
+        m = start_links.SEGMENT_RE.match(name)
+        j = int(m.group(1)) if m else -1
+        if not 0 <= j < len(bounds) - 1:
+            return JSONResponse(_LINK_GONE, status_code=404)
+        headers = {"Cache-Control": "private"}
+        if request.method == "HEAD":
+            return Response(b"", media_type=start_links.SEGMENT_TYPE, headers=headers)
+        try:
+            c0, c1 = await asyncio.to_thread(start_cuts.segment, p, src, bounds, j)
+        except RuntimeError:
+            return JSONResponse({"detail": "Couldn't cut this segment."}, status_code=502)
+        if c1 is not None and c1 <= c0:
+            # Both ends in one GOP: the GOP plays in the next segment (players skip this).
+            return Response(b"", media_type=start_links.SEGMENT_TYPE, headers=headers)
+        if len(_start_procs) >= start_links.MAX_PROCS:
+            return JSONResponse({"detail": "Too many segments are being cut; try again."},
+                                status_code=503, headers={"Retry-After": "1"})
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *start_links.segment_command(p, src, c0, c1),
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+        except OSError:
+            return JSONResponse({"detail": "Couldn't cut this segment."}, status_code=502)
+        _start_procs.add(proc)
+        return _ProcStream(proc, _start_procs, media_type=start_links.SEGMENT_TYPE,
+                           headers=headers)
 
     @app.get("/api/media/keyframe")
     def keyframe_before(

@@ -505,13 +505,14 @@ asks; CLI `media.link`.
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/media/link?path=[&subtitles=eng][&track=][&subtitles_format=srt\|vtt]` | `{"url", "subtitles_url", "expires_at"}` for a file under the media roots. |
-| GET, HEAD | `/api/media/s/{token}/{name}` | What a link opens: the raw file with Range requests (`206`), or its subtitles as SRT (`application/x-subrip`) or WebVTT. No token, no password. |
+| GET | `/api/media/link?path=[&subtitles=eng][&track=][&subtitles_format=srt\|vtt][&start=]` | `{"url", "subtitles_url", "expires_at", "starts_at"}` for a file under the media roots. |
+| GET, HEAD | `/api/media/s/{token}/{name}` | What a link opens: the raw file with Range requests (`206`), its subtitles as SRT (`application/x-subrip`) or WebVTT, or (a link with `start`) an HLS playlist and its segments. No token, no password. |
 
 ```json
 {"url": "https://quip.example/api/media/s/eyJ2Ijox….Xb3k…/Film%20(2001).mkv",
  "subtitles_url": "https://quip.example/api/media/s/eyJ2Ijox….q9Lw…/Film%20(2001).eng.srt",
- "expires_at": "2026-11-20T14:00:00Z"}
+ "expires_at": "2026-11-20T14:00:00Z",
+ "starts_at": null}
 ```
 
 - **What it links:** `url` the file itself. `subtitles_url` the subtitle track `track` (the
@@ -524,15 +525,35 @@ asks; CLI `media.link`.
   path (its `subtitles_location` extra is read as a path, never a link), so an app
   downloads `subtitles_url` to shared storage and passes that path; players that open a
   subtitle link load `subtitles_url` directly.
-- **Kinds:** the signed payload names what it opens (`k`: `file` or `subs`), so a later
-  variant (a remuxed stream, say) is another kind behind the same signing and route.
+- **Starting at a line** (`start`, seconds; D-137), for a player that takes no start time
+  (VLC for iOS): `url` is then `…/<stem>.m3u8`, an HLS VOD playlist (`EXT-X-ENDLIST`) of
+  the **whole** file whose `EXT-X-START` is `start`, and `starts_at` is where playback
+  really begins: the keyframe at or before `start` (`304.0` for `start=305` in a film with
+  a keyframe every 4 s). The lead-in is the caller's: ask for a few seconds before the
+  line. Segments are `…/NNNNN.ts` beside the playlist (same token), 10 s of the file's
+  timeline each, cut on demand by ffmpeg stream copy into MPEG-TS (no re-encoding,
+  nothing written to disk; a cut stops when its request ends or the server stops). The
+  segments keep the file's own timestamps, so `subtitles_url` is the same as without
+  `start` and stays in sync. In VLC (tried with desktop VLC 3.0.24, the libvlc branch VLC
+  for iOS uses) the viewer sees the film's full length, can seek back before the line to
+  the beginning and forward to the end, and pause; a seek lands within a keyframe
+  interval of where it was aimed. A player that ignores `EXT-X-START` starts at the
+  beginning. Only what MPEG-TS carries is streamed: video other than H.264, HEVC, MPEG-1/2,
+  MPEG-4 Part 2 or VC-1 (AV1, VP9…) is refused with `422`, and audio tracks other than
+  AAC, AC-3, E-AC-3, MP2, MP3, DTS, TrueHD or Opus (FLAC, PCM, Vorbis…) are left out
+  (`422` when none is left and there is no video); the default audio track comes first.
+  Embedded subtitles aren't in the stream (use `subtitles_url`). `start` at or past the
+  end is `400`. Without `start`, `starts_at` is `null`. CLI `media.link --start 305`.
+- **Kinds:** the signed payload names what it opens (`k`: `file`, `subs`, or `hls` for a
+  start link, which also signs the start, the file's length and the streams to copy), so
+  a later variant is another kind behind the same signing and route.
 - **Where it points:** `QC_PUBLIC_URL`, else the address the request reached the server at,
   else the advertised one; a link relative to the server when none is known.
 - **How long:** 6 hours from issue (`expires_at`), enough to watch a film through.
 - **Refused at issue:** a path outside the media roots (`403`), a folder or missing file
   (`404`), YouTube items and audiobook chapters (`400`), a token without the scope (`403`).
 - **What a link proves:** the token is `<payload>.<signature>`: base64url JSON naming the
-  resolved path, the kind (file or subtitles, and which subtitles), the expiry and the
+  resolved path, the kind (file, subtitles and which, or a start link and where), the expiry and the
   issuing client, and an HMAC-SHA256 of it under a key kept in `state_dir/media-link.key`
   (0600, made on first use). The server checks, on every request: the signature (constant
   time), the expiry, that the issuing client is still paired with `media.link` or full access
