@@ -602,7 +602,7 @@ COMMANDS: tuple[Command, ...] = (
     # --- play targets (paired apps that play the lines they are sent) ------------------------
     Command("play.targets", "List the play targets: paired apps (a TV remote app) waiting "
             "for lines to play, e.g. in VLC.", "GET", "/api/play/targets",
-            ui="—"),
+            ui="The paired TV apps in Play on…"),
     Command("play.send", "Play a library file on a play target from a time. Waits up to "
             "10 s for the target to take it (409 when it isn't listening) and reports what "
             "it did.", "POST", "/api/play/targets/{target_id}",
@@ -616,7 +616,7 @@ COMMANDS: tuple[Command, ...] = (
                           "such as eng (or en).", where=BODY),
                     Param("track", "int", "The embedded subtitle track (s:N) the line was "
                           "found in.", where=BODY)),
-            ui="—"),
+            ui="Play on… (a paired TV app in the list)"),
 
     # --- media links ---------------------------------------------------------------------
     Command("media.link", "A short-lived signed link (6 h) to a library file that a player "

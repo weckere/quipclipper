@@ -398,3 +398,12 @@ def test_player_label_is_checked(env):
     assert r.status_code == 422
     r = c.get("/api/play/receive", params={"wait": 0, "player": "x" * 21}, headers=_key(tv))
     assert r.status_code == 422
+
+
+def test_config_says_when_play_on_should_list_targets(env):
+    c = env["c"]
+    assert c.get("/api/config").json()["play_targets"] is False
+    _pair(c, None)                     # a full-access app (LeadStinger) isn't a TV
+    assert c.get("/api/config").json()["play_targets"] is False
+    _pair(c, ["play.receive"])
+    assert c.get("/api/config").json()["play_targets"] is True

@@ -234,8 +234,8 @@ by default land where they always did.
 
 | Command | What it does | Arguments | API | Web UI |
 |---|---|---|---|---|
-| `play.targets` | List the play targets: paired apps (a TV remote app) waiting for lines to play, e.g. in VLC. |  | `GET /api/play/targets` | — |
-| `play.send` | Play a library file on a play target from a time. Waits up to 10 s for the target to take it (409 when it isn't listening) and reports what it did. | `PATH` `--target-id` `--at` `--subtitles` `--track` | `POST /api/play/targets/{target_id}` | — |
+| `play.targets` | List the play targets: paired apps (a TV remote app) waiting for lines to play, e.g. in VLC. |  | `GET /api/play/targets` | The paired TV apps in Play on… |
+| `play.send` | Play a library file on a play target from a time. Waits up to 10 s for the target to take it (409 when it isn't listening) and reports what it did. | `PATH` `--target-id` `--at` `--subtitles` `--track` | `POST /api/play/targets/{target_id}` | Play on… (a paired TV app in the list) |
 
 ## media
 

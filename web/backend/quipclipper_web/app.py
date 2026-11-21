@@ -992,6 +992,9 @@ def create_app(settings: Settings | None = None,
             "server_name": pairing.server_name(settings.server_name, settings.state_dir),
             # Jellyfin URL + API key set: the Now playing card and scope show (M15).
             "jellyfin": settings.jellyfin_enabled,
+            # An app is paired that may be a play target (M27): Play on… lists targets.
+            "play_targets": any("play.receive" in (c.get("scopes") or [])
+                                for c in clients.list()),
             # Machine transcription (M21): whether it's set up, and the models to offer;
             # only while it's on (D-053).
             **({"transcribe": _transcribe_info({

@@ -21,6 +21,9 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
   the path, time and subtitle choice, never a link or token: it fetches its own signed link.
   A request nobody collects within 10 s is dropped (`409`), never delivered late; revoking
   the app removes its target at once.
+- **Play on… lists the paired TV apps** beside the Jellyfin clients, and is offered also
+  without Jellyfin once an app is paired with `play.receive` (`/api/config`'s new
+  `play_targets`). Choosing one sends it the line and says whether it played.
 - **Signed media links, so a paired app can play a file in VLC.** A new `media.link` scope
   opens `GET /api/media/link?path=…[&subtitles=eng][&track=]` (CLI `media.link`), which
   answers `{url, subtitles_url, expires_at}`: links that open the raw file (Range requests

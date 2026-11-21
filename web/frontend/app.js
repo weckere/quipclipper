@@ -1080,7 +1080,7 @@ async function dialogueSearch(query, folders) {
           `<button type="button" class="mark-icon-btn hit-bookmark" data-action="bookmark.add" title="Save this line as a bookmark" aria-label="Bookmark the line at ${hit.start_ts}"><span class="star" aria-hidden="true">★</span></button>` +
           `<button type="button" class="mark-icon-btn make-clip-btn hit-clip" data-action="clip.create" title="Cut a clip of this line with the bar's options" aria-label="Clip the line at ${hit.start_ts}"><span class="scissors" aria-hidden="true">✂</span></button>` +
           `<button type="button" class="mark-icon-btn hit-link" data-action="item.link" title="Copy a link to this line: it opens the file here with the line selected" aria-label="Copy a link to the line at ${hit.start_ts}">${iconSvg("link")}</button>` +
-          (playOnOffered(hit.path) ? `<button type="button" class="mark-icon-btn hit-play-on" data-action="jellyfin.play" aria-haspopup="dialog" aria-expanded="false" aria-controls="play-on-pop" title="Play on a Jellyfin client (a TV app, Jellyfin in a browser) from a second before this line" aria-label="Play the line at ${hit.start_ts} on a Jellyfin client">${iconSvg("play-on")}</button>` : "") +
+          (playOnOffered(hit.path) ? `<button type="button" class="mark-icon-btn hit-play-on" data-action="jellyfin.play play.targets" aria-haspopup="dialog" aria-expanded="false" aria-controls="play-on-pop" title="Play on ${playOnWhere(appConfig.jellyfin)} from a second before this line" aria-label="Play the line at ${hit.start_ts} on ${playOnWhere(appConfig.jellyfin, true)}">${iconSvg("play-on")}</button>` : "") +
           `<button type="button" class="mark-icon-btn hit-ls" data-action="leadstinger.quip leadstinger.set" title="${HIT_LS_TITLE}" aria-label="Send the line at ${hit.start_ts} to LeadStinger">${iconSvg("leadstinger")}</button>` +
           `<span class="hit-status" data-action="job.get"></span>` +
         `</div>`;
@@ -1105,7 +1105,7 @@ async function dialogueSearch(query, folders) {
       const playOn = li.querySelector(".hit-play-on");
       if (playOn) playOn.onclick = (e) => {
         e.stopPropagation();
-        openPlayOn(e.currentTarget, hit.path, playOnAt(hit.start), hit.text);
+        openPlayOn(e.currentTarget, hit.path, playOnAt(hit.start), hit.text, !!appConfig.jellyfin);
       };
       li.querySelector(".hit-ls").onclick = (e) => { e.stopPropagation(); sendHitToLeadStinger(hit, e.currentTarget, statusEl); };
       const open = () => openItem(hit.path, hit.file, {
@@ -2429,6 +2429,7 @@ async function openItem(path, name, opts) {
   showItem();
   closePlayOn();
   currentJellyfin = null;  // until /api/items says whether Jellyfin knows this file
+  playOnHere = false;
   $("play-on-btn").hidden = true;
   // A dialogue-search match to auto-select in Marks once the script loads.
   pendingCueSelect = markRange || null;
@@ -2503,7 +2504,11 @@ async function openItem(path, name, opts) {
   if (signal.aborted) return;
   showItemArtwork(info.jellyfin || null);
   currentJellyfin = appConfig.jellyfin && info.jellyfin && info.jellyfin.id ? info.jellyfin : null;
-  $("play-on-btn").hidden = !currentJellyfin;
+  // Play on… (M22, M27): a Jellyfin client that knows this file, or a play target.
+  playOnHere = !!currentJellyfin || (!!appConfig.play_targets && !info.is_youtube && playOnOffered(path));
+  $("play-on-btn").hidden = !playOnHere;
+  $("play-on-btn").title = `Play on ${playOnWhere(!!currentJellyfin)} from a second before the selection, or from the playhead`;
+  $("play-on-btn").setAttribute("aria-label", `Play on ${playOnWhere(!!currentJellyfin, true)}`);
 
   const player = $("player");
   player.style.aspectRatio = "";  // back to the default box until this item's dims load
@@ -3568,12 +3573,12 @@ async function doSearch(query, { focus = true } = {}) {
         `<span class="result-score" title="${SCORE_TITLE}">${m.score}%</span>` +
         `<span>${m.start_ts} – ${m.end_ts}</span>` +
       `</span>`;
-    if (currentJellyfin) {  // Play on… for this match, beside its time
+    if (playOnHere) {  // Play on… for this match, beside its time
       li.querySelector(".result-meta").insertAdjacentHTML("beforeend",
-        `<button type="button" class="mark-icon-btn result-play-on" data-action="jellyfin.play" aria-haspopup="dialog" aria-expanded="false" aria-controls="play-on-pop" title="Play on a Jellyfin client from a second before this line" aria-label="Play the line at ${m.start_ts} on a Jellyfin client">${iconSvg("play-on")}</button>`);
+        `<button type="button" class="mark-icon-btn result-play-on" data-action="jellyfin.play play.targets" aria-haspopup="dialog" aria-expanded="false" aria-controls="play-on-pop" title="Play on ${playOnWhere(!!currentJellyfin)} from a second before this line" aria-label="Play the line at ${m.start_ts} on ${playOnWhere(!!currentJellyfin, true)}">${iconSvg("play-on")}</button>`);
       li.querySelector(".result-play-on").onclick = (e) => {
         e.stopPropagation();
-        openPlayOn(e.currentTarget, item.path, playOnAt(m.start), m.text);
+        openPlayOn(e.currentTarget, item.path, playOnAt(m.start), m.text, !!currentJellyfin);
       };
     }
     makeActivatable(li, "Select this line and play it; ▶ and Loop selection then play just this line");
@@ -6924,7 +6929,13 @@ async function jumpToNowPlaying() {
   $("nowplaying-card").scrollIntoView({ block: "nearest" });
 }
 
-// --- Play on…: start a line on a Jellyfin client (M22) ---------------------
+// --- Play on…: start a line on a Jellyfin client (M22) or a play target (M27) ---
+//
+// Play targets: paired apps (a TV remote app) waiting for lines, listed by
+// GET /api/play/targets (play.targets); a button sends the line to one
+// (POST /api/play/targets/{id}, play.send), which opens it itself (in VLC) and says
+// how that went. They come first, then the Jellyfin clients. Offered when the server
+// has an app paired with play.receive (appConfig.play_targets), also without Jellyfin.
 //
 // GET /api/jellyfin/sessions?all=1 (jellyfin.sessions --all) lists Jellyfin's clients, and
 // each says whether it takes remote control (can_play): the Jellyfin apps on a TV or phone
@@ -6938,9 +6949,20 @@ async function jumpToNowPlaying() {
 const PLAY_LEAD_IN = 1;  // seconds
 let currentJellyfin = null;  // what Jellyfin knows about the open file, when it does
 let playOnTarget = null;  // {btn, path, at}
+let playOnHere = false;  // Play on… is offered for the open file
 
-/** Play on… for a search hit: Jellyfin is set up and the hit is a file (not a book part). */
-const playOnOffered = (path) => !!appConfig.jellyfin && !String(path).includes("#seg=");
+/** Play on… for a search hit: Jellyfin or a play target is set up and the hit is a file
+ * (not a book part or a YouTube item). */
+const playOnOffered = (path) => (!!appConfig.jellyfin || !!appConfig.play_targets) &&
+  !String(path).includes("#seg=") && !String(path).startsWith("yt:");
+/** What Play on… plays on, for titles: Jellyfin clients (`jf`), play targets, or both. */
+function playOnWhere(jf, short) {
+  const tv = !!appConfig.play_targets;
+  if (jf && tv) return short ? "a TV app or Jellyfin client" : "a paired TV app or a Jellyfin client";
+  if (tv) return "a paired TV app";
+  return short ? "a Jellyfin client" : "a Jellyfin client (a TV app, Jellyfin in a browser)";
+}
+const playTargetName = (t) => `${t.name} on ${t.host}` + (t.player ? ` · ${t.player}` : "");
 /** Where Play on… starts for a line at `start` with `before` seconds of padding. */
 const playOnAt = (start, before = 0) => Math.max(0, start - Math.max(PLAY_LEAD_IN, before));
 const playOnName = (s) => (s.device || "Unnamed device") + (s.client ? ` (${s.client})` : "");
@@ -6961,8 +6983,9 @@ function placePlayOn(pop, btn) {
   pop.style.top = `${below + h > window.innerHeight - 8 && r.top - 6 - h > 8 ? r.top - 6 - h : below}px`;
 }
 
-/** Open Play on… beside `btn` for `path`, starting at `at` seconds (a second click closes). */
-async function openPlayOn(btn, path, at, what) {
+/** Open Play on… beside `btn` for `path`, starting at `at` seconds (a second click closes).
+ * `jf`: also list Jellyfin's clients (Jellyfin is set up and knows the file). */
+async function openPlayOn(btn, path, at, what, jf) {
   const pop = $("play-on-pop");
   if (!pop.hidden && playOnTarget && playOnTarget.btn === btn) { closePlayOn(true); return; }
   closePlayOn();
@@ -6973,25 +6996,35 @@ async function openPlayOn(btn, path, at, what) {
   $("play-on-list").innerHTML = "";
   $("play-on-cant").hidden = true;
   $("play-on-status").hidden = false;
-  $("play-on-status").textContent = "Asking Jellyfin which clients are on…";
+  $("play-on-status").textContent = jf ? "Asking Jellyfin which clients are on…" : "Looking for paired TV apps…";
   setPopover(pop, btn, true);
   placePlayOn(pop, btn);
   pop.focus();
-  let sessions;
-  try {
-    sessions = (await getJSON("/api/jellyfin/sessions?all=1")).sessions || [];
-  } catch (err) {
-    if (playOnTarget !== target) return;
-    $("play-on-status").textContent = `Couldn't ask Jellyfin: ${err.message}`;
-    return;
-  }
+  const tv = !!appConfig.play_targets;
+  const [jfGot, tvGot] = await Promise.allSettled([
+    jf ? getJSON("/api/jellyfin/sessions?all=1") : Promise.resolve({ sessions: [] }),
+    tv ? getJSON("/api/play/targets") : Promise.resolve({ targets: [] }),
+  ]);
   if (playOnTarget !== target) return;  // closed, or opened for another line meanwhile
-  renderPlayOn(sessions, target);
+  const failed = [];
+  if (jfGot.status === "rejected") failed.push(`Couldn't ask Jellyfin: ${jfGot.reason.message}`);
+  if (tvGot.status === "rejected") failed.push(`Couldn't list the TV apps: ${tvGot.reason.message}`);
+  renderPlayOn(jfGot.status === "fulfilled" ? jfGot.value.sessions || [] : [],
+    tvGot.status === "fulfilled" ? tvGot.value.targets || [] : [], target, { jf, tv, failed });
   placePlayOn(pop, btn);
 }
 
-function renderPlayOn(sessions, target) {
+function renderPlayOn(sessions, targets, target, how) {
   const list = $("play-on-list");
+  for (const t of targets) {
+    const li = document.createElement("li");
+    li.className = "play-on-row";
+    li.innerHTML =
+      `<button type="button" class="btn primary" data-action="play.send" title="Send it to ${escapeHtml(playTargetName(t))}: it plays from ${formatTimeWhole(target.at)}">${escapeHtml(`${t.name} on ${t.host}`)}</button>` +
+      `<span class="muted play-on-what">${escapeHtml(t.player ? `paired app · ${t.player}` : "paired app")}</span>`;
+    li.querySelector("button").onclick = () => playOnDevice(t, target);
+    list.appendChild(li);
+  }
   const seen = new Set();
   const can = sessions.filter((s) => s.can_play && !seen.has(s.id) && seen.add(s.id));
   // The ones that can't, once per device and app (Infuse opens several sessions).
@@ -7007,14 +7040,37 @@ function renderPlayOn(sessions, target) {
     list.appendChild(li);
   }
   const status = $("play-on-status");
-  status.hidden = can.length > 0;
-  status.textContent = "No Jellyfin client can be controlled right now. Open the Jellyfin app " +
-    "on the TV (not Infuse), or Jellyfin in a browser, and try again.";
+  status.hidden = can.length + targets.length > 0 && !how.failed.length;
+  const none = how.jf && how.tv
+    ? "Nothing to play on right now. Open the paired app on the TV, or the Jellyfin app (not Infuse), and try again."
+    : how.tv ? "No paired TV app is listening right now. Open it on the TV and try again."
+    : "No Jellyfin client can be controlled right now. Open the Jellyfin app on the TV (not Infuse), or Jellyfin in a browser, and try again.";
+  status.textContent = how.failed.length ? how.failed.join(" ") : none;
   $("play-on-cant").hidden = !cant.length;
   $("play-on-cant").textContent = cant.length ? `Can't be controlled: ${cant.join(", ")}.` : "";
   $("play-on-cant").title = "These apps don't take remote control from Jellyfin, so nothing can start a line on them.";
   const first = list.querySelector("button");
   if (first) first.focus();
+}
+
+async function playOnDevice(t, target) {
+  const status = $("play-on-status");
+  status.hidden = false;
+  status.textContent = `Sending it to ${playTargetName(t)}…`;
+  try {
+    const r = await postJSON(`/api/play/targets/${encodeURIComponent(t.id)}`,
+      { path: target.path, at: target.at });
+    if (playOnTarget !== target) return;
+    const res = r.result;
+    const msg = !res ? `Sent to ${t.name} on ${t.host}; it hasn't said whether it plays.`
+      : res.ok ? `Playing on ${t.name} on ${t.host} from ${formatTimeWhole(target.at)}` + (res.detail ? ` (${res.detail})` : "") + "."
+      : `${t.name} on ${t.host} couldn't play it` + (res.detail ? `: ${res.detail}` : "") + ".";
+    status.textContent = msg;
+    announce(msg);
+  } catch (err) {
+    if (playOnTarget !== target) return;
+    status.textContent = `Couldn't send it: ${err.message}`;
+  }
 }
 
 async function playOnSession(s, target) {
@@ -7039,7 +7095,8 @@ $("play-on-btn").onclick = (e) => {
   if (!currentItem) return;
   const a = wfAnchor();
   openPlayOn(e.currentTarget, currentItem.path,
-    a ? playOnAt(a[0], clipPadBefore()) : Math.max(0, playerTime()), a ? selectionCue() : "");
+    a ? playOnAt(a[0], clipPadBefore()) : Math.max(0, playerTime()), a ? selectionCue() : "",
+    !!currentJellyfin);
 };
 trapTab($("play-on-pop"));
 
