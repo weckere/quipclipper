@@ -92,7 +92,7 @@ from quipclipper_web import (
 )
 from quipclipper_web import caller as caller_mod
 from quipclipper_web import folder_cache
-from quipclipper_web import media_links, start_links
+from quipclipper_web import media_links, play_targets, start_links
 from quipclipper_web import index_changes as index_changes_mod
 from quipclipper_web import line_index as line_index_mod
 from quipclipper_web.bookmarks import BookmarkStore
@@ -359,6 +359,23 @@ class JellyfinPlayRequest(BaseModel):
     # The embedded subtitle track (s:N) the line was found in, so that one is turned on
     # when it is in that language. Without it a sidecar in that language is looked for.
     track: int | None = Field(None, ge=0)
+
+
+class PlaySendRequest(BaseModel):
+    """JSON body for POST /api/play/targets/{id} (M27): play a line on a play target. The
+    fields and their checks are POST /api/jellyfin/play's, less the session."""
+
+    path: str
+    at: float = Field(0.0, ge=0, allow_inf_nan=False)
+    subtitles: str | None = Field(None, min_length=2, max_length=8, pattern=r"^[A-Za-z-]+$")
+    track: int | None = Field(None, ge=0)
+
+
+class PlayResult(BaseModel):
+    """JSON body for POST /api/play/receive/{id} (M27): what the target did with it."""
+
+    ok: bool
+    detail: str = Field("", max_length=play_targets.DETAIL_MAX)
 
 
 class ClipRequest(BaseModel):
@@ -745,6 +762,8 @@ def create_app(settings: Settings | None = None,
     # Signed media links (M27, D-133): a player that can't send a token opens one file.
     links = media_links.MediaLinks(settings.state_dir, clients, clock=clock or time.time)
     media_links.install_log_filter()
+    # Play targets (M27): paired apps waiting for lines to play, in memory.
+    play = play_targets.PlayTargets(clock=clock or time.monotonic)
     start_cuts = start_links.Cuts()
     server_id: list[str] = []  # made on first use, so importing the app writes nothing
     # Check for updates (M24): asks GitHub for the latest release, by hand or once a day;
@@ -819,6 +838,7 @@ def create_app(settings: Settings | None = None,
 
     app = FastAPI(title="QuipClipper", version=__version__, lifespan=lifespan)
     app.state.settings = settings
+    app.state.play_targets = play
 
     @app.exception_handler(RequestValidationError)
     async def _invalid_request(request: Request, exc: RequestValidationError):
@@ -1162,6 +1182,94 @@ def create_app(settings: Settings | None = None,
                 client, target, item["id"], req.subtitles.lower(), command=command,
                 track=req.track, sidecar=sidecar)
         return out
+
+    # --- play targets (M27): a paired app plays the lines it is sent ----------------------
+
+    def _play_alive(client_id: str) -> bool:
+        """Still paired, with a token that may receive (full access or play.receive)."""
+        c = clients.get(client_id)
+        return c is not None and pairing.scope_allows(c.get("scopes"), "GET",
+                                                      "/api/play/receive")
+
+    def _play_sender(request: Request) -> str:
+        """Who a play request is from, as the target may show it."""
+        client = request.state.client
+        if client is not None:
+            return f"{client.get('name')} on {client.get('host')}"
+        return _caller(request, settings).get("user_name") or "QuipClipper"
+
+    def _play_target_client(request: Request) -> dict:
+        client = request.state.client
+        if client is None:
+            raise HTTPException(status_code=403, detail="Only a paired app's own token can "
+                                "be a play target (pair it with the play.receive scope).")
+        return client
+
+    @app.get("/api/play/receive")
+    async def play_receive(
+        request: Request,
+        wait: float = Query(play_targets.WAIT_MAX, ge=0, allow_inf_nan=False),
+        player: str = Query("", max_length=play_targets.PLAYER_MAX),
+    ) -> dict:
+        """A play target's long poll (M27): calling it lists the app as a target; answers
+        the line sent to it as soon as one is, or ``{"request": null}`` after ``wait``
+        seconds (at most 25)."""
+        client = _play_target_client(request)
+        if player:
+            try:
+                pairing.check_label(player, "player", 1, play_targets.PLAYER_MAX)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc))
+        try:
+            got = await play.receive(client, player, wait)
+        except play_targets.Revoked:
+            return JSONResponse(_CLIENT_REVOKED, status_code=401)
+        return {"request": got}
+
+    @app.post("/api/play/receive/{request_id}")
+    def play_report(request_id: str, req: PlayResult, request: Request) -> dict:
+        """The target says what it did with a line it collected: the sender is told."""
+        client = _play_target_client(request)
+        try:
+            detail = pairing.check_label(req.detail, "detail", 0, play_targets.DETAIL_MAX)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        if not play.report(client["id"], request_id, req.ok, detail):
+            raise HTTPException(status_code=404, detail="No such play request for this app.")
+        return {"reported": True}
+
+    @app.get("/api/play/targets")
+    def play_targets_list() -> dict:
+        """The paired apps listening for lines to play (M27)."""
+        return {"targets": play.targets(_play_alive)}
+
+    def _play_resolve(path: str) -> str:
+        if youtube_items.parse_ref(path) is not None or epub_items.parse_ref(path)[1] is not None:
+            raise HTTPException(status_code=400, detail="Only files in the media roots can be "
+                                "played on a play target (not YouTube items or audiobook "
+                                "chapters).")
+        p = _resolve(path)
+        if not p.is_file():
+            raise HTTPException(status_code=404, detail=f"Not found: {path}")
+        return str(p)
+
+    @app.post("/api/play/targets/{target_id}")
+    async def play_send(target_id: str, req: PlaySendRequest, request: Request) -> dict:
+        """Play a library file on a play target from ``at`` (M27). The path is checked
+        before anything is queued; the request waits up to 10 s for the target to collect
+        it (409 when it doesn't), then up to 10 s for what it did (``result``, else null)."""
+        path = await run_in_threadpool(_play_resolve, req.path)
+        sender = _play_sender(request)
+        client = request.state.client
+        payload = {"path": path, "at": req.at,
+                   "subtitles": req.subtitles.lower() if req.subtitles else None,
+                   "track": req.track, "from": sender}
+        try:
+            return await play.send(target_id, payload,
+                                   client["id"] if client else "person:" + sender,
+                                   _play_alive)
+        except play_targets.PlayError as exc:
+            raise HTTPException(status_code=exc.status, detail=exc.detail)
 
     @app.post("/api/jellyfin/index")
     def jellyfin_reindex() -> dict:
@@ -4650,10 +4758,14 @@ def create_app(settings: Settings | None = None,
             if request.state.client is None:
                 raise HTTPException(status_code=401, detail="DELETE /api/clients/self "
                                     "revokes the client token it is sent with; none was.")
-            return {"removed": clients.remove(request.state.client["id"])}
+            removed = clients.remove(request.state.client["id"])
+            play.forget(request.state.client["id"])
+            return {"removed": removed}
         _person_only(request)
         try:
-            return {"removed": clients.remove(client_id)}
+            removed = clients.remove(client_id)
+            play.forget(client_id)   # its open poll ends; it is no longer a play target
+            return {"removed": removed}
         except OSError as exc:
             raise HTTPException(status_code=500, detail=f"Can't save the clients: {exc}")
 

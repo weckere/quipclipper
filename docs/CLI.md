@@ -230,6 +230,13 @@ by default land where they always did.
 | `jellyfin.lookup` | What Jellyfin knows about a library file or folder: its title, series, season, episode, year, ids and artwork, and the values its clip names get. | `PATH` | `GET /api/jellyfin/lookup` | Posters and titles on library rows, the workspace header and Now playing |
 | `jellyfin.reindex` | Rebuild the path index from Jellyfin now (it is rebuilt hourly on its own), e.g. after adding media. |  | `POST /api/jellyfin/index` | — |
 
+## play
+
+| Command | What it does | Arguments | API | Web UI |
+|---|---|---|---|---|
+| `play.targets` | List the play targets: paired apps (a TV remote app) waiting for lines to play, e.g. in VLC. |  | `GET /api/play/targets` | — |
+| `play.send` | Play a library file on a play target from a time. Waits up to 10 s for the target to take it (409 when it isn't listening) and reports what it did. | `PATH` `--target-id` `--at` `--subtitles` `--track` | `POST /api/play/targets/{target_id}` | — |
+
 ## media
 
 | Command | What it does | Arguments | API | Web UI |

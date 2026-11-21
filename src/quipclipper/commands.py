@@ -599,6 +599,25 @@ COMMANDS: tuple[Command, ...] = (
             "hourly on its own), e.g. after adding media.", "POST", "/api/jellyfin/index",
             ui="—"),
 
+    # --- play targets (paired apps that play the lines they are sent) ------------------------
+    Command("play.targets", "List the play targets: paired apps (a TV remote app) waiting "
+            "for lines to play, e.g. in VLC.", "GET", "/api/play/targets",
+            ui="—"),
+    Command("play.send", "Play a library file on a play target from a time. Waits up to "
+            "10 s for the target to take it (409 when it isn't listening) and reports what "
+            "it did.", "POST", "/api/play/targets/{target_id}",
+            params=(Param("path", "str", "Media file under the media roots.", where=BODY,
+                          main=True, required=True),
+                    Param("target_id", "str", "Which target: an id from play.targets.",
+                          where=PATH, required=True, flags=("-T",)),
+                    Param("at", "float", "Where to start, in seconds.", where=BODY,
+                          default=0.0),
+                    Param("subtitles", "str", "Turn these subtitles on: a language code "
+                          "such as eng (or en).", where=BODY),
+                    Param("track", "int", "The embedded subtitle track (s:N) the line was "
+                          "found in.", where=BODY)),
+            ui="—"),
+
     # --- media links ---------------------------------------------------------------------
     Command("media.link", "A short-lived signed link (6 h) to a library file that a player "
             "such as VLC opens with no token, Range requests and all, and one to its "
@@ -899,6 +918,11 @@ EXEMPT_ROUTES: dict[tuple[str, str], str] = {
     ("POST", "/api/pair"): "the app's side of pairing: LeadStinger asks for access",
     ("GET", "/api/pair/{pair_id}"): "the app's side of pairing: LeadStinger polls its own "
                                     "request with that request's poll secret",
+    # Play targets: the target's side. A person sends with play.send.
+    ("GET", "/api/play/receive"): "the play target's side: a paired TV app long-polls for "
+                                  "lines to play (play.send sends one)",
+    ("POST", "/api/play/receive/{request_id}"): "the play target's side: it reports what it "
+                                                "did with a line (play.send prints it)",
     ("GET", "/api/clients/check"): "the nginx password gate asks whether a client token is "
                                    "current (clients.list shows the clients)",
 }

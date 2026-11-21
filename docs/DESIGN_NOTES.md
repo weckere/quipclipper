@@ -844,6 +844,52 @@ sidecar was the alternative, but it needs D-Bus and is heavier. The NixOS module
 host's Avahi instead. Advertising tells the whole LAN where QuipClipper is, so it is off by
 default and the docs say tailnet-only installs must leave it off.
 
+**Play targets: a paired app plays what it is sent, and learns nothing else** (M27). A TV
+app should play a line someone found on their phone, in VLC, which Jellyfin can't drive. So
+the TV app becomes a *play target*: it long-polls the server, the phone sends it a line
+through the server, and the TV opens it itself. The security design came first:
+
+- *Who may send to which target.* Any sender may send to any listening target: a person in
+  the web UI or the CLI, `QC_API_TOKEN`, a full-access app, or an app paired with the
+  `play.send` scope. Senders are trusted people's devices on the same server, the same trust
+  Play on… already gives Jellyfin. `jellyfin.play` doesn't imply `play.send`: its banner
+  promised Jellyfin devices only, and an existing token must not quietly gain more.
+- *Who may be a target.* Only a paired app, with its own token (`play.receive` or full
+  access), and only as itself: a target is the client record, its id the client's id, and
+  its listing names what the person approved at pairing ("LineFinder on Living room TV")
+  plus a player label it sends. A person's browser, the API token and a send-only app can't
+  receive. The receive routes act on the token's own target only: there is no way to poll
+  or answer for another app.
+- *What a target learns.* `{id, path, at, subtitles, track, from}`: which library file, from
+  when, and who sent it. No link and no token. The target fetches its own signed media link
+  with its own `media.link` scope, exactly as when it picks a line itself, so a sender can't
+  make it open anything its own token couldn't, and nothing the sender holds ever reaches
+  the TV. The path is resolved under the media roots before anything is queued, so a target
+  is never handed a path the server wouldn't serve.
+- *What a sender learns.* The targets' names, and whether one took the request and what it
+  reported (a short line of text the target writes, checked like a name: no control or
+  invisible characters).
+- *Bounded.* One pending request per target (a newer one replaces it, and the replaced
+  sender is told). A request waits at most 10 s for the target's poll and is then dropped,
+  never delivered late: a line that plays a minute after the phone gave up would be a
+  surprise. A poll waits at most 25 s, well under the proxy's read timeout. 20 sends a minute
+  per sender. A target is listed while a poll is open and 45 s after one ends, so a TV that
+  went to sleep drops off the list on its own.
+- *Revoked or re-paired.* Presence is in memory only; nothing is written beyond the client
+  record pairing already keeps. Revoking the app ends its open poll (`401`) and removes it
+  from the list at once; the listing and every send also check that the client is still
+  paired, so a client removed any other way (a hand-edited `clients.json`) drops off too. A
+  re-paired app is a new client with a new id: it becomes a new target on its first poll,
+  and the old one is gone with the old token. A restart forgets every target until its
+  next poll.
+
+The long poll is an async route on asyncio primitives, so a waiting TV holds no threadpool
+worker. *Alternatives considered:* the server pushing a signed link to the target (the
+sender would then decide what the TV opens, and a link would sit in the request), a
+WebSocket (a second protocol for nginx, the password gate and the apps, for no gain at this
+rate), and the TV registering with an explicit call (a poll that is its own registration
+can't leave a stale "listening" behind).
+
 ---
 
 ## 19. Releases and the version

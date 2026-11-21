@@ -25,6 +25,7 @@ from quipclipper_web.app import (
     BookmarkUpdate,
     ClipRequest,
     JellyfinPlayRequest,
+    PlaySendRequest,
     LeadStingerQuipRequest,
     TranscribeRequest,
     FolderTranscribeRequest,
@@ -116,6 +117,7 @@ def _wire_names(cmd: reg.Command, where: str) -> set[str]:
     ("item.transcribe", TranscribeRequest),
     ("index.transcribe", FolderTranscribeRequest),
     ("jellyfin.play", JellyfinPlayRequest),
+    ("play.send", PlaySendRequest),
     ("update.settings", UpdateSettings),
 ])
 def test_body_params_match_request_models(cmd_id, model):

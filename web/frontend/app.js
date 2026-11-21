@@ -7361,6 +7361,7 @@ const SCOPE_LABELS = {
   transcribe: "transcribe audio it sends", search: "search the library's dialogue",
   "jellyfin.play": "start playback on Jellyfin devices",
   "media.link": "make links a player such as VLC opens without a token",
+  "play.receive": "play lines sent to this device", "play.send": "play lines on paired devices",
 };
 const pairCan = (scopes) => (scopes == null ? null
   : scopes.map((s) => SCOPE_LABELS[s] || s).join(" and ") || "nothing but check its key");

@@ -87,6 +87,13 @@ SCOPES: dict[str, tuple[str, frozenset[tuple[str, str]]]] = {
     # file and its subtitles (media_links, D-133). The link itself needs no token.
     "media.link": ("make links a player such as VLC opens without a token",
                    frozenset({("GET", "/api/media/link")})),
+    # Play targets (M27, play_targets): a TV app waits for lines sent to it (its own
+    # requests only: the routes act on the token's own target), and a remote sends them.
+    # jellyfin.play doesn't imply play.send: its banner promises Jellyfin devices only.
+    "play.receive": ("play lines sent to this device",
+                     frozenset({("GET", "/api/play/receive")})),
+    "play.send": ("play lines on paired devices",
+                  frozenset({("GET", "/api/play/targets")})),
 }
 # Routes with a parameter a scope opens, as (method, pattern): the transcribe scope follows
 # and cancels its jobs (the app checks the job is the token's own, :attr:`Job.owner`).
@@ -97,6 +104,8 @@ _SIGNED_MEDIA = re.compile(r"^/api/media/s/[^/]+/[^/]+$")
 SCOPE_PATTERNS: dict[str, tuple[tuple[str, re.Pattern], ...]] = {
     "transcribe": (("GET", _JOB_ROUTE), ("DELETE", _JOB_ROUTE)),
     "media.link": (("GET", _SIGNED_MEDIA), ("HEAD", _SIGNED_MEDIA)),
+    "play.receive": (("POST", re.compile(r"^/api/play/receive/[^/]+$")),),
+    "play.send": (("POST", re.compile(r"^/api/play/targets/[^/]+$")),),
 }
 # What any client token may do, scoped or not: check itself (the nginx password gate asks),
 # disconnect itself, see the server is up, and pair again.

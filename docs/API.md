@@ -746,6 +746,8 @@ throw them out. Times are UTC ISO 8601 with `Z`.
   | `search` | search the library's dialogue | `GET /api/search` (one file), `GET /api/search/folder` (folders), and `GET /api/library/roots`, so it can search the whole library by passing every root as a `path` (what the web app's Whole library does). Not the folder search's index routes, nor browsing. |
   | `jellyfin.play` | start playback on Jellyfin devices | `GET /api/jellyfin/sessions` (`all=1`: every client, with `can_play`) and `POST /api/jellyfin/play` |
   | `media.link` | make links a player such as VLC opens without a token | `GET /api/media/link` ([signed media links](#signed-media-links)); the links themselves need no token |
+  | `play.receive` | play lines sent to this device | `GET /api/play/receive` and `POST /api/play/receive/{id}`, for the app's own [play target](#play-targets) only |
+  | `play.send` | play lines on paired devices | `GET /api/play/targets` and `POST /api/play/targets/{id}` ([play targets](#play-targets)) |
 
   plus what every client may do: `GET /api/health`, `GET /api/clients/check`,
   `DELETE /api/clients/self`, and pairing again (`POST /api/pair`, `GET /api/pair/{id}`).
@@ -806,6 +808,67 @@ links fall back to; the file is removed when it stops. Docker runs it as its own
 the host's network (multicast doesn't cross Docker's bridge); the NixOS module advertises
 with Avahi instead (`advertise.enable`), and its record leaves out `id` (LeadStinger reads it
 from `/api/config`). **Tailnet-only installs should not advertise.**
+
+### Play targets
+
+A paired app that plays the lines it is sent (M27), such as a TV app that opens them in VLC.
+The target long-polls; a sender lists the targets and sends one a line through the server.
+Design and security: [DESIGN_NOTES.md §18](DESIGN_NOTES.md#18-the-web-app-one-engine-cli-parity-the-redesign).
+
+| Method | Path | Who | Purpose |
+|---|---|---|---|
+| GET | `/api/play/receive?wait=25&player=VLC` | the target: `play.receive` or a full token | Long poll. Calling it lists the app as a target. `{"request": {...}}` as soon as a line is sent to it, or `{"request": null}` after `wait` seconds. |
+| POST | `/api/play/receive/{id}` | the target | What it did with request `id`: `{"ok": bool, "detail": "…"}` → `{"reported": true}`. |
+| GET | `/api/play/targets` | a sender: `play.send`, a full token, `QC_API_TOKEN`, the web UI | `{"targets": [{"id", "name", "host", "player", "listening": true}]}`. CLI `play.targets`. |
+| POST | `/api/play/targets/{id}` | a sender | Play a file on target `id`: `{path, at?, subtitles?, track?}` → `{"target", "delivered": true, "result"}`. CLI `play.send`. |
+
+**The target's side.** `GET /api/play/receive` with the app's own token (`X-API-Key` or
+`Authorization: Bearer`):
+
+- `wait`: seconds to hold the poll, `0` to `25` (more is taken as 25; default 25). `player`:
+  a short label for the list, 1 to 20 characters with no control or invisible characters
+  (`422` otherwise), e.g. `VLC`; optional.
+- The app is listed as a target while a poll is open and for 45 s after one ends: poll again
+  as soon as one returns. A newer poll from the same app ends an older one with
+  `{"request": null}`.
+- A request: `{"id", "path", "at", "subtitles", "track", "from"}`. `path` is the file's
+  path on the server, under the media roots; `at` seconds into the file; `subtitles` a
+  lower-case language code or `null`; `track` the embedded subtitle track (`s:N`) the line
+  was found in, or `null`; `from` who sent it ("LineFinder on iPhone", or the person's
+  tailnet name or "QuipClipper" from the web UI). No link and no token: the app gets its
+  own with `GET /api/media/link?path=<path>&subtitles=<subtitles>&track=<track>` (its
+  `media.link` scope), as for a line it picked itself.
+- Then `POST /api/play/receive/{id}` `{"ok": true, "detail": "Playing in VLC"}` (or
+  `false` and why). `detail` at most 300 characters, no control characters. `404` for a
+  request this app didn't collect, or one it already answered. The sender waits 10 s for
+  it; a later answer is taken but nobody hears it.
+- `403` for a token that can't receive (`play.send` only, the web UI, `QC_API_TOKEN`).
+  `401` when the app is revoked, also ending a poll that is waiting.
+
+**The sender's side.** `POST /api/play/targets/{id}` takes `POST /api/jellyfin/play`'s
+fields less `session`: `path` (a file under the media roots), `at` (seconds, `≥ 0`, default
+`0`), `subtitles` (2 to 8 letters or `-`, sent lower-case), `track` (`≥ 0`). The path is
+checked before anything is queued: `403` outside the media roots, `404` not a file, `400`
+for a YouTube item or audiobook chapter, `422` a bad field. Then:
+
+- `404` no such target (never listed, stopped listening, or revoked).
+- The request waits up to 10 s for the target's poll to collect it; if none does, `409`
+  "`<name> on <host>` isn't listening", and the request is dropped, never delivered late.
+  A newer send to the same target replaces a request still waiting: the older send gets
+  `409` "A newer play request replaced this one on `<name>`".
+- Collected: `200` `{"target": {id, name, host, player, listening}, "delivered": true,
+  "result": {"ok": bool, "detail": "…"}}` once the target reports, or `"result": null` when
+  it hasn't within 10 s of collecting it.
+- `429` after 20 sends in a minute from one sender (an app, or the web UI).
+
+```json
+{"target": {"id": "Xb3kq9Lw0aZ1", "name": "LineFinder", "host": "Living room TV",
+            "player": "VLC", "listening": true},
+ "delivered": true, "result": {"ok": true, "detail": "Playing in VLC"}}
+```
+
+Targets live in memory: a restart forgets them until their next poll. Revoking an app removes
+its target at once.
 
 ### Now playing (Jellyfin)
 | Method | Path | Purpose |

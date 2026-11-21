@@ -13,6 +13,14 @@ Every commit on `dev` that changes behaviour adds a line under **Unreleased**;
 
 ### LineFinder (M27)
 
+- **Play targets: send a line to a paired TV app and it plays it, e.g. in VLC.** A paired
+  app with the new `play.receive` scope long-polls `GET /api/play/receive` and is listed by
+  `GET /api/play/targets` while it does; a sender (the new `play.send` scope, a full token,
+  the web UI or the CLI's `play.targets` / `play.send`) plays a library file on it with
+  `POST /api/play/targets/{id}` `{path, at, subtitles?, track?}`. The target is sent only
+  the path, time and subtitle choice, never a link or token: it fetches its own signed link.
+  A request nobody collects within 10 s is dropped (`409`), never delivered late; revoking
+  the app removes its target at once.
 - **Signed media links, so a paired app can play a file in VLC.** A new `media.link` scope
   opens `GET /api/media/link?path=…[&subtitles=eng][&track=]` (CLI `media.link`), which
   answers `{url, subtitles_url, expires_at}`: links that open the raw file (Range requests
